@@ -3,13 +3,34 @@ use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolService,
 };
 use async_trait::async_trait;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::lifecycle::{
     AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus, AdvanceCurrentRuntimeThreadActivityInput,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
 
-use super::advance_node::{CompleteLifecycleNodeParams, StepOutcome};
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum StepOutcome {
+    Completed,
+    Failed,
+}
+
+fn default_outcome() -> StepOutcome {
+    StepOutcome::Completed
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CompleteLifecycleNodeParams {
+    /// 当前 node 的工作摘要。
+    #[serde(default)]
+    summary: Option<String>,
+    /// 流转结果：completed（默认）或 failed。
+    #[serde(default = "default_outcome")]
+    outcome: StepOutcome,
+}
 
 pub fn complete_lifecycle_node_parameters_schema() -> serde_json::Value {
     serde_json::to_value(schemars::schema_for!(CompleteLifecycleNodeParams))

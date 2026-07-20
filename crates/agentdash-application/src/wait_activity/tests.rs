@@ -16,8 +16,6 @@ use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, GateWaitPolicyEnvelope, LifecycleAgent,
     LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
 };
-use agentdash_platform_spi::ExecutionContext;
-use agentdash_platform_spi::RuntimeToolProvider;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
@@ -886,49 +884,6 @@ async fn wait_after_cursor_filters_older_items() {
 
     assert!(result.timed_out);
     assert!(result.items.is_empty());
-}
-
-#[tokio::test]
-async fn runtime_tool_catalog_includes_wait() {
-    let provider =
-        WaitRuntimeToolProvider::from_service(test_service(AgentRunTerminalRegistry::new()));
-    let composer =
-        crate::runtime_tools::provider::RuntimeThreadToolComposer::new(vec![Arc::new(provider)]);
-    let frame_id = Uuid::new_v4();
-    let context = ExecutionContext {
-        session: agentdash_platform_spi::ExecutionSessionFrame {
-            turn_id: "runtime-1".to_string(),
-            working_directory: std::path::PathBuf::from("."),
-            environment_variables: std::collections::HashMap::new(),
-            executor_config: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
-            mcp_servers: Vec::new(),
-            vfs: None,
-            vfs_access_policy: None,
-            backend_execution: None,
-            runtime_backend_anchor: None,
-            identity: None,
-        },
-        turn: agentdash_platform_spi::ExecutionTurnFrame {
-            platform_tool_execution: Some(agentdash_platform_spi::PlatformToolExecutionContext {
-                run_id: Uuid::new_v4(),
-                project_id: Uuid::new_v4(),
-                agent_id: Uuid::new_v4(),
-                frame_id,
-                runtime_thread_id: RuntimeThreadId::new("runtime-1").expect("runtime thread id"),
-                invocation: None,
-                launch_evidence_frame_id: frame_id,
-                current_surface_frame_id: frame_id,
-                orchestration_id: None,
-                node_path: None,
-                node_attempt: None,
-            }),
-            ..agentdash_platform_spi::ExecutionTurnFrame::default()
-        },
-    };
-
-    let tools = composer.build_tools(&context).await.expect("build tools");
-
-    assert!(tools.iter().any(|tool| tool.name() == "wait"));
 }
 
 fn test_service(terminal_registry: Arc<AgentRunTerminalRegistry>) -> WaitActivityService {

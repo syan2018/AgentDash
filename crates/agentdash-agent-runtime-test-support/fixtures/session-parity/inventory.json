@@ -27,7 +27,6 @@
     { "variant": "platform", "main_owner": "application/platform producers", "current_owner": "W7", "fixture_id": "hook_terminal_pty_control_plane" }
   ],
   "platform_events": [
-    { "variant": "executor_session_bound", "main_owner": "connector binding producer", "current_owner": "W4/W5/W7", "fixture_id": "thread_status_title_compaction" },
     { "variant": "hook_trace", "main_owner": "hook trace producer", "current_owner": "W7", "fixture_id": "hook_terminal_pty_control_plane" },
     { "variant": "session_meta_update", "main_owner": "application session-meta producer", "current_owner": "W7", "fixture_id": "delivery_system_workflow_companion" },
     { "variant": "provider_attempt_status", "main_owner": "Native/application provider producer", "current_owner": "W5/W7", "fixture_id": "provider_phases_error" },

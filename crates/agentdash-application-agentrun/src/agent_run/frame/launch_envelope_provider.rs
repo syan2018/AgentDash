@@ -5,7 +5,6 @@
 //! context bundle 等运行时字段，否则会出现"通道漂移"。
 
 use agentdash_application_ports::launch::LaunchCommand;
-use agentdash_platform_spi::session_persistence::RuntimeCommandRecord;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionRepositoryRehydrateMode {
@@ -62,6 +61,5 @@ pub struct FrameLaunchEnvelopeConstructionInput {
     pub command: LaunchCommand,
     pub runtime_trace_state: RuntimeTraceLaunchState,
     pub had_existing_runtime: bool,
-    pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
     pub agent_needs_bootstrap: bool,
 }

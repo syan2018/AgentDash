@@ -2,22 +2,19 @@ use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookRequirement;
 use agentdash_application_ports::hook_workflow_projection::{
-    HookActiveWorkflowFacts, HookExecutionLogAppendCommand, HookWorkflowProjection,
-    HookWorkflowProjectionError, HookWorkflowProjectionPort, HookWorkflowProjectionQuery,
+    HookActiveWorkflowFacts, HookWorkflowProjection, HookWorkflowProjectionError,
+    HookWorkflowProjectionPort, HookWorkflowProjectionQuery,
 };
 use agentdash_domain::workflow::{
     RuntimeNodeStatus, build_effective_contract, build_effective_contract_from_contract,
 };
-use agentdash_platform_spi::hooks::PendingExecutionLogEntry;
 use agentdash_platform_spi::{
-    ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
-    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, HookDiagnosticEntry, HookError,
-    HookResolution, HookScriptEvaluator, HookTrigger, SessionSnapshotMetadata,
+    ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookSnapshot,
+    AgentFrameHookSnapshotQuery, HookDiagnosticEntry, HookError, HookResolution,
+    HookScriptEvaluator, SessionSnapshotMetadata,
 };
-use async_trait::async_trait;
 
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_platform_spi::ExecutionHookProvider;
 
 use super::active_workflow_contribution::build_active_workflow_step_fragments;
 use super::presets::builtin_preset_scripts;
@@ -27,8 +24,8 @@ use super::snapshot_helpers::*;
 use super::{dedupe_tags, global_builtin_source, workflow_scope_key, workflow_source};
 use crate::HookApplicationError;
 
-/// Facade：组合 workflow projection port + HookScriptEngine，
-/// 对外实现 ExecutionHookProvider trait。
+/// Facade：组合 workflow projection port + HookScriptEngine，并暴露 typed Product /
+/// Complete Agent Hook 入口。
 pub struct AppExecutionHookProvider {
     pub(super) workflow_projection: Arc<dyn HookWorkflowProjectionPort>,
     pub(super) script_engine: HookScriptEngine,
@@ -310,75 +307,6 @@ impl AppExecutionHookProvider {
     }
 }
 
-#[async_trait]
-impl ExecutionHookProvider for AppExecutionHookProvider {
-    async fn load_frame_snapshot(
-        &self,
-        query: AgentFrameHookSnapshotQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError> {
-        self.load_product_hook_snapshot(query).await
-    }
-
-    async fn refresh_frame_snapshot(
-        &self,
-        query: AgentFrameHookRefreshQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError> {
-        self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
-            target: query.target,
-            provenance: query.provenance,
-        })
-        .await
-    }
-
-    async fn evaluate_frame_hook(
-        &self,
-        query: AgentFrameHookEvaluationQuery,
-    ) -> Result<HookResolution, HookError> {
-        diag!(
-            Debug,
-            Subsystem::Hooks,
-            session_id = ?query.provenance.runtime_thread_id,
-            trigger = ?query.trigger,
-            tool_name = ?query.tool_name,
-            "hook: evaluate 触发"
-        );
-        let snapshot = match query.snapshot.clone() {
-            Some(snapshot) => snapshot,
-            None => {
-                self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
-                    target: query.target.clone(),
-                    provenance: query.provenance.clone(),
-                })
-                .await?
-            }
-        };
-        let query = HookRuleEvaluationQuery::from_frame_query(query);
-        let resolution = self.evaluate_rules(&snapshot, &query);
-        if !resolution.matched_rule_keys.is_empty() || resolution.block_reason.is_some() {
-            diag!(
-                Info,
-                Subsystem::Hooks,
-                session_id = ?query.runtime_thread_id(),
-                trigger = ?query.trigger,
-                matched = resolution.matched_rule_keys.len(),
-                blocked = resolution.block_reason.is_some(),
-                "hook: 命中规则"
-            );
-        }
-        Ok(resolution)
-    }
-
-    async fn append_execution_log(
-        &self,
-        entries: Vec<PendingExecutionLogEntry>,
-    ) -> Result<(), HookError> {
-        self.workflow_projection
-            .append_execution_log(HookExecutionLogAppendCommand { entries })
-            .await
-            .map_err(map_projection_error)
-    }
-}
-
 fn map_projection_error(error: HookWorkflowProjectionError) -> HookError {
     diag!(
         Warn,
@@ -387,111 +315,6 @@ fn map_projection_error(error: HookWorkflowProjectionError) -> HookError {
         "hook: workflow projection 加载失败"
     );
     HookError::Runtime(error.to_string())
-}
-
-impl AppExecutionHookProvider {
-    fn evaluate_rules(
-        &self,
-        snapshot: &AgentFrameHookSnapshot,
-        query: &HookRuleEvaluationQuery,
-    ) -> HookResolution {
-        let mut resolution = HookResolution {
-            diagnostics: snapshot
-                .diagnostics
-                .iter()
-                .filter(|entry| matches!(entry.code.as_str(), "active_workflow_resolved"))
-                .cloned()
-                .collect(),
-            ..HookResolution::default()
-        };
-
-        seed_snapshot_injections_for_trigger(&query.trigger, snapshot, &mut resolution);
-        if !trigger_includes_snapshot_injections(&query.trigger)
-            && !has_applicable_hook_work(snapshot, query.trigger)
-        {
-            return resolution;
-        }
-
-        match query.trigger {
-            HookTrigger::SessionStart => {}
-            HookTrigger::UserPromptSubmit => {
-                // PR 4（04-30-session-pipeline-architecture-refactor）：静态
-                // `snapshot.injections`（workflow / constraint 等"预装"条目）
-                // 由 prompt_pipeline 在启动阶段合并进 assignment fragments，
-                // 再由 assignment_context ContextFrame 投递。
-                // UserPromptSubmit 不重新渲染这些静态条目，避免 Agent 可见上下文双写。
-                // 此分支只应用动态 hook 规则（如 rhai 规则产出的 per-turn
-                // dynamic 注入）。
-                apply_hook_rules(
-                    HookEvaluationContext { snapshot, query },
-                    &mut resolution,
-                    &self.script_engine,
-                );
-            }
-            HookTrigger::BeforeTool | HookTrigger::AfterTool | HookTrigger::AfterTurn => {
-                apply_hook_rules(
-                    HookEvaluationContext { snapshot, query },
-                    &mut resolution,
-                    &self.script_engine,
-                );
-            }
-            HookTrigger::BeforeStop => {
-                apply_hook_rules(
-                    HookEvaluationContext { snapshot, query },
-                    &mut resolution,
-                    &self.script_engine,
-                );
-            }
-            HookTrigger::SessionTerminal => {
-                // SessionTerminal rules evaluate declared hook effects. Port 完成门禁由
-                // port_output_gate preset 在 BeforeStop 阶段驱动。
-                apply_hook_rules(
-                    HookEvaluationContext { snapshot, query },
-                    &mut resolution,
-                    &self.script_engine,
-                );
-            }
-            HookTrigger::BeforeSubagentDispatch
-            | HookTrigger::AfterSubagentDispatch
-            | HookTrigger::CompanionResult => {
-                apply_hook_rules(
-                    HookEvaluationContext { snapshot, query },
-                    &mut resolution,
-                    &self.script_engine,
-                );
-            }
-            HookTrigger::BeforeCompact | HookTrigger::AfterCompact => {
-                apply_hook_rules(
-                    HookEvaluationContext { snapshot, query },
-                    &mut resolution,
-                    &self.script_engine,
-                );
-            }
-            HookTrigger::BeforeProviderRequest => {
-                apply_hook_rules(
-                    HookEvaluationContext { snapshot, query },
-                    &mut resolution,
-                    &self.script_engine,
-                );
-            }
-        }
-
-        resolution
-    }
-}
-
-fn trigger_includes_snapshot_injections(trigger: &HookTrigger) -> bool {
-    matches!(trigger, HookTrigger::SessionStart)
-}
-
-fn seed_snapshot_injections_for_trigger(
-    trigger: &HookTrigger,
-    snapshot: &AgentFrameHookSnapshot,
-    resolution: &mut HookResolution,
-) {
-    if trigger_includes_snapshot_injections(trigger) {
-        resolution.injections = snapshot.injections.clone();
-    }
 }
 
 #[cfg(test)]
@@ -511,12 +334,10 @@ mod tests {
         EffectiveSessionContract, WorkflowHookRuleSpec, WorkflowHookTrigger,
     };
     use agentdash_platform_spi::hooks::{
-        AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
-        AgentFrameHookSnapshotQuery, HookControlTarget, HookResolution, RuntimeAdapterProvenance,
+        AgentFrameHookEvaluationQuery, AgentFrameHookSnapshot, HookControlTarget, HookResolution,
+        RuntimeAdapterProvenance,
     };
-    use agentdash_platform_spi::{
-        ActiveWorkflowMeta, ExecutionHookProvider, HookError, HookTrigger,
-    };
+    use agentdash_platform_spi::{ActiveWorkflowMeta, HookTrigger};
     use async_trait::async_trait;
 
     use super::super::rules::{HookEvaluationContext, HookRuleEvaluationQuery, apply_hook_rules};
@@ -563,120 +384,43 @@ mod tests {
         }
     }
 
-    #[test]
-    fn session_start_includes_snapshot_injections() {
-        let injection = agentdash_platform_spi::HookInjection {
-            slot: "workflow".to_string(),
-            content: "## Workflow Guidance\n进入 Apply 阶段".to_string(),
-            source: "workflow:builtin_workflow_admin_apply:apply".to_string(),
-        };
-        let snapshot = AgentFrameHookSnapshot {
-            runtime_adapter_runtime_thread_id: "session-1".to_string(),
-            injections: vec![injection.clone()],
-            ..AgentFrameHookSnapshot::default()
-        };
-        let mut resolution = HookResolution::default();
-
-        super::seed_snapshot_injections_for_trigger(
-            &HookTrigger::SessionStart,
-            &snapshot,
-            &mut resolution,
-        );
-
-        assert_eq!(resolution.injections, vec![injection]);
-        assert!(super::trigger_includes_snapshot_injections(
-            &HookTrigger::SessionStart
-        ));
-        assert!(!super::trigger_includes_snapshot_injections(
-            &HookTrigger::UserPromptSubmit
-        ));
-    }
-
-    struct RuleEngineTestProvider {
-        snapshot: AgentFrameHookSnapshot,
-        engine: HookScriptEngine,
-    }
-
-    impl RuleEngineTestProvider {
-        fn new(snapshot: AgentFrameHookSnapshot) -> Self {
-            Self {
-                snapshot,
-                engine: HookScriptEngine::new(Arc::new(TestHookScriptEvaluator::new(&[]))),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl ExecutionHookProvider for RuleEngineTestProvider {
-        async fn load_frame_snapshot(
-            &self,
-            _query: AgentFrameHookSnapshotQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Ok(self.snapshot.clone())
-        }
-
-        async fn refresh_frame_snapshot(
-            &self,
-            _query: AgentFrameHookRefreshQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Ok(self.snapshot.clone())
-        }
-
-        async fn evaluate_frame_hook(
-            &self,
-            query: AgentFrameHookEvaluationQuery,
-        ) -> Result<HookResolution, HookError> {
-            let snapshot = query
-                .snapshot
-                .clone()
-                .unwrap_or_else(|| self.snapshot.clone());
-            let query = HookRuleEvaluationQuery::from_frame_query(query);
-            let mut resolution = HookResolution::default();
-            apply_hook_rules(
-                HookEvaluationContext {
-                    snapshot: &snapshot,
-                    query: &query,
-                },
-                &mut resolution,
-                &self.engine,
-            );
-            Ok(resolution)
-        }
-    }
-
     #[tokio::test]
     async fn before_tool_rewrite_records_resolution() {
         let snapshot = snapshot_with_workflow("implement", "session_ended");
-        let provider = RuleEngineTestProvider::new(snapshot.clone());
-
-        let resolution = provider
-            .evaluate_frame_hook(AgentFrameHookEvaluationQuery {
-                target: HookControlTarget {
-                    run_id: uuid::Uuid::new_v4(),
-                    agent_id: uuid::Uuid::new_v4(),
-                    frame_id: uuid::Uuid::new_v4(),
-                },
-                provenance: RuntimeAdapterProvenance::runtime_thread(
-                    snapshot.runtime_adapter_runtime_thread_id.clone(),
-                    None,
-                    "provider_test",
-                ),
-                trigger: HookTrigger::BeforeTool,
-                tool_name: Some("shell_exec".to_string()),
-                tool_call_id: Some("call-shell-1".to_string()),
-                subagent_type: None,
-                snapshot: Some(snapshot),
-                payload: Some(serde_json::json!({
-                    "default_mount_root_ref": "/tmp/test-workspace",
-                    "args": {
-                        "cwd": "/tmp/test-workspace/crates/agentdash-agent",
-                        "command": "cargo test"
-                    }
-                })),
-                token_stats: None,
-            })
-            .await
-            .expect("before_tool 应返回 rewrite resolution");
+        let query = HookRuleEvaluationQuery::from_frame_query(AgentFrameHookEvaluationQuery {
+            target: HookControlTarget {
+                run_id: uuid::Uuid::new_v4(),
+                agent_id: uuid::Uuid::new_v4(),
+                frame_id: uuid::Uuid::new_v4(),
+            },
+            provenance: RuntimeAdapterProvenance::runtime_thread(
+                snapshot.runtime_adapter_runtime_thread_id.clone(),
+                None,
+                "provider_test",
+            ),
+            trigger: HookTrigger::BeforeTool,
+            tool_name: Some("shell_exec".to_string()),
+            tool_call_id: Some("call-shell-1".to_string()),
+            subagent_type: None,
+            snapshot: Some(snapshot.clone()),
+            payload: Some(serde_json::json!({
+                "default_mount_root_ref": "/tmp/test-workspace",
+                "args": {
+                    "cwd": "/tmp/test-workspace/crates/agentdash-agent",
+                    "command": "cargo test"
+                }
+            })),
+            token_stats: None,
+        });
+        let mut resolution = HookResolution::default();
+        apply_hook_rules(
+            HookEvaluationContext {
+                snapshot: &snapshot,
+                query: &query,
+            },
+            &mut resolution,
+            &HookScriptEngine::new(Arc::new(TestHookScriptEvaluator::new(&[]))),
+        );
 
         assert_eq!(
             resolution

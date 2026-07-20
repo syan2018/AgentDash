@@ -7,7 +7,7 @@
  * - item_started / item_updated / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
  * - turn_plan_updated → SessionPlanCard
  * - platform:
- *   - executor_session_bound / hook_trace / task_* / companion_* 等 → 系统事件卡片
+ *   - hook_trace / task_* / companion_* 等 → 系统事件卡片
  * - approval_request → 审批卡片
  * - error → 错误卡片
  * - token_usage_updated / turn_started / turn_completed → 静默

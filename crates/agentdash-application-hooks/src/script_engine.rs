@@ -338,11 +338,10 @@ fn empty_decision() -> ScriptDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::HookRuleEvaluationQuery;
+    use crate::rules::{HookRuleEvaluationQuery, HookRuleTestInput};
     use crate::test_script_evaluator::TestHookScriptEvaluator;
     use agentdash_platform_spi::{
-        AgentFrameHookSnapshot, HookControlTarget, HookEvaluationQuery, HookTrigger,
-        RuntimeAdapterProvenance,
+        AgentFrameHookSnapshot, HookControlTarget, HookTrigger, RuntimeAdapterProvenance,
     };
     use uuid::Uuid;
 
@@ -355,7 +354,7 @@ mod tests {
             runtime_adapter_runtime_thread_id: "sess-test".to_string(),
             ..AgentFrameHookSnapshot::default()
         };
-        let query = HookRuleEvaluationQuery::from_session_query(HookEvaluationQuery {
+        let query = HookRuleEvaluationQuery::from_test_query(HookRuleTestInput {
             session_id: "sess-test".to_string(),
             trigger: HookTrigger::BeforeTool,
             turn_id: None,

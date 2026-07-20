@@ -7,7 +7,6 @@ use crate::launch::LaunchCommand;
 use agentdash_agent_protocol::UserInputBlock;
 use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_platform_spi::session_persistence::RuntimeCommandRecord;
 use agentdash_platform_spi::{
     AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, MemoryDiscoveryOutput,
     RuntimeMcpServer, SessionContextBundle, Vfs,
@@ -149,7 +148,6 @@ pub struct FrameLaunchEnvelopeRequest {
     pub command: LaunchCommand,
     pub runtime_trace_state: RuntimeTraceLaunchStateRef,
     pub had_existing_runtime: bool,
-    pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
     pub agent_needs_bootstrap: bool,
 }
 

@@ -73,7 +73,6 @@ pub(super) async fn route_and_compose(
                 &input.command,
                 None,
                 &input.runtime_thread_id,
-                &input.requested_runtime_commands,
             )?;
             svc.apply_launch_context_discovery(&mut envelope, input.command.identity().as_ref())
                 .await;

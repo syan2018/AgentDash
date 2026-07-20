@@ -112,40 +112,6 @@ impl From<std::io::Error> for ApiError {
     }
 }
 
-impl From<agentdash_platform_spi::session_persistence::SessionStoreError> for ApiError {
-    fn from(err: agentdash_platform_spi::session_persistence::SessionStoreError) -> Self {
-        use agentdash_platform_spi::session_persistence::SessionStoreError as E;
-        match err {
-            E::NotFound(message) => ApiError::NotFound(message),
-            E::InvalidInput(message) | E::InvalidData(message) => ApiError::BadRequest(message),
-            E::Database(err) => {
-                let context =
-                    DiagnosticErrorContext::new("api.error_map", "session_persistence_database");
-                diag_error!(
-                    Error,
-                    Subsystem::Api,
-                    context = &context,
-                    error = &err,
-                    "session persistence database error"
-                );
-                ApiError::Internal(String::from("内部数据库错误"))
-            }
-            E::Internal(err) => {
-                let context =
-                    DiagnosticErrorContext::new("api.error_map", "session_persistence_internal");
-                diag_error!(
-                    Error,
-                    Subsystem::Api,
-                    context = &context,
-                    error = &err,
-                    "session persistence internal error"
-                );
-                ApiError::Internal(String::from("内部会话持久化错误"))
-            }
-        }
-    }
-}
-
 impl From<agentdash_domain::DomainError> for ApiError {
     fn from(err: agentdash_domain::DomainError) -> Self {
         match &err {

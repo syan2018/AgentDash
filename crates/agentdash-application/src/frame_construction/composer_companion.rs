@@ -44,7 +44,6 @@ pub(super) async fn compose_project_agent_owner_modifier(
         command,
         input.runtime_thread_id.as_str(),
         None,
-        &input.requested_runtime_commands,
     )
     .await
 }
@@ -95,7 +94,6 @@ pub(super) async fn compose_lifecycle_node_owner_modifier(
         command,
         input.runtime_thread_id.as_str(),
         None,
-        &input.requested_runtime_commands,
     )
     .await
 }

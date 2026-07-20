@@ -3043,7 +3043,7 @@ export type PlanDeltaNotification = { delta: string, itemId: string, threadId: s
 /**
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
-export type PlatformEvent = { "kind": "context_frame_changed", "data": ContextFrameChanged } | { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "runtime_terminal_diagnostic", "data": RuntimeTerminalDiagnostic } | { "kind": "session_rewound", "data": SessionRewound };
+export type PlatformEvent = { "kind": "context_frame_changed", "data": ContextFrameChanged } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "runtime_terminal_diagnostic", "data": RuntimeTerminalDiagnostic } | { "kind": "session_rewound", "data": SessionRewound };
 
 /**
  * Presentation durability is explicit producer evidence and is never inferred

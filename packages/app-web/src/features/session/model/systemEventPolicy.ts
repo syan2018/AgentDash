@@ -18,7 +18,6 @@ export interface PlatformEventPolicy {
 }
 
 const RENDERABLE_SYSTEM_EVENT_TYPES = new Set<string>([
-  "executor_session_bound",
   "turn_interrupted",
   "hook_event",
   "system_message",

@@ -10,9 +10,6 @@ use super::context_frame::ContextFrameChanged;
 pub enum PlatformEvent {
     /// Materialized platform context presentation changed.
     ContextFrameChanged(Box<ContextFrameChanged>),
-    /// Connector 绑定了底层执行器 session（用于 follow-up / resume）。
-    ExecutorSessionBound { executor_session_id: String },
-
     /// Hook 运行时追踪条目。
     HookTrace(Box<HookTracePayload>),
 

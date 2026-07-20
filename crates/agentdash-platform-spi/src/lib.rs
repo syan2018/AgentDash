@@ -2,7 +2,6 @@ pub mod context;
 pub mod extension_package;
 pub mod hooks;
 pub mod platform;
-pub mod session_persistence;
 pub mod workflow;
 
 // ─── agent-types re-export（保持外部 API 不变）──────────────
@@ -50,11 +49,11 @@ pub use platform::runtime_surface::{
     ExecutionBackendPlacement, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame,
     ExecutionTurnMode, McpEnvVar, McpHttpHeader, McpTransportConfig, PlatformRuntimeError,
     PlatformToolExecutionContext, PlatformToolInvocationCoordinates, RestoredSessionState,
-    RuntimeMcpServer, RuntimeMcpSourceReadiness, RuntimeToolProvider, RuntimeVfsAccessPolicy,
-    RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern,
-    SkillClusterMeta, SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension,
-    VfsDimension, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
-    partition_runtime_mcp_servers, workspace_path_from_context,
+    RuntimeMcpServer, RuntimeMcpSourceReadiness, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule,
+    RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern, SkillClusterMeta,
+    SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, VfsDimension,
+    WorkspaceModuleDimension, WorkspaceModuleVisibilityMode, partition_runtime_mcp_servers,
+    workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────
@@ -84,16 +83,15 @@ pub use extension_package::{
 
 pub use hooks::script::HookScriptEvaluator;
 pub use hooks::{
-    ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
-    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, AgentFrameRuntimeSnapshot,
-    ContextTokenStats, ExecutionHookProvider, HookApprovalRequest, HookCompactionDecision,
-    HookCompletionStatus, HookControlTarget, HookDiagnosticEntry, HookEffect, HookError,
-    HookEvaluationQuery, HookEvaluationTrigger, HookInjection, HookPendingAction,
+    ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookSnapshot,
+    AgentFrameHookSnapshotQuery, AgentFrameRuntimeSnapshot, ContextTokenStats, HookApprovalRequest,
+    HookCompactionDecision, HookCompletionStatus, HookControlTarget, HookDiagnosticEntry,
+    HookEffect, HookError, HookEvaluationTrigger, HookInjection, HookPendingAction,
     HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution, HookRuntimeAccess,
     HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookStepAdvanceRequest, HookTraceEntry,
-    HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
-    RuntimeAdapterProvenance, RuntimeEventSource, SessionSnapshotMetadata, SharedHookRuntime,
-    SubjectRunContext, action_type, context_usage_kind,
+    HookTraceTrigger, HookTrigger, HookTurnStartNotice, RuntimeAdapterProvenance,
+    RuntimeEventSource, SessionSnapshotMetadata, SharedHookRuntime, SubjectRunContext, action_type,
+    context_usage_kind,
 };
 
 // ─── workflow scripts ──────────────────────────────────────
@@ -144,24 +142,4 @@ pub use platform::tool_capability::{
     ToolCapability, ToolDescriptor, ToolSource, capability_to_platform_mcp_scope,
     capability_to_tool_clusters, default_visibility_rules, format_tool_for_prompt,
     is_capability_visible, platform_tool_descriptors, platform_tools_for_capability,
-};
-
-pub use session_persistence::{
-    AccumulationPolicy, AgentFrameTransitionRecord, ApplyChannelDirectivesEffect,
-    ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_CHANNEL,
-    CAPABILITY_DIMENSION_COMPANION, CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_SKILL,
-    CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS, CAPABILITY_DIMENSION_WORKSPACE_MODULE,
-    CapabilityArtifactSource, CapabilityContributionRecord, CapabilityDeclarationRecord,
-    CapabilityDimensionKey, CompactionProjectionCommitResult, EFFECT_TYPE_APPLY_CHANNEL_DIRECTIVES,
-    EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
-    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
-    EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, NewCompactionProjectionCommit,
-    PendingCapabilityStateTransition, PersistedSessionEvent, RuntimeCapabilityEffectRecord,
-    RuntimeCapabilityTransition, RuntimeCommandRecord, RuntimeCommandStatus,
-    RuntimeDeliveryCommand, RuntimeDeliveryCommandKind, SESSION_PROJECTION_KIND_AUDIT,
-    SESSION_PROJECTION_KIND_HANDOFF, SESSION_PROJECTION_KIND_MODEL_CONTEXT,
-    SESSION_PROJECTION_KIND_TIMELINE, SessionCompactionRecord, SessionCompactionStatus,
-    SessionEventBacklog, SessionEventPage, SessionMeta, SessionProjectionHeadRecord,
-    SessionProjectionSegmentRecord, SetCompanionAgentRosterEffect, SetMcpServerSetEffect,
-    SetToolAccessEffect,
 };

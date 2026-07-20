@@ -48,6 +48,9 @@ use super::reply_contract::{
     CompanionReplySelectorParam, ModelReplyInstruction, ModelReplySelector,
     alias_is_raw_internal_ref, normalize_reply_alias,
 };
+use super::runtime_tool_service::{
+    RuntimeThreadToolServices, SharedRuntimeThreadToolServicesHandle,
+};
 use super::tool_context::{
     CompanionHookProvenance, CompanionHookProvenanceSource, CompanionToolContext,
 };
@@ -65,7 +68,6 @@ use super::{
 use crate::channel::{
     ChannelService, LifecycleRunChannelOwnerStore, UnsupportedChannelBindingResolver,
 };
-use crate::runtime_tools::{RuntimeThreadToolServices, SharedRuntimeThreadToolServicesHandle};
 use crate::wait_activity::{WaitActivityService, WaitToolContext};
 use agentdash_agent_runtime_contract::ManagedRuntimeEntityStatus;
 use agentdash_application_agentrun::agent_run::{
@@ -3606,7 +3608,7 @@ mod companion_tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
-    use crate::runtime_tools::SharedRuntimeThreadToolServicesHandle;
+    use super::SharedRuntimeThreadToolServicesHandle;
     #[derive(Default)]
     struct FixtureGateRepo {
         gates: Mutex<HashMap<Uuid, LifecycleGate>>,

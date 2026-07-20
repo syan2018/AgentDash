@@ -11,6 +11,7 @@ use agentdash_agent_runtime_host::{
 };
 use agentdash_agent_service_api::{AgentHostCallbacks, AgentPayloadDigest, AgentServiceInstanceId};
 use agentdash_application::auth::session_service::AuthSessionService;
+use agentdash_application::companion::RuntimeThreadToolServices;
 use agentdash_application::companion::{
     ApplicationCompanionContinuationEffects, ApplicationCompanionRuntimeToolService,
     ApplicationWorkflowScriptPreflightAdapter, CompanionRuntimeToolServiceDeps,
@@ -32,7 +33,6 @@ use agentdash_application::project_agent_run_start::{
 };
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::{RoutineExecutor, RoutineRuntimeTurnTerminalObserver};
-use agentdash_application::runtime_tools::RuntimeThreadToolServices;
 use agentdash_application::runtime_tools::workspace_module_product::{
     ApplicationWorkspaceModuleRuntimeToolService, WorkspaceModuleRuntimeToolDeps,
     workspace_module_runtime_tool_schema,

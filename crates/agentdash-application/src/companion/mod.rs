@@ -4,7 +4,6 @@ pub mod gate_control;
 pub mod model_preflight;
 pub mod payload_types;
 pub(crate) mod reply_contract;
-pub mod runtime_tool_provider;
 pub mod runtime_tool_service;
 pub(crate) mod skill_projection;
 pub(crate) mod tool_context;
@@ -25,9 +24,9 @@ pub use model_preflight::{
     CompanionModelPreflightError, CompanionModelPreflightPort, CompanionModelPreflightRequest,
 };
 pub use payload_types::PayloadTypeRegistry;
-pub use runtime_tool_provider::CollaborationRuntimeToolProvider;
 pub use runtime_tool_service::{
     ApplicationCompanionRuntimeToolService, CompanionRuntimeToolServiceDeps,
+    RuntimeThreadToolServices, SharedRuntimeThreadToolServicesHandle,
 };
 pub use tools::{
     AgentRunCompanionMailboxDelivery, CompanionRequestTool, CompanionRespondTool,

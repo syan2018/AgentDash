@@ -16,7 +16,6 @@ export function extractPlatformEventType(event: BackboneEvent): string | null {
   if (event.type !== "platform") return null;
   const platform: PlatformEvent = event.payload;
 
-  if (platform.kind === "executor_session_bound") return "executor_session_bound";
   if (platform.kind === "hook_trace") return "hook_event";
   if (platform.kind === "provider_attempt_status") return "provider_attempt_status";
   if (platform.kind === "session_rewound") return "session_rewound";
@@ -32,10 +31,6 @@ export function extractPlatformEventType(event: BackboneEvent): string | null {
 export function extractPlatformEventData(event: BackboneEvent): Record<string, unknown> | null {
   if (event.type !== "platform") return null;
   const platform: PlatformEvent = event.payload;
-
-  if (platform.kind === "executor_session_bound") {
-    return { executor_session_id: platform.data.executor_session_id };
-  }
 
   if (platform.kind === "hook_trace") {
     const traceData = platform.data.data;

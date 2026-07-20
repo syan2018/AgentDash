@@ -396,15 +396,6 @@ pub struct AgentFrameHookSnapshotQuery {
     pub provenance: RuntimeAdapterProvenance,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentFrameHookRefreshQuery {
-    pub target: HookControlTarget,
-    pub provenance: RuntimeAdapterProvenance,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentFrameHookEvaluationQuery {
@@ -575,28 +566,6 @@ impl From<HookTraceTrigger> for HookEvaluationTrigger {
 /// [`HookEvaluationTrigger`] 全名。
 pub use HookEvaluationTrigger as HookTrigger;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub struct HookEvaluationQuery {
-    pub session_id: String,
-    pub trigger: HookTrigger,
-    #[serde(default)]
-    pub turn_id: Option<String>,
-    #[serde(default)]
-    pub tool_name: Option<String>,
-    #[serde(default)]
-    pub tool_call_id: Option<String>,
-    #[serde(default)]
-    pub subagent_type: Option<String>,
-    #[serde(default)]
-    pub snapshot: Option<AgentFrameHookSnapshot>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payload: Option<serde_json::Value>,
-    /// 实时 token 统计（由 runtime 自动注入）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token_stats: Option<ContextTokenStats>,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct HookResolution {
@@ -745,7 +714,7 @@ pub struct HookCompletionStatus {
 /// Request payload for the post-evaluate step advancement bridge.
 /// Produced by `evaluate_hook` when completion conditions are met, consumed by
 /// `AgentFrameHookRuntime::evaluate` which delegates to
-/// `ExecutionHookProvider::advance_workflow_step`.
+/// typed Product Hook owner 的 workflow advancement command。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct HookStepAdvanceRequest {
@@ -804,82 +773,6 @@ pub struct PendingExecutionLogEntry {
 pub enum HookError {
     #[error("{0}")]
     Runtime(String),
-}
-
-#[async_trait]
-pub trait ExecutionHookProvider: Send + Sync {
-    async fn load_frame_snapshot(
-        &self,
-        query: AgentFrameHookSnapshotQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError>;
-
-    async fn refresh_frame_snapshot(
-        &self,
-        query: AgentFrameHookRefreshQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError>;
-
-    async fn evaluate_frame_hook(
-        &self,
-        query: AgentFrameHookEvaluationQuery,
-    ) -> Result<HookResolution, HookError>;
-
-    /// Execute the actual step advancement. Called by `AgentFrameHookRuntime`
-    /// post-evaluate when the resolution carries a `pending_advance` signal.
-    async fn advance_workflow_step(
-        &self,
-        request: HookStepAdvanceRequest,
-    ) -> Result<(), HookError> {
-        let _ = request;
-        Ok(())
-    }
-
-    /// Batch-flush execution log entries to `LifecycleRun.execution_log`.
-    /// Called by `AgentFrameHookRuntime` post-evaluate when the resolution
-    /// carries non-empty `pending_execution_log`.
-    async fn append_execution_log(
-        &self,
-        entries: Vec<PendingExecutionLogEntry>,
-    ) -> Result<(), HookError> {
-        let _ = entries;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct NoopExecutionHookProvider;
-
-#[async_trait]
-impl ExecutionHookProvider for NoopExecutionHookProvider {
-    async fn load_frame_snapshot(
-        &self,
-        query: AgentFrameHookSnapshotQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError> {
-        Ok(AgentFrameHookSnapshot {
-            runtime_adapter_runtime_thread_id: query
-                .provenance
-                .runtime_thread_id
-                .unwrap_or_default(),
-            ..AgentFrameHookSnapshot::default()
-        })
-    }
-
-    async fn refresh_frame_snapshot(
-        &self,
-        query: AgentFrameHookRefreshQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError> {
-        self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
-            target: query.target,
-            provenance: query.provenance,
-        })
-        .await
-    }
-
-    async fn evaluate_frame_hook(
-        &self,
-        _query: AgentFrameHookEvaluationQuery,
-    ) -> Result<HookResolution, HookError> {
-        Ok(HookResolution::default())
-    }
 }
 
 #[cfg(test)]

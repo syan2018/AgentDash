@@ -11,7 +11,6 @@ use agentdash_domain::backend::{
 };
 use agentdash_domain::channel::ChannelCapabilityRef;
 use agentdash_domain::common::{AgentConfig, MountCapability, Vfs};
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -853,16 +852,6 @@ mod tests {
             "MCP 工具必须先由 canonical CapabilityState 授予 capability"
         );
     }
-}
-
-/// 运行时工具构建 SPI。
-/// 由 application 层持有，executor 层提供具体实现。
-#[async_trait]
-pub trait RuntimeToolProvider: Send + Sync {
-    async fn build_tools(
-        &self,
-        context: &ExecutionContext,
-    ) -> Result<Vec<agentdash_agent::DynAgentTool>, PlatformRuntimeError>;
 }
 
 #[derive(Debug, Error)]

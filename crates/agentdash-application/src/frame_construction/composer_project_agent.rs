@@ -119,7 +119,6 @@ pub(super) async fn compose(
         &input.command,
         input.runtime_thread_id.as_str(),
         None,
-        &input.requested_runtime_commands,
     )
     .await
 }

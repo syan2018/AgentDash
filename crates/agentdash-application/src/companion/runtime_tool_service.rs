@@ -3,10 +3,13 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use agentdash_application_agentrun::agent_run::{
-    AgentFrameSurfaceExt, AgentRunProductRuntimeBindingRepository,
+    AgentFrameSurfaceExt, AgentRunProductInputDeliveryPort, AgentRunProductLaunchService,
+    AgentRunProductProtocolPorts, AgentRunProductRuntimeBindingRepository,
+    CompanionContinuationEffectPort, CompanionContinuationSagaRepository,
 };
 use agentdash_application_hooks::AppExecutionHookProvider;
 use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookRequirement;
+use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
     ProductRuntimeToolService,
@@ -22,7 +25,7 @@ use agentdash_platform_spi::{
     AgentTool, AgentToolError, AgentToolResult, PlatformToolExecutionContext,
 };
 use async_trait::async_trait;
-use tokio::sync::broadcast;
+use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 
 use super::model_preflight::CompanionModelPreflightPort;
@@ -33,8 +36,33 @@ use super::tools::{
 };
 use super::workflow_script_preflight::CompanionWorkflowScriptPreflightPort;
 use crate::repository_set::RepositorySet;
-use crate::runtime_tools::{RuntimeThreadToolServices, SharedRuntimeThreadToolServicesHandle};
 use crate::wait_activity::WaitActivityService;
+
+#[derive(Clone)]
+pub struct RuntimeThreadToolServices {
+    pub product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
+    pub product_runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+    pub product_launch: Arc<AgentRunProductLaunchService>,
+    pub product_protocols: Arc<AgentRunProductProtocolPorts>,
+    pub companion_continuations: Arc<dyn CompanionContinuationSagaRepository>,
+    pub companion_continuation_effects: Arc<dyn CompanionContinuationEffectPort>,
+    pub frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+}
+
+#[derive(Clone, Default)]
+pub struct SharedRuntimeThreadToolServicesHandle {
+    inner: Arc<RwLock<Option<RuntimeThreadToolServices>>>,
+}
+
+impl SharedRuntimeThreadToolServicesHandle {
+    pub async fn set(&self, services: RuntimeThreadToolServices) {
+        *self.inner.write().await = Some(services);
+    }
+
+    pub async fn get(&self) -> Option<RuntimeThreadToolServices> {
+        self.inner.read().await.clone()
+    }
+}
 
 #[derive(Clone)]
 pub struct CompanionRuntimeToolServiceDeps {

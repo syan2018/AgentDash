@@ -29,8 +29,7 @@ use agentdash_application_ports::launch::{LaunchCommand, LaunchPromptInput};
 use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_platform_spi::{
-    AgentConfig, MemoryDiscoveryProvider, PlatformRuntimeError, RuntimeCommandRecord,
-    SkillDiscoveryProvider,
+    AgentConfig, MemoryDiscoveryProvider, PlatformRuntimeError, SkillDiscoveryProvider,
 };
 
 use crate::repository_set::RepositorySet;
@@ -44,7 +43,6 @@ use crate::agent_run::frame::{
     FrameSurfaceDraft, LaunchResolutionTrace,
 };
 use crate::agent_run::merge_executor_config_fields;
-use crate::agent_run::runtime_capability::replay_runtime_capability_transitions;
 use crate::agent_run::{PromptLaunchPath, RuntimeTraceLaunchState, SessionRepositoryRehydrateMode};
 use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
@@ -194,7 +192,6 @@ impl FrameConstructionService {
         command: &LaunchCommand,
         runtime_thread_id: &str,
         hook_binding: Option<TerminalHookEffectBinding>,
-        requested_runtime_commands: &[RuntimeCommandRecord],
     ) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
         let frame = builder
             .build_uncommitted(self.repos.agent_frame_repo.as_ref())
@@ -206,7 +203,6 @@ impl FrameConstructionService {
             command,
             hook_binding,
             runtime_thread_id,
-            requested_runtime_commands,
         )?;
         self.apply_launch_context_discovery(&mut envelope, command.identity().as_ref())
             .await;
@@ -280,7 +276,6 @@ fn frame_launch_provider_input_from_request(
         command: request.command,
         runtime_trace_state: runtime_trace_launch_state_from_ref(request.runtime_trace_state),
         had_existing_runtime: request.had_existing_runtime,
-        requested_runtime_commands: request.requested_runtime_commands,
         agent_needs_bootstrap: request.agent_needs_bootstrap,
     })
 }
@@ -369,7 +364,6 @@ pub(crate) fn build_envelope_from_frame(
     command: &LaunchCommand,
     hook_binding: Option<TerminalHookEffectBinding>,
     runtime_thread_id: &str,
-    requested_runtime_commands: &[RuntimeCommandRecord],
 ) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
     let surface = FrameRuntimeSurface::from_frame(frame, Some(runtime_thread_id.to_string()));
 
@@ -433,8 +427,7 @@ pub(crate) fn build_envelope_from_frame(
     surface_draft.vfs = vfs.clone();
     surface_draft.mcp_servers = mcp_servers.clone();
     surface_draft.execution_profile = Some(executor_config.clone());
-    let closed_surface =
-        close_frame_launch_surface(&mut surface_draft, requested_runtime_commands)?;
+    let closed_surface = close_frame_launch_surface(&mut surface_draft)?;
     let working_directory = closed_surface
         .launch_surface
         .vfs
@@ -497,64 +490,16 @@ pub(crate) struct ClosedFrameLaunchSurface {
 
 pub(crate) fn close_frame_launch_surface(
     surface_draft: &mut FrameSurfaceDraft,
-    requested_runtime_commands: &[RuntimeCommandRecord],
 ) -> Result<ClosedFrameLaunchSurface, PlatformRuntimeError> {
-    let base_launch_surface =
+    let launch_surface =
         FrameLaunchSurface::from_surface_draft(surface_draft).map_err(|error| {
             PlatformRuntimeError::InvalidConfig(format!("FrameLaunchEnvelope: {error}"))
         })?;
 
-    if requested_runtime_commands.is_empty() {
-        return Ok(ClosedFrameLaunchSurface {
-            launch_surface: base_launch_surface,
-            base_capability_state: None,
-            resolution_trace: LaunchResolutionTrace::default(),
-        });
-    }
-
-    let base_capability_state = base_launch_surface.capability_state.clone();
-    let requested_transitions = requested_runtime_commands
-        .iter()
-        .map(|command| command.pending_capability_state_transition())
-        .collect::<Vec<_>>();
-    let replay =
-        replay_runtime_capability_transitions(&base_capability_state, &requested_transitions)
-            .map_err(|error| {
-                PlatformRuntimeError::InvalidConfig(format!(
-                    "FrameLaunchEnvelope: pending runtime command closure 失败: {error}"
-                ))
-            })?;
-
-    let mut final_capability_state = replay.capability_state;
-    let effective_vfs = replay
-        .effective_vfs
-        .unwrap_or_else(|| base_launch_surface.vfs.clone());
-    final_capability_state.vfs.active = Some(effective_vfs.clone());
-    let effective_mcp_servers = replay
-        .effective_mcp_servers
-        .unwrap_or_else(|| final_capability_state.tool.mcp_servers.clone());
-    final_capability_state.tool.mcp_servers = effective_mcp_servers.clone();
-    let execution_profile = base_launch_surface.execution_profile;
-    let launch_surface = FrameLaunchSurface::new(
-        final_capability_state,
-        effective_vfs,
-        effective_mcp_servers,
-        execution_profile,
-    )
-    .map_err(|error| {
-        PlatformRuntimeError::InvalidConfig(format!("FrameLaunchEnvelope: {error}"))
-    })?;
-    launch_surface.write_back_to_surface_draft(surface_draft);
-
     Ok(ClosedFrameLaunchSurface {
         launch_surface,
-        base_capability_state: Some(base_capability_state),
-        resolution_trace: LaunchResolutionTrace {
-            vfs_source: Some("pending_runtime_command".to_string()),
-            mcp_source: Some("pending_runtime_command".to_string()),
-            capability_source: Some("pending_runtime_command".to_string()),
-            pending_overlay_applied: true,
-        },
+        base_capability_state: None,
+        resolution_trace: LaunchResolutionTrace::default(),
     })
 }
 
@@ -681,9 +626,8 @@ mod existing_surface_discovery_tests {
         let command = LaunchCommand::http_prompt_input(LaunchPromptInput::from_text("hello"), None);
 
         // ExistingSurface route 的第一步：从已持久化 frame 构造 envelope，不走 owner bootstrap。
-        let envelope =
-            build_envelope_from_frame(&frame, None, &command, None, "sess-existing", &[])
-                .expect("build envelope from persisted frame");
+        let envelope = build_envelope_from_frame(&frame, None, &command, None, "sess-existing")
+            .expect("build envelope from persisted frame");
 
         // 回归保护：frame 上的 workspace mount 必须无损进入 launch surface VFS。
         let launch_vfs = &envelope.runtime.launch_surface.vfs;
@@ -726,7 +670,7 @@ mod existing_surface_discovery_tests {
             Some(serde_json::to_value(&capability_without_vfs).unwrap());
         let command = LaunchCommand::http_prompt_input(LaunchPromptInput::from_text("hi"), None);
 
-        let result = build_envelope_from_frame(&frame, None, &command, None, "sess-existing", &[]);
+        let result = build_envelope_from_frame(&frame, None, &command, None, "sess-existing");
 
         assert!(result.is_err());
     }

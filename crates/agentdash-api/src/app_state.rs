@@ -625,7 +625,6 @@ impl AppState {
                 lifecycle_runs: repos.lifecycle_run_repo.clone(),
                 lifecycle_agents: repos.lifecycle_agent_repo.clone(),
                 subject_associations: repos.lifecycle_subject_association_repo.clone(),
-                product_bindings: product.runtime_bindings.clone(),
                 product_projection: product.gateway.clone(),
             }),
         );

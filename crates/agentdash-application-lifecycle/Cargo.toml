@@ -30,5 +30,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+agentdash-agent-service-api = { workspace = true }
 agentdash-application-skill = { workspace = true }
 agentdash-test-support = { workspace = true }

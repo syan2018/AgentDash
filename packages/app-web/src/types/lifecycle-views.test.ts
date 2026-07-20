@@ -5,10 +5,7 @@ import type {
   LifecycleAgentExecutionView,
   LifecycleRunView,
 } from "../generated/workflow-contracts";
-import type { RuntimeU64 } from "../generated/agent-runtime-contracts";
 import { lifecycleRuntimeTraceSummaries } from "./lifecycle-views";
-
-const runtimeU64 = (value: number): RuntimeU64 => String(value) as RuntimeU64;
 
 function agent(agentId: string): AgentRunView {
   return {
@@ -39,7 +36,7 @@ function lifecycleRun(agents: LifecycleAgentExecutionView[]): LifecycleRunView {
 }
 
 describe("lifecycleRuntimeTraceSummaries", () => {
-  it("preserves typed absent and stale evidence per AgentRun", () => {
+  it("preserves typed absence reasons per AgentRun", () => {
     const view = lifecycleRun([
       {
         agent: agent("agent-absent"),
@@ -51,23 +48,11 @@ describe("lifecycleRuntimeTraceSummaries", () => {
         attempts: [],
       },
       {
-        agent: agent("agent-stale"),
+        agent: agent("agent-unavailable"),
         runtime: {
-          state: "stale",
-          reason: "runtime_applied_surface_mismatch",
-          evidence: {
-            expected_target: { run_id: "run-1", agent_id: "agent-stale" },
-            observed_target: { run_id: "run-1", agent_id: "agent-stale" },
-            expected_runtime_thread_id: "thread-expected",
-            observed_runtime_thread_id: "thread-stale",
-            observed_source_binding: {
-              source_ref: "source-stale",
-              committed_at_revision: runtimeU64(7),
-              applied_surface_revision: runtimeU64(5),
-              activated_at_revision: runtimeU64(7),
-            },
-            observed_snapshot: null,
-          },
+          state: "absent",
+          target: { run_id: "run-1", agent_id: "agent-unavailable" },
+          reason: "agent_unavailable",
         },
         attempts: [],
       },
@@ -84,11 +69,11 @@ describe("lifecycleRuntimeTraceSummaries", () => {
       },
       {
         agent: expect.objectContaining({
-          agent_ref: { run_id: "run-1", agent_id: "agent-stale" },
+          agent_ref: { run_id: "run-1", agent_id: "agent-unavailable" },
         }),
-        state: "stale",
-        runtimeThreadId: "thread-stale",
-        reason: "runtime_source_binding_mismatch",
+        state: "absent",
+        runtimeThreadId: null,
+        reason: "agent_unavailable",
       },
     ]);
   });

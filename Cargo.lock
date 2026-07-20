@@ -397,6 +397,7 @@ dependencies = [
  "agentdash-agent",
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
+ "agentdash-agent-service-api",
  "agentdash-application-agentrun",
  "agentdash-application-ports",
  "agentdash-application-skill",

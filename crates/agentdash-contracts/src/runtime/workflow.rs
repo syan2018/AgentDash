@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeSnapshot, ManagedRuntimeSourceBindingEvidence, RuntimeThreadId,
-};
+use agentdash_agent_runtime_contract::{ManagedRuntimeSnapshot, RuntimeThreadId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1001,31 +999,7 @@ pub struct LifecycleAgentRuntimeBindingView {
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleRuntimeTraceAbsenceReason {
     ProductBindingMissing,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum LifecycleRuntimeTraceStaleReason {
-    ProductBindingTargetMismatch,
-    ProjectionBindingMissing,
-    ProductBindingChanged,
-    RuntimeThreadMismatch,
-    RuntimeAppliedSurfaceMismatch,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct LifecycleRuntimeTraceFenceEvidenceView {
-    pub expected_target: AgentRunRefDto,
-    pub observed_target: Option<AgentRunRefDto>,
-    #[ts(type = "RuntimeThreadId | null")]
-    pub expected_runtime_thread_id: Option<RuntimeThreadId>,
-    #[ts(type = "RuntimeThreadId | null")]
-    pub observed_runtime_thread_id: Option<RuntimeThreadId>,
-    #[ts(type = "ManagedRuntimeSourceBindingEvidence | null")]
-    pub observed_source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
-    #[ts(type = "ManagedRuntimeSnapshot | null")]
-    pub observed_snapshot: Option<ManagedRuntimeSnapshot>,
+    AgentUnavailable,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1039,10 +1013,6 @@ pub enum LifecycleRuntimeExecutionTraceView {
         binding: LifecycleAgentRuntimeBindingView,
         #[ts(type = "ManagedRuntimeSnapshot")]
         snapshot: ManagedRuntimeSnapshot,
-    },
-    Stale {
-        reason: LifecycleRuntimeTraceStaleReason,
-        evidence: LifecycleRuntimeTraceFenceEvidenceView,
     },
 }
 

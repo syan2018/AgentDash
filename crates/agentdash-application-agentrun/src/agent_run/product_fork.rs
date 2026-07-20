@@ -51,8 +51,6 @@ pub enum AgentRunProductForkError {
     InvalidRequest,
     #[error("AgentRun has no committed Runtime binding")]
     TargetNotBound,
-    #[error("AgentRun Runtime binding is stale")]
-    StaleProjection,
     #[error("Runtime Fork command is not available")]
     ForkUnavailable,
     #[error("fork requires a completed Runtime turn")]
@@ -217,9 +215,6 @@ impl AgentRunProductForkService {
             AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
                 Err(AgentRunProductForkError::TargetNotBound)
             }
-            AgentRunProductRuntimeSnapshotObservation::Stale(_) => {
-                Err(AgentRunProductForkError::StaleProjection)
-            }
         }
     }
 }
@@ -364,10 +359,8 @@ fn normalized_title(title: Option<String>) -> Option<String> {
 fn map_projection_error(error: AgentRunProductProjectionError) -> AgentRunProductForkError {
     match error {
         AgentRunProductProjectionError::TargetNotBound => AgentRunProductForkError::TargetNotBound,
-        AgentRunProductProjectionError::RuntimeThreadMismatch
-        | AgentRunProductProjectionError::RuntimeAppliedSurfaceMismatch
-        | AgentRunProductProjectionError::TargetMismatch => {
-            AgentRunProductForkError::StaleProjection
+        AgentRunProductProjectionError::TargetMismatch => {
+            AgentRunProductForkError::Projection("Product target mismatch".to_owned())
         }
         AgentRunProductProjectionError::Binding(message)
         | AgentRunProductProjectionError::Runtime(message)

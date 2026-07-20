@@ -62,9 +62,6 @@ impl AgentRunProductRuntimeChangeObserver for LifecycleRuntimeTurnTerminalObserv
             AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
                 return Err("Product Runtime snapshot is absent for terminal turn".into());
             }
-            AgentRunProductRuntimeSnapshotObservation::Stale(_) => {
-                return Err("Product Runtime snapshot is stale for terminal turn".into());
-            }
         };
         if snapshot.thread_id != input.change.thread_id
             || snapshot.revision < input.change.revision

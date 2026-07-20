@@ -473,7 +473,6 @@ fn product_fork_error(error: AgentRunProductForkError) -> ApiError {
     match error {
         AgentRunProductForkError::InvalidRequest => ApiError::BadRequest(error.to_string()),
         AgentRunProductForkError::TargetNotBound
-        | AgentRunProductForkError::StaleProjection
         | AgentRunProductForkError::ForkUnavailable
         | AgentRunProductForkError::CompletedTurnMissing
         | AgentRunProductForkError::ForkPointNotFound
@@ -1012,9 +1011,7 @@ fn agent_run_product_projection_error(error: AgentRunProductProjectionError) -> 
         | AgentRunProductProjectionError::Runtime(message)
         | AgentRunProductProjectionError::Workspace(message)
         | AgentRunProductProjectionError::Terminal(message) => ApiError::Internal(message),
-        AgentRunProductProjectionError::RuntimeThreadMismatch
-        | AgentRunProductProjectionError::RuntimeAppliedSurfaceMismatch
-        | AgentRunProductProjectionError::TargetMismatch => ApiError::Internal(error.to_string()),
+        AgentRunProductProjectionError::TargetMismatch => ApiError::Internal(error.to_string()),
     }
 }
 

@@ -8,13 +8,10 @@
 use std::cmp::Reverse;
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeSnapshot, ManagedRuntimeSourceBindingEvidence, RuntimeThreadId,
-};
+use agentdash_agent_runtime_contract::ManagedRuntimeSnapshot;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductProjectionQueryPort, AgentRunProductRuntimeBinding,
-    AgentRunProductRuntimeBindingRepository, AgentRunProductRuntimeSnapshotObservation,
-    AgentRunProductRuntimeSnapshotStaleReason,
+    AgentRunProductRuntimeSnapshotObservation,
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -103,25 +100,7 @@ pub struct LifecycleRuntimeNodeView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeTraceAbsenceReason {
     ProductBindingMissing,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RuntimeTraceStaleReason {
-    ProductBindingTargetMismatch,
-    ProjectionBindingMissing,
-    ProductBindingChanged,
-    RuntimeThreadMismatch,
-    RuntimeAppliedSurfaceMismatch,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RuntimeTraceFenceEvidence {
-    pub expected_target: AgentRunTarget,
-    pub observed_target: Option<AgentRunTarget>,
-    pub expected_runtime_thread_id: Option<RuntimeThreadId>,
-    pub observed_runtime_thread_id: Option<RuntimeThreadId>,
-    pub observed_source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
-    pub observed_snapshot: Option<ManagedRuntimeSnapshot>,
+    AgentUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,10 +113,6 @@ pub enum RuntimeExecutionTraceView {
         binding: AgentRunProductRuntimeBinding,
         snapshot: ManagedRuntimeSnapshot,
     },
-    Stale {
-        reason: RuntimeTraceStaleReason,
-        evidence: RuntimeTraceFenceEvidence,
-    },
 }
 
 #[derive(Clone)]
@@ -145,7 +120,6 @@ pub struct LifecycleRunViewQueryDeps {
     pub lifecycle_runs: Arc<dyn LifecycleRunRepository>,
     pub lifecycle_agents: Arc<dyn LifecycleAgentRepository>,
     pub subject_associations: Arc<dyn LifecycleSubjectAssociationRepository>,
-    pub product_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     pub product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
 }
 
@@ -159,94 +133,30 @@ impl LifecycleRunViewQueryService {
         Self { deps }
     }
 
-    async fn runtime_trace(
-        &self,
-        target: &AgentRunTarget,
-    ) -> Result<RuntimeExecutionTraceView, LifecycleRunViewQueryError> {
-        let Some(binding) = self
-            .deps
-            .product_bindings
-            .load_product_binding(target)
-            .await
-            .map_err(|message| LifecycleRunViewQueryError::ProductBinding {
-                target: target.clone(),
-                message,
-            })?
-        else {
-            return Ok(RuntimeExecutionTraceView::Absent {
-                target: target.clone(),
-                reason: RuntimeTraceAbsenceReason::ProductBindingMissing,
-            });
-        };
-        if binding.target != *target {
-            return Ok(RuntimeExecutionTraceView::Stale {
-                reason: RuntimeTraceStaleReason::ProductBindingTargetMismatch,
-                evidence: stale_fence_evidence(target, None, Some(&binding), None),
-            });
-        }
-
-        let observation = match self
+    async fn runtime_trace(&self, target: &AgentRunTarget) -> RuntimeExecutionTraceView {
+        match self
             .deps
             .product_projection
             .runtime_snapshot_observation(target)
             .await
         {
-            Ok(observation) => observation,
-            Err(_) => {
-                return Ok(RuntimeExecutionTraceView::Stale {
-                    reason: RuntimeTraceStaleReason::ProjectionBindingMissing,
-                    evidence: stale_fence_evidence(target, Some(&binding), None, None),
-                });
+            Ok(AgentRunProductRuntimeSnapshotObservation::Absent { .. }) => {
+                RuntimeExecutionTraceView::Absent {
+                    target: target.clone(),
+                    reason: RuntimeTraceAbsenceReason::ProductBindingMissing,
+                }
             }
-        };
-        match observation {
-            AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
-                Ok(RuntimeExecutionTraceView::Stale {
-                    reason: RuntimeTraceStaleReason::ProjectionBindingMissing,
-                    evidence: stale_fence_evidence(target, Some(&binding), None, None),
-                })
-            }
-            AgentRunProductRuntimeSnapshotObservation::Current {
+            Ok(AgentRunProductRuntimeSnapshotObservation::Current {
                 product_binding,
                 snapshot,
-            } if product_binding != binding => Ok(RuntimeExecutionTraceView::Stale {
-                reason: RuntimeTraceStaleReason::ProductBindingChanged,
-                evidence: stale_fence_evidence(
-                    target,
-                    Some(&binding),
-                    Some(&product_binding),
-                    Some(&snapshot),
-                ),
-            }),
-            AgentRunProductRuntimeSnapshotObservation::Current {
-                product_binding,
-                snapshot,
-            } => Ok(RuntimeExecutionTraceView::Current {
+            }) => RuntimeExecutionTraceView::Current {
                 binding: product_binding,
                 snapshot,
-            }),
-            AgentRunProductRuntimeSnapshotObservation::Stale(stale) => {
-                let reason = match stale.reason {
-                    AgentRunProductRuntimeSnapshotStaleReason::ProductBindingTargetMismatch => {
-                        RuntimeTraceStaleReason::ProductBindingTargetMismatch
-                    }
-                    AgentRunProductRuntimeSnapshotStaleReason::RuntimeThreadMismatch => {
-                        RuntimeTraceStaleReason::RuntimeThreadMismatch
-                    }
-                    AgentRunProductRuntimeSnapshotStaleReason::RuntimeAppliedSurfaceMismatch => {
-                        RuntimeTraceStaleReason::RuntimeAppliedSurfaceMismatch
-                    }
-                };
-                Ok(RuntimeExecutionTraceView::Stale {
-                    reason,
-                    evidence: stale_fence_evidence(
-                        target,
-                        Some(&binding),
-                        Some(&stale.product_binding),
-                        stale.observed_snapshot.as_ref(),
-                    ),
-                })
-            }
+            },
+            Err(_) => RuntimeExecutionTraceView::Absent {
+                target: target.clone(),
+                reason: RuntimeTraceAbsenceReason::AgentUnavailable,
+            },
         }
     }
 
@@ -282,7 +192,7 @@ impl LifecycleRunViewQueryService {
             let current_attempt = attempts.first().cloned();
             agent_views.push(LifecycleAgentExecutionView {
                 agent,
-                runtime: self.runtime_trace(&target).await?,
+                runtime: self.runtime_trace(&target).await,
                 current_attempt,
                 attempts,
             });
@@ -398,45 +308,12 @@ impl LifecycleRunViewQueryPort for LifecycleRunViewQueryService {
     }
 }
 
-fn stale_fence_evidence(
-    target: &AgentRunTarget,
-    expected_binding: Option<&AgentRunProductRuntimeBinding>,
-    observed_binding: Option<&AgentRunProductRuntimeBinding>,
-    observed_snapshot: Option<&ManagedRuntimeSnapshot>,
-) -> RuntimeTraceFenceEvidence {
-    RuntimeTraceFenceEvidence {
-        expected_target: target.clone(),
-        observed_target: observed_binding.map(|binding| binding.target.clone()),
-        expected_runtime_thread_id: expected_binding
-            .map(|binding| binding.runtime_thread_id.clone()),
-        observed_runtime_thread_id: match observed_snapshot {
-            Some(snapshot) => Some(snapshot.thread_id.clone()),
-            None => observed_binding.map(|binding| binding.runtime_thread_id.clone()),
-        },
-        observed_source_binding: match observed_snapshot {
-            Some(snapshot) => snapshot.source_binding.clone(),
-            None => None,
-        },
-        observed_snapshot: observed_snapshot.cloned(),
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum LifecycleRunViewQueryError {
     #[error(transparent)]
     Domain(#[from] DomainError),
     #[error("LifecycleRun not found: {run_id}")]
     RunNotFound { run_id: Uuid },
-    #[error("AgentRun Product binding query failed for {target:?}: {message}")]
-    ProductBinding {
-        target: AgentRunTarget,
-        message: String,
-    },
-    #[error("AgentRun Product projection query failed for {target:?}: {message}")]
-    RuntimeProjection {
-        target: AgentRunTarget,
-        message: String,
-    },
 }
 
 fn unique_run_ids(associations: &[LifecycleSubjectAssociation]) -> Vec<Uuid> {
@@ -713,7 +590,7 @@ fn runtime_node_artifacts(orchestration: &OrchestrationInstance, node: &RuntimeN
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeMap;
 
     use agentdash_agent_runtime_contract::{
         ManagedRuntimeAvailabilityEvidence, ManagedRuntimeChangePage,
@@ -745,25 +622,9 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct BindingRepo {
-        bindings: Mutex<BTreeMap<AgentRunTarget, AgentRunProductRuntimeBinding>>,
-    }
-
-    #[async_trait]
-    impl AgentRunProductRuntimeBindingRepository for BindingRepo {
-        async fn load_product_binding(
-            &self,
-            target: &AgentRunTarget,
-        ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
-            Ok(self.bindings.lock().await.get(target).cloned())
-        }
-    }
-
-    #[derive(Default)]
     struct ProjectionRepo {
         snapshots: Mutex<BTreeMap<AgentRunTarget, ManagedRuntimeSnapshot>>,
         bindings: Mutex<BTreeMap<AgentRunTarget, AgentRunProductRuntimeBinding>>,
-        missing: Mutex<BTreeSet<AgentRunTarget>>,
     }
 
     #[async_trait]
@@ -772,9 +633,6 @@ mod tests {
             &self,
             target: &AgentRunTarget,
         ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError> {
-            if self.missing.lock().await.contains(target) {
-                return Err(AgentRunProductProjectionError::TargetNotBound);
-            }
             self.snapshots
                 .lock()
                 .await
@@ -788,18 +646,11 @@ mod tests {
             target: &AgentRunTarget,
         ) -> Result<AgentRunProductRuntimeSnapshotObservation, AgentRunProductProjectionError>
         {
-            if self.missing.lock().await.contains(target) {
+            let Some(binding) = self.bindings.lock().await.get(target).cloned() else {
                 return Ok(AgentRunProductRuntimeSnapshotObservation::Absent {
                     requested_target: target.clone(),
                 });
-            }
-            let binding = self
-                .bindings
-                .lock()
-                .await
-                .get(target)
-                .cloned()
-                .ok_or(AgentRunProductProjectionError::TargetNotBound)?;
+            };
             let snapshot = self
                 .snapshots
                 .lock()
@@ -809,31 +660,9 @@ mod tests {
                 .ok_or_else(|| {
                     AgentRunProductProjectionError::Runtime("snapshot missing".into())
                 })?;
-            let reason = if binding.target != *target {
-                Some(AgentRunProductRuntimeSnapshotStaleReason::ProductBindingTargetMismatch)
-            } else if binding.runtime_thread_id != snapshot.thread_id {
-                Some(AgentRunProductRuntimeSnapshotStaleReason::RuntimeThreadMismatch)
-            } else if snapshot.source_binding.as_ref().is_none_or(|source| {
-                source.activated_at_revision.is_none()
-                    || source.applied_surface_revision.0 != binding.launch_frame.revision
-            }) {
-                Some(AgentRunProductRuntimeSnapshotStaleReason::RuntimeAppliedSurfaceMismatch)
-            } else {
-                None
-            };
-            Ok(match reason {
-                Some(reason) => AgentRunProductRuntimeSnapshotObservation::Stale(
-                    agentdash_application_agentrun::agent_run::AgentRunProductRuntimeSnapshotStaleEvidence {
-                        requested_target: target.clone(),
-                        product_binding: binding,
-                        observed_snapshot: Some(snapshot),
-                        reason,
-                    },
-                ),
-                None => AgentRunProductRuntimeSnapshotObservation::Current {
-                    product_binding: binding,
-                    snapshot,
-                },
+            Ok(AgentRunProductRuntimeSnapshotObservation::Current {
+                product_binding: binding,
+                snapshot,
             })
         }
 
@@ -842,6 +671,16 @@ mod tests {
             _target: &AgentRunTarget,
             _after: Option<RuntimeChangeSequence>,
         ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError> {
+            Err(AgentRunProductProjectionError::Runtime("unused".into()))
+        }
+
+        async fn runtime_live_events(
+            &self,
+            _target: &AgentRunTarget,
+        ) -> Result<
+            Box<dyn agentdash_agent_service_api::AgentLiveEventStream>,
+            AgentRunProductProjectionError,
+        > {
             Err(AgentRunProductProjectionError::Runtime("unused".into()))
         }
 
@@ -889,7 +728,6 @@ mod tests {
         runs: Arc<MemoryLifecycleRunRepository>,
         agents: Arc<MemoryLifecycleAgentRepository>,
         associations: Arc<MemoryLifecycleSubjectAssociationRepository>,
-        bindings: Arc<BindingRepo>,
         projections: Arc<ProjectionRepo>,
     }
 
@@ -899,7 +737,6 @@ mod tests {
                 runs: Arc::new(MemoryLifecycleRunRepository::default()),
                 agents: Arc::new(MemoryLifecycleAgentRepository::default()),
                 associations: Arc::new(MemoryLifecycleSubjectAssociationRepository::default()),
-                bindings: Arc::new(BindingRepo::default()),
                 projections: Arc::new(ProjectionRepo::default()),
             }
         }
@@ -909,7 +746,6 @@ mod tests {
                 lifecycle_runs: self.runs.clone(),
                 lifecycle_agents: self.agents.clone(),
                 subject_associations: self.associations.clone(),
-                product_bindings: self.bindings.clone(),
                 product_projection: self.projections.clone(),
             })
         }
@@ -944,11 +780,6 @@ mod tests {
                 execution_profile_digest: execution_profile.profile_digest.clone(),
                 execution_profile,
             };
-            self.bindings
-                .bindings
-                .lock()
-                .await
-                .insert(target.clone(), binding.clone());
             self.projections
                 .bindings
                 .lock()
@@ -1114,7 +945,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn multiple_agents_keep_missing_and_stale_runtime_traces_typed() {
+    async fn multiple_agents_keep_missing_and_current_runtime_traces_typed() {
         let fixture = Fixture::new();
         let run = LifecycleRun::new_control(Uuid::new_v4());
         let current = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent);
@@ -1146,159 +977,11 @@ mod tests {
             }
         )));
         assert!(view.agents.iter().any(|view| matches!(
-            view.runtime,
-            RuntimeExecutionTraceView::Stale {
-                reason: RuntimeTraceStaleReason::RuntimeAppliedSurfaceMismatch,
-                ..
-            }
+            &view.runtime,
+            RuntimeExecutionTraceView::Current { snapshot, .. }
+                if snapshot.thread_id.as_str() == "thread-stale"
         )));
         assert_eq!(view.agents.len(), 3);
-    }
-
-    #[tokio::test]
-    async fn stale_source_binding_preserves_an_observed_missing_value() {
-        let fixture = Fixture::new();
-        let run = LifecycleRun::new_control(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent);
-        let target = target(&run, &agent);
-        let expected_source = source("expected-source");
-        fixture.runs.create(&run).await.unwrap();
-        fixture.agents.create(&agent).await.unwrap();
-        fixture
-            .insert_binding_and_snapshot(
-                target.clone(),
-                "thread-missing-source",
-                expected_source.clone(),
-            )
-            .await;
-        fixture
-            .projections
-            .snapshots
-            .lock()
-            .await
-            .get_mut(&target)
-            .unwrap()
-            .source_binding = None;
-
-        let view = fixture.service().lifecycle_run_view(run.id).await.unwrap();
-
-        let RuntimeExecutionTraceView::Stale { reason, evidence } = &view.agents[0].runtime else {
-            panic!("expected typed stale Runtime trace");
-        };
-        assert_eq!(
-            *reason,
-            RuntimeTraceStaleReason::RuntimeAppliedSurfaceMismatch
-        );
-        assert_eq!(
-            evidence
-                .expected_runtime_thread_id
-                .as_ref()
-                .unwrap()
-                .as_str(),
-            "thread-missing-source"
-        );
-        assert_eq!(
-            evidence
-                .observed_runtime_thread_id
-                .as_ref()
-                .unwrap()
-                .as_str(),
-            "thread-missing-source"
-        );
-        assert_eq!(evidence.observed_source_binding, None);
-        assert_eq!(
-            evidence
-                .observed_snapshot
-                .as_ref()
-                .and_then(|snapshot| snapshot.source_binding.as_ref()),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn binding_change_between_reads_is_typed_stale_with_both_fences() {
-        let fixture = Fixture::new();
-        let run = LifecycleRun::new_control(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent);
-        let target = target(&run, &agent);
-        let expected_source = source("expected-source");
-        let observed_source = source("observed-source");
-        fixture.runs.create(&run).await.unwrap();
-        fixture.agents.create(&agent).await.unwrap();
-        fixture
-            .insert_binding_and_snapshot(target.clone(), "thread-before", expected_source.clone())
-            .await;
-        fixture
-            .projections
-            .bindings
-            .lock()
-            .await
-            .insert(target.clone(), {
-                let execution_profile = execution_profile();
-                AgentRunProductRuntimeBinding {
-                    target: target.clone(),
-                    runtime_thread_id: RuntimeThreadId::new("thread-after").unwrap(),
-                    agent:
-                        agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
-                            service_instance_id:
-                                agentdash_agent_service_api::AgentServiceInstanceId::new(
-                                    "fixture-agent",
-                                )
-                                .unwrap(),
-                            source: agentdash_agent_service_api::AgentSourceCoordinate::new(
-                                "fixture-source",
-                            )
-                            .unwrap(),
-                        },
-                    launch_frame: ProductAgentFrameRef {
-                        frame_id: Uuid::new_v4(),
-                        agent_id: target.agent_id,
-                        revision: 1,
-                    },
-                    execution_profile_digest: execution_profile.profile_digest.clone(),
-                    execution_profile,
-                }
-            });
-        fixture.projections.snapshots.lock().await.insert(
-            target.clone(),
-            snapshot("thread-after", observed_source.clone()),
-        );
-
-        let view = fixture.service().lifecycle_run_view(run.id).await.unwrap();
-
-        let RuntimeExecutionTraceView::Stale { reason, evidence } = &view.agents[0].runtime else {
-            panic!("expected typed stale Runtime trace");
-        };
-        assert_eq!(*reason, RuntimeTraceStaleReason::ProductBindingChanged);
-        assert_eq!(evidence.expected_target, target);
-        assert_eq!(evidence.observed_target.as_ref(), Some(&target));
-        assert_eq!(
-            evidence
-                .expected_runtime_thread_id
-                .as_ref()
-                .unwrap()
-                .as_str(),
-            "thread-before"
-        );
-        assert_eq!(
-            evidence
-                .observed_runtime_thread_id
-                .as_ref()
-                .unwrap()
-                .as_str(),
-            "thread-after"
-        );
-        assert_eq!(
-            evidence.observed_source_binding.as_ref(),
-            Some(&observed_source)
-        );
-        assert_eq!(
-            evidence
-                .observed_snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.thread_id.as_str()),
-            Some("thread-after")
-        );
     }
 
     #[tokio::test]

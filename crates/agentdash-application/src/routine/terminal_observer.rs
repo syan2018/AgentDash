@@ -55,8 +55,7 @@ impl AgentRunProductRuntimeChangeObserver for RoutineRuntimeTurnTerminalObserver
             AgentRunProductRuntimeSnapshotObservation::Current { .. } => {
                 return Err("Routine terminal Product binding changed".to_string());
             }
-            AgentRunProductRuntimeSnapshotObservation::Absent { .. }
-            | AgentRunProductRuntimeSnapshotObservation::Stale(_) => {
+            AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
                 return Err("Routine terminal Product snapshot is unavailable".to_string());
             }
         };

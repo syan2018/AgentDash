@@ -174,8 +174,7 @@ async fn lineage_ref(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let runtime_thread_name = match runtime_observation {
         AgentRunProductRuntimeSnapshotObservation::Current { snapshot, .. } => snapshot.thread_name,
-        AgentRunProductRuntimeSnapshotObservation::Absent { .. }
-        | AgentRunProductRuntimeSnapshotObservation::Stale(_) => None,
+        AgentRunProductRuntimeSnapshotObservation::Absent { .. } => None,
     };
     let display_title = app_agent_run::resolve_agent_run_display_title(
         agent.workspace_title.as_deref(),

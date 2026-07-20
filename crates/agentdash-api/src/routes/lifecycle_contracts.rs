@@ -17,14 +17,6 @@ pub(crate) fn lifecycle_run_view_query_error(error: app::LifecycleRunViewQueryEr
         app::LifecycleRunViewQueryError::RunNotFound { run_id } => {
             ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}"))
         }
-        app::LifecycleRunViewQueryError::ProductBinding { message, .. } => {
-            ApiError::Internal(format!("读取 AgentRun Product binding 失败: {message}"))
-        }
-        app::LifecycleRunViewQueryError::RuntimeProjection { message, .. } => {
-            ApiError::ServiceUnavailable(format!(
-                "读取 AgentRun Product projection 失败: {message}"
-            ))
-        }
     }
 }
 
@@ -194,6 +186,9 @@ fn runtime_execution_trace_to_contract(
                     app::RuntimeTraceAbsenceReason::ProductBindingMissing => {
                         contract::LifecycleRuntimeTraceAbsenceReason::ProductBindingMissing
                     }
+                    app::RuntimeTraceAbsenceReason::AgentUnavailable => {
+                        contract::LifecycleRuntimeTraceAbsenceReason::AgentUnavailable
+                    }
                 },
             }
         }
@@ -201,35 +196,6 @@ fn runtime_execution_trace_to_contract(
             contract::LifecycleRuntimeExecutionTraceView::Current {
                 binding: runtime_binding_to_contract(binding),
                 snapshot,
-            }
-        }
-        app::RuntimeExecutionTraceView::Stale { reason, evidence } => {
-            contract::LifecycleRuntimeExecutionTraceView::Stale {
-                reason: match reason {
-                    app::RuntimeTraceStaleReason::ProductBindingTargetMismatch => {
-                        contract::LifecycleRuntimeTraceStaleReason::ProductBindingTargetMismatch
-                    }
-                    app::RuntimeTraceStaleReason::ProjectionBindingMissing => {
-                        contract::LifecycleRuntimeTraceStaleReason::ProjectionBindingMissing
-                    }
-                    app::RuntimeTraceStaleReason::ProductBindingChanged => {
-                        contract::LifecycleRuntimeTraceStaleReason::ProductBindingChanged
-                    }
-                    app::RuntimeTraceStaleReason::RuntimeThreadMismatch => {
-                        contract::LifecycleRuntimeTraceStaleReason::RuntimeThreadMismatch
-                    }
-                    app::RuntimeTraceStaleReason::RuntimeAppliedSurfaceMismatch => {
-                        contract::LifecycleRuntimeTraceStaleReason::RuntimeAppliedSurfaceMismatch
-                    }
-                },
-                evidence: contract::LifecycleRuntimeTraceFenceEvidenceView {
-                    expected_target: agent_run_target_to_contract(evidence.expected_target),
-                    observed_target: evidence.observed_target.map(agent_run_target_to_contract),
-                    expected_runtime_thread_id: evidence.expected_runtime_thread_id,
-                    observed_runtime_thread_id: evidence.observed_runtime_thread_id,
-                    observed_source_binding: evidence.observed_source_binding,
-                    observed_snapshot: evidence.observed_snapshot,
-                },
             }
         }
     }

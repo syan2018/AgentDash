@@ -298,9 +298,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 binding: product_binding,
                 snapshot,
             }),
-            AgentRunProductRuntimeSnapshotObservation::Stale(_) => {
-                Ok(WorkspaceRuntimeObservation::Absent)
-            }
         }
     }
 

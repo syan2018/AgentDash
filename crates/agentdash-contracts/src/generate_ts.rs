@@ -230,8 +230,7 @@ use agentdash_contracts::workflow::{
     LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView,
     LifecycleRuntimeExecutionTraceView, LifecycleRuntimeNodeErrorView, LifecycleRuntimeNodeKind,
     LifecycleRuntimeNodeStatus, LifecycleRuntimeNodeView, LifecycleRuntimeTraceAbsenceReason,
-    LifecycleRuntimeTraceFenceEvidenceView, LifecycleRuntimeTraceRefView,
-    LifecycleRuntimeTraceStaleReason, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
+    LifecycleRuntimeTraceRefView, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
     OrchestrationExecutorDrainResultDto, OrchestrationInstanceView, PlatformMcpScopeDto,
     PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
     ProjectAgentRunListView, RegisterHookPresetResponse, RuntimeNodeView, RuntimeThreadRefDto,
@@ -869,8 +868,6 @@ fn main() {
             export_all::<OrchestrationInstanceView>(dir);
             export_all::<LifecycleAgentRuntimeBindingView>(dir);
             export_all::<LifecycleRuntimeTraceAbsenceReason>(dir);
-            export_all::<LifecycleRuntimeTraceStaleReason>(dir);
-            export_all::<LifecycleRuntimeTraceFenceEvidenceView>(dir);
             export_all::<LifecycleRuntimeExecutionTraceView>(dir);
             export_all::<LifecycleRuntimeNodeKind>(dir);
             export_all::<LifecycleRuntimeNodeStatus>(dir);

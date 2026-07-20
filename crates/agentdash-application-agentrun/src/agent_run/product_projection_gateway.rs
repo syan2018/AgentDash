@@ -75,21 +75,6 @@ pub struct AgentRunCommittedProductRuntimeBinding {
     pub binding_digest: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentRunProductRuntimeSnapshotStaleReason {
-    ProductBindingTargetMismatch,
-    RuntimeThreadMismatch,
-    RuntimeAppliedSurfaceMismatch,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AgentRunProductRuntimeSnapshotStaleEvidence {
-    pub requested_target: AgentRunTarget,
-    pub product_binding: AgentRunProductRuntimeBinding,
-    pub observed_snapshot: Option<ManagedRuntimeSnapshot>,
-    pub reason: AgentRunProductRuntimeSnapshotStaleReason,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum AgentRunProductRuntimeSnapshotObservation {
     Absent {
@@ -99,7 +84,6 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
         product_binding: AgentRunProductRuntimeBinding,
         snapshot: ManagedRuntimeSnapshot,
     },
-    Stale(AgentRunProductRuntimeSnapshotStaleEvidence),
 }
 
 #[async_trait]
@@ -400,11 +384,6 @@ pub trait AgentRunProductProjectionQueryPort: Send + Sync {
         Ok(match self.runtime_snapshot_observation(target).await? {
             AgentRunProductRuntimeSnapshotObservation::Absent { .. } => None,
             AgentRunProductRuntimeSnapshotObservation::Current { snapshot, .. } => Some(snapshot),
-            AgentRunProductRuntimeSnapshotObservation::Stale(evidence) => {
-                evidence.observed_snapshot.filter(|snapshot| {
-                    snapshot.thread_id == evidence.product_binding.runtime_thread_id
-                })
-            }
         })
     }
     async fn runtime_changes(
@@ -529,10 +508,6 @@ pub enum AgentRunProductProjectionError {
     TargetNotBound,
     #[error("Managed Runtime projection load failed: {0}")]
     Runtime(String),
-    #[error("Managed Runtime projection returned a different Runtime thread")]
-    RuntimeThreadMismatch,
-    #[error("Managed Runtime projection returned different source binding evidence")]
-    RuntimeAppliedSurfaceMismatch,
     #[error("Product projection returned a different AgentRun target")]
     TargetMismatch,
     #[error("Workspace Module presentation projection load failed: {0}")]

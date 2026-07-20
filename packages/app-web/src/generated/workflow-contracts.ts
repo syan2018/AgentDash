@@ -3,7 +3,7 @@
 
 import type { JsonValue } from "./common-contracts";
 import type { AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto, MailboxMessageView, MailboxStateView } from "./agent-run-mailbox-contracts";
-import type { ManagedRuntimeSnapshot, ManagedRuntimeSourceBindingEvidence, RuntimeThreadId } from "./agent-runtime-contracts";
+import type { ManagedRuntimeSnapshot, RuntimeThreadId } from "./agent-runtime-contracts";
 import type { ConversationEffectiveExecutorConfigView, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";
 import type { ResolvedVfsSurface } from "./vfs-contracts";
@@ -167,7 +167,7 @@ export type LifecycleRunTopology = "plain" | "workflow_graph";
 
 export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string, topology: LifecycleRunTopology, status: LifecycleRunStatus, orchestrations: Array<OrchestrationInstanceView>, active_runtime_node_refs: Array<ActiveRuntimeNodeRefDto>, agents: Array<LifecycleAgentExecutionView>, subject_associations: Array<LifecycleSubjectAssociationDto>, execution_log: Array<LifecycleExecutionEntry>, created_at: string, updated_at: string, last_activity_at: string, };
 
-export type LifecycleRuntimeExecutionTraceView = { "state": "absent", target: AgentRunRefDto, reason: LifecycleRuntimeTraceAbsenceReason, } | { "state": "current", binding: LifecycleAgentRuntimeBindingView, snapshot: ManagedRuntimeSnapshot, } | { "state": "stale", reason: LifecycleRuntimeTraceStaleReason, evidence: LifecycleRuntimeTraceFenceEvidenceView, };
+export type LifecycleRuntimeExecutionTraceView = { "state": "absent", target: AgentRunRefDto, reason: LifecycleRuntimeTraceAbsenceReason, } | { "state": "current", binding: LifecycleAgentRuntimeBindingView, snapshot: ManagedRuntimeSnapshot, };
 
 export type LifecycleRuntimeNodeErrorView = { code: string, message: string, retryable: boolean, detail: JsonValue | null, };
 
@@ -177,13 +177,9 @@ export type LifecycleRuntimeNodeStatus = "pending" | "ready" | "claiming" | "run
 
 export type LifecycleRuntimeNodeView = { node_id: string, node_path: string, kind: LifecycleRuntimeNodeKind, status: LifecycleRuntimeNodeStatus, attempt: number, inputs: Array<LifecycleNodePortValueView>, outputs: Array<LifecycleNodePortValueView>, executor_run_ref: ExecutorRunRef | null, agent_call_target: AgentRunRefDto | null, started_at: string | null, completed_at: string | null, error: LifecycleRuntimeNodeErrorView | null, trace_refs: Array<LifecycleRuntimeTraceRefView>, artifacts: JsonValue, children: Array<LifecycleRuntimeNodeView>, };
 
-export type LifecycleRuntimeTraceAbsenceReason = "product_binding_missing";
-
-export type LifecycleRuntimeTraceFenceEvidenceView = { expected_target: AgentRunRefDto, observed_target: AgentRunRefDto | null, expected_runtime_thread_id: RuntimeThreadId | null, observed_runtime_thread_id: RuntimeThreadId | null, observed_source_binding: ManagedRuntimeSourceBindingEvidence | null, observed_snapshot: ManagedRuntimeSnapshot | null, };
+export type LifecycleRuntimeTraceAbsenceReason = "product_binding_missing" | "agent_unavailable";
 
 export type LifecycleRuntimeTraceRefView = { "kind": "runtime_thread", thread_id: string, } | { "kind": "agent_run", run_id: string, agent_id: string, } | { "kind": "function_run", run_id: string, } | { "kind": "human_decision", decision_id: string, } | { "kind": "effect_invocation", effect_id: string, effect_kind: string, };
-
-export type LifecycleRuntimeTraceStaleReason = "product_binding_target_mismatch" | "projection_binding_missing" | "product_binding_changed" | "runtime_thread_mismatch" | "runtime_applied_surface_mismatch";
 
 export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string, anchor_agent_id?: string, subject_ref: SubjectRefDto, role: string, metadata?: JsonValue, created_at: string, };
 

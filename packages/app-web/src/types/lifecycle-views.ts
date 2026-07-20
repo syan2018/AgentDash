@@ -27,9 +27,7 @@ export type {
   LifecycleRuntimeNodeStatus,
   LifecycleRuntimeNodeView,
   LifecycleRuntimeTraceAbsenceReason,
-  LifecycleRuntimeTraceFenceEvidenceView,
   LifecycleRuntimeTraceRefView,
-  LifecycleRuntimeTraceStaleReason,
   LifecycleSubjectAssociationDto,
   OrchestrationInstanceView,
   ProjectActiveAgentsView,
@@ -76,15 +74,6 @@ export function lifecycleRuntimeTraceSummaries(
           state: runtime.state,
           runtimeThreadId: runtime.binding.runtime_thread_id,
           reason: null,
-        };
-      case "stale":
-        return {
-          agent,
-          state: runtime.state,
-          runtimeThreadId:
-            runtime.evidence.observed_runtime_thread_id
-            ?? runtime.evidence.expected_runtime_thread_id,
-          reason: runtime.reason,
         };
     }
   });

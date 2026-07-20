@@ -42,7 +42,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_run_terminal_projection_change",
     "agent_run_terminal_control_correlation",
     "agent_run_terminal_projection_outbox",
-    "dash_agent_session",
     "dash_complete_source",
     "dash_complete_effect",
     "agent_run_control_effects",
@@ -59,6 +58,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
 ];
 
 const RETIRED_POSTGRES_TABLES: &[&str] = &[
+    "dash_agent_session",
     "agent_run_mailbox_messages",
     "agent_run_mailbox_states",
     "agent_run_product_command_receipts",

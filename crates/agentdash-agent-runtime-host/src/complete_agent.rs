@@ -3,8 +3,9 @@ use std::sync::Arc;
 use crate::{
     CompleteAgentCallbackRoute, CompleteAgentHostCommit, CompleteAgentHostFacts,
     CompleteAgentHostRepository, CompleteAgentHostSnapshot, CompleteAgentHostStoreError,
-    CompleteAgentRemoteBindingFact, CompleteAgentServiceVerification,
-    SharedCompleteAgentHostRepository, SharedCompleteAgentServiceRegistry,
+    CompleteAgentLiveCatalogError, CompleteAgentLiveSelection, CompleteAgentRemoteBindingFact,
+    CompleteAgentServiceVerification, SharedCompleteAgentHostRepository,
+    SharedCompleteAgentLiveCatalog,
 };
 use agentdash_agent_runtime::{
     ManagedRuntimeAgentBinding, ManagedRuntimeCreateOutcome, ManagedRuntimeDispatchContext,
@@ -20,13 +21,14 @@ use agentdash_agent_service_api::{
     AgentChangesQuery, AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentCommandReceipt,
     AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkPoint,
     AgentHostCallbackBinding, AgentIdempotencyKey, AgentPayloadDigest, AgentProfileDigest,
-    AgentReadQuery, AgentReceiptState, AgentRuntimeOffer, AgentServiceDescriptor,
-    AgentServiceError, AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceProfile,
-    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentSurfaceSnapshot, AppliedAgentCommandReceipt,
-    AppliedAgentSurface, AppliedAgentSurfaceReceipt, AppliedForkAgentReceipt,
-    ApplyBoundAgentSurface, BoundAgentSurface, CompleteAgentService, CreateAgentCommand,
-    ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage, ResumeAgentCommand,
-    RevokeBoundAgentSurface, SemanticFidelity,
+    AgentReadQuery, AgentReceiptState, AgentRuntimeOffer, AgentServiceDefinitionId,
+    AgentServiceDescriptor, AgentServiceError, AgentServiceInstanceId, AgentSourceCoordinate,
+    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentSurfaceSnapshot,
+    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceReceipt,
+    AppliedForkAgentReceipt, ApplyBoundAgentSurface, BoundAgentSurface,
+    CompleteAgentLiveAttachmentId, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
+    ForkAgentReceipt, InitialAgentContextPackage, ResumeAgentCommand, RevokeBoundAgentSurface,
+    SemanticFidelity,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -54,10 +56,58 @@ impl CompleteAgentBindingId {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteAgentBindingTarget {
+    pub logical_instance_id: AgentServiceInstanceId,
+    pub live_attachment_id: CompleteAgentLiveAttachmentId,
+    pub definition_id: AgentServiceDefinitionId,
+    pub verified_build_digest: AgentPayloadDigest,
+    pub verified_profile_digest: AgentProfileDigest,
+    pub offer_profile_digest: AgentProfileDigest,
+    pub placement: CompleteAgentPlacement,
+    pub remote_binding: Option<CompleteAgentRemoteBindingFact>,
+}
+
+impl CompleteAgentBindingTarget {
+    pub fn host_incarnation_id(&self) -> &str {
+        self.placement.host_incarnation_id()
+    }
+
+    pub(crate) fn is_valid(&self) -> bool {
+        !self.logical_instance_id.as_str().trim().is_empty()
+            && !self.live_attachment_id.as_str().trim().is_empty()
+            && !self.definition_id.as_str().trim().is_empty()
+            && !self.verified_build_digest.as_str().trim().is_empty()
+            && !self.verified_profile_digest.as_str().trim().is_empty()
+            && !self.offer_profile_digest.as_str().trim().is_empty()
+            && self.placement.is_valid()
+            && self.verified_profile_digest == self.offer_profile_digest
+            && match (&self.placement, &self.remote_binding) {
+                (
+                    CompleteAgentPlacement::Remote {
+                        transport_id,
+                        host_incarnation_id,
+                        ..
+                    },
+                    Some(remote),
+                ) => {
+                    remote.local_service_instance_id == self.logical_instance_id
+                        && !remote.remote_service_instance_id.as_str().trim().is_empty()
+                        && remote.remote_binding_generation.0 > 0
+                        && remote.host_incarnation_id == *host_incarnation_id
+                        && remote.transport_id == *transport_id
+                }
+                (CompleteAgentPlacement::Remote { .. }, None) => false,
+                (_, None) => true,
+                (_, Some(_)) => false,
+            }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentBinding {
     pub id: CompleteAgentBindingId,
-    pub service_instance_id: AgentServiceInstanceId,
+    pub target: CompleteAgentBindingTarget,
     pub generation: AgentBindingGeneration,
     pub source: AgentSourceCoordinate,
     pub profile_digest: AgentProfileDigest,
@@ -69,7 +119,7 @@ pub struct CompleteAgentBinding {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentRuntimeTarget {
     pub runtime_thread_id: RuntimeThreadId,
-    pub service_instance_id: AgentServiceInstanceId,
+    pub target: CompleteAgentBindingTarget,
     pub generation: AgentBindingGeneration,
     pub profile_digest: AgentProfileDigest,
     pub bound_surface: BoundAgentSurface,
@@ -88,7 +138,7 @@ pub struct CompleteAgentRuntimeTargetProvisioningRequest {
     pub idempotency_key: AgentIdempotencyKey,
     pub request_digest: AgentPayloadDigest,
     pub runtime_thread_id: RuntimeThreadId,
-    pub service_instance_id: AgentServiceInstanceId,
+    pub target: CompleteAgentBindingTarget,
     pub desired_surface: AgentSurfaceSnapshot,
     pub callback_deadline_ms: u64,
 }
@@ -107,7 +157,7 @@ pub struct CompleteAgentRuntimeTargetRecoveryRequest {
     pub request_digest: AgentPayloadDigest,
     pub runtime_thread_id: RuntimeThreadId,
     pub expected_generation: AgentBindingGeneration,
-    pub service_instance_id: AgentServiceInstanceId,
+    pub target: CompleteAgentBindingTarget,
     pub desired_surface: AgentSurfaceSnapshot,
     pub callback_deadline_ms: u64,
 }
@@ -126,6 +176,7 @@ pub trait CompleteAgentRuntimeRecoveryPlanner: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompleteAgentVerifiedServiceRegistration {
     pub instance_id: AgentServiceInstanceId,
+    pub descriptor: AgentServiceDescriptor,
     pub placement: CompleteAgentPlacement,
     pub verification: CompleteAgentServiceVerification,
     pub remote_binding: Option<CompleteAgentRemoteBindingFact>,
@@ -167,7 +218,7 @@ pub struct CompleteAgentLifecycleEffectRecord {
     pub runtime_thread_id: RuntimeThreadId,
     pub child_thread_id: Option<RuntimeThreadId>,
     pub kind: CompleteAgentLifecycleOperationKind,
-    pub service_instance_id: AgentServiceInstanceId,
+    pub target: CompleteAgentBindingTarget,
     pub generation: AgentBindingGeneration,
     pub initial_context: Option<InitialAgentContextPackage>,
     pub fork_cutoff: Option<AgentForkPoint>,
@@ -199,6 +250,22 @@ pub enum CompleteAgentPlacement {
 }
 
 impl CompleteAgentPlacement {
+    pub fn host_incarnation_id(&self) -> &str {
+        match self {
+            Self::InProcess {
+                host_incarnation_id,
+            }
+            | Self::LocalProcess {
+                host_incarnation_id,
+                ..
+            }
+            | Self::Remote {
+                host_incarnation_id,
+                ..
+            } => host_incarnation_id,
+        }
+    }
+
     pub(crate) fn is_valid(&self) -> bool {
         match self {
             Self::InProcess {
@@ -219,6 +286,17 @@ impl CompleteAgentPlacement {
             }
         }
     }
+}
+
+fn validate_binding_target(
+    target: &CompleteAgentBindingTarget,
+) -> Result<(), CompleteAgentHostError> {
+    if !target.is_valid() {
+        return Err(CompleteAgentHostError::Invariant {
+            reason: "Complete Agent binding target snapshot is invalid".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 impl CompleteAgentBinding {
@@ -278,7 +356,6 @@ pub struct CompleteAgentEffectRecord {
     pub effect_id: AgentEffectIdentity,
     pub command_id: AgentCommandId,
     pub binding_id: CompleteAgentBindingId,
-    pub service_instance_id: AgentServiceInstanceId,
     pub generation: AgentBindingGeneration,
     pub source: AgentSourceCoordinate,
     pub payload_digest: AgentPayloadDigest,
@@ -299,8 +376,10 @@ enum RevokeDispatchPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CompleteAgentHostError {
-    #[error("Complete Agent service instance was not found: {instance_id}")]
-    UnknownService { instance_id: AgentServiceInstanceId },
+    #[error("Complete Agent live attachment is unavailable: {attachment_id}")]
+    UnavailableAttachment {
+        attachment_id: CompleteAgentLiveAttachmentId,
+    },
     #[error("Complete Agent binding was not found: {binding_id}")]
     UnknownBinding { binding_id: String },
     #[error("Complete Agent effect was not found: {effect_id}")]
@@ -342,6 +421,8 @@ pub enum CompleteAgentHostError {
     #[error(transparent)]
     Store(#[from] CompleteAgentHostStoreError),
     #[error(transparent)]
+    LiveCatalog(#[from] CompleteAgentLiveCatalogError),
+    #[error(transparent)]
     Service(#[from] AgentServiceError),
 }
 
@@ -349,18 +430,18 @@ pub enum CompleteAgentHostError {
 /// fencing, and stable effect reconciliation.
 pub struct CompleteAgentHost {
     repository: SharedCompleteAgentHostRepository,
-    services: SharedCompleteAgentServiceRegistry,
+    live_catalog: SharedCompleteAgentLiveCatalog,
     recovery_planner: RwLock<Option<Arc<dyn CompleteAgentRuntimeRecoveryPlanner>>>,
 }
 
 impl CompleteAgentHost {
     pub fn new(
         repository: Arc<dyn CompleteAgentHostRepository>,
-        services: SharedCompleteAgentServiceRegistry,
+        live_catalog: SharedCompleteAgentLiveCatalog,
     ) -> Self {
         Self {
             repository,
-            services,
+            live_catalog,
             recovery_planner: RwLock::new(None),
         }
     }
@@ -372,63 +453,12 @@ impl CompleteAgentHost {
         *self.recovery_planner.write().await = Some(planner);
     }
 
-    pub async fn register_verified_service(
+    pub async fn attach_verified_service(
         &self,
         registration: CompleteAgentVerifiedServiceRegistration,
         service: Arc<dyn CompleteAgentService>,
-    ) -> Result<AgentServiceDescriptor, CompleteAgentHostError> {
-        if !registration.placement.is_valid() {
-            return Err(CompleteAgentHostError::Invariant {
-                reason: "Complete Agent placement coordinates must not be empty".to_owned(),
-            });
-        }
-        if registration.verification.service_instance_id != registration.instance_id {
-            return Err(CompleteAgentHostError::Invariant {
-                reason: "Complete Agent verification belongs to another service instance"
-                    .to_owned(),
-            });
-        }
-        let descriptor = service.describe().await?;
-        validate_service_descriptor(&descriptor)?;
-        let offer = runtime_offer_from_descriptor(&descriptor)?;
-        let snapshot = self.repository.load().await?;
-        let mut facts = snapshot.facts;
-        if let Some(existing) = facts.service_instances.get(&registration.instance_id) {
-            if existing != &descriptor
-                || facts.placements.get(&registration.instance_id) != Some(&registration.placement)
-                || facts.service_verifications.get(&registration.instance_id)
-                    != Some(&registration.verification)
-                || facts.remote_bindings.get(&registration.instance_id)
-                    != registration.remote_binding.as_ref()
-            {
-                return Err(CompleteAgentHostError::Invariant {
-                    reason:
-                        "service instance id is already registered with different verified facts"
-                            .to_owned(),
-                });
-            }
-        } else {
-            facts
-                .service_instances
-                .insert(registration.instance_id.clone(), descriptor.clone());
-            facts
-                .service_verifications
-                .insert(registration.instance_id.clone(), registration.verification);
-            facts.offers.insert(registration.instance_id.clone(), offer);
-            facts
-                .placements
-                .insert(registration.instance_id.clone(), registration.placement);
-            if let Some(remote_binding) = registration.remote_binding {
-                facts
-                    .remote_bindings
-                    .insert(registration.instance_id.clone(), remote_binding);
-            }
-            self.commit(snapshot.revision, facts).await?;
-        }
-        self.services
-            .attach(registration.instance_id, service)
-            .await;
-        Ok(descriptor)
+    ) -> Result<CompleteAgentLiveSelection, CompleteAgentHostError> {
+        Ok(self.live_catalog.attach(registration, service).await?)
     }
 
     pub async fn register_binding(
@@ -442,18 +472,12 @@ impl CompleteAgentHost {
         }
         let snapshot = self.repository.load().await?;
         let mut facts = snapshot.facts;
-        let descriptor = facts
-            .service_instances
-            .get(&binding.service_instance_id)
-            .ok_or_else(|| CompleteAgentHostError::UnknownService {
-                instance_id: binding.service_instance_id.clone(),
-            })?;
-        if binding.profile_digest != descriptor.profile_digest
-            || binding.bound_surface.offer_profile_digest != binding.profile_digest
+        validate_binding_target(&binding.target)?;
+        if binding.profile_digest != binding.target.offer_profile_digest
+            || binding.bound_surface.offer_profile_digest != binding.target.offer_profile_digest
         {
             return Err(CompleteAgentHostError::DispatchRejected {
-                reason: "binding profile does not match the registered service descriptor"
-                    .to_owned(),
+                reason: "binding profile does not match its exact live target snapshot".to_owned(),
             });
         }
         let surface_matches = binding
@@ -508,17 +532,12 @@ impl CompleteAgentHost {
         }
         let snapshot = self.repository.load().await?;
         let mut facts = snapshot.facts;
-        let descriptor = facts
-            .service_instances
-            .get(&target.service_instance_id)
-            .ok_or_else(|| CompleteAgentHostError::UnknownService {
-                instance_id: target.service_instance_id.clone(),
-            })?;
-        if descriptor.profile_digest != target.profile_digest
-            || target.bound_surface.offer_profile_digest != target.profile_digest
+        validate_binding_target(&target.target)?;
+        if target.target.offer_profile_digest != target.profile_digest
+            || target.bound_surface.offer_profile_digest != target.target.offer_profile_digest
         {
             return Err(CompleteAgentHostError::DispatchRejected {
-                reason: "Runtime target does not match the registered service profile".to_owned(),
+                reason: "Runtime target does not match its exact live target snapshot".to_owned(),
             });
         }
         if let Some(existing) = facts.runtime_targets.get(&target.runtime_thread_id) {
@@ -549,6 +568,7 @@ impl CompleteAgentHost {
                 reason: "Runtime target callback deadline must be positive".to_owned(),
             });
         }
+        let selection = self.live_selection(&request.target).await?;
         loop {
             let snapshot = self.repository.load().await?;
             if let Some(existing) = snapshot
@@ -558,35 +578,30 @@ impl CompleteAgentHost {
             {
                 if existing.request_digest == request.request_digest
                     && existing.target.runtime_thread_id == request.runtime_thread_id
-                    && existing.target.service_instance_id == request.service_instance_id
+                    && existing.target.target == request.target
                 {
                     return Ok(existing.clone());
                 }
                 return Err(CompleteAgentHostError::ProvisioningConflict);
             }
-            let offer = snapshot
-                .facts
-                .offers
-                .get(&request.service_instance_id)
-                .ok_or_else(|| CompleteAgentHostError::UnknownService {
-                    instance_id: request.service_instance_id.clone(),
-                })?;
-            let bound_surface = bind_complete_agent_surface(&request.desired_surface, offer)
-                .map_err(|error| CompleteAgentHostError::DispatchRejected {
-                    reason: error.to_string(),
-                })?;
+            let bound_surface =
+                bind_complete_agent_surface(&request.desired_surface, &selection.offer).map_err(
+                    |error| CompleteAgentHostError::DispatchRejected {
+                        reason: error.to_string(),
+                    },
+                )?;
             let generation = AgentBindingGeneration(1);
             let callback_route = callback_route_id(
                 &request.runtime_thread_id,
-                &request.service_instance_id,
+                &request.target,
                 generation,
                 &bound_surface,
             )?;
             let target = CompleteAgentRuntimeTarget {
                 runtime_thread_id: request.runtime_thread_id.clone(),
-                service_instance_id: request.service_instance_id.clone(),
+                target: request.target.clone(),
                 generation,
-                profile_digest: offer.profile_digest.clone(),
+                profile_digest: selection.offer.profile_digest.clone(),
                 bound_surface,
                 callbacks: AgentHostCallbackBinding {
                     route_id: callback_route,
@@ -646,6 +661,7 @@ impl CompleteAgentHost {
                     .to_owned(),
             });
         }
+        let selection = self.live_selection(&request.target).await?;
         loop {
             let snapshot = self.repository.load().await?;
             if let Some(existing) = snapshot
@@ -655,7 +671,7 @@ impl CompleteAgentHost {
             {
                 if existing.request_digest == request.request_digest
                     && existing.previous_target.runtime_thread_id == request.runtime_thread_id
-                    && existing.recovered_target.service_instance_id == request.service_instance_id
+                    && existing.recovered_target.target == request.target
                 {
                     return Ok(existing.clone());
                 }
@@ -673,7 +689,7 @@ impl CompleteAgentHost {
                     ),
                 })?;
             if previous_target.generation != request.expected_generation
-                || previous_target.service_instance_id != request.service_instance_id
+                || previous_target.target != request.target
             {
                 return Err(CompleteAgentHostError::StaleGeneration {
                     expected: request.expected_generation,
@@ -689,7 +705,7 @@ impl CompleteAgentHost {
                 .ok_or_else(|| CompleteAgentHostError::UnknownBinding {
                     binding_id: previous_binding_id.as_str().to_owned(),
                 })?;
-            if previous_binding.service_instance_id != previous_target.service_instance_id
+            if previous_binding.target != previous_target.target
                 || previous_binding.generation != previous_target.generation
                 || !matches!(
                     previous_binding.state,
@@ -720,17 +736,12 @@ impl CompleteAgentHost {
                         .to_owned(),
                 });
             }
-            let offer = snapshot
-                .facts
-                .offers
-                .get(&request.service_instance_id)
-                .ok_or_else(|| CompleteAgentHostError::UnknownService {
-                    instance_id: request.service_instance_id.clone(),
-                })?;
-            let bound_surface = bind_complete_agent_surface(&request.desired_surface, offer)
-                .map_err(|error| CompleteAgentHostError::DispatchRejected {
-                    reason: error.to_string(),
-                })?;
+            let bound_surface =
+                bind_complete_agent_surface(&request.desired_surface, &selection.offer).map_err(
+                    |error| CompleteAgentHostError::DispatchRejected {
+                        reason: error.to_string(),
+                    },
+                )?;
             let generation =
                 AgentBindingGeneration(request.expected_generation.0.checked_add(1).ok_or_else(
                     || CompleteAgentHostError::Invariant {
@@ -739,15 +750,15 @@ impl CompleteAgentHost {
                 )?);
             let callback_route = callback_route_id(
                 &request.runtime_thread_id,
-                &request.service_instance_id,
+                &request.target,
                 generation,
                 &bound_surface,
             )?;
             let recovered_target = CompleteAgentRuntimeTarget {
                 runtime_thread_id: request.runtime_thread_id.clone(),
-                service_instance_id: request.service_instance_id.clone(),
+                target: request.target.clone(),
                 generation,
-                profile_digest: offer.profile_digest.clone(),
+                profile_digest: selection.offer.profile_digest.clone(),
                 bound_surface,
                 callbacks: AgentHostCallbackBinding {
                     route_id: callback_route,
@@ -816,6 +827,7 @@ impl CompleteAgentHost {
                         .to_owned(),
             });
         }
+        let selection = self.live_selection(&request.target).await?;
         loop {
             let snapshot = self.repository.load().await?;
             if let Some(existing) = snapshot
@@ -826,7 +838,7 @@ impl CompleteAgentHost {
                 if existing.request_digest == request.request_digest
                     && existing.previous_target.runtime_thread_id == request.runtime_thread_id
                     && existing.previous_target.generation == request.expected_generation
-                    && existing.recovered_target.service_instance_id == request.service_instance_id
+                    && existing.recovered_target.target == request.target
                 {
                     return Ok(existing.clone());
                 }
@@ -849,6 +861,12 @@ impl CompleteAgentHost {
                     actual: previous_target.generation,
                 });
             }
+            if previous_target.target == request.target {
+                return Err(CompleteAgentHostError::DispatchRejected {
+                    reason: "Runtime target recovery requires a distinct live attachment snapshot"
+                        .to_owned(),
+                });
+            }
             let previous_binding_id =
                 runtime_binding_id(&request.runtime_thread_id, request.expected_generation)?;
             let previous_binding = snapshot
@@ -859,7 +877,7 @@ impl CompleteAgentHost {
                     binding_id: previous_binding_id.as_str().to_owned(),
                 })?;
             if previous_binding.state != CompleteAgentBindingState::Lost
-                || previous_binding.service_instance_id != previous_target.service_instance_id
+                || previous_binding.target != previous_target.target
                 || previous_binding.generation != previous_target.generation
             {
                 return Err(CompleteAgentHostError::DispatchRejected {
@@ -879,17 +897,12 @@ impl CompleteAgentHost {
                             .to_owned(),
                 });
             }
-            let offer = snapshot
-                .facts
-                .offers
-                .get(&request.service_instance_id)
-                .ok_or_else(|| CompleteAgentHostError::UnknownService {
-                    instance_id: request.service_instance_id.clone(),
-                })?;
-            let bound_surface = bind_complete_agent_surface(&request.desired_surface, offer)
-                .map_err(|error| CompleteAgentHostError::DispatchRejected {
-                    reason: error.to_string(),
-                })?;
+            let bound_surface =
+                bind_complete_agent_surface(&request.desired_surface, &selection.offer).map_err(
+                    |error| CompleteAgentHostError::DispatchRejected {
+                        reason: error.to_string(),
+                    },
+                )?;
             let generation =
                 AgentBindingGeneration(request.expected_generation.0.checked_add(1).ok_or_else(
                     || CompleteAgentHostError::Invariant {
@@ -898,15 +911,15 @@ impl CompleteAgentHost {
                 )?);
             let callback_route = callback_route_id(
                 &request.runtime_thread_id,
-                &request.service_instance_id,
+                &request.target,
                 generation,
                 &bound_surface,
             )?;
             let recovered_target = CompleteAgentRuntimeTarget {
                 runtime_thread_id: request.runtime_thread_id.clone(),
-                service_instance_id: request.service_instance_id.clone(),
+                target: request.target.clone(),
                 generation,
-                profile_digest: offer.profile_digest.clone(),
+                profile_digest: selection.offer.profile_digest.clone(),
                 bound_surface,
                 callbacks: AgentHostCallbackBinding {
                     route_id: callback_route,
@@ -983,7 +996,7 @@ impl CompleteAgentHost {
             if existing.runtime_thread_id != record.runtime_thread_id
                 || existing.child_thread_id != record.child_thread_id
                 || existing.kind != record.kind
-                || existing.service_instance_id != record.service_instance_id
+                || existing.target != record.target
                 || existing.generation != record.generation
                 || existing.initial_context != record.initial_context
                 || existing.fork_cutoff != record.fork_cutoff
@@ -1076,7 +1089,7 @@ impl CompleteAgentHost {
                 actual: binding.generation,
             });
         }
-        if binding.service_instance_id != target.service_instance_id
+        if binding.target != target.target
             || binding.profile_digest != target.profile_digest
             || binding.bound_surface != target.bound_surface
             || !binding.dispatch_admitted()
@@ -1091,36 +1104,6 @@ impl CompleteAgentHost {
             });
         }
         Ok((binding_id, binding))
-    }
-
-    pub async fn runtime_offer(
-        &self,
-        instance_id: &AgentServiceInstanceId,
-    ) -> Result<AgentRuntimeOffer, CompleteAgentHostError> {
-        let snapshot = self.repository.load().await?;
-        snapshot
-            .facts
-            .offers
-            .get(instance_id)
-            .cloned()
-            .ok_or_else(|| CompleteAgentHostError::UnknownService {
-                instance_id: instance_id.clone(),
-            })
-    }
-
-    pub async fn placement(
-        &self,
-        instance_id: &AgentServiceInstanceId,
-    ) -> Result<CompleteAgentPlacement, CompleteAgentHostError> {
-        let snapshot = self.repository.load().await?;
-        snapshot
-            .facts
-            .placements
-            .get(instance_id)
-            .cloned()
-            .ok_or_else(|| CompleteAgentHostError::UnknownService {
-                instance_id: instance_id.clone(),
-            })
     }
 
     pub async fn acquire_binding_lease(
@@ -1265,13 +1248,13 @@ impl CompleteAgentHost {
         Ok(())
     }
 
-    /// Atomically fences every nonterminal binding owned by one withdrawn service instance.
+    /// Atomically fences every nonterminal binding owned by one withdrawn live attachment.
     ///
     /// Remote transport withdrawal calls this before closing placement transport. Callback routes,
     /// leases and unsettled effects are fenced in the same Host commit.
-    pub async fn mark_service_bindings_lost(
+    pub async fn mark_target_bindings_lost(
         &self,
-        service_instance_id: &AgentServiceInstanceId,
+        target: &CompleteAgentBindingTarget,
     ) -> Result<Vec<RuntimeThreadId>, CompleteAgentHostError> {
         loop {
             let snapshot = self.repository.load().await?;
@@ -1280,7 +1263,7 @@ impl CompleteAgentHost {
                 .bindings
                 .iter()
                 .filter(|(_, binding)| {
-                    &binding.service_instance_id == service_instance_id
+                    &binding.target == target
                         && !matches!(
                             binding.state,
                             CompleteAgentBindingState::Lost | CompleteAgentBindingState::Closed
@@ -1292,7 +1275,7 @@ impl CompleteAgentHost {
                 .facts
                 .runtime_targets
                 .iter()
-                .filter(|(_, target)| &target.service_instance_id == service_instance_id)
+                .filter(|(_, runtime_target)| &runtime_target.target == target)
                 .filter(|(_, target)| {
                     let binding_id =
                         runtime_binding_id(&target.runtime_thread_id, target.generation).ok();
@@ -1384,7 +1367,7 @@ impl CompleteAgentHost {
         command: AgentCommandEnvelope,
     ) -> Result<AgentCommandReceipt, CompleteAgentHostError> {
         let digest = payload_digest(&command)?;
-        let (service_instance_id, source, should_dispatch) = {
+        let (service_target, source, should_dispatch) = {
             let snapshot = self.repository.load().await?;
             let mut state = snapshot.facts;
             validate_lease_state(&state, lease, current_time_ms())?;
@@ -1412,7 +1395,6 @@ impl CompleteAgentHost {
                 effect_id: command.meta.effect_id.clone(),
                 command_id: command.meta.command_id.clone(),
                 binding_id: binding_id.clone(),
-                service_instance_id: binding.service_instance_id.clone(),
                 generation: binding.generation,
                 source: binding.source.clone(),
                 payload_digest: digest,
@@ -1443,7 +1425,7 @@ impl CompleteAgentHost {
                             .delivery_epoch = lease.epoch;
                     }
                     let result = (
-                        binding.service_instance_id.clone(),
+                        binding.target.clone(),
                         binding.source.clone(),
                         confirmed_not_applied,
                     );
@@ -1454,18 +1436,14 @@ impl CompleteAgentHost {
                     state
                         .effects
                         .insert(command.meta.effect_id.clone(), candidate);
-                    let result = (
-                        binding.service_instance_id.clone(),
-                        binding.source.clone(),
-                        true,
-                    );
+                    let result = (binding.target.clone(), binding.source.clone(), true);
                     self.commit(snapshot.revision, state).await?;
                     result
                 }
             }
         };
 
-        let service = self.service(&service_instance_id).await?;
+        let service = self.service(&service_target).await?;
         if !should_dispatch {
             return self
                 .inspect_effect(lease, &command.meta.effect_id)
@@ -1516,7 +1494,7 @@ impl CompleteAgentHost {
         lease: &CompleteAgentBindingLease,
         effect_id: &AgentEffectIdentity,
     ) -> Result<AgentEffectInspection, CompleteAgentHostError> {
-        let service_instance_id = {
+        let service_target = {
             let state = self.repository.load().await?.facts;
             let record = state.effects.get(effect_id).ok_or_else(|| {
                 CompleteAgentHostError::UnknownEffect {
@@ -1524,9 +1502,14 @@ impl CompleteAgentHost {
                 }
             })?;
             validate_effect_fence(&state, lease, record, current_time_ms())?;
-            record.service_instance_id.clone()
+            state
+                .bindings
+                .get(&record.binding_id)
+                .expect("effect binding was validated by the durable Host graph")
+                .target
+                .clone()
         };
-        let service = self.service(&service_instance_id).await?;
+        let service = self.service(&service_target).await?;
         let inspection = service.inspect(effect_id.clone()).await?;
         if !inspection.validate() {
             return Err(CompleteAgentHostError::Invariant {
@@ -1601,7 +1584,7 @@ impl CompleteAgentHost {
             .map_err(|error| CompleteAgentHostError::Invariant {
                 reason: error.message,
             })?;
-        let (service_instance_id, should_dispatch) = {
+        let (service_target, should_dispatch) = {
             let snapshot = self.repository.load().await?;
             let mut state = snapshot.facts;
             validate_lease_state(&state, lease, current_time_ms())?;
@@ -1623,7 +1606,6 @@ impl CompleteAgentHost {
                 effect_id: command.effect_id.clone(),
                 command_id: command.command_id.clone(),
                 binding_id: binding_id.clone(),
-                service_instance_id: binding.service_instance_id.clone(),
                 generation: binding.generation,
                 source: binding.source.clone(),
                 payload_digest: digest,
@@ -1656,19 +1638,19 @@ impl CompleteAgentHost {
                             .expect("effect was read from the same state")
                             .delivery_epoch = lease.epoch;
                     }
-                    let result = (binding.service_instance_id, confirmed_not_applied);
+                    let result = (binding.target, confirmed_not_applied);
                     self.commit(snapshot.revision, state).await?;
                     result
                 }
                 None => {
                     state.effects.insert(command.effect_id.clone(), candidate);
-                    let result = (binding.service_instance_id, true);
+                    let result = (binding.target, true);
                     self.commit(snapshot.revision, state).await?;
                     result
                 }
             }
         };
-        let service = self.service(&service_instance_id).await?;
+        let service = self.service(&service_target).await?;
         if !should_dispatch {
             return self
                 .recover_applied_surface(
@@ -1714,7 +1696,7 @@ impl CompleteAgentHost {
         command: RevokeBoundAgentSurface,
     ) -> Result<AgentCommandReceipt, CompleteAgentHostError> {
         let digest = payload_digest(&command)?;
-        let (service_instance_id, source, plan) = {
+        let (service_target, source, plan) = {
             let snapshot = self.repository.load().await?;
             let mut state = snapshot.facts;
             validate_lease_state(&state, lease, current_time_ms())?;
@@ -1738,7 +1720,6 @@ impl CompleteAgentHost {
                 effect_id: command.effect_id.clone(),
                 command_id: command.command_id.clone(),
                 binding_id: binding_id.clone(),
-                service_instance_id: binding.service_instance_id.clone(),
                 generation: binding.generation,
                 source: binding.source.clone(),
                 payload_digest: digest,
@@ -1777,7 +1758,7 @@ impl CompleteAgentHost {
                             .delivery_epoch = lease.epoch;
                     }
                     let result = (
-                        binding.service_instance_id,
+                        binding.target,
                         binding.source,
                         if let Some(receipt) = settled {
                             RevokeDispatchPlan::Settled(Box::new(receipt))
@@ -1792,11 +1773,7 @@ impl CompleteAgentHost {
                 }
                 None => {
                     state.effects.insert(command.effect_id.clone(), candidate);
-                    let result = (
-                        binding.service_instance_id,
-                        binding.source,
-                        RevokeDispatchPlan::Dispatch,
-                    );
+                    let result = (binding.target, binding.source, RevokeDispatchPlan::Dispatch);
                     self.commit(snapshot.revision, state).await?;
                     result
                 }
@@ -1804,7 +1781,7 @@ impl CompleteAgentHost {
         };
         let receipt = match plan {
             RevokeDispatchPlan::Dispatch => {
-                let service = self.service(&service_instance_id).await?;
+                let service = self.service(&service_target).await?;
                 match service.revoke_surface(command.clone()).await {
                     Ok(receipt) => receipt,
                     Err(error) => {
@@ -1854,13 +1831,28 @@ impl CompleteAgentHost {
 
     async fn service(
         &self,
-        instance_id: &AgentServiceInstanceId,
+        target: &CompleteAgentBindingTarget,
     ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentHostError> {
-        self.services.resolve(instance_id).await.ok_or_else(|| {
-            CompleteAgentHostError::UnknownService {
-                instance_id: instance_id.clone(),
-            }
-        })
+        Ok(self.live_selection(target).await?.service())
+    }
+
+    async fn live_selection(
+        &self,
+        target: &CompleteAgentBindingTarget,
+    ) -> Result<CompleteAgentLiveSelection, CompleteAgentHostError> {
+        let selection = self
+            .live_catalog
+            .resolve(&target.live_attachment_id)
+            .await
+            .ok_or_else(|| CompleteAgentHostError::UnavailableAttachment {
+                attachment_id: target.live_attachment_id.clone(),
+            })?;
+        if selection.target != *target {
+            return Err(CompleteAgentHostError::DispatchRejected {
+                reason: "live attachment facts do not match the durable binding target".to_owned(),
+            });
+        }
+        Ok(selection)
     }
 
     async fn record_receipt(
@@ -2122,7 +2114,7 @@ impl CompleteAgentHost {
         if let Some(binding) = self.binding(&binding_id).await?
             && binding.dispatch_admitted()
         {
-            if binding.service_instance_id != target.service_instance_id
+            if binding.target != target.target
                 || binding.generation != target.generation
                 || binding.source != source
                 || binding.profile_digest != target.profile_digest
@@ -2143,7 +2135,7 @@ impl CompleteAgentHost {
         }
         let binding = CompleteAgentBinding {
             id: binding_id.clone(),
-            service_instance_id: target.service_instance_id.clone(),
+            target: target.target.clone(),
             generation: target.generation,
             source: source.clone(),
             profile_digest: target.profile_digest.clone(),
@@ -2227,7 +2219,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             runtime_thread_id: context.runtime_thread_id.clone(),
             child_thread_id: None,
             kind: CompleteAgentLifecycleOperationKind::Create,
-            service_instance_id: target.service_instance_id.clone(),
+            target: target.target.clone(),
             generation: target.generation,
             initial_context: initial_context.clone(),
             fork_cutoff: None,
@@ -2253,7 +2245,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             CompleteAgentLifecycleBegin::Dispatch => {}
         }
         let service = self
-            .service(&target.service_instance_id)
+            .service(&target.target)
             .await
             .map_err(map_lifecycle_host_error)?;
         let receipt = service
@@ -2314,7 +2306,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             runtime_thread_id: context.runtime_thread_id.clone(),
             child_thread_id: None,
             kind: CompleteAgentLifecycleOperationKind::Resume,
-            service_instance_id: target.service_instance_id.clone(),
+            target: target.target.clone(),
             generation: target.generation,
             initial_context: None,
             fork_cutoff: None,
@@ -2337,7 +2329,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             CompleteAgentLifecycleBegin::Dispatch => {}
         }
         let service = self
-            .service(&target.service_instance_id)
+            .service(&target.target)
             .await
             .map_err(map_lifecycle_host_error)?;
         let receipt = service
@@ -2435,7 +2427,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             runtime_thread_id: context.runtime_thread_id.clone(),
             child_thread_id: None,
             kind: CompleteAgentLifecycleOperationKind::Rebind,
-            service_instance_id: target.service_instance_id.clone(),
+            target: target.target.clone(),
             generation: target.generation,
             initial_context: None,
             fork_cutoff: None,
@@ -2462,7 +2454,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             .await
             .map_err(map_applied_lifecycle_host_error)?;
         let service = self
-            .service(&target.service_instance_id)
+            .service(&target.target)
             .await
             .map_err(map_lifecycle_host_error)?;
         let receipt = service
@@ -2516,7 +2508,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             runtime_thread_id: context.runtime_thread_id.clone(),
             child_thread_id: Some(child_thread_id.clone()),
             kind: CompleteAgentLifecycleOperationKind::Fork,
-            service_instance_id: target.service_instance_id.clone(),
+            target: target.target.clone(),
             generation: target.generation,
             initial_context: None,
             fork_cutoff: Some(cutoff.clone()),
@@ -2539,7 +2531,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
             CompleteAgentLifecycleBegin::Dispatch => {}
         }
         let service = self
-            .service(&target.service_instance_id)
+            .service(&target.target)
             .await
             .map_err(map_lifecycle_host_error)?;
         let receipt = service
@@ -2659,8 +2651,12 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
                         .map(ManagedRuntimeLifecycleInspection::CommandApplied),
                 };
             }
+            let target = self
+                .runtime_target(&record.runtime_thread_id)
+                .await
+                .map_err(map_lifecycle_host_error)?;
             let service = self
-                .service(&record.service_instance_id)
+                .service(&target.target)
                 .await
                 .map_err(map_lifecycle_host_error)?;
             let inspection = service
@@ -2731,7 +2727,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
                 reason: "read source does not match Runtime binding".to_owned(),
             });
         }
-        self.service(&host_binding.service_instance_id)
+        self.service(&host_binding.target)
             .await
             .map_err(map_lifecycle_host_error)?
             .read(query)
@@ -2756,7 +2752,7 @@ impl ManagedRuntimeLifecyclePort for CompleteAgentHost {
                 reason: "changes source does not match Runtime binding".to_owned(),
             });
         }
-        self.service(&host_binding.service_instance_id)
+        self.service(&host_binding.target)
             .await
             .map_err(map_lifecycle_host_error)?
             .changes(query)
@@ -3090,7 +3086,7 @@ impl CompleteAgentHost {
                 reason: "Create lifecycle outcome has no applied binding".to_owned(),
             });
         };
-        let service = self.service(&target.service_instance_id).await?;
+        let service = self.service(&target.target).await?;
         let descriptor = service.describe().await?;
         Ok(ManagedRuntimeCreateOutcome {
             binding: ManagedRuntimeAgentBinding {
@@ -3117,14 +3113,16 @@ fn runtime_binding_id(
 
 fn callback_route_id(
     runtime_thread_id: &RuntimeThreadId,
-    service_instance_id: &AgentServiceInstanceId,
+    target: &CompleteAgentBindingTarget,
     generation: AgentBindingGeneration,
     bound_surface: &BoundAgentSurface,
 ) -> Result<AgentCallbackRouteId, CompleteAgentHostError> {
     let mut digest = Sha256::new();
     digest.update(runtime_thread_id.as_str().as_bytes());
     digest.update([0]);
-    digest.update(service_instance_id.as_str().as_bytes());
+    digest.update(target.live_attachment_id.as_str().as_bytes());
+    digest.update([0]);
+    digest.update(target.host_incarnation_id().as_bytes());
     digest.update([0]);
     digest.update(generation.0.to_be_bytes());
     digest.update([0]);
@@ -3405,7 +3403,6 @@ fn fork_inspection_kind_mismatch(
 fn map_lifecycle_host_error(error: CompleteAgentHostError) -> ManagedRuntimeLifecycleError {
     match error {
         CompleteAgentHostError::UnknownBinding { .. }
-        | CompleteAgentHostError::UnknownService { .. }
         | CompleteAgentHostError::UnknownEffect { .. } => ManagedRuntimeLifecycleError::NotFound,
         CompleteAgentHostError::StaleGeneration { .. } => {
             ManagedRuntimeLifecycleError::StaleGeneration
@@ -3422,6 +3419,14 @@ fn map_lifecycle_host_error(error: CompleteAgentHostError) -> ManagedRuntimeLife
             reason: error.to_string(),
         },
         CompleteAgentHostError::Service(error) => ManagedRuntimeLifecycleError::Unavailable {
+            reason: error.to_string(),
+        },
+        CompleteAgentHostError::UnavailableAttachment { .. } => {
+            ManagedRuntimeLifecycleError::Unavailable {
+                reason: error.to_string(),
+            }
+        }
+        CompleteAgentHostError::LiveCatalog(error) => ManagedRuntimeLifecycleError::Invalid {
             reason: error.to_string(),
         },
         CompleteAgentHostError::DispatchRejected { reason }
@@ -3492,13 +3497,13 @@ fn ensure_generation(
     Ok(())
 }
 
-fn validate_service_descriptor(
+pub(crate) fn validate_service_descriptor(
     descriptor: &AgentServiceDescriptor,
 ) -> Result<(), CompleteAgentHostError> {
     validate_surface_profile(&descriptor.profile.surface)
 }
 
-fn runtime_offer_from_descriptor(
+pub(crate) fn runtime_offer_from_descriptor(
     descriptor: &AgentServiceDescriptor,
 ) -> Result<AgentRuntimeOffer, CompleteAgentHostError> {
     let surface = &descriptor.profile.surface;
@@ -3625,7 +3630,6 @@ fn ensure_same_effect(
 ) -> Result<(), CompleteAgentHostError> {
     if existing.command_id != candidate.command_id
         || existing.binding_id != candidate.binding_id
-        || existing.service_instance_id != candidate.service_instance_id
         || existing.generation != candidate.generation
         || existing.source != candidate.source
         || existing.payload_digest != candidate.payload_digest
@@ -3815,7 +3819,9 @@ mod tests {
         InitialContextAppliedEvidence, InitialContextProfile, SemanticFidelity,
     };
     use async_trait::async_trait;
-    use tokio::sync::{Mutex, Notify, RwLock};
+    use tokio::sync::{Mutex, Notify};
+
+    use crate::ProcessCompleteAgentLiveCatalog;
 
     use super::*;
 
@@ -3956,11 +3962,6 @@ mod tests {
             }
             self.inner.commit(commit).await
         }
-    }
-
-    #[derive(Default)]
-    struct FixtureServiceRegistry {
-        handles: RwLock<BTreeMap<AgentServiceInstanceId, Arc<dyn CompleteAgentService>>>,
     }
 
     struct LifecycleService {
@@ -4154,24 +4155,6 @@ mod tests {
         }
     }
 
-    #[async_trait]
-    impl crate::CompleteAgentServiceRegistry for FixtureServiceRegistry {
-        async fn attach(
-            &self,
-            instance_id: AgentServiceInstanceId,
-            service: Arc<dyn CompleteAgentService>,
-        ) {
-            self.handles.write().await.insert(instance_id, service);
-        }
-
-        async fn resolve(
-            &self,
-            instance_id: &AgentServiceInstanceId,
-        ) -> Option<Arc<dyn CompleteAgentService>> {
-            self.handles.read().await.get(instance_id).cloned()
-        }
-    }
-
     fn lifecycle_service() -> Arc<LifecycleService> {
         Arc::new(LifecycleService {
             create_calls: AtomicUsize::new(0),
@@ -4224,22 +4207,24 @@ mod tests {
         repository: Arc<dyn CompleteAgentHostRepository>,
     ) -> (CompleteAgentHost, Arc<LifecycleService>, RuntimeThreadId) {
         let service = lifecycle_service();
-        let host = CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
+        let host =
+            CompleteAgentHost::new(repository, Arc::new(ProcessCompleteAgentLiveCatalog::new()));
         let instance_id = AgentServiceInstanceId::new("lifecycle-service").expect("service");
-        host.register_verified_service(
-            fixture_verified_registration(
-                instance_id.clone(),
-                fixture_placement(),
-                descriptor().profile_digest,
-            ),
-            service.clone(),
-        )
-        .await
-        .expect("register lifecycle service");
+        let selection = host
+            .attach_verified_service(
+                fixture_verified_registration(
+                    instance_id.clone(),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
+                service.clone(),
+            )
+            .await
+            .expect("attach lifecycle service");
         let parent_thread = RuntimeThreadId::new("runtime-parent").expect("thread");
         host.register_runtime_target(CompleteAgentRuntimeTarget {
             runtime_thread_id: parent_thread.clone(),
-            service_instance_id: instance_id,
+            target: selection.target,
             generation: AgentBindingGeneration(1),
             profile_digest: descriptor().profile_digest,
             bound_surface: empty_bound_surface(),
@@ -4259,18 +4244,20 @@ mod tests {
         repository: Arc<dyn CompleteAgentHostRepository>,
         service: Arc<LifecycleService>,
     ) -> CompleteAgentHost {
-        let host = CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
+        let host =
+            CompleteAgentHost::new(repository, Arc::new(ProcessCompleteAgentLiveCatalog::new()));
         let instance_id = AgentServiceInstanceId::new("lifecycle-service").expect("service");
-        host.register_verified_service(
-            fixture_verified_registration(
-                instance_id,
-                fixture_placement(),
-                descriptor().profile_digest,
-            ),
-            service,
-        )
-        .await
-        .expect("reattach lifecycle service");
+        let _selection = host
+            .attach_verified_service(
+                fixture_verified_registration(
+                    instance_id,
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
+                service,
+            )
+            .await
+            .expect("reattach lifecycle service");
         host
     }
 
@@ -4319,25 +4306,26 @@ mod tests {
         let repository = Arc::new(FixtureHostRepository::default());
         let host = CompleteAgentHost::new(
             repository.clone(),
-            Arc::new(FixtureServiceRegistry::default()),
+            Arc::new(ProcessCompleteAgentLiveCatalog::new()),
         );
         let service = lifecycle_service();
         let instance_id = AgentServiceInstanceId::new("lifecycle-service").expect("service");
-        host.register_verified_service(
-            fixture_verified_registration(
-                instance_id.clone(),
-                fixture_placement(),
-                descriptor().profile_digest,
-            ),
-            service,
-        )
-        .await
-        .expect("register lifecycle service");
+        let selection = host
+            .attach_verified_service(
+                fixture_verified_registration(
+                    instance_id.clone(),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
+                service,
+            )
+            .await
+            .expect("attach lifecycle service");
         let request = CompleteAgentRuntimeTargetProvisioningRequest {
             idempotency_key: AgentIdempotencyKey::new("provision-runtime-a").expect("idempotency"),
             request_digest: AgentPayloadDigest::new("sha256:provision-a").expect("digest"),
             runtime_thread_id: RuntimeThreadId::new("runtime-provisioned").expect("thread"),
-            service_instance_id: instance_id,
+            target: selection.target,
             desired_surface: AgentSurfaceSnapshot {
                 revision: AgentSurfaceRevision(7),
                 digest: agentdash_agent_service_api::AgentSurfaceDigest::new("surface-7")
@@ -4391,6 +4379,10 @@ mod tests {
             )
             .await
             .expect("create source");
+        let current_target = host
+            .runtime_target(&runtime_thread_id)
+            .await
+            .expect("current target");
         let request = CompleteAgentRuntimeTargetRecoveryRequest {
             idempotency_key: AgentIdempotencyKey::new("surface-rebind-frame-2")
                 .expect("idempotency"),
@@ -4398,7 +4390,7 @@ mod tests {
                 .expect("digest"),
             runtime_thread_id: runtime_thread_id.clone(),
             expected_generation: AgentBindingGeneration(1),
-            service_instance_id: AgentServiceInstanceId::new("lifecycle-service").expect("service"),
+            target: current_target.target,
             desired_surface: AgentSurfaceSnapshot {
                 revision: AgentSurfaceRevision(2),
                 digest: agentdash_agent_service_api::AgentSurfaceDigest::new("surface-2")
@@ -4466,10 +4458,13 @@ mod tests {
             .expect("create source");
         let old_binding_id =
             runtime_binding_id(&runtime_thread_id, AgentBindingGeneration(1)).expect("binding");
+        let previous_target = host
+            .runtime_target(&runtime_thread_id)
+            .await
+            .expect("runtime target")
+            .target;
         let lost_threads = host
-            .mark_service_bindings_lost(
-                &AgentServiceInstanceId::new("lifecycle-service").expect("service"),
-            )
+            .mark_target_bindings_lost(&previous_target)
             .await
             .expect("mark previous service bindings lost");
         assert_eq!(lost_threads, vec![runtime_thread_id.clone()]);
@@ -4481,22 +4476,23 @@ mod tests {
         );
         let replacement_instance_id =
             AgentServiceInstanceId::new("lifecycle-service-replacement").expect("service");
-        host.register_verified_service(
-            fixture_verified_registration(
-                replacement_instance_id.clone(),
-                fixture_placement(),
-                descriptor().profile_digest,
-            ),
-            service.clone(),
-        )
-        .await
-        .expect("register replacement service");
+        let replacement = host
+            .attach_verified_service(
+                fixture_verified_registration(
+                    replacement_instance_id.clone(),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
+                service.clone(),
+            )
+            .await
+            .expect("attach replacement service");
         let request = CompleteAgentRuntimeTargetRecoveryRequest {
             idempotency_key: AgentIdempotencyKey::new("recover-runtime-a").expect("idempotency"),
             request_digest: AgentPayloadDigest::new("sha256:recover-runtime-a").expect("digest"),
             runtime_thread_id: runtime_thread_id.clone(),
             expected_generation: AgentBindingGeneration(1),
-            service_instance_id: replacement_instance_id,
+            target: replacement.target,
             desired_surface: AgentSurfaceSnapshot {
                 revision: AgentSurfaceRevision(2),
                 digest: agentdash_agent_service_api::AgentSurfaceDigest::new("surface-recovered")
@@ -4576,16 +4572,17 @@ mod tests {
         .expect("mark lost");
         let replacement_instance_id =
             AgentServiceInstanceId::new("rebind-crash-replacement").expect("service");
-        host.register_verified_service(
-            fixture_verified_registration(
-                replacement_instance_id.clone(),
-                fixture_placement(),
-                descriptor().profile_digest,
-            ),
-            service.clone(),
-        )
-        .await
-        .expect("register replacement");
+        let replacement = host
+            .attach_verified_service(
+                fixture_verified_registration(
+                    replacement_instance_id.clone(),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
+                service.clone(),
+            )
+            .await
+            .expect("attach replacement");
         host.install_runtime_recovery_planner(Arc::new(FixtureRecoveryPlanner {
             request: CompleteAgentRuntimeTargetRecoveryRequest {
                 idempotency_key: AgentIdempotencyKey::new("rebind-crash-target")
@@ -4594,7 +4591,7 @@ mod tests {
                     .expect("digest"),
                 runtime_thread_id: runtime_thread_id.clone(),
                 expected_generation: AgentBindingGeneration(1),
-                service_instance_id: replacement_instance_id.clone(),
+                target: replacement.target,
                 desired_surface: AgentSurfaceSnapshot {
                     revision: AgentSurfaceRevision(2),
                     digest: agentdash_agent_service_api::AgentSurfaceDigest::new(
@@ -4617,7 +4614,7 @@ mod tests {
         assert_eq!(service.resume_calls.load(Ordering::SeqCst), 1);
         let restarted = restarted_lifecycle_host(failing, service.clone()).await;
         restarted
-            .register_verified_service(
+            .attach_verified_service(
                 fixture_verified_registration(
                     replacement_instance_id,
                     fixture_placement(),
@@ -4660,23 +4657,24 @@ mod tests {
         });
         let host = CompleteAgentHost::new(
             repository.clone(),
-            Arc::new(FixtureServiceRegistry::default()),
+            Arc::new(ProcessCompleteAgentLiveCatalog::new()),
         );
         let instance_id = AgentServiceInstanceId::new("lifecycle-service").expect("service");
-        host.register_verified_service(
-            fixture_verified_registration(
-                instance_id.clone(),
-                fixture_placement(),
-                descriptor().profile_digest,
-            ),
-            service.clone(),
-        )
-        .await
-        .expect("register lifecycle service");
+        let selection = host
+            .attach_verified_service(
+                fixture_verified_registration(
+                    instance_id.clone(),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
+                service.clone(),
+            )
+            .await
+            .expect("attach lifecycle service");
         let parent_thread = RuntimeThreadId::new("runtime-parent").expect("thread");
         host.register_runtime_target(CompleteAgentRuntimeTarget {
             runtime_thread_id: parent_thread.clone(),
-            service_instance_id: instance_id,
+            target: selection.target,
             generation: AgentBindingGeneration(1),
             profile_digest: descriptor().profile_digest,
             bound_surface: empty_bound_surface(),
@@ -5311,7 +5309,9 @@ mod tests {
     fn stale_generation_is_fenced() {
         let binding = CompleteAgentBinding {
             id: CompleteAgentBindingId::new("binding").expect("binding"),
-            service_instance_id: AgentServiceInstanceId::new("service").expect("service"),
+            target: fixture_binding_target(
+                AgentServiceInstanceId::new("service").expect("service"),
+            ),
             generation: AgentBindingGeneration(2),
             source: AgentSourceCoordinate::new("source").expect("source"),
             profile_digest: AgentProfileDigest::new("profile").expect("profile"),
@@ -5414,18 +5414,19 @@ mod tests {
         });
         let instance_id = AgentServiceInstanceId::new("service").expect("service");
         let host = fixture_host();
-        host.register_verified_service(
-            fixture_verified_registration(
-                instance_id.clone(),
-                fixture_placement(),
-                service_descriptor.profile_digest.clone(),
-            ),
-            service,
-        )
-        .await
-        .expect("register service");
+        let selection = host
+            .attach_verified_service(
+                fixture_verified_registration(
+                    instance_id.clone(),
+                    fixture_placement(),
+                    service_descriptor.profile_digest.clone(),
+                ),
+                service,
+            )
+            .await
+            .expect("attach service");
 
-        let offer = host.runtime_offer(&instance_id).await.expect("offer");
+        let offer = selection.offer;
 
         assert_eq!(offer.profile_digest, service_descriptor.profile_digest);
         assert_eq!(offer.contributions, facets);
@@ -5487,23 +5488,24 @@ mod tests {
         let repository = Arc::new(FixtureHostRepository::default());
         let host = CompleteAgentHost::new(
             repository.clone(),
-            Arc::new(FixtureServiceRegistry::default()),
+            Arc::new(ProcessCompleteAgentLiveCatalog::new()),
         );
-        host.register_verified_service(
-            fixture_verified_registration(
-                instance_id.clone(),
-                fixture_placement(),
-                descriptor().profile_digest,
-            ),
-            service.clone(),
-        )
-        .await
-        .expect("register service");
+        let selection = host
+            .attach_verified_service(
+                fixture_verified_registration(
+                    instance_id.clone(),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
+                service.clone(),
+            )
+            .await
+            .expect("attach service");
         let binding_id = CompleteAgentBindingId::new("binding").expect("binding");
         let bound_surface = empty_bound_surface();
         host.register_binding(CompleteAgentBinding {
             id: binding_id.clone(),
-            service_instance_id: instance_id,
+            target: selection.target,
             generation: AgentBindingGeneration(1),
             source: source.clone(),
             profile_digest: descriptor().profile_digest,
@@ -5552,9 +5554,9 @@ mod tests {
         drop(host);
 
         let restarted =
-            CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
+            CompleteAgentHost::new(repository, Arc::new(ProcessCompleteAgentLiveCatalog::new()));
         restarted
-            .register_verified_service(
+            .attach_verified_service(
                 fixture_verified_registration(
                     AgentServiceInstanceId::new("service").expect("service"),
                     fixture_placement(),
@@ -5763,7 +5765,9 @@ mod tests {
         let bound_surface = empty_bound_surface();
         let binding = CompleteAgentBinding {
             id: binding_id.clone(),
-            service_instance_id: AgentServiceInstanceId::new("service").expect("service"),
+            target: fixture_binding_target(
+                AgentServiceInstanceId::new("service").expect("service"),
+            ),
             generation: AgentBindingGeneration(1),
             source: source.clone(),
             profile_digest: descriptor().profile_digest,
@@ -5779,7 +5783,6 @@ mod tests {
             effect_id: effect_id.clone(),
             command_id,
             binding_id: binding_id.clone(),
-            service_instance_id: binding.service_instance_id.clone(),
             generation: binding.generation,
             source,
             payload_digest: payload_digest(&command).expect("command digest"),
@@ -5852,9 +5855,9 @@ mod tests {
         );
 
         let restarted =
-            CompleteAgentHost::new(durable, Arc::new(FixtureServiceRegistry::default()));
+            CompleteAgentHost::new(durable, Arc::new(ProcessCompleteAgentLiveCatalog::new()));
         restarted
-            .register_verified_service(
+            .attach_verified_service(
                 fixture_verified_registration(
                     AgentServiceInstanceId::new("service").expect("service"),
                     fixture_placement(),
@@ -5906,20 +5909,21 @@ mod tests {
             inspection_states: Mutex::new(VecDeque::new()),
             revoke_receipt: None,
         });
-        host.register_verified_service(
-            fixture_verified_registration(
-                instance_id.clone(),
-                fixture_placement(),
-                descriptor().profile_digest,
-            ),
-            service,
-        )
-        .await
-        .expect("register service");
+        let selection = host
+            .attach_verified_service(
+                fixture_verified_registration(
+                    instance_id.clone(),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
+                service,
+            )
+            .await
+            .expect("attach service");
         let binding_id = CompleteAgentBindingId::new("binding").expect("binding");
         host.register_binding(CompleteAgentBinding {
             id: binding_id.clone(),
-            service_instance_id: instance_id,
+            target: selection.target,
             generation: AgentBindingGeneration(3),
             source: AgentSourceCoordinate::new("source").expect("source"),
             profile_digest: descriptor().profile_digest,
@@ -6087,7 +6091,9 @@ mod tests {
         let effect_id = AgentEffectIdentity::new("effect").expect("effect");
         let binding = CompleteAgentBinding {
             id: binding_id.clone(),
-            service_instance_id: AgentServiceInstanceId::new("service").expect("service"),
+            target: fixture_binding_target(
+                AgentServiceInstanceId::new("service").expect("service"),
+            ),
             generation: AgentBindingGeneration(1),
             source: AgentSourceCoordinate::new("source").expect("source"),
             profile_digest: AgentProfileDigest::new("profile").expect("profile"),
@@ -6131,7 +6137,6 @@ mod tests {
             effect_id: AgentEffectIdentity::new("effect").expect("effect"),
             command_id: AgentCommandId::new("command").expect("command"),
             binding_id: CompleteAgentBindingId::new("binding").expect("binding"),
-            service_instance_id: AgentServiceInstanceId::new("service").expect("service"),
             generation: AgentBindingGeneration(1),
             source: AgentSourceCoordinate::new("source").expect("source"),
             payload_digest: AgentPayloadDigest::new(digest).expect("digest"),
@@ -6148,7 +6153,7 @@ mod tests {
     fn fixture_host() -> CompleteAgentHost {
         CompleteAgentHost::new(
             Arc::new(FixtureHostRepository::default()),
-            Arc::new(FixtureServiceRegistry::default()),
+            Arc::new(ProcessCompleteAgentLiveCatalog::new()),
         )
     }
 
@@ -6158,12 +6163,28 @@ mod tests {
         }
     }
 
+    fn fixture_binding_target(instance_id: AgentServiceInstanceId) -> CompleteAgentBindingTarget {
+        let descriptor = descriptor();
+        CompleteAgentBindingTarget {
+            logical_instance_id: instance_id,
+            live_attachment_id: CompleteAgentLiveAttachmentId::new("fixture-attachment")
+                .expect("attachment"),
+            definition_id: descriptor.definition_id,
+            verified_build_digest: AgentPayloadDigest::new("fixture-build").expect("build digest"),
+            verified_profile_digest: descriptor.profile_digest.clone(),
+            offer_profile_digest: descriptor.profile_digest,
+            placement: fixture_placement(),
+            remote_binding: None,
+        }
+    }
+
     fn fixture_verified_registration(
         instance_id: AgentServiceInstanceId,
         placement: CompleteAgentPlacement,
         profile_digest: AgentProfileDigest,
     ) -> CompleteAgentVerifiedServiceRegistration {
         CompleteAgentVerifiedServiceRegistration {
+            descriptor: descriptor(),
             verification: CompleteAgentServiceVerification {
                 service_instance_id: instance_id.clone(),
                 publisher_integration: "fixture-integration".to_owned(),
@@ -6228,10 +6249,10 @@ mod tests {
 
         let restarted = Arc::new(CompleteAgentHost::new(
             repository.clone(),
-            Arc::new(FixtureServiceRegistry::default()),
+            Arc::new(ProcessCompleteAgentLiveCatalog::new()),
         ));
         restarted
-            .register_verified_service(
+            .attach_verified_service(
                 fixture_verified_registration(
                     AgentServiceInstanceId::new("service").expect("service"),
                     fixture_placement(),
@@ -6252,9 +6273,9 @@ mod tests {
         drop(restarted);
 
         let replayed =
-            CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
+            CompleteAgentHost::new(repository, Arc::new(ProcessCompleteAgentLiveCatalog::new()));
         replayed
-            .register_verified_service(
+            .attach_verified_service(
                 fixture_verified_registration(
                     AgentServiceInstanceId::new("service").expect("service"),
                     fixture_placement(),
@@ -6361,9 +6382,9 @@ mod tests {
         drop(host);
 
         let restarted =
-            CompleteAgentHost::new(repository, Arc::new(FixtureServiceRegistry::default()));
+            CompleteAgentHost::new(repository, Arc::new(ProcessCompleteAgentLiveCatalog::new()));
         restarted
-            .register_verified_service(
+            .attach_verified_service(
                 fixture_verified_registration(
                     AgentServiceInstanceId::new("service").expect("service"),
                     fixture_placement(),
@@ -6446,24 +6467,25 @@ mod tests {
     ) {
         let host = Arc::new(CompleteAgentHost::new(
             repository,
-            Arc::new(FixtureServiceRegistry::default()),
+            Arc::new(ProcessCompleteAgentLiveCatalog::new()),
         ));
         let instance_id = AgentServiceInstanceId::new("service").expect("service");
-        host.register_verified_service(
-            fixture_verified_registration(
-                instance_id.clone(),
-                fixture_placement(),
-                descriptor().profile_digest,
-            ),
-            service,
-        )
-        .await
-        .expect("register service");
+        let selection = host
+            .attach_verified_service(
+                fixture_verified_registration(
+                    instance_id.clone(),
+                    fixture_placement(),
+                    descriptor().profile_digest,
+                ),
+                service,
+            )
+            .await
+            .expect("attach service");
         let binding_id = CompleteAgentBindingId::new("binding").expect("binding");
         let bound_surface = empty_bound_surface();
         host.register_binding(CompleteAgentBinding {
             id: binding_id.clone(),
-            service_instance_id: instance_id,
+            target: selection.target,
             generation: AgentBindingGeneration(1),
             source: AgentSourceCoordinate::new("source").expect("source"),
             profile_digest: descriptor().profile_digest,
@@ -6563,10 +6585,11 @@ mod tests {
         binding: Option<CompleteAgentBinding>,
     ) -> CompleteAgentBindingLease {
         let descriptor = descriptor();
-        let profile_digest = descriptor.profile_digest.clone();
         let binding = binding.unwrap_or_else(|| CompleteAgentBinding {
             id: record.binding_id.clone(),
-            service_instance_id: record.service_instance_id.clone(),
+            target: fixture_binding_target(
+                AgentServiceInstanceId::new("service").expect("service"),
+            ),
             generation: record.generation,
             source: record.source.clone(),
             profile_digest: descriptor.profile_digest.clone(),
@@ -6574,26 +6597,7 @@ mod tests {
             applied_surface: None,
             state: CompleteAgentBindingState::PendingSurface,
         });
-        let offer = runtime_offer_from_descriptor(&descriptor).expect("runtime offer");
         let mut facts = CompleteAgentHostFacts::default();
-        facts
-            .service_instances
-            .insert(binding.service_instance_id.clone(), descriptor);
-        facts
-            .offers
-            .insert(binding.service_instance_id.clone(), offer);
-        facts
-            .placements
-            .insert(binding.service_instance_id.clone(), fixture_placement());
-        facts.service_verifications.insert(
-            binding.service_instance_id.clone(),
-            fixture_verified_registration(
-                binding.service_instance_id.clone(),
-                fixture_placement(),
-                profile_digest,
-            )
-            .verification,
-        );
         facts
             .source_coordinates
             .insert(binding.id.clone(), binding.source.clone());

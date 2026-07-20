@@ -678,6 +678,18 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
+
+    fn fixture_execution_profile() -> crate::agent_run::ProductExecutionProfileRef {
+        let mut profile = crate::agent_run::ProductExecutionProfileRef {
+            profile_key: "codex".to_owned(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::json!({"executor": "codex"}),
+            credential_scope: None,
+        };
+        profile.refresh_digest();
+        profile
+    }
     use crate::agent_run::AgentRunProductRuntimeBinding;
 
     #[derive(Clone)]
@@ -1213,7 +1225,8 @@ mod tests {
                 agent_id: target.agent_id,
                 revision: 1,
             },
-            execution_profile_digest: "sha256:mailbox-profile".to_owned(),
+            execution_profile_digest: fixture_execution_profile().profile_digest,
+            execution_profile: fixture_execution_profile(),
             source_binding: ManagedRuntimeSourceBindingEvidence {
                 source_ref: RuntimeSourceRef::new("source:mailbox").expect("source"),
                 committed_at_revision: RuntimeProjectionRevision(1),

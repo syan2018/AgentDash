@@ -7,9 +7,12 @@ use tokio::sync::broadcast;
 use agentdash_agent_runtime::{PlatformToolBroker, RuntimeToolExecutor};
 use agentdash_agent_runtime_contract::ManagedAgentRuntimeGateway;
 use agentdash_agent_runtime_host::{
+    CompleteAgentHostError, CompleteAgentLiveCatalog, CompleteAgentLiveCatalogError,
     CompleteAgentVerificationMethod, CompleteAgentVerificationRecord, RuntimePlatformToolHandler,
 };
-use agentdash_agent_service_api::{AgentHostCallbacks, AgentPayloadDigest, AgentServiceInstanceId};
+use agentdash_agent_service_api::{
+    AgentHostCallbacks, AgentPayloadDigest, AgentServiceErrorCode, AgentServiceInstanceId,
+};
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::companion::RuntimeThreadToolServices;
 use agentdash_application::companion::{
@@ -135,12 +138,18 @@ fn resolve_platform_mcp_base_url(raw_value: Option<String>) -> Option<String> {
 fn is_optional_complete_agent_materialization_failure(
     error: &CompleteAgentCompositionError,
 ) -> bool {
-    matches!(
-        error,
-        CompleteAgentCompositionError::Contribution(
-            CompleteAgentContributionError::Factory(_) | CompleteAgentContributionError::Service(_)
-        )
-    )
+    match error {
+        CompleteAgentCompositionError::Contribution(CompleteAgentContributionError::Factory(_)) => {
+            true
+        }
+        CompleteAgentCompositionError::Contribution(CompleteAgentContributionError::Service(
+            service_error,
+        ))
+        | CompleteAgentCompositionError::Host(CompleteAgentHostError::LiveCatalog(
+            CompleteAgentLiveCatalogError::Service(service_error),
+        )) => service_error.code == AgentServiceErrorCode::Unavailable,
+        _ => false,
+    }
 }
 
 fn builtin_complete_agent_verifier() -> Result<PinnedCompleteAgentVerificationCatalog> {
@@ -447,9 +456,13 @@ impl AppState {
             .drain(..)
         {
             let instance_id = contribution.facts().instance_id().clone();
-            let descriptor = match complete_agent.register_contribution(contribution).await {
-                Ok(descriptor) => descriptor,
+            let _selection = match complete_agent.register_contribution(contribution).await {
+                Ok(selection) => selection,
                 Err(error) if is_optional_complete_agent_materialization_failure(&error) => {
+                    complete_agent
+                        .live_catalog
+                        .mark_unavailable(instance_id.clone(), error.to_string())
+                        .await;
                     let context = DiagnosticErrorContext::new(
                         "app_state.complete_agent_registration",
                         "materialize_optional_service",
@@ -466,9 +479,6 @@ impl AppState {
                 }
                 Err(error) => return Err(error.into()),
             };
-            complete_agent_selections
-                .activate_recovery_profile(descriptor.profile_digest, instance_id)
-                .await;
         }
         let complete_agent_selector = Arc::new(ProductionCompleteAgentServiceSelector::new(
             complete_agent.clone(),
@@ -557,7 +567,7 @@ impl AppState {
                 product_commands.clone(),
             ));
         let product_launch = Arc::new(AgentRunProductLaunchService::new(
-            product_runtime_provisioner,
+            product_runtime_provisioner.clone(),
             complete_agent.runtime.clone(),
             runtime_product_bindings.clone(),
             product_resource_materializer.clone(),
@@ -571,6 +581,7 @@ impl AppState {
             runtime_product_bindings.clone(),
             product_resource_materializer,
             product_persistence.applied_resource_surfaces.clone(),
+            product_runtime_provisioner,
         ));
         let product_recovery: Arc<dyn AgentRunProductRuntimeRecoveryPort> =
             product_recovery_service.clone();
@@ -926,6 +937,7 @@ mod tests {
     };
 
     use super::{
+        CompleteAgentHostError, CompleteAgentLiveCatalogError,
         is_optional_complete_agent_materialization_failure, resolve_platform_mcp_base_url,
     };
 
@@ -963,12 +975,23 @@ mod tests {
                 true,
             )),
         );
+        let catalog_service_error =
+            CompleteAgentCompositionError::Host(CompleteAgentHostError::LiveCatalog(
+                CompleteAgentLiveCatalogError::Service(AgentServiceError::new(
+                    AgentServiceErrorCode::Unavailable,
+                    "fixture live describe unavailable",
+                    true,
+                )),
+            ));
 
         assert!(is_optional_complete_agent_materialization_failure(
             &factory_error
         ));
         assert!(is_optional_complete_agent_materialization_failure(
             &service_error
+        ));
+        assert!(is_optional_complete_agent_materialization_failure(
+            &catalog_service_error
         ));
     }
 

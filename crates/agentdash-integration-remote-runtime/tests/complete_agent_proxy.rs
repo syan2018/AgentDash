@@ -18,12 +18,14 @@ use agentdash_agent_service_api::{
     AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandEnvelope, AgentCommandId,
     AgentCommandMeta, AgentContentBlock, AgentEffectIdentity, AgentEffectInspection,
     AgentEffectInspectionState, AgentHookAction, AgentHookDefinitionId, AgentHookInvocation,
-    AgentHookPoint, AgentHookTiming, AgentHostCallbackError, AgentHostCallbackMeta,
-    AgentHostCallbacks, AgentIdempotencyKey, AgentInput, AgentInputContent, AgentItemBody,
-    AgentItemId, AgentItemPresentation, AgentItemTransition, AgentLifecycleStatus, AgentReadQuery,
-    AgentReceiptState, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
-    AgentSourceCoordinate, AgentSourceCursor, AgentToolInvocation, AgentToolName, AgentToolResult,
-    AgentTurnId, AppliedAgentCommandReceipt, CompleteAgentService,
+    AgentHookPoint, AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbackError,
+    AgentHostCallbackMeta, AgentHostCallbacks, AgentIdempotencyKey, AgentInput, AgentInputContent,
+    AgentItemBody, AgentItemId, AgentItemPresentation, AgentItemTransition, AgentLifecycleStatus,
+    AgentProfileDigest, AgentReadQuery, AgentReceiptState, AgentServiceError,
+    AgentServiceErrorCode, AgentServiceInstanceId, AgentSourceCoordinate, AgentSourceCursor,
+    AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute, AgentToolInvocation,
+    AgentToolName, AgentToolResult, AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface,
+    AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, BoundAgentSurface, CompleteAgentService,
 };
 use agentdash_integration_remote_runtime::{
     RemoteCompleteAgentRegistration, RemoteCompleteAgentService, RemoteRuntimeTransportError,
@@ -140,6 +142,26 @@ impl RuntimeWirePlacement for LoopbackPlacement {
                         },
                     },
                 })))
+            }
+            RuntimeWireAgentServiceRequest::ApplySurface { target, command } => {
+                assert_eq!(target.binding_generation, AgentBindingGeneration(9));
+                assert_eq!(
+                    command.callbacks.binding_generation,
+                    AgentBindingGeneration(9),
+                    "proxy must rewrite callback generation at the Runtime Wire boundary"
+                );
+                RuntimeWireAgentServiceResponse::ApplySurface(Ok(Box::new(
+                    AppliedAgentSurfaceReceipt {
+                        command_id: command.command_id,
+                        effect_id: command.effect_id,
+                        source: command.source,
+                        applied: AppliedAgentSurface {
+                            revision: command.bound_surface.revision,
+                            digest: command.bound_surface.digest,
+                            contributions: Vec::new(),
+                        },
+                    },
+                )))
             }
             _ => return Ok(()),
         };
@@ -309,6 +331,31 @@ fn execute(id: &str, generation: u64) -> AgentCommandEnvelope {
             },
         },
     }
+}
+
+async fn apply_callback_route(proxy: &RemoteCompleteAgentService, route: &str, generation: u64) {
+    proxy
+        .apply_surface(ApplyBoundAgentSurface {
+            command_id: AgentCommandId::new(format!("apply-{route}")).expect("command"),
+            effect_id: AgentEffectIdentity::new(format!("apply-effect-{route}")).expect("effect"),
+            idempotency_key: AgentIdempotencyKey::new(format!("apply-idem-{route}"))
+                .expect("idempotency"),
+            source: AgentSourceCoordinate::new("thread-1").expect("source"),
+            bound_surface: BoundAgentSurface {
+                revision: AgentSurfaceRevision(1),
+                digest: AgentSurfaceDigest::new(format!("surface-{route}")).expect("digest"),
+                offer_profile_digest: AgentProfileDigest::new("profile").expect("profile"),
+                contributions: Vec::new(),
+            },
+            callbacks: AgentHostCallbackBinding {
+                route_id: AgentCallbackRouteId::new(route).expect("route"),
+                binding_generation: AgentBindingGeneration(generation),
+                delivery: AgentSurfaceRoute::AgentNativeCallback,
+                default_deadline_ms: u64::MAX,
+            },
+        })
+        .await
+        .expect("apply callback route");
 }
 
 fn tool_invocation(
@@ -516,9 +563,18 @@ impl CompleteAgentService for EndpointTracerService {
 
     async fn apply_surface(
         &self,
-        _: agentdash_agent_service_api::ApplyBoundAgentSurface,
-    ) -> Result<agentdash_agent_service_api::AppliedAgentSurfaceReceipt, AgentServiceError> {
-        Err(Self::unsupported())
+        command: ApplyBoundAgentSurface,
+    ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
+        Ok(AppliedAgentSurfaceReceipt {
+            command_id: command.command_id,
+            effect_id: command.effect_id,
+            source: command.source,
+            applied: AppliedAgentSurface {
+                revision: command.bound_surface.revision,
+                digest: command.bound_surface.digest,
+                contributions: Vec::new(),
+            },
+        })
     }
 
     async fn revoke_surface(
@@ -554,12 +610,8 @@ fn endpoint_tracer_with_callbacks(
         source_service.clone(),
     ));
     source_service.bind_callbacks(endpoint.host_callbacks());
-    let proxy = RemoteCompleteAgentService::new(
-        AgentBindingGeneration(3),
-        endpoint.target(),
-        endpoint.clone(),
-        host_callbacks,
-    );
+    let proxy =
+        RemoteCompleteAgentService::new(endpoint.target(), endpoint.clone(), host_callbacks);
     (source_service, endpoint, proxy)
 }
 
@@ -574,7 +626,6 @@ async fn registration_preserves_caller_service_identity_and_complete_agent_targe
     ));
     let registration = RemoteCompleteAgentRegistration::new(
         AgentServiceInstanceId::new("enterprise-agent").expect("instance"),
-        AgentBindingGeneration(3),
         endpoint.target(),
         endpoint,
         callbacks,
@@ -598,6 +649,7 @@ async fn wait_until(mut predicate: impl FnMut() -> bool) {
 #[tokio::test]
 async fn real_endpoint_round_trips_tool_hook_and_replays_duplicate_callback_result() {
     let (source_service, endpoint, host_callbacks, proxy) = endpoint_tracer();
+    apply_callback_route(&proxy, "endpoint-route", 3).await;
     let command = execute("endpoint-roundtrip", 3);
     let effect_id = command.meta.effect_id.clone();
 
@@ -656,6 +708,7 @@ async fn callback_effects_are_reentrant_and_different_effects_do_not_share_an_aw
     let host_callbacks = Arc::new(ReentrantCallbacks::default());
     let (source_service, endpoint, proxy) = endpoint_tracer_with_callbacks(host_callbacks.clone());
     host_callbacks.bind_nested(endpoint.host_callbacks());
+    apply_callback_route(&proxy, "endpoint-route", 3).await;
 
     tokio::time::timeout(
         std::time::Duration::from_secs(1),
@@ -727,12 +780,8 @@ async fn source_callback_deadline_clears_pending_and_replays_typed_timeout() {
 async fn proxy_deadline_and_effect_ledger_prevent_duplicate_host_side_effects() {
     let placement = LoopbackPlacement::new();
     let host = Arc::new(BlockingCallbacks::default());
-    let _proxy = RemoteCompleteAgentService::new(
-        AgentBindingGeneration(3),
-        target(),
-        placement.clone(),
-        host.clone(),
-    );
+    let proxy = RemoteCompleteAgentService::new(target(), placement.clone(), host.clone());
+    apply_callback_route(&proxy, "route-proxy-deadline-effect", 3).await;
     let call = RuntimeWireAgentHostCallbackRequest::Tool(tool_invocation(
         "proxy-deadline-effect",
         9,
@@ -979,12 +1028,7 @@ async fn failed_change_send_does_not_commit_sequence_or_cursor_before_retry() {
 async fn proxy_rewrites_generation_and_replays_completed_duplicate_without_second_effect() {
     let placement = LoopbackPlacement::new();
     let callbacks = Arc::new(RecordingCallbacks::default());
-    let proxy = RemoteCompleteAgentService::new(
-        AgentBindingGeneration(3),
-        target(),
-        placement.clone(),
-        callbacks,
-    );
+    let proxy = RemoteCompleteAgentService::new(target(), placement.clone(), callbacks);
     let command = execute("same", 3);
 
     let first = proxy.execute(command.clone()).await.expect("first execute");
@@ -1000,22 +1044,25 @@ async fn proxy_rewrites_generation_and_replays_completed_duplicate_without_secon
 }
 
 #[tokio::test]
-async fn stale_local_generation_is_fenced_before_remote_dispatch() {
+async fn recovered_local_generation_is_rewritten_and_zero_is_fenced() {
     let placement = LoopbackPlacement::new();
     let proxy = RemoteCompleteAgentService::new(
-        AgentBindingGeneration(3),
         target(),
         placement.clone(),
         Arc::new(RecordingCallbacks::default()),
     );
 
-    let error = proxy
-        .execute(execute("stale", 2))
+    proxy
+        .execute(execute("recovered", 4))
         .await
-        .expect_err("stale generation");
+        .expect("Host-fenced recovered generation");
+    let error = proxy
+        .execute(execute("zero", 0))
+        .await
+        .expect_err("zero generation");
 
     assert_eq!(error.code, AgentServiceErrorCode::StaleBindingGeneration);
-    assert_eq!(placement.execute_requests.load(Ordering::Relaxed), 0);
+    assert_eq!(placement.execute_requests.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]
@@ -1025,7 +1072,6 @@ async fn proxy_rejects_a_success_receipt_for_different_command_coordinates() {
         .mismatch_execute_coordinates
         .store(true, Ordering::Relaxed);
     let proxy = RemoteCompleteAgentService::new(
-        AgentBindingGeneration(3),
         target(),
         placement,
         Arc::new(RecordingCallbacks::default()),
@@ -1043,7 +1089,6 @@ async fn proxy_rejects_a_success_receipt_for_different_command_coordinates() {
 async fn proxy_rejects_an_inconsistent_typed_inspection() {
     let placement = LoopbackPlacement::new();
     let proxy = RemoteCompleteAgentService::new(
-        AgentBindingGeneration(3),
         target(),
         placement,
         Arc::new(RecordingCallbacks::default()),
@@ -1061,7 +1106,6 @@ async fn proxy_rejects_an_inconsistent_typed_inspection() {
 async fn pushed_change_replay_is_idempotent_and_frame_gap_loses_the_binding() {
     let placement = LoopbackPlacement::new();
     let proxy = RemoteCompleteAgentService::new(
-        AgentBindingGeneration(3),
         target(),
         placement.clone(),
         Arc::new(RecordingCallbacks::default()),
@@ -1131,12 +1175,8 @@ async fn pushed_change_replay_is_idempotent_and_frame_gap_loses_the_binding() {
 async fn reverse_callback_rewrites_source_generation_and_preserves_request_correlation() {
     let placement = LoopbackPlacement::new();
     let callbacks = Arc::new(RecordingCallbacks::default());
-    let _proxy = RemoteCompleteAgentService::new(
-        AgentBindingGeneration(3),
-        target(),
-        placement.clone(),
-        callbacks.clone(),
-    );
+    let proxy = RemoteCompleteAgentService::new(target(), placement.clone(), callbacks.clone());
+    apply_callback_route(&proxy, "route-1", 3).await;
     placement.inject(
         true,
         RuntimeWireFrame::Request(Box::new(RuntimeWireRequest::AgentHostCallback(Box::new(
@@ -1174,7 +1214,7 @@ async fn reverse_callback_rewrites_source_generation_and_preserves_request_corre
     assert!(sent.iter().any(|envelope| matches!(
         &envelope.frame,
         RuntimeWireFrame::Response {
-            request_frame_id: RuntimeWireFrameId(1),
+            request_frame_id: RuntimeWireFrameId(2),
             response: RuntimeWireResponse::AgentHostCallback(
                 RuntimeWireAgentHostCallbackResponse::Tool(Ok(_))
             ),
@@ -1186,7 +1226,6 @@ async fn reverse_callback_rewrites_source_generation_and_preserves_request_corre
 async fn disconnect_is_unavailable_never_a_fabricated_completion() {
     let placement = LoopbackPlacement::new();
     let proxy = RemoteCompleteAgentService::new(
-        AgentBindingGeneration(3),
         target(),
         placement.clone(),
         Arc::new(RecordingCallbacks::default()),

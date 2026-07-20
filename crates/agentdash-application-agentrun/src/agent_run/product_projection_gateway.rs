@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use super::ProductAgentFrameRef;
 use super::product_protocol::{
     AgentRunRuntimeProjectionPort, consume_managed_runtime_change_page,
     consume_managed_runtime_snapshot,
@@ -25,18 +24,25 @@ use super::terminal_projection_protocol::{
     AgentRunTerminalChangePage, AgentRunTerminalChangeSequence,
     AgentRunTerminalProjectionRepository, AgentRunTerminalSnapshot,
 };
+use super::{ProductAgentFrameRef, ProductExecutionProfileRef};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRunProductRuntimeBinding {
     pub target: AgentRunTarget,
     pub runtime_thread_id: RuntimeThreadId,
     pub launch_frame: ProductAgentFrameRef,
+    pub execution_profile: ProductExecutionProfileRef,
     pub execution_profile_digest: String,
     pub source_binding: ManagedRuntimeSourceBindingEvidence,
 }
 
 impl AgentRunProductRuntimeBinding {
     pub fn calculated_digest(&self) -> Result<String, String> {
+        if !self.execution_profile.validate()
+            || self.execution_profile.profile_digest != self.execution_profile_digest
+        {
+            return Err("Product Runtime binding execution profile snapshot is invalid".to_owned());
+        }
         let value = serde_json::json!({
             "target": {
                 "run_id": self.target.run_id,
@@ -44,6 +50,7 @@ impl AgentRunProductRuntimeBinding {
             },
             "runtime_thread_id": self.runtime_thread_id,
             "launch_frame": self.launch_frame,
+            "execution_profile": self.execution_profile,
             "execution_profile_digest": self.execution_profile_digest,
             "source_binding": {
                 "source_ref": self.source_binding.source_ref,

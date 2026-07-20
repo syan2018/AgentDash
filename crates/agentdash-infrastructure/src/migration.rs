@@ -70,11 +70,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_runtime_outbox",
     "agent_runtime_surface_snapshot",
     "agent_runtime_host_revision",
-    "agent_service_instance",
-    "agent_service_verification",
-    "agent_runtime_offer",
-    "agent_runtime_placement",
-    "agent_runtime_remote_binding",
     "agent_runtime_lifecycle_target",
     "agent_runtime_lifecycle_effect",
     "agent_runtime_binding",
@@ -113,6 +108,11 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
 ];
 
 const RETIRED_POSTGRES_TABLES: &[&str] = &[
+    "agent_service_instance",
+    "agent_service_verification",
+    "agent_runtime_offer",
+    "agent_runtime_placement",
+    "agent_runtime_remote_binding",
     "agent_run_runtime_binding",
     "agent_run_command_receipts",
     "agent_run_delivery_bindings",
@@ -169,6 +169,7 @@ pub async fn assert_postgres_schema_ready(pool: &PgPool) -> Result<(), DomainErr
         "agent_run_product_runtime_binding",
         &[
             "binding_digest",
+            "execution_profile",
             "applied_resource_snapshot_revision",
             "applied_resource_binding_id",
             "applied_resource_binding_generation",

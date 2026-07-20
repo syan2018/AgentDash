@@ -373,6 +373,18 @@ mod tests {
     use super::*;
     use crate::agent_run::AgentRunProductRuntimeBinding;
 
+    fn fixture_execution_profile() -> crate::agent_run::ProductExecutionProfileRef {
+        let mut profile = crate::agent_run::ProductExecutionProfileRef {
+            profile_key: "codex".to_owned(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::json!({"executor": "codex"}),
+            credential_scope: None,
+        };
+        profile.refresh_digest();
+        profile
+    }
+
     struct BindingRepository {
         binding: AgentRunProductRuntimeBinding,
     }
@@ -593,7 +605,8 @@ mod tests {
                 agent_id: target.agent_id,
                 revision: 4,
             },
-            execution_profile_digest: "sha256:product-command-profile".to_owned(),
+            execution_profile_digest: fixture_execution_profile().profile_digest,
+            execution_profile: fixture_execution_profile(),
             source_binding,
         };
         (target, binding, snapshot)

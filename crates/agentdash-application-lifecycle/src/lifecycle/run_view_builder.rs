@@ -722,7 +722,7 @@ mod tests {
     };
     use agentdash_application_agentrun::agent_run::{
         AgentRunProductProjectionError, AgentRunTerminalChangePage, AgentRunTerminalChangeSequence,
-        AgentRunTerminalSnapshot, ProductAgentFrameRef,
+        AgentRunTerminalSnapshot, ProductAgentFrameRef, ProductExecutionProfileRef,
     };
     use agentdash_domain::workflow::{
         AgentSource, OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef,
@@ -914,6 +914,7 @@ mod tests {
             thread: &str,
             source: ManagedRuntimeSourceBindingEvidence,
         ) {
+            let execution_profile = execution_profile();
             let binding = AgentRunProductRuntimeBinding {
                 target: target.clone(),
                 runtime_thread_id: RuntimeThreadId::new(thread).unwrap(),
@@ -922,7 +923,8 @@ mod tests {
                     agent_id: target.agent_id,
                     revision: 1,
                 },
-                execution_profile_digest: "sha256:lifecycle-run-view-fixture".to_string(),
+                execution_profile_digest: execution_profile.profile_digest.clone(),
+                execution_profile,
                 source_binding: source.clone(),
             };
             self.bindings
@@ -941,6 +943,21 @@ mod tests {
                 .await
                 .insert(target, snapshot(thread, source));
         }
+    }
+
+    fn execution_profile() -> ProductExecutionProfileRef {
+        let mut profile = ProductExecutionProfileRef {
+            profile_key: "lifecycle-run-view-fixture".to_string(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::json!({
+                "provider": "fixture",
+                "model": "lifecycle-run-view"
+            }),
+            credential_scope: None,
+        };
+        profile.refresh_digest();
+        profile
     }
 
     fn source(name: &str) -> ManagedRuntimeSourceBindingEvidence {
@@ -1198,20 +1215,26 @@ mod tests {
         fixture
             .insert_binding_and_snapshot(target.clone(), "thread-before", expected_source.clone())
             .await;
-        fixture.projections.bindings.lock().await.insert(
-            target.clone(),
-            AgentRunProductRuntimeBinding {
-                target: target.clone(),
-                runtime_thread_id: RuntimeThreadId::new("thread-after").unwrap(),
-                launch_frame: ProductAgentFrameRef {
-                    frame_id: Uuid::new_v4(),
-                    agent_id: target.agent_id,
-                    revision: 1,
-                },
-                execution_profile_digest: "sha256:lifecycle-run-view-fixture".to_string(),
-                source_binding: observed_source.clone(),
-            },
-        );
+        fixture
+            .projections
+            .bindings
+            .lock()
+            .await
+            .insert(target.clone(), {
+                let execution_profile = execution_profile();
+                AgentRunProductRuntimeBinding {
+                    target: target.clone(),
+                    runtime_thread_id: RuntimeThreadId::new("thread-after").unwrap(),
+                    launch_frame: ProductAgentFrameRef {
+                        frame_id: Uuid::new_v4(),
+                        agent_id: target.agent_id,
+                        revision: 1,
+                    },
+                    execution_profile_digest: execution_profile.profile_digest.clone(),
+                    execution_profile,
+                    source_binding: observed_source.clone(),
+                }
+            });
         fixture.projections.snapshots.lock().await.insert(
             target.clone(),
             snapshot("thread-after", observed_source.clone()),

@@ -288,6 +288,7 @@ impl AgentRunProductLaunchPort for RecordingLaunch {
                 .execution_profile
                 .profile_digest
                 .clone(),
+            execution_profile: request.provisioning.execution_profile.clone(),
             source_binding,
         };
         let receipt = |phase: &str, revision| ManagedRuntimeOperationReceipt {

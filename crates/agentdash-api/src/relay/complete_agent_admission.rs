@@ -4,15 +4,14 @@ use agentdash_agent_runtime_contract::{
     ManagedAgentRuntimeGateway, ManagedRuntimeReadRequest, RuntimeThreadId,
 };
 use agentdash_agent_runtime_host::{
-    CompleteAgentVerificationMethod, CompleteAgentVerificationRecord,
+    CompleteAgentBindingTarget, CompleteAgentLiveCatalog, CompleteAgentVerificationMethod,
+    CompleteAgentVerificationRecord,
 };
 use agentdash_agent_runtime_wire::{
     RuntimeWireAgentBindingTarget, RuntimeWireAuthenticatedTransport,
     RuntimeWirePlacementProvenance, RuntimeWireServiceOfferAdvertisement,
 };
-use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId,
-};
+use agentdash_agent_service_api::{AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId};
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductRuntimeBindingRepository, AgentRunProductRuntimeRecoveryPort,
     AgentRunProductRuntimeRecoveryRequest, ProductExecutionProfileRef,
@@ -273,6 +272,7 @@ impl RuntimeWireCompleteAgentRecoveryObserver for ProductRuntimeWireCompleteAgen
 #[derive(Clone)]
 struct ActiveRemotePlacement {
     local_instance_id: AgentServiceInstanceId,
+    target: CompleteAgentBindingTarget,
     service_profile_digest: AgentProfileDigest,
     profiles: Vec<ProductExecutionProfileRef>,
     placement: Arc<dyn RuntimeWirePlacement>,
@@ -540,10 +540,8 @@ impl RuntimeWireCompleteAgentAdmission {
                 reason: error.to_string(),
             });
         }
-        let local_generation = AgentBindingGeneration(1);
         let mapping = CompleteAgentRemoteBindingMapping {
             local_service_instance_id: local_instance_id.clone(),
-            local_binding_generation: local_generation,
             remote_service_instance_id: advertisement.service_instance_id.clone(),
             remote_binding_generation: advertisement.binding_generation,
         };
@@ -578,22 +576,33 @@ impl RuntimeWireCompleteAgentAdmission {
                 });
             }
         };
-        if let Err(error) = self
+        let selection = match self
             .complete_agent
             .register_contribution(contribution)
             .await
         {
-            placement
-                .close("remote Complete Agent registration failed")
-                .await;
-            return Err(RuntimeWireCompleteAgentAdmissionError::Registration {
-                reason: error.to_string(),
-            });
-        }
+            Ok(selection) => selection,
+            Err(error) => {
+                placement
+                    .close("remote Complete Agent registration failed")
+                    .await;
+                return Err(RuntimeWireCompleteAgentAdmissionError::Registration {
+                    reason: error.to_string(),
+                });
+            }
+        };
+        let target = selection.target;
 
         let mut state = self.state.lock().await;
         if state.desired.get(&key) != Some(&desired) {
             drop(state);
+            self.complete_agent
+                .live_catalog
+                .retire(
+                    &target.live_attachment_id,
+                    "remote Complete Agent admission was superseded".to_owned(),
+                )
+                .await;
             placement
                 .close("placement admission was superseded before activation")
                 .await;
@@ -605,13 +614,20 @@ impl RuntimeWireCompleteAgentAdmission {
             .switch_placement(
                 previous
                     .as_ref()
-                    .map(|previous| (previous.profiles.as_slice(), &previous.local_instance_id)),
+                    .map(|previous| (previous.profiles.as_slice(), &previous.target)),
                 &trusted.product_profiles,
-                &local_instance_id,
+                &target,
             )
             .await
         {
             drop(state);
+            self.complete_agent
+                .live_catalog
+                .retire(
+                    &target.live_attachment_id,
+                    "remote Complete Agent selection activation failed".to_owned(),
+                )
+                .await;
             placement
                 .close("remote Complete Agent selection activation failed")
                 .await;
@@ -621,6 +637,7 @@ impl RuntimeWireCompleteAgentAdmission {
         }
         let active = ActiveRemotePlacement {
             local_instance_id: local_instance_id.clone(),
+            target: target.clone(),
             service_profile_digest: advertisement.descriptor.profile_digest.clone(),
             profiles: trusted.product_profiles,
             placement,
@@ -635,12 +652,6 @@ impl RuntimeWireCompleteAgentAdmission {
             },
         );
         drop(state);
-        self.selections
-            .activate_recovery_profile(
-                advertisement.descriptor.profile_digest,
-                local_instance_id.clone(),
-            )
-            .await;
         self.recover_pending_placement(&key, &desired).await?;
         Ok(local_instance_id)
     }
@@ -671,11 +682,19 @@ impl RuntimeWireCompleteAgentAdmission {
         if let Some(previous) = pending.previous {
             self.complete_agent
                 .host
-                .mark_service_bindings_lost(&previous.local_instance_id)
+                .mark_target_bindings_lost(&previous.target)
                 .await
                 .map_err(|error| RuntimeWireCompleteAgentAdmissionError::Recovery {
                     reason: error.to_string(),
                 })?;
+            self.complete_agent
+                .live_catalog
+                .retire(
+                    &previous.target.live_attachment_id,
+                    "remote Complete Agent placement was replaced by a new connection epoch"
+                        .to_owned(),
+                )
+                .await;
             previous
                 .placement
                 .close("remote Complete Agent placement was superseded")
@@ -717,7 +736,7 @@ impl RuntimeWireCompleteAgentAdmission {
                         recovery_id: remote_recovery_id(
                             key,
                             desired,
-                            &active.local_instance_id,
+                            &active.target,
                             &runtime_thread_id,
                         ),
                         runtime_thread_id,
@@ -752,9 +771,9 @@ impl RuntimeWireCompleteAgentAdmission {
         if let Some(active) = active {
             self.selections
                 .switch_placement(
-                    Some((active.profiles.as_slice(), &active.local_instance_id)),
+                    Some((active.profiles.as_slice(), &active.target)),
                     &[],
-                    &active.local_instance_id,
+                    &active.target,
                 )
                 .await
                 .map_err(
@@ -766,17 +785,18 @@ impl RuntimeWireCompleteAgentAdmission {
             drop(state);
             self.complete_agent
                 .host
-                .mark_service_bindings_lost(&active.local_instance_id)
+                .mark_target_bindings_lost(&active.target)
                 .await
                 .map_err(
                     |error| RuntimeWireCompleteAgentAdmissionError::Registration {
                         reason: error.to_string(),
                     },
                 )?;
-            self.selections
-                .deactivate_recovery_profile(
-                    &active.service_profile_digest,
-                    &active.local_instance_id,
+            self.complete_agent
+                .live_catalog
+                .retire(
+                    &active.target.live_attachment_id,
+                    "remote Complete Agent endpoint was withdrawn".to_owned(),
                 )
                 .await;
             active
@@ -900,7 +920,7 @@ fn local_instance_id(
 fn remote_recovery_id(
     key: &(String, String),
     desired: &DesiredRemotePlacement,
-    service_instance_id: &AgentServiceInstanceId,
+    target: &CompleteAgentBindingTarget,
     runtime_thread_id: &RuntimeThreadId,
 ) -> String {
     let mut hasher = Sha256::new();
@@ -915,7 +935,9 @@ fn remote_recovery_id(
     hasher.update(b"\0");
     hasher.update(desired.digest.as_str().as_bytes());
     hasher.update(b"\0");
-    hasher.update(service_instance_id.as_str().as_bytes());
+    hasher.update(target.live_attachment_id.as_str().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(target.host_incarnation_id().as_bytes());
     hasher.update(b"\0");
     hasher.update(runtime_thread_id.as_str().as_bytes());
     format!("remote-complete-agent-recovery:{:x}", hasher.finalize())
@@ -929,11 +951,32 @@ fn trust_error(error: impl std::fmt::Display) -> RuntimeWireCompleteAgentAdmissi
 
 #[cfg(test)]
 mod tests {
+    use agentdash_agent_runtime_host::CompleteAgentPlacement;
     use agentdash_agent_runtime_wire::RuntimeWireAdvertisementRevision;
+    use agentdash_agent_service_api::{
+        AgentBindingGeneration, AgentServiceDefinitionId, CompleteAgentLiveAttachmentId,
+    };
 
     use super::*;
 
     struct FixturePlacement;
+
+    fn fixture_binding_target(instance_id: AgentServiceInstanceId) -> CompleteAgentBindingTarget {
+        let profile_digest = AgentProfileDigest::new("sha256:profile").expect("profile");
+        CompleteAgentBindingTarget {
+            logical_instance_id: instance_id,
+            live_attachment_id: CompleteAgentLiveAttachmentId::new("attachment")
+                .expect("attachment"),
+            definition_id: AgentServiceDefinitionId::new("definition").expect("definition"),
+            verified_build_digest: AgentPayloadDigest::new("sha256:build").expect("build"),
+            verified_profile_digest: profile_digest.clone(),
+            offer_profile_digest: profile_digest,
+            placement: CompleteAgentPlacement::InProcess {
+                host_incarnation_id: "fixture-host".to_owned(),
+            },
+            remote_binding: None,
+        }
+    }
 
     #[async_trait]
     impl RuntimeWirePlacement for FixturePlacement {
@@ -1101,6 +1144,7 @@ mod tests {
         let profile_digest = AgentProfileDigest::new("sha256:profile").unwrap();
         let active = ActiveRemotePlacement {
             local_instance_id: instance.clone(),
+            target: fixture_binding_target(instance.clone()),
             service_profile_digest: profile_digest,
             profiles: Vec::new(),
             placement: Arc::new(FixturePlacement),
@@ -1143,21 +1187,22 @@ mod tests {
             digest: AgentPayloadDigest::new("sha256:epoch").unwrap(),
         };
         let instance = AgentServiceInstanceId::new("remote.fixture").unwrap();
+        let target = fixture_binding_target(instance);
         let thread = RuntimeThreadId::new("runtime-thread-a").unwrap();
 
         assert_eq!(
-            remote_recovery_id(&key, &desired, &instance, &thread),
-            remote_recovery_id(&key, &desired, &instance, &thread)
+            remote_recovery_id(&key, &desired, &target, &thread),
+            remote_recovery_id(&key, &desired, &target, &thread)
         );
         assert_ne!(
-            remote_recovery_id(&key, &desired, &instance, &thread),
+            remote_recovery_id(&key, &desired, &target, &thread),
             remote_recovery_id(
                 &key,
                 &DesiredRemotePlacement {
                     revision: 8,
                     ..desired
                 },
-                &instance,
+                &target,
                 &thread
             )
         );

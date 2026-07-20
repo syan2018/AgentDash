@@ -50,9 +50,11 @@ pub trait RuntimeTerminalApplicationEffectOutbox {
 - operation sequence 与 event sequence 必须从数据库现有 cursor 的下一位开始严格连续。projection 不得在缺少对应 durable fact 时推进 cursor。
 - Runtime-owned schema 持有 Thread、Operation、Event、Turn、Item、Interaction、Outbox、Quarantine 及 Context Checkpoint/Preparation/Candidate/Activation/Dispatch/Head。跨实体一致性同时由 domain 校验与 composite foreign key/unique constraint 保护。
 - Context Head 只能指向同一 Thread 下的非 `opaque` immutable checkpoint，并完整匹配 checkpoint revision、digest、fidelity、settings revision 与 tool-set revision。
-- `agent_runtime_binding` 与 `agent_runtime_source_coordinate` 是 Integration Driver Host 所有的坐标事实。Runtime persistence 仅引用并校验它们，不创建、不推进 generation，也不改写 source coordinate。
+- `agent_runtime_binding` 与 `agent_runtime_source_coordinate` 是 Integration Driver Host 所有的坐标事实。binding 冻结 exact live attachment/incarnation target；Runtime persistence 仅引用并校验 binding/source/generation，不创建、不推进 generation，也不改写 source coordinate。
+- Complete Agent descriptor、verification、effective offer、placement availability、remote connection epoch 与 callable handle 属于 process-local live catalog，不进入 PostgreSQL。Host persistence 只保存 binding、effect、source、lease、target provisioning/recovery 和 exact target snapshot，因为这些事实跨重启不可重建。
+- Host revision JSON 是 durable Host graph 的 canonical snapshot，normalized Host tables 是该 snapshot 的精确关系投影。投影写入既要 upsert 当前事实，也要删除 canonical map 中已释放的可消失事实（当前包括 binding lease）；read verification 必须同时拒绝缺行、字段漂移和额外行。原因是残留 lease 会让数据库关系投影继续声称一个已经释放的执行权。
 - Runtime schema 从新 contract 独立建立；旧 session/connector 表不参与读取、回填或双写。切换与删除旧事实源属于 AgentRun cutover 阶段。
-- Conversation contract发生不兼容替换时使用显式data migration清理Runtime owner graph，不增加旧JSON reader。`0069_reset_runtime_conversation_contract.sql`解除mailbox operation引用并删除Runtime-derived lineage/recovery/anchor、permission、Thread与binding事实，同时保留Project、Lifecycle、mailbox主体及service/offer catalog，供后续重新provision。
+- Contract 发生不兼容替换时使用显式 data migration 清理受影响 owner graph，不增加旧 JSON reader。Complete Agent `0089` hard cut 清理引用旧 Host graph 的 Product runtime binding/saga 与 Host/callback facts，保留 canonical Managed Runtime journal/projection、Product execution profile、Provider 与 credential 配置；新 Product binding 持久化完整不可变execution profile及其digest，使进程重启能先按精确配置materialize attachment，再请求Host rebind。
 - claim 使用数据库时钟、`FOR UPDATE SKIP LOCKED`、owner、随机 token、到期时间和 attempt。只有仍持有相同 owner/token 且 lease 未过期的 worker 能 ack/release；到期后新 claim 必须生成新 token 并增加 attempt，旧 worker 不得确认新一轮工作。
 - Runtime outbox dispatch返回错误后必须重新读取canonical Operation、Thread与binding状态。只有Operation已terminal、Thread已Lost/Closed或binding/generation已obsolete时才能ack；包括`DriverError::Terminalized`在内的adapter返回值都不是canonical终态证明，canonical仍active时必须release并保留work可重领。
 - queue 只负责 work 的租约和交付确认，业务状态仍留在各自 runtime/context 表。Activation dispatch 仅能 claim `prepared` activation。
@@ -67,7 +69,8 @@ pub trait RuntimeTerminalApplicationEffectOutbox {
 | 首次创建 Thread 并发冲突 | 重读实际 revision 后返回 typed conflict |
 | operation/event sequence 跳号、重复或 cursor 无事实推进 | 拒绝整个 commit |
 | context candidate/activation/head 坐标不一致 | `ContextInvariant` 或数据库 constraint violation，事务回滚 |
-| binding/source/generation 不存在或不匹配 | foreign key/typed store error；Runtime 不补造 Host 事实 |
+| binding/source/generation/attachment/incarnation 不存在或不匹配 | foreign key/typed store error；Runtime 不补造 Host 事实 |
+| canonical Host facts 已释放 lease，但 normalized lease 仍有行 | 同事务删除残留行；load/readiness 对额外行返回 invariant |
 | claim 参数非法 | `InvalidWorkClaim` |
 | owner/token 不匹配、lease 已过期或已被接管 | `WorkClaimConflict`，不得 ack/release |
 | worker release 有效 claim | 记录错误并释放租约，业务 work 保持可重试 |
@@ -95,6 +98,7 @@ pub trait RuntimeTerminalApplicationEffectOutbox {
 - 覆盖 composite foreign key、Head/checkpoint fidelity 与 revision/digest/settings/tool-set 一致性。
 - 对四类 `RuntimeWorkKind` 覆盖 claim 隔离、limit、attempt、ack、release、lease 到期接管和 stale worker fencing。
 - 明确验证 Runtime adapter 不写 binding/source；测试 fixture 需要由 Host 角色显式 seed 坐标。
+- Host repository真实PostgreSQL测试先提交lease、再提交不含该lease的canonical facts，断言normalized lease行为零且snapshot reload精确相等。
 - migration guard 必须确认 managed runtime migration 不引用旧 session runtime/connector 表。
 - data reset migration必须用外键有效的完整旧数据图验证清理/保留集合与`_sqlx_migrations`历史；禁止通过`session_replication_role`绕过约束造数。
 - terminal application effect tests覆盖与terminal record原子提交、claim/ack/release、lease过期接管、stale token fencing、多owner部分成功重试与immutable payload conflict。

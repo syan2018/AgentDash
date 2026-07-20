@@ -559,98 +559,29 @@ async fn replace_host_projection(
     execute_host_projection(
         tx,
         facts,
-        "INSERT INTO agent_service_instance(
-             service_instance_id, descriptor_digest, descriptor
-         )
-         SELECT entry.key, entry.value->>'profile_digest', entry.value
-         FROM jsonb_each($1::JSONB->'service_instances') entry
-         ON CONFLICT (service_instance_id) DO UPDATE
-         SET descriptor_digest = EXCLUDED.descriptor_digest,
-             descriptor = EXCLUDED.descriptor",
-    )
-    .await?;
-    execute_host_projection(
-        tx,
-        facts,
-        "INSERT INTO agent_service_verification(
-             service_instance_id, publisher_integration, service_version,
-             verifier_identity, verifier_revision, verification_method,
-             verified_profile_digest, claimed_conformance_suite_revision,
-             claimed_build_digest, evidence_digest, verification
-         )
-         SELECT entry.key, entry.value->>'publisher_integration',
-                entry.value->>'service_version', entry.value->>'verifier_identity',
-                entry.value->>'verifier_revision', entry.value->>'method',
-                entry.value->>'verified_profile_digest',
-                entry.value->>'claimed_conformance_suite_revision',
-                entry.value#>>'{verified_build,claimed_build_digest}',
-                entry.value#>>'{verified_build,evidence_digest}', entry.value
-         FROM jsonb_each($1::JSONB->'service_verifications') entry
-         ON CONFLICT (service_instance_id) DO NOTHING",
-    )
-    .await?;
-    execute_host_projection(
-        tx,
-        facts,
-        "INSERT INTO agent_runtime_offer(service_instance_id, profile_digest, offer)
-         SELECT entry.key, entry.value->>'profile_digest', entry.value
-         FROM jsonb_each($1::JSONB->'offers') entry
-         ON CONFLICT (service_instance_id) DO UPDATE
-         SET profile_digest = EXCLUDED.profile_digest, offer = EXCLUDED.offer",
-    )
-    .await?;
-    execute_host_projection(
-        tx,
-        facts,
-        "INSERT INTO agent_runtime_placement(
-             service_instance_id, placement_kind, host_id, transport_id,
-             host_incarnation_id, placement
-         )
-         SELECT entry.key, entry.value->>'kind', entry.value->>'host_id',
-                entry.value->>'transport_id', entry.value->>'host_incarnation_id', entry.value
-         FROM jsonb_each($1::JSONB->'placements') entry
-         ON CONFLICT (service_instance_id) DO UPDATE SET
-             placement_kind = EXCLUDED.placement_kind,
-             host_id = EXCLUDED.host_id,
-             transport_id = EXCLUDED.transport_id,
-             host_incarnation_id = EXCLUDED.host_incarnation_id,
-             placement = EXCLUDED.placement",
-    )
-    .await?;
-    execute_host_projection(
-        tx,
-        facts,
-        "INSERT INTO agent_runtime_remote_binding(
-             local_service_instance_id, local_binding_generation,
-             remote_service_instance_id, remote_binding_generation,
-             host_incarnation_id, transport_id, mapping
-         )
-         SELECT entry.key, (entry.value->>'local_binding_generation')::NUMERIC(20,0),
-                entry.value->>'remote_service_instance_id',
-                (entry.value->>'remote_binding_generation')::NUMERIC(20,0),
-                entry.value->>'host_incarnation_id', entry.value->>'transport_id',
-                entry.value
-         FROM jsonb_each($1::JSONB->'remote_bindings') entry
-         ON CONFLICT (local_service_instance_id) DO NOTHING",
-    )
-    .await?;
-    execute_host_projection(
-        tx,
-        facts,
         "INSERT INTO agent_runtime_lifecycle_target(
-             runtime_thread_id, service_instance_id, generation, profile_digest,
-             bound_surface_digest, target
+             runtime_thread_id, logical_instance_id, live_attachment_id,
+             host_incarnation_id, definition_id, generation, profile_digest,
+             bound_surface_digest, target_snapshot, target
          )
-         SELECT entry.key, entry.value->>'service_instance_id',
+         SELECT entry.key, entry.value#>>'{target,logical_instance_id}',
+                entry.value#>>'{target,live_attachment_id}',
+                entry.value#>>'{target,placement,host_incarnation_id}',
+                entry.value#>>'{target,definition_id}',
                 (entry.value->>'generation')::NUMERIC(20,0),
                 entry.value->>'profile_digest',
-                entry.value#>>'{bound_surface,digest}', entry.value
+                entry.value#>>'{bound_surface,digest}',
+                entry.value->'target', entry.value
          FROM jsonb_each($1::JSONB->'runtime_targets') entry
          ON CONFLICT (runtime_thread_id) DO UPDATE SET
-             service_instance_id = EXCLUDED.service_instance_id,
+             logical_instance_id = EXCLUDED.logical_instance_id,
+             live_attachment_id = EXCLUDED.live_attachment_id,
+             host_incarnation_id = EXCLUDED.host_incarnation_id,
+             definition_id = EXCLUDED.definition_id,
              generation = EXCLUDED.generation,
              profile_digest = EXCLUDED.profile_digest,
              bound_surface_digest = EXCLUDED.bound_surface_digest,
+             target_snapshot = EXCLUDED.target_snapshot,
              target = EXCLUDED.target",
     )
     .await?;
@@ -658,20 +589,28 @@ async fn replace_host_projection(
         tx,
         facts,
         "INSERT INTO agent_runtime_binding(
-             binding_id, service_instance_id, generation, source_coordinate,
-             profile_digest, bound_surface_digest, state, binding
+             binding_id, logical_instance_id, live_attachment_id,
+             host_incarnation_id, definition_id, generation, source_coordinate,
+             profile_digest, bound_surface_digest, target_snapshot, state, binding
          )
-         SELECT entry.key, entry.value->>'service_instance_id',
+         SELECT entry.key, entry.value#>>'{target,logical_instance_id}',
+                entry.value#>>'{target,live_attachment_id}',
+                entry.value#>>'{target,placement,host_incarnation_id}',
+                entry.value#>>'{target,definition_id}',
                 (entry.value->>'generation')::NUMERIC(20,0), entry.value->>'source',
                 entry.value->>'profile_digest', entry.value#>>'{bound_surface,digest}',
-                entry.value->>'state', entry.value
+                entry.value->'target', entry.value->>'state', entry.value
          FROM jsonb_each($1::JSONB->'bindings') entry
          ON CONFLICT (binding_id) DO UPDATE SET
-             service_instance_id = EXCLUDED.service_instance_id,
+             logical_instance_id = EXCLUDED.logical_instance_id,
+             live_attachment_id = EXCLUDED.live_attachment_id,
+             host_incarnation_id = EXCLUDED.host_incarnation_id,
+             definition_id = EXCLUDED.definition_id,
              generation = EXCLUDED.generation,
              source_coordinate = EXCLUDED.source_coordinate,
              profile_digest = EXCLUDED.profile_digest,
              bound_surface_digest = EXCLUDED.bound_surface_digest,
+             target_snapshot = EXCLUDED.target_snapshot,
              state = EXCLUDED.state,
              binding = EXCLUDED.binding",
     )
@@ -680,14 +619,13 @@ async fn replace_host_projection(
         tx,
         facts,
         "INSERT INTO agent_runtime_source_coordinate(
-             binding_id, service_instance_id, generation, source_coordinate
+             binding_id, generation, source_coordinate
          )
-         SELECT entry.key, binding.service_instance_id, binding.generation,
+         SELECT entry.key, binding.generation,
                 entry.value #>> '{}'
          FROM jsonb_each($1::JSONB->'source_coordinates') entry
          JOIN agent_runtime_binding binding ON binding.binding_id = entry.key
          ON CONFLICT (binding_id) DO UPDATE SET
-             service_instance_id = EXCLUDED.service_instance_id,
              generation = EXCLUDED.generation,
              source_coordinate = EXCLUDED.source_coordinate",
     )
@@ -730,13 +668,15 @@ async fn replace_host_projection(
         facts,
         "INSERT INTO agent_runtime_lifecycle_effect(
              effect_id, runtime_thread_id, child_thread_id, operation_kind,
-             service_instance_id, generation, initial_context_digest,
-             fork_cutoff, outcome, effect
+             live_attachment_id, host_incarnation_id, generation,
+             target_snapshot, initial_context_digest, fork_cutoff, outcome, effect
          )
          SELECT entry.key, entry.value->>'runtime_thread_id',
                 entry.value->>'child_thread_id', entry.value->>'kind',
-                entry.value->>'service_instance_id',
+                entry.value#>>'{target,live_attachment_id}',
+                entry.value#>>'{target,placement,host_incarnation_id}',
                 (entry.value->>'generation')::NUMERIC(20,0),
+                entry.value->'target',
                 entry.value#>>'{initial_context,digest}',
                 entry.value->'fork_cutoff', entry.value->'outcome', entry.value
          FROM jsonb_each($1::JSONB->'lifecycle_effects') entry
@@ -748,12 +688,11 @@ async fn replace_host_projection(
         tx,
         facts,
         "INSERT INTO agent_runtime_effect(
-             effect_id, command_id, binding_id, service_instance_id, generation,
+             effect_id, command_id, binding_id, generation,
              source_coordinate, payload_digest, delivery_epoch, dispatch_attempt,
              state, effect
          )
          SELECT entry.key, entry.value->>'command_id', entry.value->>'binding_id',
-                entry.value->>'service_instance_id',
                 (entry.value->>'generation')::NUMERIC(20,0), entry.value->>'source',
                 entry.value->>'payload_digest',
                 (entry.value->>'delivery_epoch')::NUMERIC(20,0),
@@ -782,6 +721,13 @@ async fn replace_host_projection(
     )
     .await?;
     ensure_host_attempt_prefix(tx, facts).await?;
+    execute_host_projection(
+        tx,
+        facts,
+        "DELETE FROM agent_runtime_lease
+         WHERE NOT (($1::JSONB->'leases') ? binding_id)",
+    )
+    .await?;
     execute_host_projection(
         tx,
         facts,
@@ -997,22 +943,10 @@ async fn verify_host_projection(
     let drift: bool = sqlx::query_scalar(
         "SELECT
            EXISTS (
-             SELECT 1 FROM jsonb_each($1::JSONB->'service_instances') candidate
-             LEFT JOIN agent_service_instance stored
-               ON stored.service_instance_id = candidate.key
-             WHERE stored.descriptor IS DISTINCT FROM candidate.value
-           )
-           OR EXISTS (
-             SELECT 1 FROM jsonb_each($1::JSONB->'service_verifications') candidate
-             LEFT JOIN agent_service_verification stored
-               ON stored.service_instance_id = candidate.key
-             WHERE stored.verification IS DISTINCT FROM candidate.value
-           )
-           OR EXISTS (
-             SELECT 1 FROM jsonb_each($1::JSONB->'remote_bindings') candidate
-             LEFT JOIN agent_runtime_remote_binding stored
-               ON stored.local_service_instance_id = candidate.key
-             WHERE stored.mapping IS DISTINCT FROM candidate.value
+             SELECT 1 FROM jsonb_each($1::JSONB->'runtime_targets') candidate
+             LEFT JOIN agent_runtime_lifecycle_target stored
+               ON stored.runtime_thread_id = candidate.key
+             WHERE stored.target IS DISTINCT FROM candidate.value
            )
            OR EXISTS (
              SELECT 1 FROM jsonb_each($1::JSONB->'bindings') candidate
@@ -1025,9 +959,27 @@ async fn verify_host_projection(
              WHERE stored.route IS DISTINCT FROM candidate.value
            )
            OR EXISTS (
+             SELECT 1 FROM jsonb_each($1::JSONB->'lifecycle_effects') candidate
+             LEFT JOIN agent_runtime_lifecycle_effect stored
+               ON stored.effect_id = candidate.key
+             WHERE stored.effect IS DISTINCT FROM candidate.value
+           )
+           OR EXISTS (
              SELECT 1 FROM jsonb_each($1::JSONB->'effects') candidate
              LEFT JOIN agent_runtime_effect stored ON stored.effect_id = candidate.key
              WHERE stored.effect IS DISTINCT FROM candidate.value
+           )
+           OR EXISTS (
+             SELECT 1 FROM agent_runtime_lease stored
+             LEFT JOIN jsonb_each($1::JSONB->'leases') candidate
+               ON candidate.key = stored.binding_id
+             WHERE candidate IS NULL
+                OR stored.generation <> (candidate.value->>'generation')::NUMERIC(20,0)
+                OR stored.owner <> candidate.value->>'owner'
+                OR stored.token <> candidate.value->>'token'
+                OR stored.epoch <> (candidate.value->>'epoch')::NUMERIC(20,0)
+                OR stored.expires_at_ms
+                   <> (candidate.value->>'expires_at_ms')::NUMERIC(20,0)
            )",
     )
     .bind(&facts)
@@ -1123,6 +1075,16 @@ mod tests {
         ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
         ManagedRuntimeSnapshot, ManagedRuntimeThreadNameSource, RuntimeChangeSequence,
         RuntimePayloadDigest, RuntimeProjectionRevision,
+    };
+    use agentdash_agent_runtime_host::{
+        CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingLease,
+        CompleteAgentBindingState, CompleteAgentBindingTarget, CompleteAgentHostFacts,
+        CompleteAgentPlacement,
+    };
+    use agentdash_agent_service_api::{
+        AgentBindingGeneration, AgentPayloadDigest, AgentProfileDigest, AgentServiceDefinitionId,
+        AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceDigest, AgentSurfaceRevision,
+        BoundAgentSurface, CompleteAgentLiveAttachmentId,
     };
 
     fn thread_name_facts(
@@ -1282,6 +1244,117 @@ mod tests {
             .await
             .expect("replay exact callback facts");
         assert_eq!(callback_replay, callback_before);
+    }
+
+    #[tokio::test]
+    async fn complete_agent_host_projection_persists_exact_attachment_target_without_inventory() {
+        let (pool, _runtime) = isolated_thread_name_pool().await;
+        let repository = PostgresCompleteAgentHostRepository::new(pool.clone());
+        let profile_digest = AgentProfileDigest::new("sha256:profile").expect("profile");
+        let attachment_id =
+            CompleteAgentLiveAttachmentId::new("attachment-exact").expect("attachment");
+        let binding_id = CompleteAgentBindingId::new("binding-exact").expect("binding");
+        let source = AgentSourceCoordinate::new("source-exact").expect("source");
+        let binding = CompleteAgentBinding {
+            id: binding_id.clone(),
+            target: CompleteAgentBindingTarget {
+                logical_instance_id: AgentServiceInstanceId::new("logical-service")
+                    .expect("instance"),
+                live_attachment_id: attachment_id.clone(),
+                definition_id: AgentServiceDefinitionId::new("definition").expect("definition"),
+                verified_build_digest: AgentPayloadDigest::new("sha256:build").expect("build"),
+                verified_profile_digest: profile_digest.clone(),
+                offer_profile_digest: profile_digest.clone(),
+                placement: CompleteAgentPlacement::InProcess {
+                    host_incarnation_id: "host-incarnation-exact".to_owned(),
+                },
+                remote_binding: None,
+            },
+            generation: AgentBindingGeneration(1),
+            source: source.clone(),
+            profile_digest: profile_digest.clone(),
+            bound_surface: BoundAgentSurface {
+                revision: AgentSurfaceRevision(1),
+                digest: AgentSurfaceDigest::new("sha256:surface").expect("surface"),
+                offer_profile_digest: profile_digest,
+                contributions: Vec::new(),
+            },
+            applied_surface: None,
+            state: CompleteAgentBindingState::PendingSurface,
+        };
+        let mut facts = CompleteAgentHostFacts::default();
+        facts.bindings.insert(binding_id.clone(), binding);
+        facts.source_coordinates.insert(binding_id.clone(), source);
+        facts.lease_epochs.insert(binding_id.clone(), 1);
+        facts.leases.insert(
+            binding_id.clone(),
+            CompleteAgentBindingLease {
+                binding_id: binding_id.clone(),
+                generation: AgentBindingGeneration(1),
+                owner: "worker-exact".to_owned(),
+                token: "lease-token-exact".to_owned(),
+                epoch: 1,
+                expires_at_ms: u64::MAX,
+            },
+        );
+
+        let committed = repository
+            .commit(CompleteAgentHostCommit {
+                expected_revision: Default::default(),
+                facts,
+            })
+            .await
+            .expect("commit exact Host target");
+        assert_eq!(
+            repository.load().await.expect("reload exact Host target"),
+            committed
+        );
+
+        let row = sqlx::query(
+            "SELECT live_attachment_id, host_incarnation_id, target_snapshot
+             FROM agent_runtime_binding WHERE binding_id=$1",
+        )
+        .bind(binding_id.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("normalized binding");
+        assert_eq!(
+            row.try_get::<String, _>("live_attachment_id")
+                .expect("attachment"),
+            attachment_id.as_str()
+        );
+        assert_eq!(
+            row.try_get::<String, _>("host_incarnation_id")
+                .expect("incarnation"),
+            "host-incarnation-exact"
+        );
+        assert_eq!(
+            row.try_get::<Value, _>("target_snapshot")
+                .expect("target snapshot")["live_attachment_id"],
+            attachment_id.as_str()
+        );
+
+        let mut released_facts = committed.facts.clone();
+        released_facts.leases.remove(&binding_id);
+        let released = repository
+            .commit(CompleteAgentHostCommit {
+                expected_revision: committed.revision,
+                facts: released_facts,
+            })
+            .await
+            .expect("release exact Host lease");
+        assert!(!released.facts.leases.contains_key(&binding_id));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM agent_runtime_lease WHERE binding_id=$1",
+            )
+            .bind(binding_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("count released normalized lease"),
+            0,
+            "released leases must disappear from the normalized projection"
+        );
     }
 
     #[tokio::test]

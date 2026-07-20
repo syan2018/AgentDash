@@ -15,14 +15,14 @@ use agentdash_agent_runtime_wire::{
     RuntimeWireResponse,
 };
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentChange, AgentChangePage, AgentChangesQuery, AgentCommandEnvelope,
-    AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection, AgentHookDecision,
-    AgentHookInvocation, AgentHostCallbackError, AgentHostCallbackErrorCode, AgentHostCallbacks,
-    AgentReadQuery, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
-    AgentServiceInstanceId, AgentSnapshot, AgentSourceCoordinate, AgentToolInvocation,
-    AgentToolResult, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CompleteAgentService,
-    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, ResumeAgentCommand,
-    RevokeBoundAgentSurface,
+    AgentBindingGeneration, AgentCallbackRouteId, AgentChange, AgentChangePage, AgentChangesQuery,
+    AgentCommandEnvelope, AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection,
+    AgentHookDecision, AgentHookInvocation, AgentHostCallbackError, AgentHostCallbackErrorCode,
+    AgentHostCallbacks, AgentReadQuery, AgentServiceDescriptor, AgentServiceError,
+    AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshot, AgentSourceCoordinate,
+    AgentToolInvocation, AgentToolResult, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface,
+    CompleteAgentService, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
+    ResumeAgentCommand, RevokeBoundAgentSurface,
 };
 use async_trait::async_trait;
 use thiserror::Error;
@@ -55,7 +55,6 @@ fn allocate_frame_id(
 /// the source placement generation used on Runtime Wire. Mutating commands are validated against
 /// the local fence and rewritten exactly once at this boundary.
 pub struct RemoteCompleteAgentService {
-    local_binding_generation: AgentBindingGeneration,
     target: RuntimeWireAgentBindingTarget,
     placement: Arc<dyn RuntimeWirePlacement>,
     callbacks: Arc<dyn AgentHostCallbacks>,
@@ -64,6 +63,7 @@ pub struct RemoteCompleteAgentService {
     cached_effects:
         tokio::sync::Mutex<HashMap<AgentEffectIdentity, RuntimeWireAgentServiceResponse>>,
     callback_effects: tokio::sync::Mutex<HashMap<AgentEffectIdentity, ProxyCallbackEffectState>>,
+    callback_generations: tokio::sync::Mutex<HashMap<AgentCallbackRouteId, AgentBindingGeneration>>,
     pushed_changes: tokio::sync::Mutex<HashMap<AgentSourceCoordinate, Vec<AgentChange>>>,
     pushed_gaps: tokio::sync::Mutex<HashSet<AgentSourceCoordinate>>,
     last_inbound_frame_id: tokio::sync::Mutex<Option<RuntimeWireFrameId>>,
@@ -72,13 +72,11 @@ pub struct RemoteCompleteAgentService {
 
 impl RemoteCompleteAgentService {
     pub fn new(
-        local_binding_generation: AgentBindingGeneration,
         target: RuntimeWireAgentBindingTarget,
         placement: Arc<dyn RuntimeWirePlacement>,
         callbacks: Arc<dyn AgentHostCallbacks>,
     ) -> Arc<Self> {
         let service = Arc::new(Self {
-            local_binding_generation,
             target,
             placement,
             callbacks,
@@ -86,6 +84,7 @@ impl RemoteCompleteAgentService {
             pending: tokio::sync::Mutex::new(HashMap::new()),
             cached_effects: tokio::sync::Mutex::new(HashMap::new()),
             callback_effects: tokio::sync::Mutex::new(HashMap::new()),
+            callback_generations: tokio::sync::Mutex::new(HashMap::new()),
             pushed_changes: tokio::sync::Mutex::new(HashMap::new()),
             pushed_gaps: tokio::sync::Mutex::new(HashSet::new()),
             last_inbound_frame_id: tokio::sync::Mutex::new(None),
@@ -320,9 +319,29 @@ impl RemoteCompleteAgentService {
             Ok(deadline) => deadline,
             Err(error) => return callback_error_response(&callback, error),
         };
+        let route_id = match &callback {
+            RuntimeWireAgentHostCallbackRequest::Tool(invocation) => &invocation.meta.route_id,
+            RuntimeWireAgentHostCallbackRequest::Hook(invocation) => &invocation.meta.route_id,
+        };
+        let Some(local_generation) = self
+            .callback_generations
+            .lock()
+            .await
+            .get(route_id)
+            .copied()
+        else {
+            return callback_error_response(
+                &callback,
+                agentdash_agent_service_api::AgentHostCallbackError::new(
+                    agentdash_agent_service_api::AgentHostCallbackErrorCode::StaleBindingGeneration,
+                    "remote callback route has no exact local generation mapping",
+                    false,
+                ),
+            );
+        };
         match callback {
             RuntimeWireAgentHostCallbackRequest::Tool(mut invocation) => {
-                invocation.meta.binding_generation = self.local_binding_generation;
+                invocation.meta.binding_generation = local_generation;
                 let result =
                     tokio::time::timeout(deadline, self.callbacks.invoke_tool(invocation)).await;
                 RuntimeWireAgentHostCallbackResponse::Tool(match result {
@@ -331,7 +350,7 @@ impl RemoteCompleteAgentService {
                 })
             }
             RuntimeWireAgentHostCallbackRequest::Hook(mut invocation) => {
-                invocation.meta.binding_generation = self.local_binding_generation;
+                invocation.meta.binding_generation = local_generation;
                 let result =
                     tokio::time::timeout(deadline, self.callbacks.invoke_hook(invocation)).await;
                 RuntimeWireAgentHostCallbackResponse::Hook(match result {
@@ -468,12 +487,31 @@ impl RemoteCompleteAgentService {
         &self,
         received: AgentBindingGeneration,
     ) -> Result<(), AgentServiceError> {
-        if received != self.local_binding_generation {
+        if received.0 == 0 {
             return Err(stale_generation(format!(
-                "expected local binding generation {:?}, received {received:?}",
-                self.local_binding_generation
+                "local binding generation must be positive, received {received:?}"
             )));
         }
+        Ok(())
+    }
+
+    async fn remember_callback_generation(
+        &self,
+        route_id: AgentCallbackRouteId,
+        generation: AgentBindingGeneration,
+    ) -> Result<(), AgentServiceError> {
+        self.validate_local_generation(generation)?;
+        let mut generations = self.callback_generations.lock().await;
+        if let Some(existing) = generations.get(&route_id) {
+            return if *existing == generation {
+                Ok(())
+            } else {
+                Err(stale_generation(
+                    "callback route was reused with a different local binding generation",
+                ))
+            };
+        }
+        generations.insert(route_id, generation);
         Ok(())
     }
 }
@@ -742,7 +780,11 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         &self,
         mut command: ApplyBoundAgentSurface,
     ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
-        self.validate_local_generation(command.callbacks.binding_generation)?;
+        self.remember_callback_generation(
+            command.callbacks.route_id.clone(),
+            command.callbacks.binding_generation,
+        )
+        .await?;
         if let Some(RuntimeWireAgentServiceResponse::ApplySurface(result)) =
             self.cached(&command.effect_id).await
         {

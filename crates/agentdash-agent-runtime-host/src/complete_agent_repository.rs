@@ -5,8 +5,8 @@ use std::{
 
 use agentdash_agent_service_api::{
     AgentCallbackRouteId, AgentEffectIdentity, AgentEffectInspectionState, AgentPayloadDigest,
-    AgentProfileDigest, AgentReceiptState, AgentRuntimeOffer, AgentServiceDescriptor,
-    AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceRoute, CompleteAgentService,
+    AgentProfileDigest, AgentReceiptState, AgentServiceInstanceId, AgentSourceCoordinate,
+    AgentSurfaceRoute,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ use crate::{
     CompleteAgentBindingState, CompleteAgentCallbackRoute, CompleteAgentEffectAttemptEvidence,
     CompleteAgentEffectRecord, CompleteAgentEffectState, CompleteAgentLifecycleAppliedReceipt,
     CompleteAgentLifecycleEffectRecord, CompleteAgentLifecycleOperationKind,
-    CompleteAgentLifecycleOutcome, CompleteAgentPlacement, CompleteAgentRuntimeTarget,
+    CompleteAgentLifecycleOutcome, CompleteAgentRuntimeTarget,
     CompleteAgentRuntimeTargetProvisioning, CompleteAgentRuntimeTargetRecovery,
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
@@ -100,7 +100,6 @@ pub trait CompleteAgentRegistrationVerifier: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompleteAgentRemoteBindingFact {
     pub local_service_instance_id: AgentServiceInstanceId,
-    pub local_binding_generation: agentdash_agent_service_api::AgentBindingGeneration,
     pub remote_service_instance_id: AgentServiceInstanceId,
     pub remote_binding_generation: agentdash_agent_service_api::AgentBindingGeneration,
     pub host_incarnation_id: String,
@@ -109,11 +108,6 @@ pub struct CompleteAgentRemoteBindingFact {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentHostFacts {
-    pub service_instances: BTreeMap<AgentServiceInstanceId, AgentServiceDescriptor>,
-    pub service_verifications: BTreeMap<AgentServiceInstanceId, CompleteAgentServiceVerification>,
-    pub offers: BTreeMap<AgentServiceInstanceId, AgentRuntimeOffer>,
-    pub placements: BTreeMap<AgentServiceInstanceId, CompleteAgentPlacement>,
-    pub remote_bindings: BTreeMap<AgentServiceInstanceId, CompleteAgentRemoteBindingFact>,
     pub bindings: BTreeMap<CompleteAgentBindingId, CompleteAgentBinding>,
     pub source_coordinates: BTreeMap<CompleteAgentBindingId, AgentSourceCoordinate>,
     pub callback_routes: BTreeMap<AgentCallbackRouteId, CompleteAgentCallbackRoute>,
@@ -158,8 +152,8 @@ pub enum CompleteAgentHostStoreError {
     Persistence { reason: String },
 }
 
-/// Durable authority for Complete Agent service, offer, binding, source, effect, lease, and
-/// generation facts.
+/// Durable authority for Complete Agent exact target snapshots, bindings, sources, effects,
+/// leases, recovery, and generation facts.
 ///
 /// A commit is one Host transaction. Implementations must compare `expected_revision`, validate
 /// the complete fact graph, and atomically persist every changed fact before advancing revision.
@@ -194,27 +188,7 @@ pub fn decode_complete_agent_host_snapshot(
     Ok(snapshot)
 }
 
-/// Process-local resolver for live Complete Agent service handles.
-///
-/// Service handles are deliberately outside durable Host facts. Production composition attaches
-/// handles from the final Complete Agent registrations; a reconstructed Host resolves the same
-/// durable service instance through this port.
-#[async_trait]
-pub trait CompleteAgentServiceRegistry: Send + Sync {
-    async fn attach(
-        &self,
-        instance_id: AgentServiceInstanceId,
-        service: Arc<dyn CompleteAgentService>,
-    );
-
-    async fn resolve(
-        &self,
-        instance_id: &AgentServiceInstanceId,
-    ) -> Option<Arc<dyn CompleteAgentService>>;
-}
-
 pub type SharedCompleteAgentHostRepository = Arc<dyn CompleteAgentHostRepository>;
-pub type SharedCompleteAgentServiceRegistry = Arc<dyn CompleteAgentServiceRegistry>;
 
 pub fn apply_complete_agent_host_commit(
     current: &mut CompleteAgentHostSnapshot,
@@ -244,147 +218,9 @@ pub fn validate_complete_agent_host_facts(
     current: &CompleteAgentHostFacts,
     candidate: &CompleteAgentHostFacts,
 ) -> Result<(), CompleteAgentHostStoreError> {
-    if candidate.service_instances.len() != candidate.offers.len()
-        || candidate.service_instances.len() != candidate.placements.len()
-        || candidate.service_instances.len() != candidate.service_verifications.len()
-    {
-        return invariant(
-            "every service instance must have exactly one Runtime offer and placement",
-        );
-    }
-    for (instance_id, descriptor) in &candidate.service_instances {
-        if instance_id.as_str().trim().is_empty()
-            || descriptor.definition_id.as_str().trim().is_empty()
-            || descriptor.title.trim().is_empty()
-            || descriptor.protocol_revision == 0
-            || descriptor.profile_digest.as_str().trim().is_empty()
-        {
-            return invariant("service instance descriptor coordinates are invalid");
-        }
-        let offer = candidate.offers.get(instance_id).ok_or_else(|| {
-            CompleteAgentHostStoreError::Invariant {
-                reason: "service instance has no Runtime offer".to_owned(),
-            }
-        })?;
-        let placement = candidate.placements.get(instance_id).ok_or_else(|| {
-            CompleteAgentHostStoreError::Invariant {
-                reason: "service instance has no placement".to_owned(),
-            }
-        })?;
-        let verification = candidate
-            .service_verifications
-            .get(instance_id)
-            .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
-                reason: "service instance has no independent Host verification".to_owned(),
-            })?;
-        if !placement.is_valid() {
-            return invariant("service placement coordinates must not be empty");
-        }
-        if matches!(placement, CompleteAgentPlacement::Remote { .. })
-            != candidate.remote_bindings.contains_key(instance_id)
-        {
-            return invariant(
-                "only remote service placements require one explicit identity/generation mapping",
-            );
-        }
-        if &verification.service_instance_id != instance_id
-            || verification.publisher_integration.trim().is_empty()
-            || verification.service_version.trim().is_empty()
-            || verification.verifier_identity.trim().is_empty()
-            || verification.verifier_revision.trim().is_empty()
-            || verification
-                .claimed_conformance_suite_revision
-                .trim()
-                .is_empty()
-            || verification.verified_profile_digest != descriptor.profile_digest
-            || verification
-                .verified_build
-                .claimed_build_digest
-                .as_str()
-                .trim()
-                .is_empty()
-            || verification
-                .verified_build
-                .evidence_digest
-                .as_str()
-                .trim()
-                .is_empty()
-        {
-            return invariant("service Host verification coordinates or evidence are invalid");
-        }
-        if offer.profile_digest != descriptor.profile_digest
-            || offer.contributions != descriptor.profile.surface.facets
-        {
-            return Err(CompleteAgentHostStoreError::Invariant {
-                reason: "Runtime offer does not exactly match its service descriptor".to_owned(),
-            });
-        }
-    }
-    for (instance_id, descriptor) in &current.service_instances {
-        if candidate.service_instances.get(instance_id) != Some(descriptor) {
-            return invariant("service descriptor history is immutable");
-        }
-        if candidate.offers.get(instance_id) != current.offers.get(instance_id) {
-            return invariant("published Runtime offer history is immutable");
-        }
-        if candidate.placements.get(instance_id) != current.placements.get(instance_id) {
-            return invariant("service placement history is immutable");
-        }
-        if candidate.service_verifications.get(instance_id)
-            != current.service_verifications.get(instance_id)
-        {
-            return invariant("service Host verification history is immutable");
-        }
-    }
-    if candidate
-        .placements
-        .keys()
-        .any(|instance_id| !candidate.service_instances.contains_key(instance_id))
-    {
-        return invariant("service placement has no owning service instance");
-    }
-    for (local_instance_id, mapping) in &candidate.remote_bindings {
-        let placement = candidate.placements.get(local_instance_id).ok_or_else(|| {
-            CompleteAgentHostStoreError::Invariant {
-                reason: "remote binding mapping has no owning service placement".to_owned(),
-            }
-        })?;
-        if local_instance_id != &mapping.local_service_instance_id
-            || mapping.local_binding_generation.0 == 0
-            || mapping.remote_binding_generation.0 == 0
-            || mapping
-                .remote_service_instance_id
-                .as_str()
-                .trim()
-                .is_empty()
-            || mapping.host_incarnation_id.trim().is_empty()
-            || mapping.transport_id.trim().is_empty()
-        {
-            return invariant("remote binding mapping coordinates are invalid");
-        }
-        match placement {
-            CompleteAgentPlacement::Remote {
-                transport_id,
-                host_incarnation_id,
-                ..
-            } if transport_id == &mapping.transport_id
-                && host_incarnation_id == &mapping.host_incarnation_id => {}
-            _ => {
-                return invariant(
-                    "remote binding mapping does not match its Host incarnation and transport placement",
-                );
-            }
-        }
-    }
-    for (local_instance_id, mapping) in &current.remote_bindings {
-        if candidate.remote_bindings.get(local_instance_id) != Some(mapping) {
-            return invariant("remote binding identity and generation mapping is immutable");
-        }
-    }
-
     for (binding_id, binding) in &candidate.bindings {
         if binding_id.as_str().trim().is_empty()
-            || binding.service_instance_id.as_str().trim().is_empty()
+            || !binding.target.is_valid()
             || binding.source.as_str().trim().is_empty()
             || binding.profile_digest.as_str().trim().is_empty()
             || binding.bound_surface.digest.as_str().trim().is_empty()
@@ -399,21 +235,12 @@ pub fn validate_complete_agent_host_facts(
         {
             return invariant("binding coordinates or generation are invalid");
         }
-        let descriptor = candidate
-            .service_instances
-            .get(&binding.service_instance_id)
-            .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
-                reason: "binding has no owning service instance".to_owned(),
-            })?;
-        let offer = candidate
-            .offers
-            .get(&binding.service_instance_id)
-            .expect("service-to-offer completeness was validated");
-        if binding.profile_digest != descriptor.profile_digest
-            || binding.profile_digest != offer.profile_digest
-            || binding.bound_surface.offer_profile_digest != offer.profile_digest
+        if binding.profile_digest != binding.target.offer_profile_digest
+            || binding.bound_surface.offer_profile_digest != binding.target.offer_profile_digest
         {
-            return invariant("binding profile or bound surface does not match its Runtime offer");
+            return invariant(
+                "binding profile or surface does not match its exact target snapshot",
+            );
         }
         let applied_matches = binding
             .applied_surface
@@ -436,7 +263,7 @@ pub fn validate_complete_agent_host_facts(
             }
         })?;
         if binding.id != next.id
-            || binding.service_instance_id != next.service_instance_id
+            || binding.target != next.target
             || binding.generation != next.generation
             || binding.source != next.source
             || binding.profile_digest != next.profile_digest
@@ -595,7 +422,6 @@ pub fn validate_complete_agent_host_facts(
         if effect_id.as_str().trim().is_empty()
             || effect.command_id.as_str().trim().is_empty()
             || effect.binding_id.as_str().trim().is_empty()
-            || effect.service_instance_id.as_str().trim().is_empty()
             || effect.source.as_str().trim().is_empty()
             || effect.payload_digest.as_str().trim().is_empty()
             || effect_id != &effect.effect_id
@@ -613,10 +439,7 @@ pub fn validate_complete_agent_host_facts(
                 reason: "effect has no owning binding".to_owned(),
             }
         })?;
-        if effect.generation != binding.generation
-            || effect.service_instance_id != binding.service_instance_id
-            || effect.source != binding.source
-        {
+        if effect.generation != binding.generation || effect.source != binding.source {
             return invariant("effect coordinates do not match its binding generation");
         }
         if effect.delivery_epoch == 0
@@ -654,7 +477,6 @@ pub fn validate_complete_agent_host_facts(
         })?;
         if effect.command_id != next.command_id
             || effect.binding_id != next.binding_id
-            || effect.service_instance_id != next.service_instance_id
             || effect.generation != next.generation
             || effect.source != next.source
             || effect.payload_digest != next.payload_digest
@@ -817,7 +639,7 @@ pub fn validate_complete_agent_host_facts(
             })?;
         if previous_binding.state != CompleteAgentBindingState::Lost
             || previous_binding.generation != recovery.previous_target.generation
-            || previous_binding.service_instance_id != recovery.previous_target.service_instance_id
+            || previous_binding.target != recovery.previous_target.target
         {
             return invariant("Runtime target recovery previous binding is not exactly lost");
         }
@@ -839,7 +661,7 @@ pub fn validate_complete_agent_host_facts(
                 .child_thread_id
                 .as_ref()
                 .is_some_and(|thread_id| thread_id.as_str().trim().is_empty())
-            || effect.service_instance_id.as_str().trim().is_empty()
+            || !effect.target.is_valid()
             || effect_id != &effect.effect_id
         {
             return invariant("lifecycle effect coordinates are invalid");
@@ -849,9 +671,7 @@ pub fn validate_complete_agent_host_facts(
                 .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
                 reason: "lifecycle effect has no matching Runtime target generation".to_owned(),
             })?;
-        if effect.service_instance_id != target.service_instance_id
-            || effect.generation != target.generation
-        {
+        if effect.target != target.target || effect.generation != target.generation {
             return invariant("lifecycle effect does not match its Runtime target");
         }
         validate_lifecycle_effect(effect)?;
@@ -866,7 +686,7 @@ pub fn validate_complete_agent_host_facts(
             || effect.runtime_thread_id != next.runtime_thread_id
             || effect.child_thread_id != next.child_thread_id
             || effect.kind != next.kind
-            || effect.service_instance_id != next.service_instance_id
+            || effect.target != next.target
             || effect.generation != next.generation
             || effect.initial_context != next.initial_context
             || effect.fork_cutoff != next.fork_cutoff
@@ -880,12 +700,12 @@ pub fn validate_complete_agent_host_facts(
 }
 
 fn validate_runtime_target(
-    facts: &CompleteAgentHostFacts,
+    _facts: &CompleteAgentHostFacts,
     thread_id: &RuntimeThreadId,
     target: &CompleteAgentRuntimeTarget,
 ) -> Result<(), CompleteAgentHostStoreError> {
     if thread_id.as_str().trim().is_empty()
-        || target.service_instance_id.as_str().trim().is_empty()
+        || !target.target.is_valid()
         || target.profile_digest.as_str().trim().is_empty()
         || target.callbacks.route_id.as_str().trim().is_empty()
         || thread_id != &target.runtime_thread_id
@@ -896,16 +716,10 @@ fn validate_runtime_target(
     {
         return invariant("Runtime target identity or generation is invalid");
     }
-    let descriptor = facts
-        .service_instances
-        .get(&target.service_instance_id)
-        .ok_or_else(|| CompleteAgentHostStoreError::Invariant {
-            reason: "Runtime target has no registered service instance".to_owned(),
-        })?;
-    if target.profile_digest != descriptor.profile_digest
-        || target.bound_surface.offer_profile_digest != target.profile_digest
+    if target.profile_digest != target.target.offer_profile_digest
+        || target.bound_surface.offer_profile_digest != target.target.offer_profile_digest
     {
-        return invariant("Runtime target does not match its service profile");
+        return invariant("Runtime target does not match its exact target snapshot");
     }
     Ok(())
 }
@@ -1398,21 +1212,20 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use agentdash_agent_service_api::{
-        AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId,
-        AgentCapabilityProfile, AgentCommandCapability, AgentCommandId, AgentCommandReceipt,
-        AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity,
-        AgentEffectInspection, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint,
-        AgentHostCallbackBinding, AgentLifecycleCapability, AgentPayloadDigest, AgentProfileDigest,
-        AgentReceiptState, AgentRuntimeOffer, AgentServiceDefinitionId, AgentSourceChangeLevel,
-        AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceProfile,
+        AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId, AgentCommandId,
+        AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection, AgentForkPoint,
+        AgentHostCallbackBinding, AgentPayloadDigest, AgentProfileDigest, AgentReceiptState,
+        AgentServiceDefinitionId, AgentSurfaceContributionPayload, AgentSurfaceDigest,
         AgentSurfaceRevision, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery,
         AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics,
         AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
         AppliedContributionStatus, BoundAgentSurface, BoundAgentSurfaceContribution,
-        ForkAgentReceipt, InitialContextAppliedEvidence, InitialContextProfile, SemanticFidelity,
+        CompleteAgentLiveAttachmentId, ForkAgentReceipt, SemanticFidelity,
     };
     use serde_json::json;
     use tokio::sync::Mutex;
+
+    use crate::{CompleteAgentBindingTarget, CompleteAgentPlacement};
 
     use super::*;
 
@@ -1460,7 +1273,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_host_state_round_trips_service_binding_effect_and_lease_facts() {
+    fn persisted_host_state_round_trips_only_durable_binding_effect_and_lease_facts() {
         let snapshot = CompleteAgentHostSnapshot {
             revision: CompleteAgentHostRevision(8),
             facts: valid_facts(),
@@ -1470,8 +1283,6 @@ mod tests {
         let decoded = decode_complete_agent_host_snapshot(encoded).expect("decode Host snapshot");
 
         assert_eq!(decoded, snapshot);
-        assert_eq!(decoded.facts.service_instances.len(), 1);
-        assert_eq!(decoded.facts.offers.len(), 1);
         assert_eq!(decoded.facts.bindings.len(), 1);
         assert_eq!(decoded.facts.source_coordinates.len(), 1);
         assert_eq!(decoded.facts.effects.len(), 1);
@@ -1487,7 +1298,7 @@ mod tests {
         };
         let mut encoded =
             encode_complete_agent_host_snapshot(&snapshot).expect("encode Host snapshot");
-        encoded["facts"]["offers"] = json!({});
+        encoded["facts"]["source_coordinates"] = json!({});
 
         assert!(matches!(
             decode_complete_agent_host_snapshot(encoded),
@@ -1499,24 +1310,15 @@ mod tests {
     fn persisted_host_state_rejects_invalid_runtime_target_callback_coordinates() {
         let mut facts = valid_facts();
         let runtime_thread_id = RuntimeThreadId::new("runtime-thread").expect("Runtime thread");
-        let service_instance_id = service_id();
-        let profile_digest = facts
-            .service_instances
-            .get(&service_instance_id)
-            .expect("service descriptor")
-            .profile_digest
-            .clone();
-        let bound_surface = facts
-            .bindings
-            .get(&binding_id())
-            .expect("binding")
-            .bound_surface
-            .clone();
+        let binding = facts.bindings.get(&binding_id()).expect("binding");
+        let profile_digest = binding.profile_digest.clone();
+        let bound_surface = binding.bound_surface.clone();
+        let target = binding.target.clone();
         facts.runtime_targets.insert(
             runtime_thread_id.clone(),
             CompleteAgentRuntimeTarget {
                 runtime_thread_id,
-                service_instance_id,
+                target,
                 generation: AgentBindingGeneration(1),
                 profile_digest,
                 bound_surface,
@@ -1585,7 +1387,7 @@ mod tests {
             runtime_thread_id: thread_id.clone(),
             child_thread_id: Some(RuntimeThreadId::new("child-thread").expect("child")),
             kind: CompleteAgentLifecycleOperationKind::Create,
-            service_instance_id: service_id.clone(),
+            target: binding_target(service_id.clone()),
             generation: AgentBindingGeneration(1),
             initial_context: None,
             fork_cutoff: None,
@@ -1599,7 +1401,7 @@ mod tests {
             runtime_thread_id: thread_id,
             child_thread_id: None,
             kind: CompleteAgentLifecycleOperationKind::Create,
-            service_instance_id: service_id,
+            target: binding_target(service_id),
             generation: AgentBindingGeneration(1),
             initial_context: None,
             fork_cutoff: None,
@@ -1625,57 +1427,50 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_offer_and_binding_contracts_reject_cross_revision_rewrites() {
+    fn exact_binding_target_and_surface_contracts_reject_rewrites() {
         let current = valid_facts();
 
-        let mut descriptor_rewrite = current.clone();
-        descriptor_rewrite
-            .service_instances
-            .get_mut(&service_id())
-            .expect("descriptor")
-            .title = "rewritten".to_owned();
+        let mut attachment_rewrite = current.clone();
+        attachment_rewrite
+            .bindings
+            .get_mut(&binding_id())
+            .expect("binding")
+            .target
+            .live_attachment_id =
+            agentdash_agent_service_api::CompleteAgentLiveAttachmentId::new("rewritten-attachment")
+                .expect("attachment");
         assert_invariant(validate_complete_agent_host_facts(
             &current,
-            &descriptor_rewrite,
+            &attachment_rewrite,
         ));
 
-        let mut missing_offer = current.clone();
-        missing_offer.offers.clear();
-        assert_invariant(validate_complete_agent_host_facts(&current, &missing_offer));
-
         let mut placement_rewrite = current.clone();
-        placement_rewrite.placements.insert(
-            service_id(),
-            CompleteAgentPlacement::Remote {
-                host_id: "host-2".to_owned(),
-                transport_id: "transport-2".to_owned(),
-                host_incarnation_id: "incarnation-2".to_owned(),
-            },
-        );
+        placement_rewrite
+            .bindings
+            .get_mut(&binding_id())
+            .expect("binding")
+            .target
+            .placement = crate::CompleteAgentPlacement::InProcess {
+            host_incarnation_id: "other-incarnation".to_owned(),
+        };
         assert_invariant(validate_complete_agent_host_facts(
             &current,
             &placement_rewrite,
         ));
 
-        let mut missing_placement = current.clone();
-        missing_placement.placements.clear();
+        let mut invalid_target = CompleteAgentHostFacts::default();
+        let mut invalid_binding = current.bindings[&binding_id()].clone();
+        invalid_binding.target.verified_profile_digest =
+            AgentProfileDigest::new("other-profile").expect("profile");
+        invalid_target
+            .source_coordinates
+            .insert(binding_id(), invalid_binding.source.clone());
+        invalid_target
+            .bindings
+            .insert(binding_id(), invalid_binding);
         assert_invariant(validate_complete_agent_host_facts(
-            &current,
-            &missing_placement,
-        ));
-
-        let mut invalid_placement = current.clone();
-        invalid_placement.placements.insert(
-            service_id(),
-            CompleteAgentPlacement::Remote {
-                host_id: String::new(),
-                transport_id: "transport".to_owned(),
-                host_incarnation_id: "incarnation".to_owned(),
-            },
-        );
-        assert_invariant(validate_complete_agent_host_facts(
-            &current,
-            &invalid_placement,
+            &CompleteAgentHostFacts::default(),
+            &invalid_target,
         ));
 
         let mut zero_generation = current.clone();
@@ -1698,81 +1493,6 @@ mod tests {
         assert_invariant(validate_complete_agent_host_facts(
             &current,
             &profile_mismatch,
-        ));
-    }
-
-    #[test]
-    fn host_verification_and_remote_identity_mapping_are_immutable_fences() {
-        let current = valid_facts();
-
-        let mut verification_rewrite = current.clone();
-        verification_rewrite
-            .service_verifications
-            .get_mut(&service_id())
-            .expect("verification")
-            .verifier_revision = "rewritten-verifier-revision".to_owned();
-        assert_invariant(validate_complete_agent_host_facts(
-            &current,
-            &verification_rewrite,
-        ));
-
-        let mut evidence_rewrite = current.clone();
-        evidence_rewrite
-            .service_verifications
-            .get_mut(&service_id())
-            .expect("verification")
-            .verified_build
-            .evidence_digest =
-            AgentPayloadDigest::new("rewritten-evidence").expect("evidence digest");
-        assert_invariant(validate_complete_agent_host_facts(
-            &current,
-            &evidence_rewrite,
-        ));
-
-        let mut remote = current.clone();
-        remote.placements.insert(
-            service_id(),
-            CompleteAgentPlacement::Remote {
-                host_id: "remote-host".to_owned(),
-                transport_id: "remote-transport".to_owned(),
-                host_incarnation_id: "host-incarnation".to_owned(),
-            },
-        );
-        remote.remote_bindings.insert(
-            service_id(),
-            CompleteAgentRemoteBindingFact {
-                local_service_instance_id: service_id(),
-                local_binding_generation: AgentBindingGeneration(3),
-                remote_service_instance_id: AgentServiceInstanceId::new("remote-service")
-                    .expect("remote service"),
-                remote_binding_generation: AgentBindingGeneration(8),
-                host_incarnation_id: "host-incarnation".to_owned(),
-                transport_id: "remote-transport".to_owned(),
-            },
-        );
-        validate_complete_agent_host_facts(&CompleteAgentHostFacts::default(), &remote)
-            .expect("initial remote mapping");
-
-        let mut generation_rewrite = remote.clone();
-        generation_rewrite
-            .remote_bindings
-            .get_mut(&service_id())
-            .expect("remote mapping")
-            .remote_binding_generation = AgentBindingGeneration(9);
-        assert_invariant(validate_complete_agent_host_facts(
-            &remote,
-            &generation_rewrite,
-        ));
-
-        let mut incarnation_rewrite = remote.clone();
-        incarnation_rewrite
-            .remote_bindings
-            .get_mut(&service_id())
-            .expect("remote mapping")
-            .host_incarnation_id = "other-incarnation".to_owned();
-        assert_invariant(validate_complete_agent_host_facts(
-            &remote,
-            &incarnation_rewrite,
         ));
     }
 
@@ -2291,6 +2011,23 @@ mod tests {
         AgentServiceInstanceId::new("service").expect("service")
     }
 
+    fn binding_target(instance_id: AgentServiceInstanceId) -> CompleteAgentBindingTarget {
+        let profile_digest = AgentProfileDigest::new("profile").expect("profile");
+        CompleteAgentBindingTarget {
+            logical_instance_id: instance_id,
+            live_attachment_id: CompleteAgentLiveAttachmentId::new("attachment")
+                .expect("attachment"),
+            definition_id: AgentServiceDefinitionId::new("definition").expect("definition"),
+            verified_build_digest: AgentPayloadDigest::new("sha256:build").expect("build"),
+            verified_profile_digest: profile_digest.clone(),
+            offer_profile_digest: profile_digest,
+            placement: CompleteAgentPlacement::InProcess {
+                host_incarnation_id: "fixture-host".to_owned(),
+            },
+            remote_binding: None,
+        }
+    }
+
     fn binding_id() -> CompleteAgentBindingId {
         CompleteAgentBindingId::new("binding").expect("binding")
     }
@@ -2405,38 +2142,24 @@ mod tests {
         let effect_id = effect_id();
         let source = AgentSourceCoordinate::new("source").expect("source");
         let profile_digest = AgentProfileDigest::new("profile").expect("profile");
-        let descriptor = AgentServiceDescriptor {
+        let target = CompleteAgentBindingTarget {
+            logical_instance_id: service_id.clone(),
+            live_attachment_id: agentdash_agent_service_api::CompleteAgentLiveAttachmentId::new(
+                "fixture-attachment",
+            )
+            .expect("attachment"),
             definition_id: AgentServiceDefinitionId::new("definition").expect("definition"),
-            title: "service".to_owned(),
-            protocol_revision: 1,
-            profile: AgentCapabilityProfile {
-                lifecycle: BTreeSet::<AgentLifecycleCapability>::new(),
-                commands: BTreeSet::<AgentCommandCapability>::new(),
-                fork: AgentForkCapability {
-                    cutoffs: BTreeMap::<AgentForkCutoffKind, SemanticFidelity>::new(),
-                    lineage_fidelity: SemanticFidelity::Unsupported,
-                    native_durability: SemanticFidelity::Unsupported,
-                },
-                compaction: BTreeMap::<AgentCompactionMode, SemanticFidelity>::new(),
-                source_changes: AgentSourceChangeLevel::SnapshotOnly,
-                initial_context: InitialContextProfile {
-                    contribution_fidelity: BTreeMap::new(),
-                    applied_evidence: InitialContextAppliedEvidence::Unsupported,
-                    renderer_versions: BTreeSet::new(),
-                },
-                surface: AgentSurfaceProfile { facets: Vec::new() },
-                inspect_effects: SemanticFidelity::Exact,
+            verified_build_digest: AgentPayloadDigest::new("fixture-build").expect("build digest"),
+            verified_profile_digest: profile_digest.clone(),
+            offer_profile_digest: profile_digest.clone(),
+            placement: crate::CompleteAgentPlacement::InProcess {
+                host_incarnation_id: "fixture-host".to_owned(),
             },
-            profile_digest: profile_digest.clone(),
-            configuration_boundary: AgentConfigurationBoundary::Binding,
-        };
-        let offer = AgentRuntimeOffer {
-            profile_digest: profile_digest.clone(),
-            contributions: Vec::new(),
+            remote_binding: None,
         };
         let binding = CompleteAgentBinding {
             id: binding_id.clone(),
-            service_instance_id: service_id.clone(),
+            target,
             generation: AgentBindingGeneration(1),
             source: source.clone(),
             profile_digest: profile_digest.clone(),
@@ -2461,7 +2184,6 @@ mod tests {
             effect_id: effect_id.clone(),
             command_id: AgentCommandId::new("command").expect("command"),
             binding_id: binding_id.clone(),
-            service_instance_id: service_id.clone(),
             generation: AgentBindingGeneration(1),
             source: source.clone(),
             payload_digest: AgentPayloadDigest::new("sha256:payload").expect("digest"),
@@ -2474,34 +2196,6 @@ mod tests {
             attempt_history: Vec::new(),
         };
         CompleteAgentHostFacts {
-            service_instances: BTreeMap::from([(service_id.clone(), descriptor)]),
-            service_verifications: BTreeMap::from([(
-                service_id.clone(),
-                CompleteAgentServiceVerification {
-                    service_instance_id: service_id.clone(),
-                    publisher_integration: "fixture-integration".to_owned(),
-                    service_version: "fixture-version".to_owned(),
-                    verifier_identity: "fixture-verifier".to_owned(),
-                    verifier_revision: "fixture-verifier-revision".to_owned(),
-                    method: CompleteAgentVerificationMethod::PinnedBuiltin,
-                    verified_profile_digest: AgentProfileDigest::new("profile").expect("profile"),
-                    claimed_conformance_suite_revision: "fixture-conformance".to_owned(),
-                    verified_build: CompleteAgentVerifiedBuildEvidence {
-                        claimed_build_digest: AgentPayloadDigest::new("fixture-build")
-                            .expect("build digest"),
-                        evidence_digest: AgentPayloadDigest::new("fixture-evidence")
-                            .expect("evidence digest"),
-                    },
-                },
-            )]),
-            offers: BTreeMap::from([(service_id.clone(), offer)]),
-            placements: BTreeMap::from([(
-                service_id.clone(),
-                CompleteAgentPlacement::InProcess {
-                    host_incarnation_id: "fixture-host".to_owned(),
-                },
-            )]),
-            remote_bindings: BTreeMap::new(),
             bindings: BTreeMap::from([(binding_id.clone(), binding)]),
             source_coordinates: BTreeMap::from([(binding_id.clone(), source)]),
             callback_routes: BTreeMap::new(),

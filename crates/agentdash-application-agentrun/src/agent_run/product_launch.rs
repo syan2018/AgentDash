@@ -138,6 +138,7 @@ impl AgentRunProductLaunchService {
             target: request.target.clone(),
             runtime_thread_id: request.runtime_thread_id.clone(),
             launch_frame: request.frame.clone(),
+            execution_profile: request.execution_profile.clone(),
             execution_profile_digest: request.execution_profile.profile_digest.clone(),
             source_binding: pre_activation_source_binding,
         };
@@ -283,6 +284,7 @@ impl AgentRunProductLaunchService {
             target: request.provisioning.target.clone(),
             runtime_thread_id: request.provisioning.runtime_thread_id.clone(),
             launch_frame: request.provisioning.frame.clone(),
+            execution_profile: request.provisioning.execution_profile.clone(),
             execution_profile_digest: request
                 .provisioning
                 .execution_profile
@@ -744,6 +746,7 @@ mod tests {
             target: request.provisioning.target.clone(),
             runtime_thread_id: request.provisioning.runtime_thread_id.clone(),
             launch_frame: request.provisioning.frame.clone(),
+            execution_profile: request.provisioning.execution_profile.clone(),
             execution_profile_digest: request
                 .provisioning
                 .execution_profile

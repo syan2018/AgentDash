@@ -1302,7 +1302,7 @@ mod tests {
         RuntimeThreadId, SurfaceRevision,
     };
     use agentdash_application_agentrun::agent_run::{
-        AgentRunProductRuntimeBinding, ProductAgentFrameRef,
+        AgentRunProductRuntimeBinding, ProductAgentFrameRef, ProductExecutionProfileRef,
     };
     use agentdash_domain::{
         DomainError,
@@ -1649,6 +1649,14 @@ mod tests {
         frame: &AgentFrame,
         thread_id: &str,
     ) -> AgentRunProductRuntimeBinding {
+        let mut execution_profile = ProductExecutionProfileRef {
+            profile_key: "gate-control-profile".to_string(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::json!({"provider": "fixture"}),
+            credential_scope: None,
+        };
+        execution_profile.refresh_digest();
         AgentRunProductRuntimeBinding {
             target: AgentRunTarget {
                 run_id,
@@ -1660,7 +1668,8 @@ mod tests {
                 agent_id: frame.agent_id,
                 revision: u64::try_from(frame.revision).expect("positive frame revision"),
             },
-            execution_profile_digest: "sha256:gate-control-profile".to_string(),
+            execution_profile_digest: execution_profile.profile_digest.clone(),
+            execution_profile,
             source_binding: ManagedRuntimeSourceBindingEvidence {
                 source_ref: RuntimeSourceRef::new(format!("source-{thread_id}"))
                     .expect("source ref"),

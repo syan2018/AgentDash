@@ -834,7 +834,7 @@ fn resolve_callback_context(
             && target.callbacks.binding_generation == route.generation
             && target.callbacks.delivery == route.delivery
             && target.callbacks.default_deadline_ms == route.default_deadline_ms
-            && target.service_instance_id == binding.service_instance_id
+            && target.target == binding.target
             && target.generation == binding.generation
             && target.profile_digest == binding.profile_digest
             && target.bound_surface == binding.bound_surface
@@ -855,7 +855,7 @@ fn resolve_callback_context(
         binding_id: binding.id.clone(),
         binding_generation: binding.generation,
         source: binding.source.clone(),
-        service_instance_id: target.service_instance_id.clone(),
+        service_instance_id: target.target.logical_instance_id.clone(),
         profile_digest: target.profile_digest.clone(),
         bound_surface_revision: binding.bound_surface.revision,
         bound_surface_digest: binding.bound_surface.digest.clone(),
@@ -1107,19 +1107,20 @@ mod tests {
         AgentEffectIdentity, AgentHookBlockingSemantics, AgentHookDefinitionId,
         AgentHookEffectKind, AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet,
         AgentHookTiming, AgentHostCallbackMeta, AgentIdempotencyKey, AgentPayloadDigest,
-        AgentProfileDigest, AgentSurfaceContributionPayload, AgentSurfaceDigest,
-        AgentSurfaceRevision, AgentSurfaceSemanticFacet, AgentToolDelivery, AgentToolName,
-        AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnId, AppliedAgentSurface,
-        AppliedAgentSurfaceContribution, AppliedContributionStatus, BoundAgentSurfaceContribution,
-        SemanticFidelity,
+        AgentProfileDigest, AgentServiceDefinitionId, AgentSurfaceContributionPayload,
+        AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceSemanticFacet, AgentToolDelivery,
+        AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnId,
+        AppliedAgentSurface, AppliedAgentSurfaceContribution, AppliedContributionStatus,
+        BoundAgentSurfaceContribution, CompleteAgentLiveAttachmentId, SemanticFidelity,
     };
     use serde_json::json;
     use tokio::sync::Mutex;
 
     use super::*;
     use crate::{
-        CompleteAgentBinding, CompleteAgentHostCommit, CompleteAgentHostRepository,
-        CompleteAgentHostSnapshot, CompleteAgentRuntimeTarget, apply_complete_agent_host_commit,
+        CompleteAgentBinding, CompleteAgentBindingTarget, CompleteAgentHostCommit,
+        CompleteAgentHostRepository, CompleteAgentHostSnapshot, CompleteAgentPlacement,
+        CompleteAgentRuntimeTarget, apply_complete_agent_host_commit,
     };
 
     #[test]
@@ -1169,10 +1170,23 @@ mod tests {
             let mut snapshot = CompleteAgentHostSnapshot::default();
             let service_instance_id =
                 AgentServiceInstanceId::new("service").expect("service instance");
+            let target = CompleteAgentBindingTarget {
+                logical_instance_id: service_instance_id,
+                live_attachment_id: CompleteAgentLiveAttachmentId::new("attachment")
+                    .expect("attachment"),
+                definition_id: AgentServiceDefinitionId::new("definition").expect("definition"),
+                verified_build_digest: AgentPayloadDigest::new("build").expect("build"),
+                verified_profile_digest: route.bound_surface.offer_profile_digest.clone(),
+                offer_profile_digest: route.bound_surface.offer_profile_digest.clone(),
+                placement: CompleteAgentPlacement::InProcess {
+                    host_incarnation_id: "host-incarnation".to_owned(),
+                },
+                remote_binding: None,
+            };
             let runtime_thread_id = RuntimeThreadId::new("runtime-thread").expect("Runtime thread");
             let binding = CompleteAgentBinding {
                 id: route.binding_id.clone(),
-                service_instance_id: service_instance_id.clone(),
+                target: target.clone(),
                 generation: route.generation,
                 source: route.source.clone(),
                 profile_digest: route.bound_surface.offer_profile_digest.clone(),
@@ -1189,7 +1203,7 @@ mod tests {
                 runtime_thread_id.clone(),
                 CompleteAgentRuntimeTarget {
                     runtime_thread_id,
-                    service_instance_id,
+                    target,
                     generation: route.generation,
                     profile_digest: route.bound_surface.offer_profile_digest.clone(),
                     bound_surface: route.bound_surface.clone(),

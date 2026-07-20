@@ -41,15 +41,13 @@ pub enum CompleteAgentPlacementRequirement {
 
 /// Immutable identity and generation rewrite fact for one remote Complete Agent binding.
 ///
-/// The local identity/generation is the Host-facing fence. The remote identity/generation is the
-/// Runtime Wire target. They may differ only through this explicit mapping: outbound requests are
-/// fenced against `local_binding_generation` and rewritten to `remote_binding_generation`;
-/// callbacks apply the inverse rewrite after fencing the remote generation.
+/// The local service identity is the Host-facing logical key. The remote identity/generation is
+/// the Runtime Wire attachment target. Per-thread Host binding generations remain separate and
+/// are mapped by the exact callback route installed during surface application.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CompleteAgentRemoteBindingMapping {
     pub local_service_instance_id: AgentServiceInstanceId,
-    pub local_binding_generation: AgentBindingGeneration,
     pub remote_service_instance_id: AgentServiceInstanceId,
     pub remote_binding_generation: AgentBindingGeneration,
 }
@@ -66,7 +64,7 @@ impl CompleteAgentRemoteBindingMapping {
                 actual: self.local_service_instance_id.to_string(),
             });
         }
-        if self.local_binding_generation.0 == 0 || self.remote_binding_generation.0 == 0 {
+        if self.remote_binding_generation.0 == 0 {
             return Err(CompleteAgentContributionError::InvalidRegistration {
                 reason: "remote binding generations must be non-zero".to_owned(),
             });
@@ -532,7 +530,6 @@ mod tests {
                 Some(CompleteAgentRemoteBindingMapping {
                     local_service_instance_id: AgentServiceInstanceId::new("another-local")
                         .expect("instance"),
-                    local_binding_generation: AgentBindingGeneration(3),
                     remote_service_instance_id: AgentServiceInstanceId::new("remote-instance")
                         .expect("instance"),
                     remote_binding_generation: AgentBindingGeneration(9),
@@ -555,7 +552,6 @@ mod tests {
             AgentServiceInstanceId::new("fixture-local-instance").expect("instance");
         let remote_binding = CompleteAgentRemoteBindingMapping {
             local_service_instance_id: local_instance.clone(),
-            local_binding_generation: AgentBindingGeneration(3),
             remote_service_instance_id: AgentServiceInstanceId::new("fixture-remote-instance")
                 .expect("instance"),
             remote_binding_generation: AgentBindingGeneration(9),

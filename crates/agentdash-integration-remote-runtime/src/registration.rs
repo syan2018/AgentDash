@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use agentdash_agent_runtime_wire::RuntimeWireAgentBindingTarget;
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentHostCallbacks, AgentServiceDescriptor, AgentServiceInstanceId,
-    CompleteAgentService,
+    AgentHostCallbacks, AgentServiceDescriptor, AgentServiceInstanceId, CompleteAgentService,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, CompleteAgentContributionError, CompleteAgentPlacementRequirement,
@@ -27,7 +26,6 @@ impl CompleteAgentServiceFactory for RemoteCompleteAgentServiceFactory {
     ) -> Result<Arc<dyn CompleteAgentService>, CompleteAgentServiceFactoryError> {
         Ok(RemoteCompleteAgentRegistration::new(
             self.binding.local_service_instance_id.clone(),
-            self.binding.local_binding_generation,
             RuntimeWireAgentBindingTarget {
                 service_instance_id: self.binding.remote_service_instance_id.clone(),
                 binding_generation: self.binding.remote_binding_generation,
@@ -149,19 +147,13 @@ pub struct RemoteCompleteAgentRegistration {
 impl RemoteCompleteAgentRegistration {
     pub fn new(
         instance_id: AgentServiceInstanceId,
-        local_binding_generation: AgentBindingGeneration,
         target: RuntimeWireAgentBindingTarget,
         placement: Arc<dyn RuntimeWirePlacement>,
         callbacks: Arc<dyn AgentHostCallbacks>,
     ) -> Self {
         Self {
             instance_id,
-            service: RemoteCompleteAgentService::new(
-                local_binding_generation,
-                target,
-                placement,
-                callbacks,
-            ),
+            service: RemoteCompleteAgentService::new(target, placement, callbacks),
         }
     }
 
@@ -180,6 +172,8 @@ impl RemoteCompleteAgentRegistration {
 
 #[cfg(test)]
 mod tests {
+    use agentdash_agent_service_api::AgentBindingGeneration;
+
     use super::*;
 
     fn instance(value: &str) -> AgentServiceInstanceId {
@@ -189,7 +183,6 @@ mod tests {
     fn mapping() -> CompleteAgentRemoteBindingMapping {
         CompleteAgentRemoteBindingMapping {
             local_service_instance_id: instance("local-agent"),
-            local_binding_generation: AgentBindingGeneration(3),
             remote_service_instance_id: instance("remote-agent"),
             remote_binding_generation: AgentBindingGeneration(9),
         }
@@ -203,13 +196,12 @@ mod tests {
     }
 
     #[test]
-    fn explicit_generation_mapping_accepts_distinct_local_and_remote_coordinates() {
+    fn explicit_remote_generation_mapping_pins_the_wire_target() {
         let mapping = mapping();
 
         validate_wire_target(&mapping, &target("remote-agent", 9))
             .expect("target must match declared remote side");
         assert_eq!(mapping.local_service_instance_id, instance("local-agent"));
-        assert_eq!(mapping.local_binding_generation, AgentBindingGeneration(3));
         assert_eq!(mapping.remote_service_instance_id, instance("remote-agent"));
         assert_eq!(mapping.remote_binding_generation, AgentBindingGeneration(9));
     }

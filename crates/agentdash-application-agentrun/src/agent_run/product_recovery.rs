@@ -17,6 +17,16 @@ use super::{
     AgentRunProductRuntimeRecoverySaga, AgentRunProductRuntimeRecoverySagaRepository,
 };
 
+#[async_trait]
+pub trait AgentRunProductRuntimeRecoveryPreparationPort: Send + Sync {
+    /// Re-materializes the exact Product execution profile and makes its live attachment
+    /// available to the Host recovery planner for this Runtime thread.
+    async fn prepare_recovery_attachment(
+        &self,
+        binding: &AgentRunProductRuntimeBinding,
+    ) -> Result<(), String>;
+}
+
 #[derive(Debug, Clone)]
 pub struct AgentRunProductRuntimeRecoveryRequest {
     pub target: AgentRunTarget,
@@ -80,6 +90,7 @@ pub struct AgentRunProductRuntimeRecoveryService {
     bindings: Arc<dyn AgentRunProductRuntimeBindingStore>,
     resources: Arc<dyn AgentRunAppliedResourceSurfaceMaterializationPort>,
     resource_query: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
+    preparation: Arc<dyn AgentRunProductRuntimeRecoveryPreparationPort>,
 }
 
 impl AgentRunProductRuntimeRecoveryService {
@@ -89,6 +100,7 @@ impl AgentRunProductRuntimeRecoveryService {
         bindings: Arc<dyn AgentRunProductRuntimeBindingStore>,
         resources: Arc<dyn AgentRunAppliedResourceSurfaceMaterializationPort>,
         resource_query: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
+        preparation: Arc<dyn AgentRunProductRuntimeRecoveryPreparationPort>,
     ) -> Self {
         Self {
             sagas,
@@ -96,6 +108,7 @@ impl AgentRunProductRuntimeRecoveryService {
             bindings,
             resources,
             resource_query,
+            preparation,
         }
     }
 
@@ -226,6 +239,10 @@ impl AgentRunProductRuntimeRecoveryService {
         &self,
         saga: AgentRunProductRuntimeRecoverySaga,
     ) -> Result<AgentRunProductRuntimeRecoverySaga, AgentRunProductRuntimeRecoveryError> {
+        self.preparation
+            .prepare_recovery_attachment(saga.previous_binding())
+            .await
+            .map_err(AgentRunProductRuntimeRecoveryError::Binding)?;
         let receipt = self
             .runtime
             .execute(recovery_envelope(
@@ -789,6 +806,22 @@ mod tests {
         }
     }
 
+    struct RecoveryPreparation;
+
+    #[async_trait]
+    impl AgentRunProductRuntimeRecoveryPreparationPort for RecoveryPreparation {
+        async fn prepare_recovery_attachment(
+            &self,
+            binding: &AgentRunProductRuntimeBinding,
+        ) -> Result<(), String> {
+            if binding.execution_profile.validate() {
+                Ok(())
+            } else {
+                Err("invalid recovery execution profile".to_owned())
+            }
+        }
+    }
+
     #[tokio::test]
     async fn process_restart_replays_the_frozen_rebind_and_continues_to_activation() {
         let target = AgentRunTarget {
@@ -822,6 +855,7 @@ mod tests {
                 bindings.clone(),
                 resources.clone(),
                 resources.clone(),
+                Arc::new(RecoveryPreparation),
             )
         };
         let request = AgentRunProductRuntimeRecoveryRequest {
@@ -902,6 +936,7 @@ mod tests {
         runtime_thread_id: &RuntimeThreadId,
         source_binding: ManagedRuntimeSourceBindingEvidence,
     ) -> AgentRunProductRuntimeBinding {
+        let execution_profile = recovery_execution_profile();
         AgentRunProductRuntimeBinding {
             target: target.clone(),
             runtime_thread_id: runtime_thread_id.clone(),
@@ -910,9 +945,22 @@ mod tests {
                 agent_id: target.agent_id,
                 revision: 3,
             },
-            execution_profile_digest: "sha256:profile".to_owned(),
+            execution_profile_digest: execution_profile.profile_digest.clone(),
+            execution_profile,
             source_binding,
         }
+    }
+
+    fn recovery_execution_profile() -> crate::agent_run::ProductExecutionProfileRef {
+        let mut profile = crate::agent_run::ProductExecutionProfileRef {
+            profile_key: "codex".to_owned(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::json!({"executor": "codex"}),
+            credential_scope: None,
+        };
+        profile.refresh_digest();
+        profile
     }
 
     fn runtime_snapshot(

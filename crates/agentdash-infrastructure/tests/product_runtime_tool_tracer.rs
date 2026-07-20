@@ -12,11 +12,12 @@ use agentdash_agent_runtime::{
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_agent_runtime_host::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingState,
-    CompleteAgentCallbackBroker, CompleteAgentCallbackCommit, CompleteAgentCallbackRepository,
-    CompleteAgentCallbackRoute, CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError,
-    CompleteAgentHookHandler, CompleteAgentHostCommit, CompleteAgentHostFacts,
-    CompleteAgentHostRepository, CompleteAgentHostSnapshot, CompleteAgentHostStoreError,
-    CompleteAgentRuntimeTarget, CompleteAgentToolHandler, ResolvedCompleteAgentCallbackContext,
+    CompleteAgentBindingTarget, CompleteAgentCallbackBroker, CompleteAgentCallbackCommit,
+    CompleteAgentCallbackRepository, CompleteAgentCallbackRoute, CompleteAgentCallbackSnapshot,
+    CompleteAgentCallbackStoreError, CompleteAgentHookHandler, CompleteAgentHostCommit,
+    CompleteAgentHostFacts, CompleteAgentHostRepository, CompleteAgentHostSnapshot,
+    CompleteAgentHostStoreError, CompleteAgentPlacement, CompleteAgentRuntimeTarget,
+    CompleteAgentToolHandler, ResolvedCompleteAgentCallbackContext,
     ResolvedCompleteAgentHookCallback, ResolvedCompleteAgentToolCallback,
     RuntimePlatformToolHandler, apply_complete_agent_callback_commit,
     apply_complete_agent_host_commit,
@@ -25,11 +26,13 @@ use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentEffectIdentity, AgentHookDecision,
     AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbackMeta, AgentHostCallbacks,
     AgentIdempotencyKey, AgentItemId, AgentPayloadDigest, AgentProfileDigest,
-    AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceContributionPayload,
-    AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
-    AgentToolDelivery, AgentToolInvocation, AgentToolName, AgentToolResult, AgentToolSemanticFacet,
-    AgentToolUpdateSemantics, AgentTurnId, AppliedAgentSurface, AppliedAgentSurfaceContribution,
-    AppliedContributionStatus, BoundAgentSurface, BoundAgentSurfaceContribution, SemanticFidelity,
+    AgentServiceDefinitionId, AgentServiceInstanceId, AgentSourceCoordinate,
+    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
+    AgentSurfaceSemanticFacet, AgentToolDelivery, AgentToolInvocation, AgentToolName,
+    AgentToolResult, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnId,
+    AppliedAgentSurface, AppliedAgentSurfaceContribution, AppliedContributionStatus,
+    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentLiveAttachmentId,
+    SemanticFidelity,
 };
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
@@ -513,9 +516,24 @@ fn callback_host_snapshot(tool_names: &[&str]) -> CompleteAgentHostSnapshot {
         bound_surface.clone(),
     )
     .expect("Complete Agent callback route");
+    let target = CompleteAgentBindingTarget {
+        logical_instance_id: service_instance_id,
+        live_attachment_id: CompleteAgentLiveAttachmentId::new("product-tools-attachment")
+            .expect("attachment"),
+        definition_id: AgentServiceDefinitionId::new("product-tools-definition")
+            .expect("definition"),
+        verified_build_digest: AgentPayloadDigest::new("sha256:product-tools-build")
+            .expect("build"),
+        verified_profile_digest: profile_digest.clone(),
+        offer_profile_digest: profile_digest.clone(),
+        placement: CompleteAgentPlacement::InProcess {
+            host_incarnation_id: "product-tools-host".to_owned(),
+        },
+        remote_binding: None,
+    };
     let binding = CompleteAgentBinding {
         id: binding_id.clone(),
-        service_instance_id: service_instance_id.clone(),
+        target: target.clone(),
         generation,
         source: source.clone(),
         profile_digest: profile_digest.clone(),
@@ -526,7 +544,7 @@ fn callback_host_snapshot(tool_names: &[&str]) -> CompleteAgentHostSnapshot {
     let runtime_thread_id = RuntimeThreadId::new(RUNTIME_THREAD_ID).expect("Runtime thread");
     let runtime_target = CompleteAgentRuntimeTarget {
         runtime_thread_id: runtime_thread_id.clone(),
-        service_instance_id,
+        target,
         generation,
         profile_digest,
         bound_surface,

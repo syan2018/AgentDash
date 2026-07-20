@@ -242,9 +242,7 @@ impl AgentRunProductRuntimeRecoverySaga {
                 "Activation evidence does not match the durable recovery intent".to_string()
             })?;
         let mut pre_activation_binding = activated_binding.clone();
-        pre_activation_binding
-            .source_binding
-            .activated_at_revision = None;
+        pre_activation_binding.source_binding.activated_at_revision = None;
         if activated_binding.target != self.target
             || activated_binding.runtime_thread_id != self.runtime_thread_id
             || activated_at_revision != receipt.accepted_revision
@@ -384,6 +382,18 @@ mod tests {
     use super::*;
     use crate::agent_run::ProductAgentFrameRef;
 
+    fn fixture_execution_profile() -> crate::agent_run::ProductExecutionProfileRef {
+        let mut profile = crate::agent_run::ProductExecutionProfileRef {
+            profile_key: "codex".to_owned(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::json!({"executor": "codex"}),
+            credential_scope: None,
+        };
+        profile.refresh_digest();
+        profile
+    }
+
     fn binding(target: AgentRunTarget, activated_at: Option<u64>) -> AgentRunProductRuntimeBinding {
         let agent_id = target.agent_id;
         AgentRunProductRuntimeBinding {
@@ -394,7 +404,8 @@ mod tests {
                 agent_id,
                 revision: 3,
             },
-            execution_profile_digest: "sha256:profile".to_string(),
+            execution_profile_digest: fixture_execution_profile().profile_digest,
+            execution_profile: fixture_execution_profile(),
             source_binding: ManagedRuntimeSourceBindingEvidence {
                 source_ref: RuntimeSourceRef::new("source").unwrap(),
                 committed_at_revision: RuntimeProjectionRevision(8),

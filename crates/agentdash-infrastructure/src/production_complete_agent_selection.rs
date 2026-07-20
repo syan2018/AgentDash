@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_agent_runtime_host::{CompleteAgentAvailability, CompleteAgentLiveCatalog};
 use agentdash_agent_service_api::{AgentPayloadDigest, AgentServiceInstanceId};
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductRuntimeProvisioningError, ProductCredentialScopeRef, ProductExecutionProfileRef,
@@ -120,17 +121,18 @@ impl ProductionCompleteAgentServiceSelector {
             self.dash_store.clone(),
         )
         .map_err(|error| failed(error.to_string()))?;
-        self.complete_agent
+        let selection = self
+            .complete_agent
             .register_contribution(contribution)
             .await
             .map_err(|error| failed(error.to_string()))?;
         Ok(VerifiedCompleteAgentSelection {
-            service_instance_id: instance_id,
+            target: selection.target,
             verified_product_profile_digest: profile.profile_digest.clone(),
         })
     }
 
-    fn select_codex(
+    async fn select_codex(
         &self,
         profile: &ProductExecutionProfileRef,
         config: &AgentConfig,
@@ -144,8 +146,26 @@ impl ProductionCompleteAgentServiceSelector {
                 "CODEX profile requests per-binding configuration that the pinned Codex service does not expose",
             ));
         }
+        let availability = self
+            .complete_agent
+            .live_catalog
+            .availability(&self.codex_instance_id)
+            .await;
+        let CompleteAgentAvailability::Available { attachment_id } = availability else {
+            return Err(incompatible(
+                availability
+                    .unavailable_reason()
+                    .unwrap_or("Codex Complete Agent 当前不可用"),
+            ));
+        };
+        let selection = self
+            .complete_agent
+            .live_catalog
+            .resolve(&attachment_id)
+            .await
+            .ok_or_else(|| incompatible("Codex live attachment 已退出当前进程"))?;
         Ok(VerifiedCompleteAgentSelection {
-            service_instance_id: self.codex_instance_id.clone(),
+            target: selection.target,
             verified_product_profile_digest: profile.profile_digest.clone(),
         })
     }
@@ -176,19 +196,9 @@ impl CompleteAgentServiceSelector for ProductionCompleteAgentServiceSelector {
         }
         match normalized_key.as_str() {
             DASH_PROFILE_KEY => self.select_dash(profile, config).await,
-            CODEX_PROFILE_KEY => self.select_codex(profile, &config),
+            CODEX_PROFILE_KEY => self.select_codex(profile, &config).await,
             _ => self.exact.select(profile).await,
         }
-    }
-
-    async fn select_recovery(
-        &self,
-        service_profile_digest: &agentdash_agent_service_api::AgentProfileDigest,
-        previous_instance_id: &AgentServiceInstanceId,
-    ) -> Result<AgentServiceInstanceId, AgentRunProductRuntimeProvisioningError> {
-        self.exact
-            .select_recovery(service_profile_digest, previous_instance_id)
-            .await
     }
 }
 

@@ -260,6 +260,8 @@ export type BoundAgentSurface = { revision: AgentSurfaceRevision, digest: AgentS
 
 export type BoundAgentSurfaceContribution = { key: string, required: boolean, route: AgentSurfaceRoute, fidelity: SemanticFidelity, semantics: AgentSurfaceSemanticFacet, payload: AgentSurfaceContributionPayload, payload_digest: AgentPayloadDigest, };
 
+export type CompleteAgentLiveAttachmentId = string;
+
 export type ContextAuthorityKind = "agent_history" | "agent_snapshot" | "workflow" | "constraint";
 
 export type ContextProvenance = { authority: ContextAuthorityKind, source: AgentContextSourceCoordinate, revision: AgentContextSourceRevision, digest: AgentPayloadDigest, };

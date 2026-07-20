@@ -41,6 +41,10 @@
 18. **把审计事实与命令式意图混为一谈**：journal可持久化“展示请求曾发生”供审计，但历史
     hydrate不应重放短命UI命令。跨层事件要显式区分projection invalidation与imperative intent，
     再验证live dispatcher、命令式UI owner、workspace-scoped store初始化与最终renderer。
+19. **把不同生命周期的 generation 合并为一个坐标**：Product profile、Host binding generation、
+    live attachment/connection epoch 与 remote binding generation分别回答“重建什么”“本地第几代
+    binding”“当前连接是谁”“远端接受哪一代”。跨层设计要为每个坐标指定唯一owner和显式映射，
+    因为任意一个注册期常量都无法代表多个Runtime thread及其重启恢复历史。
 
 ---
 
@@ -66,6 +70,7 @@
 - [ ] 若新增Driver fact或sink admission枚举，建立“所有producer × Runtime admission × 所有pump/worker consumer”矩阵，并至少增加一条真实persistence组合回归
 - [ ] 若工具执行中可能更新catalog/surface，分别列出新调用准入坐标与已accept调用的progress/approval/terminal坐标，并覆盖“发起更新的调用完成 + 更新后的新调用按新revision准入”
 - [ ] 若schema被多个进程或数据根消费，列出每个持久实例并验证既有数据库升级，而不只验证空库或Dashboard数据库
+- [ ] 若跨Host/transport重写identity或generation，列出Product、Host binding、attachment/connection与remote target四个owner，并为出站改写、callback反向映射、disconnect retire和restart re-materialization各放一条回归
 
 **实现后：**
 

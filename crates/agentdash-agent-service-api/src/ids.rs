@@ -68,6 +68,7 @@ macro_rules! service_id {
 
 service_id!(AgentServiceDefinitionId);
 service_id!(AgentServiceInstanceId);
+service_id!(CompleteAgentLiveAttachmentId);
 service_id!(AgentSourceCoordinate);
 service_id!(AgentSourceRevision);
 service_id!(AgentSourceCursor);

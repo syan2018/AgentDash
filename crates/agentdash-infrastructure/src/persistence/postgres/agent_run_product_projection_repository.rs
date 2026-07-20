@@ -65,6 +65,7 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
             },
             "runtime_thread_id": binding.runtime_thread_id,
             "launch_frame": binding.launch_frame,
+            "execution_profile": binding.execution_profile,
             "execution_profile_digest": binding.execution_profile_digest,
             "source_binding": evidence,
         });
@@ -72,10 +73,11 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         let result = sqlx::query(
             "INSERT INTO agent_run_product_runtime_binding(
                  target_run_id, target_agent_id, project_id, runtime_thread_id,
-                 launch_frame_id, launch_frame_revision, execution_profile_digest, source_ref,
+                 launch_frame_id, launch_frame_revision, execution_profile_digest,
+                 execution_profile, source_ref,
                  source_committed_revision, source_applied_surface_revision,
                  source_activated_revision, binding_digest, binding
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
              ON CONFLICT (target_run_id,target_agent_id) DO NOTHING",
         )
         .bind(binding.target.run_id.to_string())
@@ -85,6 +87,7 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         .bind(binding.launch_frame.frame_id.to_string())
         .bind(to_i64(binding.launch_frame.revision).map_err(|error| error.to_string())?)
         .bind(&binding.execution_profile_digest)
+        .bind(serde_json::to_value(&binding.execution_profile).map_err(|error| error.to_string())?)
         .bind(evidence.source_ref.as_str())
         .bind(to_i64(evidence.committed_at_revision.0).map_err(|error| error.to_string())?)
         .bind(to_i64(evidence.applied_surface_revision.0).map_err(|error| error.to_string())?)
@@ -134,20 +137,21 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
              SET launch_frame_id=$5,
                  launch_frame_revision=$6,
                  execution_profile_digest=$7,
-                 source_committed_revision=$8,
-                 source_applied_surface_revision=$9,
+                 execution_profile=$8,
+                 source_committed_revision=$9,
+                 source_applied_surface_revision=$10,
                  source_activated_revision=NULL,
-                 binding_digest=$10,
+                 binding_digest=$11,
                  applied_resource_snapshot_revision=NULL,
                  applied_resource_binding_id=NULL,
                  applied_resource_binding_generation=NULL,
-                 binding=$11
+                 binding=$12
              WHERE target_run_id=$1 AND target_agent_id=$2
                AND runtime_thread_id=$3
                AND source_ref=$4
                AND (
-                   binding_digest=$12
-                   OR (binding_digest=$10 AND binding=$11)
+                   binding_digest=$13
+                   OR (binding_digest=$11 AND binding=$12)
                )",
         )
         .bind(binding.target.run_id.to_string())
@@ -157,6 +161,7 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         .bind(binding.launch_frame.frame_id.to_string())
         .bind(to_i64(binding.launch_frame.revision).map_err(|error| error.to_string())?)
         .bind(&binding.execution_profile_digest)
+        .bind(serde_json::to_value(&binding.execution_profile).map_err(|error| error.to_string())?)
         .bind(
             to_i64(binding.source_binding.committed_at_revision.0)
                 .map_err(|error| error.to_string())?,
@@ -297,11 +302,12 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         let inserted = sqlx::query(
             "INSERT INTO agent_run_product_runtime_binding(
                  target_run_id,target_agent_id,project_id,runtime_thread_id,
-                 launch_frame_id,launch_frame_revision,execution_profile_digest,source_ref,
+                 launch_frame_id,launch_frame_revision,execution_profile_digest,
+                 execution_profile,source_ref,
                  source_committed_revision,source_applied_surface_revision,
                  source_activated_revision,binding_digest,applied_resource_snapshot_revision,
                  applied_resource_binding_id,applied_resource_binding_generation,binding
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::TEXT::NUMERIC,$16)
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::TEXT::NUMERIC,$17)
              ON CONFLICT (target_run_id,target_agent_id) DO UPDATE SET
                  source_activated_revision=EXCLUDED.source_activated_revision,
                  applied_resource_snapshot_revision=EXCLUDED.applied_resource_snapshot_revision,
@@ -312,6 +318,7 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
                AND agent_run_product_runtime_binding.launch_frame_id=EXCLUDED.launch_frame_id
                AND agent_run_product_runtime_binding.launch_frame_revision=EXCLUDED.launch_frame_revision
                AND agent_run_product_runtime_binding.execution_profile_digest=EXCLUDED.execution_profile_digest
+               AND agent_run_product_runtime_binding.execution_profile=EXCLUDED.execution_profile
                AND agent_run_product_runtime_binding.source_ref=EXCLUDED.source_ref
                AND agent_run_product_runtime_binding.source_committed_revision=EXCLUDED.source_committed_revision
                AND agent_run_product_runtime_binding.source_applied_surface_revision=EXCLUDED.source_applied_surface_revision
@@ -328,6 +335,7 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         .bind(binding.launch_frame.frame_id.to_string())
         .bind(to_i64(binding.launch_frame.revision).map_err(|error| error.to_string())?)
         .bind(&binding.execution_profile_digest)
+        .bind(serde_json::to_value(&binding.execution_profile).map_err(|error| error.to_string())?)
         .bind(evidence.source_ref.as_str())
         .bind(to_i64(evidence.committed_at_revision.0).map_err(|error| error.to_string())?)
         .bind(to_i64(evidence.applied_surface_revision.0).map_err(|error| error.to_string())?)
@@ -380,7 +388,8 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
     ) -> Result<Option<crate::CommittedRuntimeToolProductBinding>, String> {
         let row = sqlx::query(
             "SELECT target_run_id,target_agent_id,runtime_thread_id,
-                    launch_frame_id,launch_frame_revision,execution_profile_digest,source_ref,
+                    launch_frame_id,launch_frame_revision,execution_profile_digest,
+                    execution_profile,source_ref,
                     source_committed_revision,source_applied_surface_revision,
                     source_activated_revision,binding_digest,
                     applied_resource_snapshot_revision,
@@ -432,7 +441,8 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
     ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
         let row = sqlx::query(
             "SELECT target_run_id,target_agent_id,runtime_thread_id,
-                    launch_frame_id,launch_frame_revision,execution_profile_digest,source_ref,
+                    launch_frame_id,launch_frame_revision,execution_profile_digest,
+                    execution_profile,source_ref,
                     source_committed_revision,source_applied_surface_revision,
                     source_activated_revision
              FROM agent_run_product_runtime_binding
@@ -473,6 +483,7 @@ fn product_binding_json(binding: &AgentRunProductRuntimeBinding) -> Value {
         },
         "runtime_thread_id": binding.runtime_thread_id,
         "launch_frame": binding.launch_frame,
+        "execution_profile": binding.execution_profile,
         "execution_profile_digest": binding.execution_profile_digest,
         "source_binding": binding.source_binding,
     })
@@ -496,7 +507,7 @@ impl AgentRunProductRuntimeBindingRepository for PostgresAgentRunProductRuntimeB
     ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
         let row = sqlx::query(
             "SELECT runtime_thread_id,launch_frame_id,launch_frame_revision,
-                    execution_profile_digest,source_ref,source_committed_revision,
+                    execution_profile_digest,execution_profile,source_ref,source_committed_revision,
                     source_applied_surface_revision,source_activated_revision
              FROM agent_run_product_runtime_binding
              WHERE target_run_id=$1 AND target_agent_id=$2",
@@ -588,6 +599,13 @@ fn map_product_binding_row(
     let execution_profile_digest = row
         .try_get::<String, _>("execution_profile_digest")
         .map_err(string_db_error)?;
+    let execution_profile = serde_json::from_value(
+        row.try_get::<Value, _>("execution_profile")
+            .map_err(string_db_error)?,
+    )
+    .map_err(|error| {
+        format!("agent_run_product_runtime_binding.execution_profile is invalid: {error}")
+    })?;
     let committed = row
         .try_get::<i64, _>("source_committed_revision")
         .map_err(string_db_error)?;
@@ -605,6 +623,7 @@ fn map_product_binding_row(
             agent_id: target_agent_id,
             revision: u64::try_from(launch_frame_revision).map_err(|error| error.to_string())?,
         },
+        execution_profile,
         execution_profile_digest,
         source_binding: ManagedRuntimeSourceBindingEvidence {
             source_ref,
@@ -1936,11 +1955,21 @@ mod product_activation_tests {
         };
         let thread_id = format!("thread-{}", Uuid::new_v4());
         let service_id = format!("service-{}", Uuid::new_v4());
+        let attachment_id = format!("attachment-{}", Uuid::new_v4());
         let binding_id = format!("binding-{}", Uuid::new_v4());
         let route_id = format!("route-{}", Uuid::new_v4());
         let source = format!("source-{}", Uuid::new_v4());
         let surface_digest = format!("sha256:surface-{}", Uuid::new_v4());
         let launch_frame_id = Uuid::new_v4();
+        let mut execution_profile =
+            agentdash_application_agentrun::agent_run::ProductExecutionProfileRef {
+                profile_key: "codex".to_owned(),
+                profile_revision: 1,
+                profile_digest: String::new(),
+                configuration: serde_json::json!({"executor": "codex"}),
+                credential_scope: None,
+            };
+        execution_profile.refresh_digest();
         let product_binding = AgentRunProductRuntimeBinding {
             target: target.clone(),
             runtime_thread_id: RuntimeThreadId::new(thread_id.clone()).unwrap(),
@@ -1949,7 +1978,8 @@ mod product_activation_tests {
                 agent_id: target.agent_id,
                 revision: 1,
             },
-            execution_profile_digest: "sha256:profile-test".to_owned(),
+            execution_profile_digest: execution_profile.profile_digest.clone(),
+            execution_profile,
             source_binding: ManagedRuntimeSourceBindingEvidence {
                 source_ref: RuntimeSourceRef::new(source.clone()).unwrap(),
                 committed_at_revision: RuntimeProjectionRevision(1),
@@ -2047,25 +2077,36 @@ mod product_activation_tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO agent_service_instance(
-                 service_instance_id,descriptor_digest,descriptor
-             ) VALUES ($1,'descriptor-test','{}'::JSONB)",
-        )
-        .bind(&service_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+        let target_snapshot = serde_json::json!({
+            "logical_instance_id": service_id,
+            "live_attachment_id": attachment_id,
+            "definition_id": "definition-test",
+            "verified_build_digest": "sha256:build-test",
+            "verified_profile_digest": "profile-test",
+            "offer_profile_digest": "profile-test",
+            "placement": {
+                "kind": "in_process",
+                "host_incarnation_id": "host-incarnation-test"
+            },
+            "remote_binding": null
+        });
         sqlx::query(
             "INSERT INTO agent_runtime_binding(
-                 binding_id,service_instance_id,generation,source_coordinate,profile_digest,
-                 bound_surface_digest,state,binding
-             ) VALUES ($1,$2,1,$3,'profile-test','bound-test','available',$4)",
+                 binding_id,logical_instance_id,live_attachment_id,host_incarnation_id,
+                 definition_id,generation,source_coordinate,profile_digest,
+                 bound_surface_digest,target_snapshot,state,binding
+             ) VALUES (
+                 $1,$2,$3,'host-incarnation-test','definition-test',1,$4,
+                 'profile-test','bound-test',$5,'available',$6
+             )",
         )
         .bind(&binding_id)
         .bind(&service_id)
+        .bind(&attachment_id)
         .bind(&source)
+        .bind(&target_snapshot)
         .bind(serde_json::json!({
+            "target": target_snapshot.clone(),
             "applied_surface": {"revision": "1", "digest": surface_digest}
         }))
         .execute(&pool)
@@ -2085,13 +2126,22 @@ mod product_activation_tests {
         .unwrap();
         sqlx::query(
             "INSERT INTO agent_runtime_lifecycle_target(
-                 runtime_thread_id,service_instance_id,generation,profile_digest,
-                 bound_surface_digest,target
-             ) VALUES ($1,$2,1,'profile-test','bound-test',$3)",
+                 runtime_thread_id,logical_instance_id,live_attachment_id,
+                 host_incarnation_id,definition_id,generation,profile_digest,
+                 bound_surface_digest,target_snapshot,target
+             ) VALUES (
+                 $1,$2,$3,'host-incarnation-test','definition-test',1,
+                 'profile-test','bound-test',$4,$5
+             )",
         )
         .bind(&thread_id)
         .bind(&service_id)
-        .bind(serde_json::json!({"callbacks": {"route_id": route_id}}))
+        .bind(&attachment_id)
+        .bind(&target_snapshot)
+        .bind(serde_json::json!({
+            "target": target_snapshot.clone(),
+            "callbacks": {"route_id": route_id}
+        }))
         .execute(&pool)
         .await
         .unwrap();

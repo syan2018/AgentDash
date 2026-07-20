@@ -1,0 +1,28 @@
+{
+  "id": "database-persistence-boundary-cleanup",
+  "name": "database-persistence-boundary-cleanup",
+  "title": "数据库持久化边界清理",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-07-20",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/agent-runtime-final-convergence-plan",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-20-complete-agent-persistence-boundary"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

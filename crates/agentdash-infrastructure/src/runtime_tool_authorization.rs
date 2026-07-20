@@ -1218,6 +1218,15 @@ mod tests {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
         };
+        let mut execution_profile =
+            agentdash_application_agentrun::agent_run::ProductExecutionProfileRef {
+                profile_key: "codex".to_owned(),
+                profile_revision: 1,
+                profile_digest: String::new(),
+                configuration: serde_json::json!({"executor": "codex"}),
+                credential_scope: None,
+            };
+        execution_profile.refresh_digest();
         CommittedRuntimeToolProductBinding {
             binding: AgentRunProductRuntimeBinding {
                 launch_frame: agentdash_application_agentrun::agent_run::ProductAgentFrameRef {
@@ -1225,7 +1234,8 @@ mod tests {
                     agent_id: target.agent_id,
                     revision: 1,
                 },
-                execution_profile_digest: "sha256:runtime-tool-profile".to_owned(),
+                execution_profile_digest: execution_profile.profile_digest.clone(),
+                execution_profile,
                 target,
                 runtime_thread_id: RuntimeThreadId::new("thread-test").unwrap(),
                 source_binding: ManagedRuntimeSourceBindingEvidence {

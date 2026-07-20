@@ -3,15 +3,14 @@ use std::{collections::BTreeMap, sync::Arc};
 use agentdash_agent_runtime_contract::{ManagedAgentRuntimeGateway, ManagedRuntimeGatewayError};
 use agentdash_agent_runtime_host::{
     CompleteAgentCallbackBroker, CompleteAgentHookHandler, CompleteAgentHost,
-    CompleteAgentHostError, CompleteAgentPlacement, CompleteAgentRegistrationVerifier,
-    CompleteAgentRemoteBindingFact, CompleteAgentServiceRegistry, CompleteAgentServiceVerification,
-    CompleteAgentToolHandler, CompleteAgentVerificationError, CompleteAgentVerificationRecord,
-    CompleteAgentVerificationRequest, CompleteAgentVerifiedBuildEvidence,
-    CompleteAgentVerifiedServiceRegistration, complete_agent_managed_runtime_gateway,
+    CompleteAgentHostError, CompleteAgentLiveSelection, CompleteAgentPlacement,
+    CompleteAgentRegistrationVerifier, CompleteAgentRemoteBindingFact,
+    CompleteAgentServiceVerification, CompleteAgentToolHandler, CompleteAgentVerificationError,
+    CompleteAgentVerificationRecord, CompleteAgentVerificationRequest,
+    CompleteAgentVerifiedBuildEvidence, CompleteAgentVerifiedServiceRegistration,
+    ProcessCompleteAgentLiveCatalog, complete_agent_managed_runtime_gateway,
 };
-use agentdash_agent_service_api::{
-    AgentHostCallbacks, AgentServiceDescriptor, AgentServiceInstanceId, CompleteAgentService,
-};
+use agentdash_agent_service_api::{AgentHostCallbacks, AgentServiceInstanceId};
 use agentdash_integration_api::{
     CompleteAgentContributionError, CompleteAgentPlacementRequirement,
     CompleteAgentRegistrationContribution,
@@ -25,29 +24,6 @@ use crate::{
     PostgresCompleteAgentCallbackRepository, PostgresCompleteAgentHostRepository,
     PostgresManagedRuntimeStateRepository,
 };
-
-#[derive(Default)]
-struct ProcessCompleteAgentServiceRegistry {
-    services: RwLock<BTreeMap<AgentServiceInstanceId, Arc<dyn CompleteAgentService>>>,
-}
-
-#[async_trait]
-impl CompleteAgentServiceRegistry for ProcessCompleteAgentServiceRegistry {
-    async fn attach(
-        &self,
-        instance_id: AgentServiceInstanceId,
-        service: Arc<dyn CompleteAgentService>,
-    ) {
-        self.services.write().await.insert(instance_id, service);
-    }
-
-    async fn resolve(
-        &self,
-        instance_id: &AgentServiceInstanceId,
-    ) -> Option<Arc<dyn CompleteAgentService>> {
-        self.services.read().await.get(instance_id).cloned()
-    }
-}
 
 #[derive(Debug, Error)]
 pub enum CompleteAgentCompositionError {
@@ -289,6 +265,7 @@ pub struct CompleteAgentComposition {
     pub runtime_repository: Arc<PostgresManagedRuntimeStateRepository>,
     pub host_repository: Arc<PostgresCompleteAgentHostRepository>,
     pub callback_repository: Arc<PostgresCompleteAgentCallbackRepository>,
+    pub live_catalog: Arc<ProcessCompleteAgentLiveCatalog>,
     pub host: Arc<CompleteAgentHost>,
     pub callbacks: Arc<CompleteAgentCallbackBroker>,
     pub runtime: Arc<dyn ManagedAgentRuntimeGateway>,
@@ -313,8 +290,11 @@ impl CompleteAgentComposition {
         let runtime_repository = Arc::new(PostgresManagedRuntimeStateRepository::new(pool.clone()));
         let host_repository = Arc::new(PostgresCompleteAgentHostRepository::new(pool.clone()));
         let callback_repository = Arc::new(PostgresCompleteAgentCallbackRepository::new(pool));
-        let registry = Arc::new(ProcessCompleteAgentServiceRegistry::default());
-        let host = Arc::new(CompleteAgentHost::new(host_repository.clone(), registry));
+        let live_catalog = Arc::new(ProcessCompleteAgentLiveCatalog::new());
+        let host = Arc::new(CompleteAgentHost::new(
+            host_repository.clone(),
+            live_catalog.clone(),
+        ));
         let callbacks = Arc::new(CompleteAgentCallbackBroker::new(
             tool_handler,
             hook_handler,
@@ -331,6 +311,7 @@ impl CompleteAgentComposition {
             runtime_repository,
             host_repository,
             callback_repository,
+            live_catalog,
             host,
             callbacks,
             runtime,
@@ -346,7 +327,7 @@ impl CompleteAgentComposition {
     pub async fn register_contribution(
         &self,
         contribution: CompleteAgentRegistrationContribution,
-    ) -> Result<AgentServiceDescriptor, CompleteAgentCompositionError> {
+    ) -> Result<CompleteAgentLiveSelection, CompleteAgentCompositionError> {
         let candidate = contribution.materialize().await?;
         let facts = candidate.facts();
         let claim = facts.registration_claim();
@@ -386,7 +367,6 @@ impl CompleteAgentComposition {
             .remote_binding()
             .map(|mapping| CompleteAgentRemoteBindingFact {
                 local_service_instance_id: mapping.local_service_instance_id.clone(),
-                local_binding_generation: mapping.local_binding_generation,
                 remote_service_instance_id: mapping.remote_service_instance_id.clone(),
                 remote_binding_generation: mapping.remote_binding_generation,
                 host_incarnation_id: self.host_incarnation_id.clone(),
@@ -399,9 +379,10 @@ impl CompleteAgentComposition {
             });
         Ok(self
             .host
-            .register_verified_service(
+            .attach_verified_service(
                 CompleteAgentVerifiedServiceRegistration {
                     instance_id: facts.instance_id().clone(),
+                    descriptor: facts.declared_descriptor().clone(),
                     placement,
                     verification,
                     remote_binding,

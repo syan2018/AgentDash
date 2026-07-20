@@ -2,6 +2,7 @@ use std::{collections::BTreeSet, env, fs, path::Path};
 
 use agentdash_agent_service_api::{
     AgentHostCallbackError, AgentServiceApiSchema, AgentServiceInstanceId, AgentServiceU64,
+    CompleteAgentLiveAttachmentId,
 };
 use schemars::schema_for;
 use ts_rs::TS;
@@ -19,6 +20,8 @@ fn main() {
         .expect("export Complete Agent Service API types");
     AgentServiceInstanceId::export_all_to(temp.path())
         .expect("export Complete Agent Service routing identity");
+    CompleteAgentLiveAttachmentId::export_all_to(temp.path())
+        .expect("export Complete Agent live attachment identity");
     AgentHostCallbackError::export_all_to(temp.path())
         .expect("export Complete Agent Host callback error");
     AgentServiceU64::export_all_to(temp.path())
@@ -83,6 +86,7 @@ fn required_service_type_names() -> BTreeSet<String> {
         "AgentHookDecision",
         "AgentHostCallbackError",
         "AgentServiceInstanceId",
+        "CompleteAgentLiveAttachmentId",
         "AgentServiceError",
         "AgentServiceU64",
     ]

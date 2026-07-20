@@ -404,6 +404,7 @@ mod tests {
     use agentdash_application_agentrun::agent_run::{
         AgentRunProductProjectionError, AgentRunProductRuntimeBinding, AgentRunTerminalChangePage,
         AgentRunTerminalChangeSequence, AgentRunTerminalSnapshot, ProductAgentFrameRef,
+        ProductExecutionProfileRef,
     };
     use agentdash_domain::workflow::AgentSource;
     use agentdash_test_support::workflow::{
@@ -560,6 +561,14 @@ mod tests {
         target: AgentRunTarget,
         snapshot: &ManagedRuntimeSnapshot,
     ) -> AgentRunProductRuntimeBinding {
+        let mut execution_profile = ProductExecutionProfileRef {
+            profile_key: "list-title-profile".to_string(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::json!({"provider": "fixture"}),
+            credential_scope: None,
+        };
+        execution_profile.refresh_digest();
         AgentRunProductRuntimeBinding {
             target: target.clone(),
             runtime_thread_id: snapshot.thread_id.clone(),
@@ -568,7 +577,8 @@ mod tests {
                 agent_id: target.agent_id,
                 revision: 1,
             },
-            execution_profile_digest: "sha256:list-title-profile".to_string(),
+            execution_profile_digest: execution_profile.profile_digest.clone(),
+            execution_profile,
             source_binding: source_binding(),
         }
     }

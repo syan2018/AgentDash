@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_host::CompleteAgentHostRepository;
+use agentdash_agent_runtime_host::{CompleteAgentAvailability, CompleteAgentLiveCatalog};
+use agentdash_agent_service_api::AgentServiceInstanceId;
 use agentdash_contracts::project_agent::{
     ExecutionProfileDiscoveryResponse, ExecutionProfileDto, ExecutionProfileModelDto,
     ExecutionProfileModelSelectorDto, ExecutionProfileOptionsDto, ExecutionProfileProviderDto,
@@ -18,12 +19,11 @@ use crate::{app_state::AppState, auth::CurrentUser, rpc::ApiError};
 
 pub const MANAGED_EXECUTION_PROFILE_ID: &str = "PI_AGENT";
 pub const CODEX_EXECUTION_PROFILE_ID: &str = "CODEX";
-const CODEX_DEFINITION_ID: &str = "builtin.codex-app-server";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExecutionProfileRegistration {
     BuiltIn,
-    StaticService(&'static str),
+    LiveAdapter(&'static str),
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,34 +32,17 @@ pub struct ExecutionProfileOptionsQuery {
 }
 
 pub async fn is_known_execution_profile(
-    state: &AppState,
+    _state: &AppState,
     profile_id: &str,
 ) -> Result<bool, ApiError> {
-    let Some(registration) = execution_profile_registration(profile_id) else {
-        return Ok(false);
-    };
-    let ExecutionProfileRegistration::StaticService(definition_id) = registration else {
-        return Ok(true);
-    };
-    let snapshot = state
-        .services
-        .complete_agent
-        .host_repository
-        .load()
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    Ok(snapshot
-        .facts
-        .service_instances
-        .values()
-        .any(|descriptor| descriptor.definition_id.as_str() == definition_id))
+    Ok(execution_profile_registration(profile_id).is_some())
 }
 
 fn execution_profile_registration(profile_id: &str) -> Option<ExecutionProfileRegistration> {
     match profile_id {
         MANAGED_EXECUTION_PROFILE_ID => Some(ExecutionProfileRegistration::BuiltIn),
-        CODEX_EXECUTION_PROFILE_ID => Some(ExecutionProfileRegistration::StaticService(
-            CODEX_DEFINITION_ID,
+        CODEX_EXECUTION_PROFILE_ID => Some(ExecutionProfileRegistration::LiveAdapter(
+            agentdash_integration_codex::CODEX_COMPLETE_AGENT_INSTANCE_ID,
         )),
         _ => None,
     }
@@ -75,13 +58,18 @@ fn managed_profile(provider_available: bool) -> ExecutionProfileDto {
     }
 }
 
-fn codex_profile(codex_registered: bool) -> ExecutionProfileDto {
+fn codex_profile(availability: CompleteAgentAvailability) -> ExecutionProfileDto {
+    let available = availability.is_available();
     ExecutionProfileDto {
         id: CODEX_EXECUTION_PROFILE_ID.to_string(),
         name: "Codex App Server".to_string(),
-        available: codex_registered,
-        unavailable_reason: (!codex_registered)
-            .then(|| "内置 Codex App Server Runtime Integration 未注册".to_string()),
+        available,
+        unavailable_reason: (!available).then(|| {
+            availability
+                .unavailable_reason()
+                .unwrap_or("内置 Codex App Server Runtime Integration 当前不可用")
+                .to_owned()
+        }),
     }
 }
 
@@ -112,10 +100,19 @@ pub async fn discover_execution_profiles(
     )
     .await;
     let provider_available = catalog.providers.iter().any(|provider| provider.executable);
+    let codex_instance_id =
+        AgentServiceInstanceId::new(agentdash_integration_codex::CODEX_COMPLETE_AGENT_INSTANCE_ID)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let codex_availability = state
+        .services
+        .complete_agent
+        .live_catalog
+        .availability(&codex_instance_id)
+        .await;
     Ok(Json(ExecutionProfileDiscoveryResponse {
         executors: vec![
             managed_profile(provider_available),
-            codex_profile(is_known_execution_profile(&state, CODEX_EXECUTION_PROFILE_ID).await?),
+            codex_profile(codex_availability),
         ],
     }))
 }
@@ -260,8 +257,18 @@ mod tests {
 
     #[test]
     fn codex_profile_is_projected_independently_from_native_provider_availability() {
-        assert!(codex_profile(true).available);
-        let unavailable = codex_profile(false);
+        assert!(
+            codex_profile(CompleteAgentAvailability::Available {
+                attachment_id: agentdash_agent_service_api::CompleteAgentLiveAttachmentId::new(
+                    "attachment"
+                )
+                .unwrap(),
+            })
+            .available
+        );
+        let unavailable = codex_profile(CompleteAgentAvailability::Unavailable {
+            reason: "not materialized".to_owned(),
+        });
         assert!(!unavailable.available);
         assert!(unavailable.unavailable_reason.is_some());
     }
@@ -274,8 +281,8 @@ mod tests {
         );
         assert_eq!(
             execution_profile_registration(CODEX_EXECUTION_PROFILE_ID),
-            Some(ExecutionProfileRegistration::StaticService(
-                CODEX_DEFINITION_ID
+            Some(ExecutionProfileRegistration::LiveAdapter(
+                agentdash_integration_codex::CODEX_COMPLETE_AGENT_INSTANCE_ID
             ))
         );
         assert_eq!(execution_profile_registration("unknown"), None);

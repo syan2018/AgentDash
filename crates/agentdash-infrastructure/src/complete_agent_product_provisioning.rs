@@ -4,25 +4,27 @@ use std::{
 };
 
 use agentdash_agent_runtime::{PlatformToolBroker, RuntimeToolDefinition};
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_agent_runtime_host::{
-    CompleteAgentHost, CompleteAgentHostError, CompleteAgentRuntimeRecoveryPlanner,
-    CompleteAgentRuntimeTarget, CompleteAgentRuntimeTargetProvisioningRequest,
-    CompleteAgentRuntimeTargetRecoveryRequest,
+    CompleteAgentBindingTarget, CompleteAgentHost, CompleteAgentHostError,
+    CompleteAgentRuntimeRecoveryPlanner, CompleteAgentRuntimeTarget,
+    CompleteAgentRuntimeTargetProvisioningRequest, CompleteAgentRuntimeTargetRecoveryRequest,
 };
 use agentdash_agent_service_api::{
     AgentHookAction, AgentHookBlockingSemantics, AgentHookDefinitionId, AgentHookEffectKind,
     AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming,
-    AgentIdempotencyKey, AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId,
-    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRequirement,
-    AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentSurfaceSnapshot,
-    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, SemanticFidelity,
+    AgentIdempotencyKey, AgentPayloadDigest, AgentSurfaceContributionPayload, AgentSurfaceDigest,
+    AgentSurfaceRequirement, AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
+    AgentSurfaceSnapshot, AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    SemanticFidelity,
 };
 use agentdash_application_agentrun::agent_run::frame::{
     AgentContextSourceSnapshot, runtime_backend_anchor_from_vfs,
 };
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductRuntimeProvisioningError, AgentRunProductRuntimeProvisioningEvidence,
-    AgentRunProductRuntimeProvisioningPort, AgentRunProductRuntimeProvisioningRequest,
+    AgentRunProductRuntimeBinding, AgentRunProductRuntimeProvisioningError,
+    AgentRunProductRuntimeProvisioningEvidence, AgentRunProductRuntimeProvisioningPort,
+    AgentRunProductRuntimeProvisioningRequest, AgentRunProductRuntimeRecoveryPreparationPort,
     AgentRunProductRuntimeSurfaceRebindEvidence, AgentRunProductRuntimeSurfaceRebindPort,
     AgentRunProductRuntimeSurfaceRebindRequest, ProductAgentSurfaceFacts,
     ProductExecutionProfileRef,
@@ -48,13 +50,12 @@ const DEFAULT_CALLBACK_DEADLINE_MS: u64 = 30_000;
 
 #[derive(Default)]
 pub struct CompleteAgentServiceSelectionCatalog {
-    profiles: RwLock<BTreeMap<(String, String), AgentServiceInstanceId>>,
-    recovery_profiles: RwLock<BTreeMap<AgentProfileDigest, AgentServiceInstanceId>>,
+    profiles: RwLock<BTreeMap<(String, String), CompleteAgentBindingTarget>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedCompleteAgentSelection {
-    pub service_instance_id: AgentServiceInstanceId,
+    pub target: CompleteAgentBindingTarget,
     pub verified_product_profile_digest: String,
 }
 
@@ -64,43 +65,13 @@ pub trait CompleteAgentServiceSelector: Send + Sync {
         &self,
         profile: &ProductExecutionProfileRef,
     ) -> Result<VerifiedCompleteAgentSelection, AgentRunProductRuntimeProvisioningError>;
-
-    async fn select_recovery(
-        &self,
-        service_profile_digest: &AgentProfileDigest,
-        previous_instance_id: &AgentServiceInstanceId,
-    ) -> Result<AgentServiceInstanceId, AgentRunProductRuntimeProvisioningError>;
 }
 
 impl CompleteAgentServiceSelectionCatalog {
-    pub async fn activate_recovery_profile(
-        &self,
-        profile_digest: AgentProfileDigest,
-        instance_id: AgentServiceInstanceId,
-    ) -> Option<AgentServiceInstanceId> {
-        self.recovery_profiles
-            .write()
-            .await
-            .insert(profile_digest, instance_id)
-    }
-
-    pub async fn deactivate_recovery_profile(
-        &self,
-        profile_digest: &AgentProfileDigest,
-        expected_instance_id: &AgentServiceInstanceId,
-    ) -> bool {
-        let mut profiles = self.recovery_profiles.write().await;
-        if profiles.get(profile_digest) != Some(expected_instance_id) {
-            return false;
-        }
-        profiles.remove(profile_digest);
-        true
-    }
-
     pub async fn register(
         &self,
         profile: &ProductExecutionProfileRef,
-        instance_id: AgentServiceInstanceId,
+        target: CompleteAgentBindingTarget,
     ) -> Result<(), AgentRunProductRuntimeProvisioningError> {
         if !profile.validate() {
             return Err(invalid(
@@ -111,7 +82,7 @@ impl CompleteAgentServiceSelectionCatalog {
         let coordinate = (profile_key.clone(), profile.profile_digest.clone());
         let mut profiles = self.profiles.write().await;
         if let Some(existing) = profiles.get(&coordinate) {
-            if existing == &instance_id {
+            if existing == &target {
                 return Ok(());
             }
             return Err(AgentRunProductRuntimeProvisioningError::Conflict {
@@ -120,7 +91,7 @@ impl CompleteAgentServiceSelectionCatalog {
                 ),
             });
         }
-        profiles.insert(coordinate, instance_id);
+        profiles.insert(coordinate, target);
         Ok(())
     }
 
@@ -128,8 +99,8 @@ impl CompleteAgentServiceSelectionCatalog {
     pub async fn activate(
         &self,
         profile: &ProductExecutionProfileRef,
-        instance_id: AgentServiceInstanceId,
-    ) -> Result<Option<AgentServiceInstanceId>, AgentRunProductRuntimeProvisioningError> {
+        target: CompleteAgentBindingTarget,
+    ) -> Result<Option<CompleteAgentBindingTarget>, AgentRunProductRuntimeProvisioningError> {
         if !profile.validate() {
             return Err(invalid(
                 "execution profile must have a valid immutable digest before activation",
@@ -139,20 +110,20 @@ impl CompleteAgentServiceSelectionCatalog {
             normalize_profile_key(&profile.profile_key)?,
             profile.profile_digest.clone(),
         );
-        Ok(self.profiles.write().await.insert(coordinate, instance_id))
+        Ok(self.profiles.write().await.insert(coordinate, target))
     }
 
     pub async fn deactivate(
         &self,
         profile: &ProductExecutionProfileRef,
-        expected_instance_id: &AgentServiceInstanceId,
+        expected_target: &CompleteAgentBindingTarget,
     ) -> Result<bool, AgentRunProductRuntimeProvisioningError> {
         let coordinate = (
             normalize_profile_key(&profile.profile_key)?,
             profile.profile_digest.clone(),
         );
         let mut profiles = self.profiles.write().await;
-        if profiles.get(&coordinate) != Some(expected_instance_id) {
+        if profiles.get(&coordinate) != Some(expected_target) {
             return Ok(false);
         }
         profiles.remove(&coordinate);
@@ -165,9 +136,9 @@ impl CompleteAgentServiceSelectionCatalog {
     /// placement is a conflict and leaves the complete catalog unchanged.
     pub async fn switch_placement(
         &self,
-        previous: Option<(&[ProductExecutionProfileRef], &AgentServiceInstanceId)>,
+        previous: Option<(&[ProductExecutionProfileRef], &CompleteAgentBindingTarget)>,
         next_profiles: &[ProductExecutionProfileRef],
-        next_instance_id: &AgentServiceInstanceId,
+        next_target: &CompleteAgentBindingTarget,
     ) -> Result<(), AgentRunProductRuntimeProvisioningError> {
         let next = next_profiles
             .iter()
@@ -185,7 +156,7 @@ impl CompleteAgentServiceSelectionCatalog {
         let mut selections = self.profiles.write().await;
         for coordinate in &next {
             if let Some(current) = selections.get(coordinate)
-                && current != next_instance_id
+                && current != next_target
                 && previous
                     .as_ref()
                     .is_none_or(|(_, previous_instance)| current != *previous_instance)
@@ -206,7 +177,7 @@ impl CompleteAgentServiceSelectionCatalog {
             }
         }
         for coordinate in next {
-            selections.insert(coordinate, next_instance_id.clone());
+            selections.insert(coordinate, next_target.clone());
         }
         Ok(())
     }
@@ -224,7 +195,7 @@ impl CompleteAgentServiceSelector for CompleteAgentServiceSelectionCatalog {
             ));
         }
         let profile_key = normalize_profile_key(&profile.profile_key)?;
-        let service_instance_id = self
+        let target = self
             .profiles
             .read()
             .await
@@ -238,28 +209,9 @@ impl CompleteAgentServiceSelector for CompleteAgentServiceSelectionCatalog {
                 ),
             })?;
         Ok(VerifiedCompleteAgentSelection {
-            service_instance_id,
+            target,
             verified_product_profile_digest: profile.profile_digest.clone(),
         })
-    }
-
-    async fn select_recovery(
-        &self,
-        service_profile_digest: &AgentProfileDigest,
-        previous_instance_id: &AgentServiceInstanceId,
-    ) -> Result<AgentServiceInstanceId, AgentRunProductRuntimeProvisioningError> {
-        self.recovery_profiles
-            .read()
-            .await
-            .get(service_profile_digest)
-            .filter(|instance_id| *instance_id != previous_instance_id)
-            .cloned()
-            .ok_or_else(|| AgentRunProductRuntimeProvisioningError::Incompatible {
-                reason: format!(
-                    "no replacement Complete Agent is active for service profile `{}`",
-                    service_profile_digest.as_str()
-                ),
-            })
     }
 }
 
@@ -269,6 +221,7 @@ pub struct CompleteAgentProductRuntimeProvisioner {
     broker: Arc<PlatformToolBroker>,
     dynamic_tools: Arc<dyn RuntimeDynamicToolCatalog>,
     callback_deadline_ms: u64,
+    prepared_recoveries: RwLock<BTreeMap<RuntimeThreadId, CompleteAgentBindingTarget>>,
 }
 
 impl CompleteAgentProductRuntimeProvisioner {
@@ -284,12 +237,46 @@ impl CompleteAgentProductRuntimeProvisioner {
             broker,
             dynamic_tools,
             callback_deadline_ms: DEFAULT_CALLBACK_DEADLINE_MS,
+            prepared_recoveries: RwLock::new(BTreeMap::new()),
         }
     }
 
     pub fn with_callback_deadline_ms(mut self, callback_deadline_ms: u64) -> Self {
         self.callback_deadline_ms = callback_deadline_ms;
         self
+    }
+}
+
+#[async_trait]
+impl AgentRunProductRuntimeRecoveryPreparationPort for CompleteAgentProductRuntimeProvisioner {
+    async fn prepare_recovery_attachment(
+        &self,
+        binding: &AgentRunProductRuntimeBinding,
+    ) -> Result<(), String> {
+        if !binding.execution_profile.validate()
+            || binding.execution_profile.profile_digest != binding.execution_profile_digest
+        {
+            return Err(
+                "Product recovery binding does not preserve one exact execution profile snapshot"
+                    .to_owned(),
+            );
+        }
+        let selection = self
+            .selections
+            .select(&binding.execution_profile)
+            .await
+            .map_err(|error| error.to_string())?;
+        if selection.verified_product_profile_digest != binding.execution_profile_digest {
+            return Err(
+                "Product recovery selection did not verify the persisted execution profile"
+                    .to_owned(),
+            );
+        }
+        self.prepared_recoveries
+            .write()
+            .await
+            .insert(binding.runtime_thread_id.clone(), selection.target);
+        Ok(())
     }
 }
 
@@ -322,7 +309,7 @@ impl AgentRunProductRuntimeProvisioningPort for CompleteAgentProductRuntimeProvi
                     .map_err(|error| invalid(error.to_string()))?,
                 request_digest,
                 runtime_thread_id: request.runtime_thread_id.clone(),
-                service_instance_id: selection.service_instance_id,
+                target: selection.target,
                 desired_surface: compiled,
                 callback_deadline_ms: self.callback_deadline_ms,
             })
@@ -389,7 +376,7 @@ impl AgentRunProductRuntimeSurfaceRebindPort for CompleteAgentProductRuntimeProv
                 request_digest,
                 runtime_thread_id: request.runtime_thread_id.clone(),
                 expected_generation: current.generation,
-                service_instance_id: current.service_instance_id,
+                target: current.target,
                 desired_surface,
                 callback_deadline_ms: current.callbacks.default_deadline_ms,
             })
@@ -424,16 +411,26 @@ impl CompleteAgentRuntimeRecoveryPlanner for CompleteAgentProductRuntimeProvisio
                     .to_owned(),
             });
         }
-        let service_instance_id = self
-            .selections
-            .select_recovery(
-                &previous_target.profile_digest,
-                &previous_target.service_instance_id,
-            )
+        let target = self
+            .prepared_recoveries
+            .read()
             .await
-            .map_err(|error| CompleteAgentHostError::DispatchRejected {
-                reason: error.to_string(),
+            .get(runtime_thread_id)
+            .cloned()
+            .ok_or_else(|| CompleteAgentHostError::DispatchRejected {
+                reason: "Product recovery did not prepare an exact live attachment".to_owned(),
             })?;
+        if target == previous_target.target
+            || target.definition_id != previous_target.target.definition_id
+            || target.verified_build_digest != previous_target.target.verified_build_digest
+            || target.verified_profile_digest != previous_target.target.verified_profile_digest
+            || target.offer_profile_digest != previous_target.target.offer_profile_digest
+        {
+            return Err(CompleteAgentHostError::DispatchRejected {
+                reason: "prepared recovery attachment is not a distinct compatible target snapshot"
+                    .to_owned(),
+            });
+        }
         let desired_surface = AgentSurfaceSnapshot {
             revision: previous_target.bound_surface.revision,
             digest: previous_target.bound_surface.digest.clone(),
@@ -460,8 +457,8 @@ impl CompleteAgentRuntimeRecoveryPlanner for CompleteAgentProductRuntimeProvisio
                     "runtime_thread_id": runtime_thread_id,
                     "effect_id": effect_id,
                     "expected_generation": previous_binding.generation,
-                    "previous_service_instance_id": previous_target.service_instance_id,
-                    "service_instance_id": service_instance_id,
+                    "previous_target": previous_target.target,
+                    "target": target,
                     "desired_surface": desired_surface,
                 }))
                 .map_err(|error| CompleteAgentHostError::Encoding {
@@ -483,7 +480,7 @@ impl CompleteAgentRuntimeRecoveryPlanner for CompleteAgentProductRuntimeProvisio
             request_digest,
             runtime_thread_id: runtime_thread_id.clone(),
             expected_generation: previous_binding.generation,
-            service_instance_id,
+            target,
             desired_surface,
             callback_deadline_ms: previous_target.callbacks.default_deadline_ms,
         })
@@ -915,7 +912,7 @@ fn map_host_error(error: CompleteAgentHostError) -> AgentRunProductRuntimeProvis
             }
         }
         CompleteAgentHostError::DispatchRejected { .. }
-        | CompleteAgentHostError::UnknownService { .. } => incompatible(error.to_string()),
+        | CompleteAgentHostError::UnavailableAttachment { .. } => incompatible(error.to_string()),
         _ => failed(error.to_string()),
     }
 }
@@ -940,7 +937,32 @@ fn failed(reason: impl Into<String>) -> AgentRunProductRuntimeProvisioningError 
 
 #[cfg(test)]
 mod tests {
+    use agentdash_agent_runtime_host::CompleteAgentPlacement;
+    use agentdash_agent_service_api::{
+        AgentProfileDigest, AgentServiceDefinitionId, AgentServiceInstanceId,
+        CompleteAgentLiveAttachmentId,
+    };
+
     use super::*;
+
+    fn binding_target(instance: &str) -> CompleteAgentBindingTarget {
+        let profile = AgentProfileDigest::new("sha256:service-profile").expect("profile");
+        CompleteAgentBindingTarget {
+            logical_instance_id: AgentServiceInstanceId::new(instance).expect("instance"),
+            live_attachment_id: CompleteAgentLiveAttachmentId::new(format!(
+                "attachment-{instance}"
+            ))
+            .expect("attachment"),
+            definition_id: AgentServiceDefinitionId::new("definition").expect("definition"),
+            verified_build_digest: AgentPayloadDigest::new("sha256:build").expect("build"),
+            verified_profile_digest: profile.clone(),
+            offer_profile_digest: profile,
+            placement: CompleteAgentPlacement::InProcess {
+                host_incarnation_id: "fixture-host".to_owned(),
+            },
+            remote_binding: None,
+        }
+    }
 
     fn product_profile(system_prompt: &str) -> ProductExecutionProfileRef {
         let mut profile = ProductExecutionProfileRef {
@@ -961,13 +983,13 @@ mod tests {
     async fn exact_selection_is_pinned_to_the_verified_product_profile_digest() {
         let catalog = CompleteAgentServiceSelectionCatalog::default();
         let profile = product_profile("one");
-        let instance = AgentServiceInstanceId::new("codex-fixture").unwrap();
-        catalog.register(&profile, instance.clone()).await.unwrap();
+        let target = binding_target("codex-fixture");
+        catalog.register(&profile, target.clone()).await.unwrap();
 
         assert_eq!(
             catalog.select(&profile).await.unwrap(),
             VerifiedCompleteAgentSelection {
-                service_instance_id: instance,
+                target,
                 verified_product_profile_digest: profile.profile_digest.clone(),
             }
         );
@@ -985,87 +1007,46 @@ mod tests {
         let previous_profile = product_profile("previous");
         let next_profile = product_profile("next");
         let conflicting_profile = product_profile("conflict");
-        let previous_instance = AgentServiceInstanceId::new("previous").unwrap();
-        let next_instance = AgentServiceInstanceId::new("next").unwrap();
-        let other_instance = AgentServiceInstanceId::new("other").unwrap();
+        let previous_target = binding_target("previous");
+        let next_target = binding_target("next");
+        let other_target = binding_target("other");
         catalog
-            .register(&previous_profile, previous_instance.clone())
+            .register(&previous_profile, previous_target.clone())
             .await
             .unwrap();
         catalog
-            .register(&conflicting_profile, other_instance)
+            .register(&conflicting_profile, other_target)
             .await
             .unwrap();
 
         assert!(matches!(
             catalog
                 .switch_placement(
-                    Some((&[previous_profile.clone()], &previous_instance)),
+                    Some((std::slice::from_ref(&previous_profile), &previous_target)),
                     &[next_profile.clone(), conflicting_profile],
-                    &next_instance,
+                    &next_target,
                 )
                 .await,
             Err(AgentRunProductRuntimeProvisioningError::Conflict { .. })
         ));
         assert_eq!(
-            catalog
-                .select(&previous_profile)
-                .await
-                .unwrap()
-                .service_instance_id,
-            previous_instance
+            catalog.select(&previous_profile).await.unwrap().target,
+            previous_target
         );
         assert!(catalog.select(&next_profile).await.is_err());
 
         catalog
             .switch_placement(
-                Some((&[previous_profile.clone()], &previous_instance)),
-                &[next_profile.clone()],
-                &next_instance,
+                Some((std::slice::from_ref(&previous_profile), &previous_target)),
+                std::slice::from_ref(&next_profile),
+                &next_target,
             )
             .await
             .unwrap();
         assert!(catalog.select(&previous_profile).await.is_err());
         assert_eq!(
-            catalog
-                .select(&next_profile)
-                .await
-                .unwrap()
-                .service_instance_id,
-            next_instance
-        );
-    }
-
-    #[tokio::test]
-    async fn recovery_selection_uses_only_the_current_trusted_service_profile_placement() {
-        let catalog = CompleteAgentServiceSelectionCatalog::default();
-        let profile_digest = AgentProfileDigest::new("sha256:service-profile").unwrap();
-        let previous = AgentServiceInstanceId::new("previous-service").unwrap();
-        let replacement = AgentServiceInstanceId::new("replacement-service").unwrap();
-        catalog
-            .activate_recovery_profile(profile_digest.clone(), previous.clone())
-            .await;
-        assert!(
-            catalog
-                .select_recovery(&profile_digest, &previous)
-                .await
-                .is_err()
-        );
-
-        catalog
-            .activate_recovery_profile(profile_digest.clone(), replacement.clone())
-            .await;
-        assert_eq!(
-            catalog
-                .select_recovery(&profile_digest, &previous)
-                .await
-                .unwrap(),
-            replacement
-        );
-        assert!(
-            !catalog
-                .deactivate_recovery_profile(&profile_digest, &previous)
-                .await
+            catalog.select(&next_profile).await.unwrap().target,
+            next_target
         );
     }
 

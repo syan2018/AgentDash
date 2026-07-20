@@ -595,13 +595,6 @@ impl ProductWorkflowAgentCallRuntimeAdapter {
                 .map_err(|error| error.to_string())?,
             operation_id,
             thread_id: saga.runtime_thread_id.clone(),
-            expected_revision: match phase {
-                WorkflowAgentCallProductPhase::ActivateRuntime => saga
-                    .source_binding
-                    .as_ref()
-                    .map(|binding| binding.committed_at_revision),
-                _ => None,
-            },
             command,
         })
     }

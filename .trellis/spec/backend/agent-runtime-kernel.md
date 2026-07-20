@@ -138,7 +138,7 @@ struct RuntimeCommit {
 ### 5. Good/Base/Bad Cases
 
 - Good：Command在revision 7被接受，事务同时写operation、revision 8 projection、连续events与outbox；Driver worker只在commit后消费outbox。
-- Good：两个并发Command都声明expected revision 7，仅一条commit成功；失败方不占用operation/event sequence。
+- Good：两个并发Command都从revision 7归约候选状态；repository内部CAS仅允许一条commit成功，失败方重新读取canonical事实且不占用operation/event sequence。调用方不需要知道aggregate revision。
 - Good：Driver batch在revision 18归约到临时revision 19后发现非法后置fact；Runtime丢弃整份staged projection，以expected revision 18提交唯一violation/Lost终态并停止pump。
 - Good：同一durable事件在事务内追加标准`ThreadNameUpdated` journal并把projection改为新名称；commit与live publish完成后，observer只收到一份`projection_changed=true`通知。
 - Base：客户端携带durable cursor与当前transient generation/sequence重连；Gateway去重replay后保持live连接，final durable item覆盖过程delta。

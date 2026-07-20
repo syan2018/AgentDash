@@ -56,7 +56,11 @@ fn is_optional_complete_agent_materialization_failure(
 - Required surface/hook contribution只有在revision/digest/artifact与per-point applied ack匹配，且effective HookProfile满足actions/strength/failure policy/configuration boundary后才允许Turn dispatch。
 - Live catalog 中复用的 selection 与本次 materialization 新产生的 selection 必须经过同一个完整 Surface admission 函数；attach 成功只证明 service 可用，不证明它满足当前 AgentFrame。任何路径都不得把未求交 offer 延迟到 Host bind 才发现 workspace/hook 不兼容。
 - Integration profile与adapter apply acknowledgment必须由同一capability事实生成。`HostAdaptedExact` workspace要声明Host能够精确交付的最大capability；Hook failure policy必须与callback错误分支一致。Managed Runtime持久化effect不进入Driver action requirement。
-- `agent_runtime_binding`/`agent_runtime_source_coordinate` 是 Managed Runtime 引用的最小 Host-owned anchor。`0089` 后 Host 表保存 exact target snapshot、binding detail、lease、effect 与完整 coordinates；live inventory 不进入 schema。Runtime repository 不写 Host authority，Host 不写 Runtime journal/projection。
+- `agent_runtime_host_revision.facts` 是 durable Host graph 的唯一持久化形态，保存 exact
+  target snapshot、binding/source/generation、callback route、lease、effect 与 recovery
+  evidence。Managed Runtime 与 Product 只冻结所需的 typed identity/revision/digest；需要
+  Host 当前事实时通过 typed Host snapshot 读取，不引用 Host 内部集合表。这样 Host graph
+  的 domain 校验、CAS 与持久化共享同一个原子边界。
 - Relay是placement transport而非service identity。Native/Codex/remote service通过相同contribution/Host seam接入，不在Application/router增加service类型分支。
 - Local Host每次启动生成不可复用的`HostIncarnationId`。Offer advertisement、Runtime Wire placement request与relay provenance携带该identity；Local endpoint在解析Driver前同时校验host、transport、incarnation、instance与generation，使重启前的stream和command无法命中新进程中从1重新计数的generation。
 - Runtime Wire placement 断连后成为 retired connection epoch：catalog retire 旧 attachment，所有 send/frame/ack/open 永久 fence。重新连接必须以新的 transport epoch 产生新 attachment，再通过显式 recovery 提升 binding generation；不能重放旧 epoch 未确认 work。

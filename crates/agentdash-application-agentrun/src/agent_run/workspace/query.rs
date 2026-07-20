@@ -365,13 +365,13 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         has_product_binding: bool,
     ) -> Result<Option<ResolvedVfsSurface>, WorkflowApplicationError> {
         let vfs = if has_product_binding {
-            let snapshot = self
+            let surface = self
                 .repos
                 .applied_resource_surfaces
-                .applied_resource_surface(target, None)
+                .applied_resource_surface(target)
                 .await
                 .map_err(|error| WorkflowApplicationError::Conflict(error.to_string()))?;
-            applied_surface_vfs(snapshot.surface)
+            applied_surface_vfs(surface)
         } else {
             let Some(frame) = frame else {
                 return Ok(None);

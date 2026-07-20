@@ -1665,7 +1665,6 @@ mod tests {
     fn command(
         thread_id: RuntimeThreadId,
         operation: &str,
-        expected_revision: Option<RuntimeProjectionRevision>,
         command: ManagedRuntimeCommand,
     ) -> ManagedRuntimeCommandEnvelope {
         ManagedRuntimeCommandEnvelope {
@@ -1673,7 +1672,6 @@ mod tests {
             idempotency_key: RuntimeIdempotencyKey::new(format!("idem:{operation}"))
                 .expect("idempotency"),
             thread_id,
-            expected_revision,
             command,
         }
     }
@@ -1701,7 +1699,6 @@ mod tests {
         let create = command(
             parent.clone(),
             "create",
-            None,
             ManagedRuntimeCommand::Create {
                 initial_context: None,
             },
@@ -1716,7 +1713,7 @@ mod tests {
         assert!(duplicate.duplicate);
         assert_eq!(lifecycle.create_calls.load(Ordering::SeqCst), 1);
 
-        let parent_snapshot = gateway
+        gateway
             .read(ManagedRuntimeReadRequest {
                 thread_id: parent.clone(),
             })
@@ -1726,7 +1723,6 @@ mod tests {
             .execute(command(
                 parent.clone(),
                 "activate-parent",
-                Some(parent_snapshot.revision),
                 ManagedRuntimeCommand::Activate,
             ))
             .await
@@ -1744,7 +1740,6 @@ mod tests {
             .execute(command(
                 parent,
                 "fork",
-                Some(active.revision),
                 ManagedRuntimeCommand::Fork {
                     child_thread_id: child.clone(),
                     through_completed_turn_id: None,
@@ -1774,7 +1769,6 @@ mod tests {
             .execute(command(
                 child.clone(),
                 "activate-child",
-                Some(child_snapshot.revision),
                 ManagedRuntimeCommand::Activate,
             ))
             .await
@@ -1803,14 +1797,13 @@ mod tests {
             .execute(command(
                 thread_id.clone(),
                 "rebind-create",
-                None,
                 ManagedRuntimeCommand::Create {
                     initial_context: None,
                 },
             ))
             .await
             .expect("create");
-        let created = gateway
+        gateway
             .read(ManagedRuntimeReadRequest {
                 thread_id: thread_id.clone(),
             })
@@ -1820,23 +1813,17 @@ mod tests {
             .execute(command(
                 thread_id.clone(),
                 "rebind-activate",
-                Some(created.revision),
                 ManagedRuntimeCommand::Activate,
             ))
             .await
             .expect("activate");
-        let active = gateway
+        gateway
             .read(ManagedRuntimeReadRequest {
                 thread_id: thread_id.clone(),
             })
             .await
             .expect("active");
-        let command = command(
-            thread_id.clone(),
-            "rebind",
-            Some(active.revision),
-            ManagedRuntimeCommand::Rebind,
-        );
+        let command = command(thread_id.clone(), "rebind", ManagedRuntimeCommand::Rebind);
 
         let rebound = gateway.execute(command.clone()).await.expect("rebind");
         let replay = gateway.execute(command).await.expect("replay rebind");
@@ -1878,7 +1865,6 @@ mod tests {
             .execute(command(
                 thread_id.clone(),
                 "resume",
-                None,
                 ManagedRuntimeCommand::Resume,
             ))
             .await
@@ -1907,7 +1893,6 @@ mod tests {
         let create = command(
             thread_id.clone(),
             "create-lost-receipt",
-            None,
             ManagedRuntimeCommand::Create {
                 initial_context: None,
             },
@@ -1952,14 +1937,13 @@ mod tests {
             .execute(command(
                 parent.clone(),
                 "partial-create",
-                None,
                 ManagedRuntimeCommand::Create {
                     initial_context: None,
                 },
             ))
             .await
             .expect("create parent");
-        let parent_snapshot = gateway
+        gateway
             .read(ManagedRuntimeReadRequest {
                 thread_id: parent.clone(),
             })
@@ -1969,12 +1953,11 @@ mod tests {
             .execute(command(
                 parent.clone(),
                 "partial-activate",
-                Some(parent_snapshot.revision),
                 ManagedRuntimeCommand::Activate,
             ))
             .await
             .expect("activate parent");
-        let active = gateway
+        gateway
             .read(ManagedRuntimeReadRequest {
                 thread_id: parent.clone(),
             })
@@ -1988,7 +1971,6 @@ mod tests {
             .execute(command(
                 parent,
                 "partial-fork",
-                Some(active.revision),
                 ManagedRuntimeCommand::Fork {
                     child_thread_id: child.clone(),
                     through_completed_turn_id: None,
@@ -2027,14 +2009,13 @@ mod tests {
             .execute(command(
                 parent.clone(),
                 "inspection-create",
-                None,
                 ManagedRuntimeCommand::Create {
                     initial_context: None,
                 },
             ))
             .await
             .expect("create parent");
-        let parent_snapshot = gateway
+        gateway
             .read(ManagedRuntimeReadRequest {
                 thread_id: parent.clone(),
             })
@@ -2044,12 +2025,11 @@ mod tests {
             .execute(command(
                 parent.clone(),
                 "inspection-activate",
-                Some(parent_snapshot.revision),
                 ManagedRuntimeCommand::Activate,
             ))
             .await
             .expect("activate parent");
-        let active = gateway
+        gateway
             .read(ManagedRuntimeReadRequest {
                 thread_id: parent.clone(),
             })
@@ -2062,7 +2042,6 @@ mod tests {
         let fork = command(
             parent,
             "inspection-fork",
-            Some(active.revision),
             ManagedRuntimeCommand::Fork {
                 child_thread_id: child.clone(),
                 through_completed_turn_id: None,

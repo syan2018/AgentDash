@@ -1297,10 +1297,7 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
-    use agentdash_agent_runtime_contract::{
-        ManagedRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
-        RuntimeThreadId, SurfaceRevision,
-    };
+    use agentdash_agent_runtime_contract::RuntimeThreadId;
     use agentdash_application_agentrun::agent_run::{
         AgentRunProductRuntimeBinding, ProductAgentFrameRef, ProductExecutionProfileRef,
     };
@@ -1670,13 +1667,6 @@ mod tests {
             },
             execution_profile_digest: execution_profile.profile_digest.clone(),
             execution_profile,
-            source_binding: ManagedRuntimeSourceBindingEvidence {
-                source_ref: RuntimeSourceRef::new(format!("source-{thread_id}"))
-                    .expect("source ref"),
-                committed_at_revision: RuntimeProjectionRevision(1),
-                applied_surface_revision: SurfaceRevision(1),
-                activated_at_revision: Some(RuntimeProjectionRevision(1)),
-            },
         }
     }
 

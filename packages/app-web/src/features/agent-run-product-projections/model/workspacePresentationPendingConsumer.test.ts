@@ -4,11 +4,9 @@ import type {
   WorkspaceModulePresentationIntent,
   WorkspaceModulePresentationSnapshot,
 } from "../../../generated/agent-run-product-projection-contracts";
-import type { RuntimeU64 } from "../../../generated/agent-runtime-contracts";
 import { WorkspacePresentationPendingConsumer } from "./workspacePresentationPendingConsumer";
 
 const target = { run_id: "run-1", agent_id: "agent-1" };
-const runtimeU64 = (value: number): RuntimeU64 => String(value) as RuntimeU64;
 const intent: WorkspaceModulePresentationIntent = {
   intent_id: "intent-1",
   effect_id: "effect-1",
@@ -22,12 +20,7 @@ const intent: WorkspaceModulePresentationIntent = {
   },
   currentness_fence: {
     runtime_thread_id: "thread-1",
-    source_binding: {
-      source_ref: "source-1",
-      committed_at_revision: runtimeU64(1),
-      applied_surface_revision: runtimeU64(3),
-      activated_at_revision: runtimeU64(2),
-    },
+    source_ref: "source-1",
     surface_revision: 3n,
     module_id: "canvas:one",
     view_key: "preview",

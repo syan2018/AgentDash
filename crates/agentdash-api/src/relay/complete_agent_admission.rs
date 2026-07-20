@@ -255,7 +255,6 @@ impl RuntimeWireCompleteAgentRecoveryObserver for ProductRuntimeWireCompleteAgen
             .recover(AgentRunProductRuntimeRecoveryRequest {
                 target: binding.target,
                 client_command_id: request.recovery_id,
-                expected_revision: snapshot.revision,
             })
             .await
             .map_err(|error| error.to_string())?;

@@ -151,7 +151,7 @@ export type LaunchedAgentNodeDto = { run_id: string, agent_id: string, orchestra
 
 export type LifecycleAgentExecutionView = { agent: AgentRunView, runtime: LifecycleRuntimeExecutionTraceView, current_attempt?: LifecycleExecutionAttemptView, attempts: Array<LifecycleExecutionAttemptView>, };
 
-export type LifecycleAgentRuntimeBindingView = { target: AgentRunRefDto, runtime_thread_id: RuntimeThreadId, source_binding: ManagedRuntimeSourceBindingEvidence, };
+export type LifecycleAgentRuntimeBindingView = { target: AgentRunRefDto, runtime_thread_id: RuntimeThreadId, };
 
 export type LifecycleExecutionAttemptView = { orchestration_id: string, node_path: string, attempt: number, status: string, observed_at: string, artifacts: JsonValue, runtime_node: LifecycleRuntimeNodeView, };
 
@@ -179,11 +179,11 @@ export type LifecycleRuntimeNodeView = { node_id: string, node_path: string, kin
 
 export type LifecycleRuntimeTraceAbsenceReason = "product_binding_missing";
 
-export type LifecycleRuntimeTraceFenceEvidenceView = { expected_target: AgentRunRefDto, observed_target: AgentRunRefDto | null, expected_runtime_thread_id: RuntimeThreadId | null, observed_runtime_thread_id: RuntimeThreadId | null, expected_source_binding: ManagedRuntimeSourceBindingEvidence | null, observed_source_binding: ManagedRuntimeSourceBindingEvidence | null, observed_snapshot: ManagedRuntimeSnapshot | null, };
+export type LifecycleRuntimeTraceFenceEvidenceView = { expected_target: AgentRunRefDto, observed_target: AgentRunRefDto | null, expected_runtime_thread_id: RuntimeThreadId | null, observed_runtime_thread_id: RuntimeThreadId | null, observed_source_binding: ManagedRuntimeSourceBindingEvidence | null, observed_snapshot: ManagedRuntimeSnapshot | null, };
 
 export type LifecycleRuntimeTraceRefView = { "kind": "runtime_thread", thread_id: string, } | { "kind": "agent_run", run_id: string, agent_id: string, } | { "kind": "function_run", run_id: string, } | { "kind": "human_decision", decision_id: string, } | { "kind": "effect_invocation", effect_id: string, effect_kind: string, };
 
-export type LifecycleRuntimeTraceStaleReason = "product_binding_target_mismatch" | "projection_binding_missing" | "product_binding_changed" | "runtime_thread_mismatch" | "runtime_source_binding_mismatch";
+export type LifecycleRuntimeTraceStaleReason = "product_binding_target_mismatch" | "projection_binding_missing" | "product_binding_changed" | "runtime_thread_mismatch" | "runtime_applied_surface_mismatch";
 
 export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string, anchor_agent_id?: string, subject_ref: SubjectRefDto, role: string, metadata?: JsonValue, created_at: string, };
 

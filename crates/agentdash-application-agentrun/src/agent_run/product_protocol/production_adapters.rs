@@ -225,7 +225,6 @@ impl ProductAgentRunForkRuntimeAdapter {
             operation_id: identity.runtime_operation_id.clone(),
             idempotency_key: runtime_idempotency_key(&identity.runtime_operation_id)?,
             thread_id,
-            expected_revision: None,
             command,
         })
     }
@@ -657,7 +656,6 @@ impl ProductCompanionFreshRuntimeAdapter {
             operation_id: identity.runtime_operation_id.clone(),
             idempotency_key: runtime_idempotency_key(&identity.runtime_operation_id)?,
             thread_id: saga.runtime_thread_id().clone(),
-            expected_revision: None,
             command,
         })
     }

@@ -223,26 +223,13 @@ function encodeOperation(operation: ManagedRuntimeOperation): ManagedRuntimeOper
 export function decodeManagedRuntimeCommandEnvelope(
   value: unknown,
 ): ManagedRuntimeCommandEnvelope {
-  const envelope = record(value, "$");
-  return {
-    ...envelope,
-    expected_revision: optionalRuntimeU64(
-      envelope.expected_revision,
-      "$.expected_revision",
-    ),
-  } as ManagedRuntimeCommandEnvelope;
+  return record(value, "$") as unknown as ManagedRuntimeCommandEnvelope;
 }
 
 export function encodeManagedRuntimeCommandEnvelope(
   envelope: ManagedRuntimeCommandEnvelope,
 ): ManagedRuntimeCommandEnvelopeWire {
-  return {
-    ...envelope,
-    expected_revision:
-      envelope.expected_revision === null
-        ? null
-        : encodeRuntimeU64(envelope.expected_revision, "$.expected_revision"),
-  } as ManagedRuntimeCommandEnvelopeWire;
+  return { ...envelope } as ManagedRuntimeCommandEnvelopeWire;
 }
 
 export function decodeManagedRuntimeOperationReceipt(

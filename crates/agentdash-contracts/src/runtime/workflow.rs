@@ -995,8 +995,6 @@ pub struct LifecycleAgentRuntimeBindingView {
     pub target: AgentRunRefDto,
     #[ts(type = "RuntimeThreadId")]
     pub runtime_thread_id: RuntimeThreadId,
-    #[ts(type = "ManagedRuntimeSourceBindingEvidence")]
-    pub source_binding: ManagedRuntimeSourceBindingEvidence,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -1012,7 +1010,7 @@ pub enum LifecycleRuntimeTraceStaleReason {
     ProjectionBindingMissing,
     ProductBindingChanged,
     RuntimeThreadMismatch,
-    RuntimeSourceBindingMismatch,
+    RuntimeAppliedSurfaceMismatch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1024,8 +1022,6 @@ pub struct LifecycleRuntimeTraceFenceEvidenceView {
     pub expected_runtime_thread_id: Option<RuntimeThreadId>,
     #[ts(type = "RuntimeThreadId | null")]
     pub observed_runtime_thread_id: Option<RuntimeThreadId>,
-    #[ts(type = "ManagedRuntimeSourceBindingEvidence | null")]
-    pub expected_source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
     #[ts(type = "ManagedRuntimeSourceBindingEvidence | null")]
     pub observed_source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
     #[ts(type = "ManagedRuntimeSnapshot | null")]

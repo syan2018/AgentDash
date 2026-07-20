@@ -46,9 +46,9 @@ use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurface
 use agentdash_application::wait_activity::WaitActivityService;
 use agentdash_application::workflow_agent_call_product::ApplicationWorkflowAgentCallProductAdapter;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductCommandFacade, AgentRunProductInputDeliveryPort,
-    AgentRunProductInputDeliveryService, AgentRunProductLaunchService,
-    AgentRunProductProjectionQueryPort, AgentRunProductProtocolPorts,
+    AgentRunAppliedResourceSurfaceQueryPort, AgentRunProductCommandFacade,
+    AgentRunProductInputDeliveryPort, AgentRunProductInputDeliveryService,
+    AgentRunProductLaunchService, AgentRunProductProjectionQueryPort, AgentRunProductProtocolPorts,
     AgentRunProductRuntimeRecoveryAdvancementPort, AgentRunProductRuntimeRecoveryPort,
     AgentRunProductRuntimeRecoveryService, AgentRunTerminalSourceReconcilePort,
     CompanionContinuationEffectPort, CompanionContinuationSagaRepository,
@@ -200,6 +200,7 @@ pub struct ServiceSet {
     pub agent_run_product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
     pub agent_run_product_projection_composition: Arc<AgentRunProductProjectionComposition>,
     pub agent_run_product_persistence_composition: Arc<AgentRunProductPersistenceComposition>,
+    pub agent_run_product_resource_surfaces: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
     pub agent_run_product_runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
     pub agent_run_product_commands: Arc<AgentRunProductCommandFacade>,
     pub agent_run_product_mailbox: Arc<ProductMailboxFacade>,
@@ -326,14 +327,25 @@ impl AppState {
 
         let product_persistence =
             Arc::new(AgentRunProductPersistenceComposition::build(pool.clone()));
-        let vfs_surface_resolver = Arc::new(VfsSurfaceResolver::new(VfsSurfaceResolverDeps {
-            repos: repos.clone(),
-            vfs_service: vfs_service.clone(),
-            applied_resource_surfaces: product_persistence.applied_resource_surfaces.clone(),
-        }));
         let runtime_product_bindings = Arc::new(
             PostgresAgentRunProductRuntimeBindingRepository::new(pool.clone()),
         );
+        let product_facts = Arc::new(ProductAgentRunFactsResolver::new(
+            repos.clone(),
+            runtime_product_bindings.clone(),
+        ));
+        let product_resource_surfaces: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort> =
+            Arc::new(AgentRunLifecycleAppliedResourceSurfaceCompiler::new(
+                Arc::new(ProductAgentRunAppliedResourceSurfaceCompiler::new(
+                    product_facts.as_ref().clone(),
+                )),
+                product_facts,
+            ));
+        let vfs_surface_resolver = Arc::new(VfsSurfaceResolver::new(VfsSurfaceResolverDeps {
+            repos: repos.clone(),
+            vfs_service: vfs_service.clone(),
+            applied_resource_surfaces: product_resource_surfaces.clone(),
+        }));
         let workspace_module_presentations =
             Arc::new(PostgresWorkspaceModulePresentationStore::new(pool.clone()));
         let workspace_module_presentation_commands: Arc<
@@ -415,7 +427,7 @@ impl AppState {
         ]));
         let runtime_tool_authorizer = Arc::new(ProductRuntimeToolAuthorizer::new(
             runtime_product_bindings.clone(),
-            product_persistence.applied_resource_surfaces.clone(),
+            product_resource_surfaces.clone(),
         ));
         let runtime_tool_broker = Arc::new(
             PlatformToolBroker::new(runtime_tool_catalog, runtime_tool_authorizer)
@@ -523,28 +535,12 @@ impl AppState {
         ));
         let product_mailbox =
             Arc::new(product_persistence.product_mailbox_facade(runtime_product_bindings.clone()));
-        let product_facts = Arc::new(ProductAgentRunFactsResolver::new(
-            repos.clone(),
-            runtime_product_bindings.clone(),
-        ));
-        let product_surface_compiler =
-            Arc::new(AgentRunLifecycleAppliedResourceSurfaceCompiler::new(
-                Arc::new(ProductAgentRunAppliedResourceSurfaceCompiler::new(
-                    product_facts.as_ref().clone(),
-                )),
-                product_facts,
-            ));
-        let product_resource_materializer = Arc::new(
-            product_persistence.applied_resource_surface_materializer(product_surface_compiler),
-        );
         let product_runtime_surface_updates: Arc<dyn AgentRunRuntimeSurfaceUpdatePort> =
             Arc::new(ProductAgentRunRuntimeSurfaceUpdateService::new(
                 repos.clone(),
                 runtime_product_bindings.clone(),
                 complete_agent.runtime.clone(),
                 product_runtime_provisioner.clone(),
-                product_resource_materializer.clone(),
-                product_persistence.applied_resource_surfaces.clone(),
             ));
 
         let product = Arc::new(
@@ -570,8 +566,6 @@ impl AppState {
             product_runtime_provisioner.clone(),
             complete_agent.runtime.clone(),
             runtime_product_bindings.clone(),
-            product_resource_materializer.clone(),
-            product_persistence.applied_resource_surfaces.clone(),
         ));
         let product_recovery_service = Arc::new(AgentRunProductRuntimeRecoveryService::new(
             Arc::new(PostgresAgentRunProductRuntimeRecoverySagaRepository::new(
@@ -579,8 +573,6 @@ impl AppState {
             )),
             complete_agent.runtime.clone(),
             runtime_product_bindings.clone(),
-            product_resource_materializer,
-            product_persistence.applied_resource_surfaces.clone(),
             product_runtime_provisioner,
         ));
         let product_recovery: Arc<dyn AgentRunProductRuntimeRecoveryPort> =
@@ -715,7 +707,7 @@ impl AppState {
         let workspace_module_runtime_tool_deps = WorkspaceModuleRuntimeToolDeps {
             repos: repos.clone(),
             runtime_bindings: runtime_product_bindings.clone(),
-            applied_surfaces: product_persistence.applied_resource_surfaces.clone(),
+            applied_surfaces: product_resource_surfaces.clone(),
             frames: repos.agent_frame_repo.clone(),
             installations: repos.project_extension_installation_repo.clone(),
             canvases: repos.canvas_repo.clone(),
@@ -866,6 +858,7 @@ impl AppState {
                 agent_run_product_projection: product.gateway.clone(),
                 agent_run_product_projection_composition: product.clone(),
                 agent_run_product_persistence_composition: product_persistence,
+                agent_run_product_resource_surfaces: product_resource_surfaces,
                 agent_run_product_runtime_bindings: product.runtime_bindings.clone(),
                 agent_run_product_commands: product_commands,
                 agent_run_product_mailbox: product_mailbox,

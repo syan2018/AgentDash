@@ -93,13 +93,17 @@ POST /agent-runs/{run_id}/agents/{agent_id}/runtime/{compact|cancel|steer}
 POST /agent-runs/{run_id}/agents/{agent_id}/runtime/interactions/{interaction_id}/respond
 ```
 
-Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-session tables and product execution columns. `agent_run_agent_runtime_binding.runtime_thread_id` is unique but intentionally has no thread foreign key because product binding is persisted before `ThreadStart`; `runtime_binding_id` references the Host binding that already exists.
+`agent_run_product_runtime_binding.runtime_thread_id` 是 Product 冻结的跨 owner identity，不对
+Runtime owner document 的内部集合建立外键。Product binding 可以先于 Runtime outbox 消费
+建立；完整 Runtime binding evidence 由 typed contract 和 revision/digest fence 校验。
 
 Migration `0066_agent_frame_hook_plan.sql` adds nullable `agent_frames.hook_plan jsonb`. Existing rows remain explicitly unmaterialized；所有生产Frame writer必须在新的revision中写入可校验的`AgentFrameHookPlan { revision, digest, requirements[] }`，Runtime surface adoption不得从permission policy、executor kind或Driver profile补造计划。
 
-Migration `0077_agent_run_product_command_receipts.sql` restores product-command idempotency after the RuntimeSession cutover as a new product-owned table. It references canonical `runtime_thread_id + runtime_operation_id` and does not restore retired RuntimeSession/AgentRunTurn/ProtocolTurn columns.
+Product command receipt 将 `runtime_thread_id + runtime_operation_id` 保存为 Runtime 返回的
+opaque typed evidence，用于结果关联与重放；Product 不通过外键读取 Runtime operation 集合。
 
-Migration `0078_rebind_safe_runtime_outbox_coordinates.sql` persists each Runtime outbox entry's immutable `binding_id + binding_epoch + driver_generation`. Historical dispatch fences reference `agent_runtime_binding`, while `thread_id` independently retains thread ownership, so `ThreadRebind` can advance the thread without rewriting old outbox coordinates.
+Runtime outbox entry 在 Runtime owner document 内保留其 immutable binding/generation fence；
+ThreadRebind 只追加新的 canonical facts，不改写历史 outbox evidence。
 
 Migration `0079_reconcile_agent_run_mailbox_delivery.sql` removes the retired AgentRun/protocol turn reference columns and executor/backend second facts from mailbox rows, adds the typed lease-reconciliation fact and stable delivery digest, and links each product receipt to at most one exact mailbox message.
 
@@ -117,6 +121,10 @@ historical Runtime projection JSON and clears only Lifecycle titles whose proven
   `ThreadNameUpdated` 发布现有 `agent_run_list/title_changed` project invalidation；它通过
   runtime binding 与 LifecycleRun 解析 project/run/agent 坐标，不把 runtime 名称复制进
   Lifecycle repository。
+- Runtime change consumer 从已激活的 Product binding 出发读取 Runtime canonical outbox。
+  `change_delivery_state` 在同一 Product binding JSONB 中按 `consumer_name` 保存独立 cursor、
+  claim、attempt 与 error；一个 observer 的失败不会重放其他 observer 已确认的 sequence，
+  没有 Product binding 的 Runtime thread 也不会被误建模为失败工作。
 
 - Application depends on the named `AgentRunRuntime` facade and owned Runtime contract. The facade maps product coordinates and commands; it does not own Thread/Turn/Item/Interaction state.
 - AgentRun详情产品投影由具名`AgentRunProductQuery`组合Lifecycle read model、current AgentFrame/model config与VFS surface；API route只负责鉴权、runtime projection adapter和generated DTO映射，不直接编排repository。
@@ -129,6 +137,15 @@ historical Runtime projection JSON and clears only Lifecycle titles whose proven
 - `ThreadStart` carries immutable surface settings, tool-set revision and bound Hook plan. It is replayed with identical coordinates after a durable duplicate/retry.
 - `AgentFrameHookPlan.requirements[].site`决定execution route。完整bound plan保留Managed Runtime、Tool Broker、Agent Core Callback与Driver Native entries；`DriverHookSurface`只投影Driver实际执行的site，Tool Broker approval不会成为Driver offer requirement。
 - API/UI command availability comes only from the canonical Runtime view. A product-level status, connector kind or executor kind cannot enable a command.
+- Product 与 API 命令不携带通用 `expected_revision`。整体 projection revision 只描述一次观察，
+  无法表达命令真正依赖的业务事实，而且 availability、receipt 或其它无关事实推进不应使合法命令
+  失效。Facade 在 admission 时读取 current snapshot，并把并发要求收窄为 command-owned
+  coordinate：Steer/Interrupt 固定 active turn identity，ResolveInteraction 固定 interaction
+  identity，Fork 固定 child/cutoff identity，binding/source/generation 由各自 typed evidence
+  校验。
+- Runtime repository 的 aggregate revision 仍是事务实现细节。Coordinator 从同一次 load 得到
+  repository CAS baseline，commit 冲突时不落部分 write-set；该 revision 不进入
+  `ManagedRuntimeCommandEnvelope`、Product claim digest 或 HTTP request。
 - Runtime events use a durable cursor。Session GET、live、replay与fork cutoff都使用`inherited prefix length + raw Runtime EventSequence`；过滤internal-only facts后留下的cursor空洞合法，不能重新enumerate为稠密序列。Authoritative lifecycle events are not reconstructed from Backbone or transient broadcast state.
 - Remote Driver events are ordered within a RuntimeWire stream. Response correlation and reverse HostPort calls may be concurrent, but canonical lifecycle notifications are emitted serially.
 - A disconnected active binding converges exactly once to `BindingLost`; Thread, active Turn and accepted Operation become `Lost`. Re-registration creates a new generation, and late events from the old generation cannot revive canonical state.

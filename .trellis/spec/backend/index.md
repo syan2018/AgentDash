@@ -21,7 +21,7 @@
 | [Runtime Gateway](./runtime-gateway.md) | runtime action 调用边界 |
 | [Managed Agent Runtime Kernel](./agent-runtime-kernel.md) | operation/journal/projection/outbox原子事务、幂等、cursor与Lost收敛合同 |
 | [Managed Agent Runtime Context](./agent-runtime-context.md) | ContextRecipe/checkpoint/head fidelity与managed compaction activation/recovery合同 |
-| [Managed Agent Runtime PostgreSQL Persistence](./agent-runtime-persistence.md) | Runtime原子写集、Host坐标所有权、复合约束与durable work lease合同 |
+| [Agent Runtime Owner-Document Persistence](./agent-runtime-persistence.md) | Runtime/Host/Callback canonical JSONB、跨owner evidence与Product consumer cursor合同 |
 | [Managed Agent Runtime Hook Orchestration](./agent-runtime-hooks.md) | immutable HookPlan、canonical HookRun、failure policy、effect与恢复合同 |
 | [Business Agent Surface and Platform Tool Broker](./agent-runtime-surface-tool-broker.md) | capability编译、profile binding与callable tool执行合同 |
 | [Integration Agent Runtime Driver Host](./agent-runtime-driver-host.md) | service contribution、offer、sticky binding、lease与source fencing合同 |

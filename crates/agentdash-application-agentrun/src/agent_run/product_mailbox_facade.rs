@@ -667,10 +667,7 @@ mod tests {
         },
     };
 
-    use agentdash_agent_runtime_contract::{
-        ManagedRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
-        RuntimeThreadId, SurfaceRevision,
-    };
+    use agentdash_agent_runtime_contract::RuntimeThreadId;
     use agentdash_domain::agent_run_mailbox::{
         ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
         MailboxMessageStatus, MailboxSourceIdentity,
@@ -1227,12 +1224,6 @@ mod tests {
             },
             execution_profile_digest: fixture_execution_profile().profile_digest,
             execution_profile: fixture_execution_profile(),
-            source_binding: ManagedRuntimeSourceBindingEvidence {
-                source_ref: RuntimeSourceRef::new("source:mailbox").expect("source"),
-                committed_at_revision: RuntimeProjectionRevision(1),
-                applied_surface_revision: SurfaceRevision(1),
-                activated_at_revision: Some(RuntimeProjectionRevision(1)),
-            },
         };
         let store = Arc::new(FixtureProductMailboxStore::new(&target));
         let facade = ProductMailboxFacade::new(

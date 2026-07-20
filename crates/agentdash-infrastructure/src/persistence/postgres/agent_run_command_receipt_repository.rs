@@ -472,7 +472,6 @@ mod tests {
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::workflow::AgentRunCommandKind;
     use serde_json::json;
-    use sqlx::PgPool;
 
     fn new_receipt(command_id: &str, digest: &str) -> NewAgentRunCommandReceipt {
         NewAgentRunCommandReceipt {
@@ -484,57 +483,11 @@ mod tests {
         }
     }
 
-    async fn seed_runtime_operation(pool: &PgPool, suffix: &str) -> (String, String) {
-        let binding_id = format!("binding-receipt-{suffix}");
-        let source_thread_id = format!("source-receipt-{suffix}");
-        let thread_id = format!("thread-receipt-{suffix}");
-        let operation_id = format!("operation-receipt-{suffix}");
-        let profile_digest = format!("profile-receipt-{suffix}");
-        sqlx::query(
-            "INSERT INTO agent_runtime_binding (id,driver_generation,profile_digest) VALUES ($1,1,$2)",
+    fn runtime_operation_coordinates(suffix: &str) -> (String, String) {
+        (
+            format!("thread-receipt-{suffix}"),
+            format!("operation-receipt-{suffix}"),
         )
-        .bind(&binding_id)
-        .bind(&profile_digest)
-        .execute(pool)
-        .await
-        .expect("seed runtime binding");
-        sqlx::query(
-            "INSERT INTO agent_runtime_source_coordinate (binding_id,source_thread_id,thread_id) VALUES ($1,$2,$3)",
-        )
-        .bind(&binding_id)
-        .bind(&source_thread_id)
-        .bind(&thread_id)
-        .execute(pool)
-        .await
-        .expect("seed runtime coordinate");
-        sqlx::query(
-            "INSERT INTO agent_runtime_thread \
-             (id,revision,next_event_sequence,next_operation_sequence,status,binding_id,driver_generation,source_thread_id,profile_digest,context_revision,settings_revision,tool_set_revision,projection) \
-             VALUES ($1,0,0,2,'active',$2,1,$3,$4,0,0,0,$5)",
-        )
-        .bind(&thread_id)
-        .bind(&binding_id)
-        .bind(&source_thread_id)
-        .bind(&profile_digest)
-        .bind(json!({}))
-        .execute(pool)
-        .await
-        .expect("seed runtime thread");
-        sqlx::query(
-            "INSERT INTO agent_runtime_operation \
-             (id,thread_id,operation_sequence,idempotency_key,accepted_revision,status,actor,command,terminal,record) \
-             VALUES ($1,$2,1,$3,0,'active',$4,$5,NULL,$6)",
-        )
-        .bind(&operation_id)
-        .bind(&thread_id)
-        .bind(format!("key-receipt-{suffix}"))
-        .bind(json!({"kind":"system","component":"command-receipt-test"}))
-        .bind(json!({"kind":"context_compact","thread_id":thread_id,"compaction_id":format!("compact-{suffix}")}))
-        .bind(json!({}))
-        .execute(pool)
-        .await
-        .expect("seed runtime operation");
-        (thread_id, operation_id)
     }
 
     #[tokio::test]
@@ -581,8 +534,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
-        let (runtime_thread_id, runtime_operation_id) =
-            seed_runtime_operation(&pool, "accepted").await;
+        let (runtime_thread_id, runtime_operation_id) = runtime_operation_coordinates("accepted");
 
         sqlx::query(
             "INSERT INTO lifecycle_runs \
@@ -664,7 +616,6 @@ mod tests {
             .claim(new_receipt("cmd-mismatch", "sha256:mismatch"))
             .await
             .expect("claim mismatched command");
-        let (other_thread_id, _) = seed_runtime_operation(&pool, "other").await;
         let mismatch = repo
             .mark_accepted(
                 mismatch_claim.receipt().id,
@@ -673,7 +624,7 @@ mod tests {
                     agent_id,
                     frame_id: None,
                     frame_revision: None,
-                    runtime_thread_id: Some(other_thread_id),
+                    runtime_thread_id: None,
                     runtime_operation_id: accepted
                         .accepted_refs
                         .as_ref()
@@ -683,7 +634,7 @@ mod tests {
             .await;
         assert!(
             mismatch.is_err(),
-            "跨 thread operation 引用必须由复合外键拒绝"
+            "Product receipt must reject an operation coordinate without its Runtime thread"
         );
     }
 }

@@ -217,10 +217,10 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             ));
         }
 
-        let snapshot = self
+        let surface = self
             .deps
             .applied_surfaces
-            .applied_resource_surface(&target, None)
+            .applied_resource_surface(&target)
             .await
             .map_err(|error| {
                 failed(
@@ -228,13 +228,13 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                     error.to_string(),
                 )
             })?;
-        snapshot.validate_for(&target).map_err(|error| {
+        surface.validate_for(&target).map_err(|error| {
             rejected(
                 "workspace_module_applied_surface_invalid",
                 error.to_string(),
             )
         })?;
-        if snapshot.surface.project_id != request.context.target.project_id {
+        if surface.project_id != request.context.target.project_id {
             return Err(rejected(
                 "workspace_module_project_mismatch",
                 "applied resource surface project does not match the authorized Product target",
@@ -283,7 +283,7 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
         let projection = resolve_workspace_module_visibility_with_operation_context(
             &self.deps.installations,
             &self.deps.canvases,
-            snapshot.surface.project_id,
+            surface.project_id,
             WorkspaceModuleVisibilityInput {
                 base_visibility: &capability.workspace_module,
                 runtime_vfs: &vfs,
@@ -306,7 +306,7 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                     })
                 })
                 .collect(),
-            applied_surface: snapshot.surface,
+            applied_surface: surface,
         })
     }
 

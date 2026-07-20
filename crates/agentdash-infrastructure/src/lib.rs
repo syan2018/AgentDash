@@ -36,7 +36,6 @@ pub use hooks::RhaiHookScriptEvaluator;
 pub use mcp::RmcpProbeTransport;
 pub use persistence::postgres::PostgresAgentFrameRepository;
 pub use persistence::postgres::PostgresAgentLineageRepository;
-pub use persistence::postgres::PostgresAgentRunAppliedResourceSurfaceRepository;
 pub use persistence::postgres::PostgresAgentRunCommandReceiptRepository;
 pub use persistence::postgres::PostgresAgentRunForkGraphStore;
 pub use persistence::postgres::PostgresAgentRunForkSagaRepository;

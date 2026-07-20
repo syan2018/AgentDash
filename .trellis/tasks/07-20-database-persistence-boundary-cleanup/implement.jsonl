@@ -1,1 +1,8 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "遵守forward migration、schema readiness与未上线hard cut约束。"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "保持owner-owned aggregate repository与revision CAS边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "收敛Managed Runtime、Host与Product delivery的durable authority。"}
+{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "保留Complete Agent binding、effect、lease、callback与recovery业务不变量。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "保持Product binding、Runtime snapshot/change与恢复调用边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "保持command admission与repository内部revision CAS的职责边界。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md", "reason": "使用最终Product、Runtime、Host与Complete Agent四owner模型。"}
+{"file": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/product-canonical-presentation-cutover.md", "reason": "保持canonical Runtime facts、projection/change/outbox同事务与Product consumer语义。"}

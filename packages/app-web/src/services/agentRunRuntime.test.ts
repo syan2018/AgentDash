@@ -60,7 +60,6 @@ describe("AgentRun runtime service", () => {
       "/agent-runs/run%2F1/agents/agent%2F1/runtime/commands",
       {
         client_command_id: "command-compact",
-        expected_revision: "6",
         command: { kind: "request_compaction" },
       },
     );
@@ -154,7 +153,6 @@ describe("AgentRun runtime service", () => {
       "interaction/1",
       { kind: "denied", reason: null },
       "command-interaction-1",
-      9n,
     )).resolves.toMatchObject({
       accepted_revision: 18_446_744_073_709_551_615n,
     });
@@ -162,7 +160,6 @@ describe("AgentRun runtime service", () => {
       "/agent-runs/run%2F1/agents/agent%2F1/runtime/commands",
       {
         client_command_id: "command-interaction-1",
-        expected_revision: "9",
         command: {
           kind: "resolve_interaction",
           interaction_id: "interaction/1",

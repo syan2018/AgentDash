@@ -6,8 +6,7 @@ use std::{
 
 use agentdash_agent_runtime_contract::ManagedRuntimeLifecycleStatus;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductProjectionQueryPort, AgentRunProductRuntimeSnapshotObservation,
-    resolve_agent_run_display_title,
+    AgentRunProductProjectionQueryPort, resolve_agent_run_display_title,
 };
 use agentdash_domain::{
     agent::ProjectAgentRepository,
@@ -215,29 +214,14 @@ impl ProjectAgentRunListQuery {
         let project_agent_label = agent
             .project_agent_id
             .and_then(|id| project_agents.get(&id).cloned());
-        let runtime_observation = self
+        let runtime_snapshot = self
             .product_projection
-            .runtime_snapshot_observation(&AgentRunTarget {
+            .runtime_presentation_snapshot(&AgentRunTarget {
                 run_id: run.id,
                 agent_id: agent.id,
             })
             .await
-            .map_err(|error| {
-                ApplicationError::Internal(format!(
-                    "AgentRun list Product projection failed: run_id={}, agent_id={}: {error}",
-                    run.id, agent.id
-                ))
-            })?;
-        let runtime_snapshot = match runtime_observation {
-            AgentRunProductRuntimeSnapshotObservation::Absent { .. } => None,
-            AgentRunProductRuntimeSnapshotObservation::Current { snapshot, .. } => Some(snapshot),
-            AgentRunProductRuntimeSnapshotObservation::Stale(evidence) => {
-                return Err(ApplicationError::Conflict(format!(
-                    "AgentRun list Product Runtime 投影已过期: {:?}",
-                    evidence.reason
-                )));
-            }
-        };
+            .unwrap_or(None);
         let title = resolve_agent_run_display_title(
             agent.workspace_title.as_deref(),
             agent.workspace_title_source.as_deref(),
@@ -402,7 +386,8 @@ mod tests {
         RuntimeSourceRef, SurfaceRevision,
     };
     use agentdash_application_agentrun::agent_run::{
-        AgentRunProductProjectionError, AgentRunProductRuntimeBinding, AgentRunTerminalChangePage,
+        AgentRunProductProjectionError, AgentRunProductRuntimeBinding,
+        AgentRunProductRuntimeSnapshotObservation, AgentRunTerminalChangePage,
         AgentRunTerminalChangeSequence, AgentRunTerminalSnapshot, ProductAgentFrameRef,
         ProductExecutionProfileRef,
     };
@@ -457,10 +442,23 @@ mod tests {
                 });
             };
             let snapshot = runtime_snapshot(thread_name);
+            let product_binding = runtime_binding(target.clone(), &snapshot);
             Ok(AgentRunProductRuntimeSnapshotObservation::Current {
-                product_binding: runtime_binding(target.clone(), &snapshot),
+                product_binding,
                 snapshot,
             })
+        }
+
+        async fn runtime_presentation_snapshot(
+            &self,
+            _: &AgentRunTarget,
+        ) -> Result<Option<ManagedRuntimeSnapshot>, AgentRunProductProjectionError> {
+            if self.fail_inspect {
+                return Err(AgentRunProductProjectionError::Runtime(
+                    "fixture projection failure".to_string(),
+                ));
+            }
+            Ok(self.thread_name.clone().map(runtime_snapshot))
         }
 
         async fn runtime_changes(
@@ -579,7 +577,6 @@ mod tests {
             },
             execution_profile_digest: execution_profile.profile_digest.clone(),
             execution_profile,
-            source_binding: source_binding(),
         }
     }
 
@@ -883,7 +880,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn query_reports_runtime_inspect_failure_with_product_coordinates() {
+    async fn query_keeps_agent_runs_when_optional_runtime_summary_is_unavailable() {
         let fixture = query_fixture(true);
         let project_id = Uuid::new_v4();
         let run = LifecycleRun::new_plain(project_id);
@@ -891,7 +888,7 @@ mod tests {
         fixture.run_repo.create(&run).await.expect("run");
         fixture.agent_repo.create(&agent).await.expect("agent");
 
-        let error = fixture
+        let page = fixture
             .query
             .list(ProjectAgentRunListInput {
                 project_id,
@@ -899,9 +896,10 @@ mod tests {
                 cursor: None,
             })
             .await
-            .expect_err("runtime inspect failure must fail the list");
-        let message = error.to_string();
-        assert!(message.contains(&run.id.to_string()));
-        assert!(message.contains(&agent.id.to_string()));
+            .expect("Runtime summary failure must not fail the Product list");
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].run_id, run.id);
+        assert_eq!(page.entries[0].agent_id, agent.id);
+        assert!(page.entries[0].runtime.is_none());
     }
 }

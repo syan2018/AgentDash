@@ -37,8 +37,8 @@ pub enum AgentRunThreadNameProjectionError {
     Runtime(String),
     #[error("Managed Runtime snapshot belongs to a different Runtime thread")]
     SnapshotThreadMismatch,
-    #[error("Managed Runtime source binding is not current for this AgentRun")]
-    RuntimeSourceBindingMismatch,
+    #[error("Managed Runtime applied surface does not match the Product AgentFrame")]
+    RuntimeAppliedSurfaceMismatch,
     #[error(
         "Managed Runtime snapshot is behind thread-name change revision {change_revision:?} / sequence {change_sequence:?}"
     )]
@@ -133,8 +133,11 @@ impl AgentRunThreadNameProjectionObserver {
         if snapshot.thread_id != binding.runtime_thread_id {
             return Err(AgentRunThreadNameProjectionError::SnapshotThreadMismatch);
         }
-        if snapshot.source_binding.as_ref() != Some(&binding.source_binding) {
-            return Err(AgentRunThreadNameProjectionError::RuntimeSourceBindingMismatch);
+        if snapshot.source_binding.as_ref().is_none_or(|source| {
+            source.activated_at_revision.is_none()
+                || source.applied_surface_revision.0 != binding.launch_frame.revision
+        }) {
+            return Err(AgentRunThreadNameProjectionError::RuntimeAppliedSurfaceMismatch);
         }
         if snapshot.revision < change.revision || snapshot.latest_change_sequence < change.sequence
         {
@@ -382,11 +385,10 @@ mod tests {
                     launch_frame: crate::agent_run::ProductAgentFrameRef {
                         frame_id: Uuid::new_v4(),
                         agent_id: target.agent_id,
-                        revision: 1,
+                        revision: runtime_binding.applied_surface_revision.0,
                     },
                     execution_profile_digest: fixture_execution_profile().profile_digest,
                     execution_profile: fixture_execution_profile(),
-                    source_binding: runtime_binding,
                 }),
             }),
             Arc::new(StaticRuntimeProjection {
@@ -490,7 +492,7 @@ mod tests {
             rebound_observer
                 .observe(&target, &name_change(thread_id, 7, Some("标题")))
                 .await,
-            Err(AgentRunThreadNameProjectionError::RuntimeSourceBindingMismatch)
+            Err(AgentRunThreadNameProjectionError::RuntimeAppliedSurfaceMismatch)
         ));
     }
 

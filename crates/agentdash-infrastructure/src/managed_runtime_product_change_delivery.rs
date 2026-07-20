@@ -1,25 +1,50 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+};
 
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimePlatformChange, RuntimeChangeSequence, RuntimeThreadId,
-};
+use agentdash_agent_runtime_contract::{ManagedRuntimePlatformChange, RuntimeChangeSequence};
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductRuntimeChange, AgentRunProductRuntimeChangeObserver,
+    AgentRunProductRuntimeBinding, AgentRunProductRuntimeChange,
+    AgentRunProductRuntimeChangeObserver,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::PostgresAgentRunProductRuntimeBindingRepository;
-
 #[derive(Debug)]
 struct ProductChangeClaim {
-    thread_id: RuntimeThreadId,
+    target_run_id: String,
+    target_agent_id: String,
+    binding: AgentRunProductRuntimeBinding,
     sequence: RuntimeChangeSequence,
     change: ManagedRuntimePlatformChange,
+    consumer_name: String,
     owner: String,
     token: Uuid,
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct ProductChangeDeliveryConsumerState {
+    #[serde(default)]
+    delivered_sequence: u64,
+    #[serde(default)]
+    claim: Option<ProductChangeDeliveryClaimState>,
+    #[serde(default)]
+    attempt_count: u64,
+    #[serde(default)]
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ProductChangeDeliveryClaimState {
+    owner: String,
+    token: Uuid,
+    expires_at_ms: u64,
+}
+
+type ProductChangeDeliveryState = BTreeMap<String, ProductChangeDeliveryConsumerState>;
 
 #[derive(Clone)]
 pub(crate) struct PostgresManagedRuntimeProductChangeDelivery {
@@ -47,181 +72,212 @@ impl PostgresManagedRuntimeProductChangeDelivery {
         })
     }
 
-    async fn claim(&self, limit: usize) -> Result<Vec<ProductChangeClaim>, String> {
-        if limit == 0 {
-            return Err("Runtime Product change delivery limit must be positive".to_owned());
+    async fn claim(
+        &self,
+        consumer_name: &str,
+        limit: usize,
+    ) -> Result<Vec<ProductChangeClaim>, String> {
+        if consumer_name.trim().is_empty() || limit == 0 {
+            return Err(
+                "Runtime Product change delivery requires a consumer and positive limit".to_owned(),
+            );
         }
         let limit = i64::try_from(limit)
             .map_err(|_| "Runtime Product change delivery limit exceeds BIGINT".to_owned())?;
-        let lease_duration_ms = i64::try_from(self.lease_duration_ms)
-            .map_err(|_| "Runtime Product change lease exceeds BIGINT".to_owned())?;
-        let token = Uuid::new_v4();
         let mut tx = self.pool.begin().await.map_err(db_error)?;
-        sqlx::query(
-            "INSERT INTO agent_runtime_product_change_delivery(thread_id,sequence)
-             SELECT thread_id,sequence FROM agent_runtime_outbox
-             ON CONFLICT (thread_id,sequence) DO NOTHING",
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(db_error)?;
+        let now_ms = database_time_ms(&mut tx).await?;
+        let expires_at_ms = now_ms
+            .checked_add(self.lease_duration_ms)
+            .ok_or_else(|| "Runtime Product change delivery lease overflowed".to_owned())?;
+        let token = Uuid::new_v4();
         let rows = sqlx::query(
-            "WITH claimable AS (
-                 SELECT delivery.thread_id,delivery.sequence
-                 FROM agent_runtime_product_change_delivery delivery
-                 WHERE (
-                     delivery.status='pending'
-                     OR (
-                         delivery.status='claimed'
-                         AND delivery.claim_expires_at <= NOW()
-                     )
-                 )
-                 AND NOT EXISTS (
-                     SELECT 1
-                     FROM agent_runtime_product_change_delivery earlier
-                     WHERE earlier.thread_id=delivery.thread_id
-                       AND earlier.sequence < delivery.sequence
-                       AND earlier.status <> 'delivered'
-                 )
-                 ORDER BY delivery.thread_id,delivery.sequence
-                 FOR UPDATE OF delivery SKIP LOCKED
-                 LIMIT $1
-             ),
-             claimed AS (
-                 UPDATE agent_runtime_product_change_delivery delivery
-                 SET status='claimed',
-                     claim_owner=$2,
-                     claim_token=$3,
-                     claim_expires_at=NOW() + ($4 * INTERVAL '1 millisecond'),
-                     attempt_count=delivery.attempt_count + 1,
-                     last_error=NULL
-                 FROM claimable
-                 WHERE delivery.thread_id=claimable.thread_id
-                   AND delivery.sequence=claimable.sequence
-                 RETURNING delivery.thread_id,delivery.sequence
-             )
-             SELECT claimed.thread_id,claimed.sequence::TEXT AS sequence,outbox.change
-             FROM claimed
-             JOIN agent_runtime_outbox outbox
-               ON outbox.thread_id=claimed.thread_id
-              AND outbox.sequence=claimed.sequence
-             ORDER BY claimed.thread_id,claimed.sequence",
+            "SELECT product_binding.target_run_id,
+                    product_binding.target_agent_id,
+                    product_binding.binding,
+                    product_binding.change_delivery_state,
+                    next_change.outbox_entry
+             FROM agent_run_product_runtime_binding product_binding
+             JOIN agent_runtime_state_revision runtime
+               ON runtime.thread_id=product_binding.runtime_thread_id
+             CROSS JOIN LATERAL (
+                 SELECT entry.value AS outbox_entry
+                 FROM jsonb_array_elements(
+                     COALESCE(runtime.facts->'outbox', '[]'::JSONB)
+                 ) entry
+                 WHERE (entry.value->>'sequence')::NUMERIC(20,0) >
+                       COALESCE(
+                           product_binding.change_delivery_state
+                               -> $1 ->> 'delivered_sequence',
+                           '0'
+                       )::NUMERIC(20,0)
+                 ORDER BY (entry.value->>'sequence')::NUMERIC(20,0)
+                 LIMIT 1
+             ) next_change
+             WHERE product_binding.binding
+                       -> 'source_binding' ->> 'activated_at_revision' IS NOT NULL
+               AND COALESCE(
+                   product_binding.change_delivery_state
+                       -> $1 -> 'claim' ->> 'expires_at_ms',
+                   '0'
+               )::NUMERIC(20,0) <= $2::TEXT::NUMERIC(20,0)
+             ORDER BY product_binding.runtime_thread_id
+             FOR UPDATE OF product_binding SKIP LOCKED
+             LIMIT $3",
         )
+        .bind(consumer_name)
+        .bind(now_ms.to_string())
         .bind(limit)
-        .bind(&self.claim_owner)
-        .bind(token)
-        .bind(lease_duration_ms)
         .fetch_all(&mut *tx)
         .await
         .map_err(db_error)?;
-        tx.commit().await.map_err(db_error)?;
 
-        rows.into_iter()
-            .map(|row| {
-                let thread_id =
-                    RuntimeThreadId::new(row.try_get::<String, _>("thread_id").map_err(db_error)?)
-                        .map_err(|error| error.to_string())?;
-                let sequence = RuntimeChangeSequence(
-                    row.try_get::<String, _>("sequence")
-                        .map_err(db_error)?
-                        .parse::<u64>()
-                        .map_err(|_| {
-                            "Runtime Product change sequence is outside the canonical u64 domain"
-                                .to_owned()
-                        })?,
+        let mut claims = Vec::with_capacity(rows.len());
+        for row in rows {
+            let target_run_id = row
+                .try_get::<String, _>("target_run_id")
+                .map_err(db_error)?;
+            let target_agent_id = row
+                .try_get::<String, _>("target_agent_id")
+                .map_err(db_error)?;
+            let binding = serde_json::from_value::<AgentRunProductRuntimeBinding>(
+                row.try_get::<Value, _>("binding").map_err(db_error)?,
+            )
+            .map_err(|error| format!("decode Product Runtime binding: {error}"))?;
+            let outbox_entry = row.try_get::<Value, _>("outbox_entry").map_err(db_error)?;
+            let sequence = decode_sequence(outbox_entry.get("sequence"))?;
+            let change = serde_json::from_value::<ManagedRuntimePlatformChange>(
+                outbox_entry
+                    .get("change")
+                    .cloned()
+                    .ok_or_else(|| "Runtime Product outbox entry omitted change".to_owned())?,
+            )
+            .map_err(|error| format!("decode committed Runtime Product change: {error}"))?;
+            if change.thread_id != binding.runtime_thread_id || change.sequence != sequence {
+                return Err(
+                    "Runtime Product change coordinates drifted from canonical binding/outbox"
+                        .to_owned(),
                 );
-                let change = serde_json::from_value::<ManagedRuntimePlatformChange>(
-                    row.try_get::<Value, _>("change").map_err(db_error)?,
-                )
-                .map_err(|error| format!("decode committed Runtime Product change: {error}"))?;
-                if change.thread_id != thread_id || change.sequence != sequence {
-                    return Err(
-                        "Runtime Product change delivery coordinates drifted from outbox"
-                            .to_owned(),
-                    );
-                }
-                Ok(ProductChangeClaim {
-                    thread_id,
-                    sequence,
-                    change,
-                    owner: self.claim_owner.clone(),
-                    token,
-                })
-            })
-            .collect()
+            }
+
+            let mut delivery_state = decode_delivery_state(
+                row.try_get::<Value, _>("change_delivery_state")
+                    .map_err(db_error)?,
+            )?;
+            let consumer = delivery_state.entry(consumer_name.to_owned()).or_default();
+            if sequence.0 <= consumer.delivered_sequence {
+                return Err(
+                    "Runtime Product change claim did not advance the consumer cursor".to_owned(),
+                );
+            }
+            consumer.claim = Some(ProductChangeDeliveryClaimState {
+                owner: self.claim_owner.clone(),
+                token,
+                expires_at_ms,
+            });
+            consumer.attempt_count = consumer
+                .attempt_count
+                .checked_add(1)
+                .ok_or_else(|| "Runtime Product change attempt count overflowed".to_owned())?;
+            consumer.last_error = None;
+            persist_delivery_state(&mut tx, &target_run_id, &target_agent_id, &delivery_state)
+                .await?;
+            claims.push(ProductChangeClaim {
+                target_run_id,
+                target_agent_id,
+                binding,
+                sequence,
+                change,
+                consumer_name: consumer_name.to_owned(),
+                owner: self.claim_owner.clone(),
+                token,
+            });
+        }
+        tx.commit().await.map_err(db_error)?;
+        Ok(claims)
     }
 
     async fn ack(&self, claim: &ProductChangeClaim) -> Result<(), String> {
-        let result = sqlx::query(
-            "UPDATE agent_runtime_product_change_delivery
-             SET status='delivered',
-                 claim_owner=NULL,
-                 claim_token=NULL,
-                 claim_expires_at=NULL,
-                 last_error=NULL,
-                 delivered_at=NOW()
-             WHERE thread_id=$1 AND sequence=$2::NUMERIC(20,0)
-               AND status='claimed'
-               AND claim_owner=$3
-               AND claim_token=$4
-               AND claim_expires_at > NOW()",
-        )
-        .bind(claim.thread_id.as_str())
-        .bind(sequence_decimal(claim.sequence))
-        .bind(&claim.owner)
-        .bind(claim.token)
-        .execute(&self.pool)
-        .await
-        .map_err(db_error)?;
-        if result.rows_affected() != 1 {
-            return Err("Runtime Product change delivery claim is stale".to_owned());
-        }
-        Ok(())
+        self.finish_claim(claim, None).await
     }
 
     async fn release(&self, claim: &ProductChangeClaim, error: &str) -> Result<(), String> {
-        let result = sqlx::query(
-            "UPDATE agent_runtime_product_change_delivery
-             SET status='pending',
-                 claim_owner=NULL,
-                 claim_token=NULL,
-                 claim_expires_at=NULL,
-                 last_error=$5
-             WHERE thread_id=$1 AND sequence=$2::NUMERIC(20,0)
-               AND status='claimed'
-               AND claim_owner=$3
-               AND claim_token=$4",
+        self.finish_claim(claim, Some(error)).await
+    }
+
+    async fn finish_claim(
+        &self,
+        claim: &ProductChangeClaim,
+        error: Option<&str>,
+    ) -> Result<(), String> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let now_ms = database_time_ms(&mut tx).await?;
+        let state = sqlx::query_scalar::<_, Value>(
+            "SELECT change_delivery_state
+             FROM agent_run_product_runtime_binding
+             WHERE target_run_id=$1 AND target_agent_id=$2
+             FOR UPDATE",
         )
-        .bind(claim.thread_id.as_str())
-        .bind(sequence_decimal(claim.sequence))
-        .bind(&claim.owner)
-        .bind(claim.token)
-        .bind(error)
-        .execute(&self.pool)
+        .bind(&claim.target_run_id)
+        .bind(&claim.target_agent_id)
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(db_error)?;
-        if result.rows_affected() != 1 {
-            return Err("Runtime Product change delivery release claim is stale".to_owned());
+        .map_err(db_error)?
+        .ok_or_else(|| "Runtime Product change delivery claim is stale".to_owned())?;
+        let mut delivery_state = decode_delivery_state(state)?;
+        let consumer = delivery_state
+            .get_mut(&claim.consumer_name)
+            .ok_or_else(|| {
+                "Runtime Product change delivery consumer claim is missing".to_owned()
+            })?;
+        let active_claim = consumer
+            .claim
+            .as_ref()
+            .filter(|active| {
+                active.owner == claim.owner
+                    && active.token == claim.token
+                    && (error.is_some() || active.expires_at_ms > now_ms)
+            })
+            .ok_or_else(|| "Runtime Product change delivery claim is stale".to_owned())?;
+        if active_claim.expires_at_ms == 0 {
+            return Err("Runtime Product change delivery claim has no lease".to_owned());
         }
-        Ok(())
+        consumer.claim = None;
+        match error {
+            Some(error) => consumer.last_error = Some(error.to_owned()),
+            None => {
+                if claim.sequence.0 <= consumer.delivered_sequence {
+                    return Err(
+                        "Runtime Product change acknowledgement did not advance its cursor"
+                            .to_owned(),
+                    );
+                }
+                consumer.delivered_sequence = claim.sequence.0;
+                consumer.last_error = None;
+            }
+        }
+        persist_delivery_state(
+            &mut tx,
+            &claim.target_run_id,
+            &claim.target_agent_id,
+            &delivery_state,
+        )
+        .await?;
+        tx.commit().await.map_err(db_error)
     }
 }
 
 pub(crate) struct ManagedRuntimeProductChangeConsumer {
     delivery: PostgresManagedRuntimeProductChangeDelivery,
-    bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
     observers: RwLock<Vec<Arc<dyn AgentRunProductRuntimeChangeObserver>>>,
 }
 
 impl ManagedRuntimeProductChangeConsumer {
     pub(crate) fn new(
         delivery: PostgresManagedRuntimeProductChangeDelivery,
-        bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
         observer: Arc<dyn AgentRunProductRuntimeChangeObserver>,
     ) -> Self {
         Self {
             delivery,
-            bindings,
             observers: RwLock::new(vec![observer]),
         }
     }
@@ -248,25 +304,41 @@ impl ManagedRuntimeProductChangeConsumer {
     }
 
     pub(crate) async fn drain(&self, limit: usize) -> Result<usize, String> {
-        let claims = self.delivery.claim(limit).await?;
+        let observers = self
+            .observers
+            .read()
+            .map_err(|_| "Runtime Product change observer registry lock poisoned".to_owned())?
+            .clone();
         let mut delivered = 0;
         let mut first_error = None;
-        for claim in claims {
-            let result = self.dispatch(&claim).await;
-            match result {
-                Ok(()) => {
-                    if let Err(error) = self.delivery.ack(&claim).await {
-                        first_error.get_or_insert(error);
-                    } else {
-                        delivered += 1;
+        for observer in observers {
+            let consumer_name = observer.consumer_name();
+            let claims = self.delivery.claim(consumer_name, limit).await?;
+            for claim in claims {
+                let input = AgentRunProductRuntimeChange {
+                    binding: claim.binding.clone(),
+                    change: claim.change.clone(),
+                };
+                match observer.observe_product_runtime_change(&input).await {
+                    Ok(_) => {
+                        if let Err(error) = self.delivery.ack(&claim).await {
+                            first_error.get_or_insert(error);
+                        } else {
+                            delivered += 1;
+                        }
                     }
-                }
-                Err(error) => {
-                    let release = self.delivery.release(&claim, &error).await;
-                    first_error.get_or_insert_with(|| match release {
-                        Ok(()) => error,
-                        Err(release_error) => format!("{error}; release failed: {release_error}"),
-                    });
+                    Err(error) => {
+                        let observer_error = format!(
+                            "Runtime Product change observer `{consumer_name}` failed: {error}"
+                        );
+                        let release = self.delivery.release(&claim, &observer_error).await;
+                        first_error.get_or_insert_with(|| match release {
+                            Ok(()) => observer_error,
+                            Err(release_error) => {
+                                format!("{observer_error}; release failed: {release_error}")
+                            }
+                        });
+                    }
                 }
             }
         }
@@ -275,44 +347,57 @@ impl ManagedRuntimeProductChangeConsumer {
             None => Ok(delivered),
         }
     }
-
-    async fn dispatch(&self, claim: &ProductChangeClaim) -> Result<(), String> {
-        let binding = self
-            .bindings
-            .load_product_binding_by_runtime_thread(&claim.thread_id)
-            .await?
-            .ok_or_else(|| {
-                format!(
-                    "Runtime thread {} has no final AgentRun Product binding",
-                    claim.thread_id
-                )
-            })?;
-        let input = AgentRunProductRuntimeChange {
-            binding,
-            change: claim.change.clone(),
-        };
-        let observers = self
-            .observers
-            .read()
-            .map_err(|_| "Runtime Product change observer registry lock poisoned".to_owned())?
-            .clone();
-        for observer in observers {
-            observer
-                .observe_product_runtime_change(&input)
-                .await
-                .map_err(|error| {
-                    format!(
-                        "Runtime Product change observer `{}` failed: {error}",
-                        observer.consumer_name()
-                    )
-                })?;
-        }
-        Ok(())
-    }
 }
 
-fn sequence_decimal(sequence: RuntimeChangeSequence) -> String {
-    sequence.0.to_string()
+async fn persist_delivery_state(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    target_run_id: &str,
+    target_agent_id: &str,
+    delivery_state: &ProductChangeDeliveryState,
+) -> Result<(), String> {
+    let state = serde_json::to_value(delivery_state)
+        .map_err(|error| format!("encode Runtime Product change delivery state: {error}"))?;
+    let result = sqlx::query(
+        "UPDATE agent_run_product_runtime_binding
+         SET change_delivery_state=$3
+         WHERE target_run_id=$1 AND target_agent_id=$2",
+    )
+    .bind(target_run_id)
+    .bind(target_agent_id)
+    .bind(state)
+    .execute(&mut **tx)
+    .await
+    .map_err(db_error)?;
+    if result.rows_affected() != 1 {
+        return Err("Runtime Product change delivery binding disappeared".to_owned());
+    }
+    Ok(())
+}
+
+fn decode_delivery_state(value: Value) -> Result<ProductChangeDeliveryState, String> {
+    serde_json::from_value(value)
+        .map_err(|error| format!("decode Runtime Product change delivery state: {error}"))
+}
+
+fn decode_sequence(value: Option<&Value>) -> Result<RuntimeChangeSequence, String> {
+    let sequence = match value {
+        Some(Value::Number(value)) => value.as_u64(),
+        Some(Value::String(value)) => value.parse::<u64>().ok(),
+        _ => None,
+    }
+    .ok_or_else(|| "Runtime Product outbox sequence is outside the u64 domain".to_owned())?;
+    Ok(RuntimeChangeSequence(sequence))
+}
+
+async fn database_time_ms(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<u64, String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::TEXT",
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(db_error)?
+    .parse::<u64>()
+    .map_err(|_| "Runtime Product change database clock exceeded u64".to_owned())
 }
 
 fn db_error(error: sqlx::Error) -> String {
@@ -321,11 +406,83 @@ fn db_error(error: sqlx::Error) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use agentdash_agent_runtime_contract::{
         ManagedRuntimeChangeDelta, ManagedRuntimeLifecycleStatus, RuntimeProjectionRevision,
+        RuntimeThreadId,
     };
 
-    use super::*;
+    #[test]
+    fn delivery_state_keeps_independent_consumer_cursors() {
+        let mut state = ProductChangeDeliveryState::new();
+        state.insert(
+            "thread_name".to_owned(),
+            ProductChangeDeliveryConsumerState {
+                delivered_sequence: 7,
+                attempt_count: 1,
+                ..Default::default()
+            },
+        );
+        state.insert(
+            "terminal".to_owned(),
+            ProductChangeDeliveryConsumerState {
+                delivered_sequence: 3,
+                attempt_count: 2,
+                last_error: Some("retry".to_owned()),
+                ..Default::default()
+            },
+        );
+
+        let decoded = decode_delivery_state(
+            serde_json::to_value(&state).expect("encode Product delivery state"),
+        )
+        .expect("decode Product delivery state");
+        assert_eq!(decoded["thread_name"].delivered_sequence, 7);
+        assert_eq!(decoded["terminal"].delivered_sequence, 3);
+        assert_eq!(decoded["terminal"].last_error.as_deref(), Some("retry"));
+    }
+
+    #[tokio::test]
+    async fn runtime_outbox_without_product_binding_is_not_delivery_work() {
+        let (pool, _runtime) = isolated_delivery_pool().await;
+        let thread_id =
+            RuntimeThreadId::new(format!("unbound-runtime-{}", Uuid::new_v4())).expect("thread");
+        let change = ManagedRuntimePlatformChange {
+            thread_id: thread_id.clone(),
+            sequence: RuntimeChangeSequence(1),
+            revision: RuntimeProjectionRevision(1),
+            delta: ManagedRuntimeChangeDelta::RuntimeLifecycleChanged {
+                lifecycle: ManagedRuntimeLifecycleStatus::Active,
+            },
+        };
+        sqlx::query(
+            "INSERT INTO agent_runtime_state_revision(thread_id,revision,facts)
+             VALUES ($1,1,$2)",
+        )
+        .bind(thread_id.as_str())
+        .bind(serde_json::json!({
+            "outbox": [{
+                "sequence": 1,
+                "operation_id": null,
+                "change": change,
+            }]
+        }))
+        .execute(&pool)
+        .await
+        .expect("seed unbound canonical Runtime outbox");
+
+        let delivery =
+            PostgresManagedRuntimeProductChangeDelivery::new(pool, "test-worker", 30_000)
+                .expect("delivery");
+        assert!(
+            delivery
+                .claim("terminal_projection", 16)
+                .await
+                .expect("claim Product work")
+                .is_empty(),
+            "a Runtime thread without an activated Product binding has no Product consumer work"
+        );
+    }
 
     async fn isolated_delivery_pool() -> (PgPool, Option<crate::postgres_runtime::PostgresRuntime>)
     {
@@ -369,87 +526,5 @@ mod tests {
             .await
             .expect("Runtime Product change delivery schema readiness");
         (pool, Some(runtime))
-    }
-
-    fn change(thread_id: RuntimeThreadId, sequence: u64) -> ManagedRuntimePlatformChange {
-        ManagedRuntimePlatformChange {
-            thread_id,
-            sequence: RuntimeChangeSequence(sequence),
-            revision: RuntimeProjectionRevision(sequence),
-            delta: ManagedRuntimeChangeDelta::RuntimeLifecycleChanged {
-                lifecycle: ManagedRuntimeLifecycleStatus::Active,
-            },
-        }
-    }
-
-    #[tokio::test]
-    async fn delivery_claims_one_ordered_change_per_thread_and_fences_stale_tokens() {
-        let (pool, _runtime) = isolated_delivery_pool().await;
-        let thread_id =
-            RuntimeThreadId::new(format!("runtime-delivery-{}", Uuid::new_v4())).expect("thread");
-        sqlx::query(
-            "INSERT INTO agent_runtime_state_revision(thread_id,revision,facts)
-             VALUES ($1,1,'{}'::JSONB)",
-        )
-        .bind(thread_id.as_str())
-        .execute(&pool)
-        .await
-        .expect("seed Runtime state");
-        for sequence in [1_u64, 2] {
-            let change = serde_json::to_value(change(thread_id.clone(), sequence))
-                .expect("encode Runtime change");
-            sqlx::query(
-                "INSERT INTO agent_runtime_change(thread_id,sequence,operation_id,change)
-                 VALUES ($1,$2,NULL,$3)",
-            )
-            .bind(thread_id.as_str())
-            .bind(i64::try_from(sequence).expect("sequence"))
-            .bind(&change)
-            .execute(&pool)
-            .await
-            .expect("seed Runtime change");
-            sqlx::query(
-                "INSERT INTO agent_runtime_outbox(thread_id,sequence,operation_id,change)
-                 VALUES ($1,$2,NULL,$3)",
-            )
-            .bind(thread_id.as_str())
-            .bind(i64::try_from(sequence).expect("sequence"))
-            .bind(change)
-            .execute(&pool)
-            .await
-            .expect("seed Runtime outbox");
-        }
-
-        let delivery =
-            PostgresManagedRuntimeProductChangeDelivery::new(pool.clone(), "worker-a", 30_000)
-                .expect("delivery");
-        let first = delivery.claim(16).await.expect("claim first");
-        assert_eq!(first.len(), 1);
-        assert_eq!(first[0].sequence, RuntimeChangeSequence(1));
-        delivery
-            .release(&first[0], "retry")
-            .await
-            .expect("release first");
-
-        let retried = delivery.claim(16).await.expect("reclaim first");
-        assert_eq!(retried.len(), 1);
-        assert_eq!(retried[0].sequence, RuntimeChangeSequence(1));
-        assert!(
-            delivery.ack(&first[0]).await.is_err(),
-            "released claim token must be stale after reclaim"
-        );
-        delivery.ack(&retried[0]).await.expect("ack first");
-
-        let second = delivery.claim(16).await.expect("claim second");
-        assert_eq!(second.len(), 1);
-        assert_eq!(second[0].sequence, RuntimeChangeSequence(2));
-        delivery.ack(&second[0]).await.expect("ack second");
-        assert!(delivery.claim(16).await.expect("drained").is_empty());
-
-        sqlx::query("DELETE FROM agent_runtime_state_revision WHERE thread_id=$1")
-            .bind(thread_id.as_str())
-            .execute(&pool)
-            .await
-            .expect("cleanup Runtime delivery fixture");
     }
 }

@@ -3,7 +3,7 @@
   "name": "database-persistence-boundary-cleanup",
   "title": "数据库持久化边界清理",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

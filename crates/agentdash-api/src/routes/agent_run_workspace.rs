@@ -52,11 +52,7 @@ pub(crate) async fn load(
     let service = app_workspace::AgentRunWorkspaceQueryService::new(
         app_workspace::AgentRunWorkspaceQueryDeps {
             product_projection: state.services.agent_run_product_projection.as_ref(),
-            applied_resource_surfaces: state
-                .services
-                .agent_run_product_persistence_composition
-                .applied_resource_surfaces
-                .as_ref(),
+            applied_resource_surfaces: state.services.agent_run_product_resource_surfaces.as_ref(),
             product_mailbox: state.services.agent_run_product_mailbox.as_ref(),
             agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
             project_agent_repo: state.repos.project_agent_repo.as_ref(),

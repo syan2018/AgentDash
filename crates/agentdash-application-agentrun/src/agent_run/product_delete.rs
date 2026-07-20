@@ -107,7 +107,6 @@ impl AgentRunProductDeleteService {
                 .execute(AgentRunProductCommandRequest {
                     target,
                     client_command_id: format!("agent-run-delete:v1:{}:{}", run.id, agent.id),
-                    expected_revision: snapshot.revision,
                     command: AgentRunProductCommand::Close,
                 })
                 .await

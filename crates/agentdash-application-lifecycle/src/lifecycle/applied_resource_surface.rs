@@ -2,9 +2,9 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceCompilerPort,
-    AgentRunAppliedResourceSurfaceMaterializeRequest, AgentRunAppliedResourceSurfaceWriteError,
-    AppliedVfsGrant, AppliedVfsMount, AppliedVfsOperation, AppliedVfsPathScope,
+    AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError,
+    AgentRunAppliedResourceSurfaceQueryPort, AppliedVfsGrant, AppliedVfsMount, AppliedVfsOperation,
+    AppliedVfsPathScope,
 };
 use agentdash_application_vfs::append_lifecycle_skill_asset_projection;
 use agentdash_domain::{
@@ -45,7 +45,7 @@ pub trait AgentRunLifecycleMountFactsQueryPort: Send + Sync {
     async fn lifecycle_mount_facts(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<AgentRunLifecycleMountFacts, AgentRunAppliedResourceSurfaceWriteError>;
+    ) -> Result<AgentRunLifecycleMountFacts, AgentRunAppliedResourceSurfaceQueryError>;
 }
 
 /// Final Product surface compiler decorator.
@@ -53,16 +53,15 @@ pub trait AgentRunLifecycleMountFactsQueryPort: Send + Sync {
 /// The inner compiler owns the complete Product VFS/Task grant policy. This decorator adds the
 /// single Lifecycle mount with canonical-history read grants and, for an active workflow node,
 /// independently scoped node-output write grants. It then recalculates the final VFS digest and
-/// must be the compiler passed to
-/// `AgentRunAppliedResourceSurfaceMaterializer`.
+/// is evaluated on demand by Product consumers.
 pub struct AgentRunLifecycleAppliedResourceSurfaceCompiler {
-    inner: Arc<dyn AgentRunAppliedResourceSurfaceCompilerPort>,
+    inner: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
     facts: Arc<dyn AgentRunLifecycleMountFactsQueryPort>,
 }
 
 impl AgentRunLifecycleAppliedResourceSurfaceCompiler {
     pub fn new(
-        inner: Arc<dyn AgentRunAppliedResourceSurfaceCompilerPort>,
+        inner: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
         facts: Arc<dyn AgentRunLifecycleMountFactsQueryPort>,
     ) -> Self {
         Self { inner, facts }
@@ -70,22 +69,14 @@ impl AgentRunLifecycleAppliedResourceSurfaceCompiler {
 }
 
 #[async_trait]
-impl AgentRunAppliedResourceSurfaceCompilerPort
-    for AgentRunLifecycleAppliedResourceSurfaceCompiler
-{
-    async fn compile_applied_resource_surface(
+impl AgentRunAppliedResourceSurfaceQueryPort for AgentRunLifecycleAppliedResourceSurfaceCompiler {
+    async fn applied_resource_surface(
         &self,
-        request: &AgentRunAppliedResourceSurfaceMaterializeRequest,
-    ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceWriteError> {
-        let mut surface = self.inner.compile_applied_resource_surface(request).await?;
-        let facts = self.facts.lifecycle_mount_facts(&request.target).await?;
+        target: &AgentRunTarget,
+    ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError> {
+        let mut surface = self.inner.applied_resource_surface(target).await?;
+        let facts = self.facts.lifecycle_mount_facts(target).await?;
         install_agent_run_lifecycle_applied_mount(&mut surface, &facts)?;
-        if facts.product_binding_digest != request.product_binding_digest {
-            return Err(AgentRunAppliedResourceSurfaceWriteError::Conflict {
-                message: "Lifecycle mount facts do not attest the materialize Product binding"
-                    .to_string(),
-            });
-        }
         Ok(surface)
     }
 }
@@ -97,9 +88,9 @@ impl AgentRunAppliedResourceSurfaceCompilerPort
 pub fn install_agent_run_lifecycle_applied_mount(
     surface: &mut AgentRunAppliedResourceSurface,
     facts: &AgentRunLifecycleMountFacts,
-) -> Result<(), AgentRunAppliedResourceSurfaceWriteError> {
+) -> Result<(), AgentRunAppliedResourceSurfaceQueryError> {
     if surface.target != facts.target {
-        return Err(AgentRunAppliedResourceSurfaceWriteError::Conflict {
+        return Err(AgentRunAppliedResourceSurfaceQueryError::Conflict {
             message: "Lifecycle mount target does not match the compiled Product surface"
                 .to_string(),
         });
@@ -107,7 +98,7 @@ pub fn install_agent_run_lifecycle_applied_mount(
     if surface.product_binding_digest != facts.product_binding_digest
         || facts.product_binding_digest.trim().is_empty()
     {
-        return Err(AgentRunAppliedResourceSurfaceWriteError::Conflict {
+        return Err(AgentRunAppliedResourceSurfaceQueryError::Conflict {
             message: "Lifecycle mount facts do not match the compiled Product binding".to_string(),
         });
     }
@@ -122,7 +113,7 @@ pub fn install_agent_run_lifecycle_applied_mount(
         }
         (None, None, None) => None,
         _ => {
-            return Err(AgentRunAppliedResourceSurfaceWriteError::CorruptEvidence {
+            return Err(AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence {
                 message:
                     "Lifecycle workflow mount facts must provide orchestration, node path and lifecycle key together"
                         .to_string(),
@@ -130,7 +121,7 @@ pub fn install_agent_run_lifecycle_applied_mount(
         }
     };
     if node_scope.is_none() && !facts.writable_port_keys.is_empty() {
-        return Err(AgentRunAppliedResourceSurfaceWriteError::CorruptEvidence {
+        return Err(AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence {
             message: "Lifecycle writable ports require an active workflow node".to_string(),
         });
     }
@@ -212,7 +203,7 @@ pub fn install_agent_run_lifecycle_applied_mount(
         &surface.vfs_grants,
     )?;
     surface.validate_for(&facts.target).map_err(|error| {
-        AgentRunAppliedResourceSurfaceWriteError::CorruptEvidence {
+        AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence {
             message: error.to_string(),
         }
     })
@@ -220,7 +211,7 @@ pub fn install_agent_run_lifecycle_applied_mount(
 
 fn applied_mount(
     mount: Mount,
-) -> Result<AppliedVfsMount, AgentRunAppliedResourceSurfaceWriteError> {
+) -> Result<AppliedVfsMount, AgentRunAppliedResourceSurfaceQueryError> {
     let capabilities = mount
         .capabilities
         .into_iter()
@@ -231,7 +222,7 @@ fn applied_mount(
             MountCapability::Write => Ok(AppliedVfsOperation::Write),
             MountCapability::Exec => Ok(AppliedVfsOperation::Exec),
             MountCapability::Watch => {
-                Err(AgentRunAppliedResourceSurfaceWriteError::CorruptEvidence {
+                Err(AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence {
                     message: "AppliedResourceSurface has no Watch authorization operation"
                         .to_string(),
                 })
@@ -261,7 +252,7 @@ fn canonical_vfs_digest(
     mounts: &[AppliedVfsMount],
     default_mount_id: Option<&str>,
     grants: &[AppliedVfsGrant],
-) -> Result<String, AgentRunAppliedResourceSurfaceWriteError> {
+) -> Result<String, AgentRunAppliedResourceSurfaceQueryError> {
     let mut mounts = mounts.to_vec();
     mounts.sort_by(|left, right| left.mount_id.cmp(&right.mount_id));
     let mut grants = grants.to_vec();
@@ -277,7 +268,7 @@ fn canonical_vfs_digest(
         grants: &grants,
     })
     .map_err(
-        |error| AgentRunAppliedResourceSurfaceWriteError::CorruptEvidence {
+        |error| AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence {
             message: format!("canonical VFS digest serialization failed: {error}"),
         },
     )?;
@@ -339,9 +330,7 @@ mod tests {
                 scope: AppliedTaskScope::Project { project_id },
                 operations: BTreeSet::from([AppliedTaskOperation::Read]),
             }],
-            task_surface_revision: 1,
             task_surface_digest: "sha256:task".to_string(),
-            task_provenance: provenance(),
             product_binding_digest: "sha256:binding".to_string(),
             provenance: provenance(),
         }
@@ -485,13 +474,13 @@ mod tests {
         wrong_binding.product_binding_digest = "sha256:other".to_string();
         assert!(matches!(
             install_agent_run_lifecycle_applied_mount(&mut surface, &wrong_binding),
-            Err(AgentRunAppliedResourceSurfaceWriteError::Conflict { .. })
+            Err(AgentRunAppliedResourceSurfaceQueryError::Conflict { .. })
         ));
 
         let wrong_target = facts(target());
         assert!(matches!(
             install_agent_run_lifecycle_applied_mount(&mut surface, &wrong_target),
-            Err(AgentRunAppliedResourceSurfaceWriteError::Conflict { .. })
+            Err(AgentRunAppliedResourceSurfaceQueryError::Conflict { .. })
         ));
     }
 }

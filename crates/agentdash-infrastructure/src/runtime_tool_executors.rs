@@ -9,7 +9,9 @@ use agentdash_agent_runtime::{
     RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation, RuntimeToolPermission,
     RuntimeToolResourceGrant, RuntimeVfsGrantedOperation, RuntimeVfsPathGrant,
 };
-use agentdash_agent_runtime_contract::{RuntimeItemId, RuntimeTurnId, SurfaceRevision};
+use agentdash_agent_runtime_contract::{
+    RuntimeItemId, RuntimeSourceRef, RuntimeTurnId, SurfaceRevision,
+};
 use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
 use agentdash_application_agentrun::runtime_task_tools::{
     RuntimeTaskToolKind, RuntimeTaskToolOutcome, RuntimeTaskToolRequest, RuntimeTaskToolScope,
@@ -525,7 +527,10 @@ impl RuntimeToolExecutor for WorkspaceModulePresentRuntimeTool {
                 runtime_turn_id,
                 runtime_item_id,
             },
-            source_binding: binding.source_binding,
+            source_ref: match RuntimeSourceRef::new(invocation.context.source.to_string()) {
+                Ok(value) => value,
+                Err(error) => return rejected("invalid_runtime_source", error.to_string()),
+            },
             surface_revision: SurfaceRevision(invocation.context.applied_surface_revision.0),
             presentation,
             committed_at_ms: now_ms(),
@@ -1053,15 +1058,11 @@ mod tests {
                 agent_id: agent_id.to_string(),
             },
             applied_surface: RuntimeToolAppliedSurfaceEvidence {
-                snapshot_revision: 1,
                 agent_surface_revision: 1,
                 agent_surface_digest: "surface".to_owned(),
-                vfs_revision: 1,
                 vfs_digest: "vfs".to_owned(),
                 vfs_provenance: provenance.clone(),
-                task_revision: 1,
                 task_digest: "task".to_owned(),
-                task_provenance: provenance,
                 product_binding_digest: "binding".to_owned(),
                 host_binding_generation: 1,
             },

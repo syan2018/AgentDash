@@ -463,8 +463,7 @@ CREATE TABLE agent_run_product_command_receipts (
     runtime_thread_id text,
     runtime_operation_id text,
     UNIQUE (scope_kind, scope_key, client_command_id),
-    FOREIGN KEY (runtime_thread_id, runtime_operation_id)
-        REFERENCES agent_runtime_operation(thread_id, id)
+    CHECK (runtime_operation_id IS NULL OR runtime_thread_id IS NOT NULL)
 );
 ```
 
@@ -478,7 +477,8 @@ pub struct AgentRunAcceptedRefs {
 ### 3. Contracts
 
 - Product receipt 只拥有请求 digest、状态、结果重放与产品坐标；Managed Runtime 仍独占 operation/turn 状态。
-- accepted Runtime 引用使用 `runtime_thread_id + runtime_operation_id`，复合外键保证 operation 属于同一 thread。
+- accepted Runtime 引用使用 `runtime_thread_id + runtime_operation_id` 作为 Runtime 返回的
+  opaque typed evidence；Product 不对 Runtime owner document 的内部 operation 集合建外键。
 - 纯产品命令可以没有 Runtime operation；Runtime 命令被接受后必须保存原 operation ID。
 - `result_json` 保存对调用方返回的 typed response，用于同一 client command 的精确重放。
 
@@ -488,7 +488,7 @@ pub struct AgentRunAcceptedRefs {
 | --- | --- |
 | 相同 scope/client ID 与相同 digest | 返回首次 receipt/result，不重复 side effect |
 | 相同 scope/client ID 与不同 digest | typed digest conflict |
-| operation ID 不属于给定 thread | 复合外键拒绝整个 accepted update |
+| operation ID 存在但 thread ID 缺失 | Product CHECK 拒绝整个 accepted update |
 | Runtime command accepted 但 receipt 未保存 operation | API/application 测试失败，不得伪造 protocol turn ID |
 | receipt schema 缺失 | readiness 失败，不装配 repository |
 
@@ -500,7 +500,8 @@ pub struct AgentRunAcceptedRefs {
 
 ### 6. Tests Required
 
-- Repository: claim/duplicate/digest conflict、accepted refs/result roundtrip、复合 FK mismatch。
+- Repository: claim/duplicate/digest conflict、accepted refs/result roundtrip，以及 operation
+  coordinate 缺少 thread 时的 Product CHECK。
 - Migration: fresh embedded PostgreSQL 与既有 schema 顺序升级后新表 ready，旧 `agent_run_command_receipts` 仍 retired。
 - API: cancel/compaction 接受后保存真实 operation ID；重复 client command 不产生第二 operation。
 
@@ -519,4 +520,5 @@ AgentRun product command -> product receipt claim -> Managed Runtime command
 - `RAISE` 占位符是单个 `%`，参数数量匹配。
 - `SELECT ... INTO` 后检查 `FOUND`。
 - JSONB 数组遍历使用 `jsonb_array_elements()`。
-- 迁移脚本保持幂等：`ADD COLUMN IF NOT EXISTS`、`ON CONFLICT DO NOTHING`。
+- 迁移脚本按已知前序 schema 做单向变换并由 `_sqlx_migrations` 保证只执行一次；DDL 直接
+  描述目标结构，使意外 schema drift 在迁移阶段显式失败。

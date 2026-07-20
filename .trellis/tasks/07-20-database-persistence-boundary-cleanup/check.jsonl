@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查migration历史、最终schema与readiness一致性。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "检查canonical JSONB authority、CAS、change/outbox与claim语义。"}
+{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "检查去镜像后Host effect、lease、generation与callback fencing未退化。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "执行受影响Rust质量门与负向搜索。"}
+{"file": ".trellis/tasks/07-20-database-persistence-boundary-cleanup/design.md", "reason": "逐项核对镜像表删除、Product cursor ownership与migration hard cut。"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "检查命令不暴露aggregate revision且repository事务仍执行精确CAS。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "检查Product/API只传业务命令identity与command-specific coordinate。"}

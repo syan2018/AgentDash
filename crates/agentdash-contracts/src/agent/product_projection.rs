@@ -1,6 +1,6 @@
 use agentdash_agent_runtime_contract::{
     ManagedRuntimeContentBlock, ManagedRuntimeInteractionResponse, ManagedRuntimeOperationReceipt,
-    ManagedRuntimeSourceBindingEvidence, RuntimeInteractionId, RuntimeProjectionRevision,
+    ManagedRuntimeSourceBindingEvidence, RuntimeInteractionId, RuntimeSourceRef,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -33,7 +33,6 @@ pub enum AgentRunProductRuntimeCommand {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct AgentRunProductRuntimeCommandRequest {
     pub client_command_id: String,
-    pub expected_revision: RuntimeProjectionRevision,
     pub command: AgentRunProductRuntimeCommand,
 }
 
@@ -48,7 +47,7 @@ pub struct WorkspaceModulePresentationCause {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct WorkspaceModulePresentationCurrentnessFence {
     pub runtime_thread_id: String,
-    pub source_binding: ManagedRuntimeSourceBindingEvidence,
+    pub source_ref: RuntimeSourceRef,
     pub surface_revision: u64,
     pub module_id: String,
     pub view_key: String,

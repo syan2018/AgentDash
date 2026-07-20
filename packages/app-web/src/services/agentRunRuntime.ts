@@ -64,7 +64,6 @@ export async function fetchAgentRunRuntimeContextProjection(
 
 export interface AgentRunProductRuntimeCommandRequest {
   client_command_id: string;
-  expected_revision: bigint;
   command: AgentRunProductRuntimeCommand;
 }
 
@@ -74,10 +73,6 @@ export async function executeAgentRunRuntimeCommand(
 ): Promise<ManagedRuntimeOperationReceipt> {
   const wireRequest: AgentRunProductRuntimeCommandRequestWire = {
     client_command_id: request.client_command_id,
-    expected_revision: encodeRuntimeU64(
-      request.expected_revision,
-      "$.expected_revision",
-    ),
     command: request.command,
   };
   const payload = await api.post<unknown>(
@@ -97,7 +92,6 @@ export async function compactAgentRunContext(
   }
   return executeAgentRunRuntimeCommand(target, {
     client_command_id: clientCommandId,
-    expected_revision: snapshot.revision,
     command: { kind: "request_compaction" },
   });
 }
@@ -107,11 +101,9 @@ export async function respondAgentRunInteraction(
   interactionId: string,
   response: ManagedRuntimeInteractionResponse,
   clientCommandId: string,
-  expectedRevision: bigint,
 ): Promise<ManagedRuntimeOperationReceipt> {
   return executeAgentRunRuntimeCommand(target, {
     client_command_id: clientCommandId,
-    expected_revision: expectedRevision,
     command: {
       kind: "resolve_interaction",
       interaction_id: interactionId,

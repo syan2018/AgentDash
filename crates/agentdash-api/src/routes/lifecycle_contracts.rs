@@ -218,8 +218,8 @@ fn runtime_execution_trace_to_contract(
                     app::RuntimeTraceStaleReason::RuntimeThreadMismatch => {
                         contract::LifecycleRuntimeTraceStaleReason::RuntimeThreadMismatch
                     }
-                    app::RuntimeTraceStaleReason::RuntimeSourceBindingMismatch => {
-                        contract::LifecycleRuntimeTraceStaleReason::RuntimeSourceBindingMismatch
+                    app::RuntimeTraceStaleReason::RuntimeAppliedSurfaceMismatch => {
+                        contract::LifecycleRuntimeTraceStaleReason::RuntimeAppliedSurfaceMismatch
                     }
                 },
                 evidence: contract::LifecycleRuntimeTraceFenceEvidenceView {
@@ -227,7 +227,6 @@ fn runtime_execution_trace_to_contract(
                     observed_target: evidence.observed_target.map(agent_run_target_to_contract),
                     expected_runtime_thread_id: evidence.expected_runtime_thread_id,
                     observed_runtime_thread_id: evidence.observed_runtime_thread_id,
-                    expected_source_binding: evidence.expected_source_binding,
                     observed_source_binding: evidence.observed_source_binding,
                     observed_snapshot: evidence.observed_snapshot,
                 },
@@ -254,7 +253,6 @@ fn runtime_binding_to_contract(
             agent_id: binding.target.agent_id.to_string(),
         },
         runtime_thread_id: binding.runtime_thread_id,
-        source_binding: binding.source_binding,
     }
 }
 

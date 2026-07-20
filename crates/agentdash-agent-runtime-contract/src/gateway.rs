@@ -188,7 +188,6 @@ pub struct ManagedRuntimeCommandEnvelope {
     pub operation_id: RuntimeOperationId,
     pub idempotency_key: RuntimeIdempotencyKey,
     pub thread_id: RuntimeThreadId,
-    pub expected_revision: Option<RuntimeProjectionRevision>,
     pub command: ManagedRuntimeCommand,
 }
 

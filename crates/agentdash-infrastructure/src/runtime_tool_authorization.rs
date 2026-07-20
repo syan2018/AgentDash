@@ -10,8 +10,8 @@ use agentdash_agent_runtime::{
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_agentrun::agent_run::{
     AgentRunAppliedResourceSurfaceQueryError, AgentRunAppliedResourceSurfaceQueryPort,
-    AgentRunAppliedResourceSurfaceSnapshot, AgentRunProductRuntimeBinding, AppliedTaskOperation,
-    AppliedTaskScope, AppliedVfsOperation, AppliedVfsPathScope,
+    AgentRunProductRuntimeBinding, AppliedTaskOperation, AppliedTaskScope, AppliedVfsOperation,
+    AppliedVfsPathScope,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -26,8 +26,6 @@ use uuid::Uuid;
 pub struct CommittedRuntimeToolProductBinding {
     pub binding: AgentRunProductRuntimeBinding,
     pub binding_digest: String,
-    pub applied_resource_snapshot_revision: Option<u64>,
-    pub applied_resource_binding_generation: Option<u64>,
 }
 
 pub struct ProductRuntimeToolAuthorizer {
@@ -79,82 +77,61 @@ impl RuntimeToolAuthorizationPort for ProductRuntimeToolAuthorizer {
                     "runtime thread has no committed Product target binding",
                 )
             })?;
-        let binding_generation = binding.applied_resource_binding_generation.ok_or_else(|| {
-            denied(
-                "applied_resource_surface_not_activated",
-                "Product resource surface is not pinned to a Host binding generation",
-            )
-        })?;
-        if binding_generation != request.context.binding_generation.0 {
-            return Err(denied(
-                "stale_product_surface_generation",
-                "Product resource snapshot is pinned to a different Host binding generation",
-            ));
-        }
-        let snapshot_revision = binding.applied_resource_snapshot_revision.ok_or_else(|| {
-            denied(
-                "applied_resource_surface_not_activated",
-                "Product resource surface is not pinned before activation",
-            )
-        })?;
         ensure_current_surface(&binding.binding, &request)?;
-        let snapshot = self
+        let surface = self
             .surfaces
-            .applied_resource_surface(&binding.binding.target, Some(snapshot_revision))
+            .applied_resource_surface(&binding.binding.target)
             .await
             .map_err(map_surface_query_error)?;
-        if snapshot.surface.product_binding_digest != binding.binding_digest {
+        if surface.product_binding_digest != binding.binding_digest {
             return Err(denied(
                 "stale_product_binding",
-                "Product resource surface does not attest the committed Product binding digest",
+                "Product resource authority does not attest the committed Product binding digest",
             ));
         }
-        authorize_snapshot(snapshot, request)
+        authorize_surface(surface, request)
     }
 }
 
-fn authorize_snapshot(
-    snapshot: AgentRunAppliedResourceSurfaceSnapshot,
+fn authorize_surface(
+    surface: agentdash_application_agentrun::agent_run::AgentRunAppliedResourceSurface,
     request: RuntimeToolAuthorizationRequest,
 ) -> Result<RuntimeToolAuthorizationGrant, RuntimeToolBrokerError> {
-    let surface = &snapshot.surface;
-    if surface.agent_surface_revision != request.context.applied_surface_revision.0
-        || surface.agent_surface_digest != request.context.applied_surface_digest.as_str()
-    {
+    if surface.agent_surface_revision != request.context.applied_surface_revision.0 {
         return Err(denied(
             "stale_product_surface",
-            "Product snapshot does not attest the callback applied surface revision and digest",
+            "Product authority does not attest the callback applied surface revision",
         ));
     }
     let resources = match request.definition.name.as_str() {
-        "mounts_list" => vfs_grant(surface, AppliedVfsOperation::List, &[], true)?,
+        "mounts_list" => vfs_grant(&surface, AppliedVfsOperation::List, &[], true)?,
         "fs_read" => vfs_grant(
-            surface,
+            &surface,
             AppliedVfsOperation::Read,
-            &[path_argument(surface, &request.arguments, "path", false)?],
+            &[path_argument(&surface, &request.arguments, "path", false)?],
             false,
         )?,
         "fs_glob" => vfs_grant(
-            surface,
+            &surface,
             AppliedVfsOperation::List,
-            &[path_argument(surface, &request.arguments, "path", true)?],
+            &[path_argument(&surface, &request.arguments, "path", true)?],
             false,
         )?,
         "fs_grep" => vfs_grant(
-            surface,
+            &surface,
             AppliedVfsOperation::Search,
-            &[path_argument(surface, &request.arguments, "path", true)?],
+            &[path_argument(&surface, &request.arguments, "path", true)?],
             false,
         )?,
         "fs_apply_patch" => vfs_grant(
-            surface,
+            &surface,
             AppliedVfsOperation::Write,
             &patch_paths(&request.arguments)?,
             false,
         )?,
-        "shell_exec" => shell_vfs_grant(surface, &request.arguments)?,
-        "task_read" => task_grant(surface, AppliedTaskOperation::Read, &request.arguments)?,
-        "task_write" => task_grant(surface, AppliedTaskOperation::Write, &request.arguments)?,
+        "shell_exec" => shell_vfs_grant(&surface, &request.arguments)?,
+        "task_read" => task_grant(&surface, AppliedTaskOperation::Read, &request.arguments)?,
+        "task_write" => task_grant(&surface, AppliedTaskOperation::Write, &request.arguments)?,
         "wait"
         | "complete_lifecycle_node"
         | "companion_request"
@@ -181,15 +158,11 @@ fn authorize_snapshot(
             agent_id: surface.target.agent_id.to_string(),
         },
         applied_surface: RuntimeToolAppliedSurfaceEvidence {
-            snapshot_revision: snapshot.snapshot_revision,
             agent_surface_revision: surface.agent_surface_revision,
             agent_surface_digest: surface.agent_surface_digest.clone(),
-            vfs_revision: snapshot.snapshot_revision,
             vfs_digest: surface.vfs_digest.clone(),
             vfs_provenance: map_provenance(&surface.provenance),
-            task_revision: surface.task_surface_revision,
             task_digest: surface.task_surface_digest.clone(),
-            task_provenance: map_provenance(&surface.task_provenance),
             product_binding_digest: surface.product_binding_digest.clone(),
             host_binding_generation: request.context.binding_generation.0,
         },
@@ -226,7 +199,6 @@ fn task_grant(
                 task_id: task_id.to_string(),
             },
         },
-        plan_revision: surface.task_surface_revision,
         plan_digest: surface.task_surface_digest.clone(),
         operations: grant
             .operations
@@ -678,14 +650,11 @@ fn map_surface_query_error(
     error: AgentRunAppliedResourceSurfaceQueryError,
 ) -> RuntimeToolBrokerError {
     match error {
-        AgentRunAppliedResourceSurfaceQueryError::SurfaceNotApplied => denied(
-            "applied_resource_surface_missing",
-            "Product resource surface has not been materialized before activation",
-        ),
-        AgentRunAppliedResourceSurfaceQueryError::ProjectionStale { .. } => {
-            denied("stale_product_surface", error.to_string())
+        AgentRunAppliedResourceSurfaceQueryError::MissingFacts => {
+            denied("product_surface_facts_missing", error.to_string())
         }
         AgentRunAppliedResourceSurfaceQueryError::TargetMismatch
+        | AgentRunAppliedResourceSurfaceQueryError::Conflict { .. }
         | AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence { .. } => {
             denied("invalid_product_surface", error.to_string())
         }
@@ -705,15 +674,7 @@ fn ensure_current_surface(
             "Product target binding belongs to a different Runtime thread",
         ));
     }
-    if binding.source_binding.source_ref.as_str() != request.context.source.as_str() {
-        return Err(denied(
-            "stale_product_binding",
-            "Product target binding belongs to a different Agent source",
-        ));
-    }
-    if binding.source_binding.applied_surface_revision.0
-        != request.context.applied_surface_revision.0
-    {
+    if binding.launch_frame.revision != request.context.applied_surface_revision.0 {
         return Err(denied(
             "stale_product_surface",
             "Product target binding does not attest the callback applied surface revision",
@@ -735,10 +696,6 @@ mod tests {
 
     use agentdash_agent_runtime::{
         RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolPermission, RuntimeToolResolvedContext,
-    };
-    use agentdash_agent_runtime_contract::{
-        ManagedRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
-        SurfaceRevision,
     };
     use agentdash_agent_service_api::{
         AgentBindingGeneration, AgentProfileDigest, AgentServiceInstanceId, AgentSourceCoordinate,
@@ -768,10 +725,7 @@ mod tests {
     }
 
     struct SurfaceFixture {
-        value: Result<
-            AgentRunAppliedResourceSurfaceSnapshot,
-            AgentRunAppliedResourceSurfaceQueryError,
-        >,
+        value: Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>,
     }
 
     #[async_trait]
@@ -779,19 +733,9 @@ mod tests {
         async fn applied_resource_surface(
             &self,
             _target: &AgentRunTarget,
-            expected_snapshot_revision: Option<u64>,
-        ) -> Result<AgentRunAppliedResourceSurfaceSnapshot, AgentRunAppliedResourceSurfaceQueryError>
+        ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>
         {
-            let snapshot = self.value.clone()?;
-            if let Some(expected) = expected_snapshot_revision
-                && snapshot.snapshot_revision != expected
-            {
-                return Err(AgentRunAppliedResourceSurfaceQueryError::ProjectionStale {
-                    expected_revision: expected,
-                    actual_revision: snapshot.snapshot_revision,
-                });
-            }
-            Ok(snapshot)
+            self.value.clone()
         }
     }
 
@@ -803,7 +747,7 @@ mod tests {
                 value: Some(binding),
             }),
             Arc::new(SurfaceFixture {
-                value: Err(AgentRunAppliedResourceSurfaceQueryError::SurfaceNotApplied),
+                value: Err(AgentRunAppliedResourceSurfaceQueryError::MissingFacts),
             }),
         );
         let error = authorizer
@@ -813,18 +757,17 @@ mod tests {
         assert!(matches!(
             error,
             RuntimeToolBrokerError::AuthorizationDenied { code, .. }
-                if code == "applied_resource_surface_missing"
+                if code == "product_surface_facts_missing"
         ));
     }
 
     #[tokio::test]
-    async fn stale_surface_digest_is_typed_deny() {
+    async fn product_and_host_surface_digests_are_distinct_evidence_namespaces() {
         let binding = binding();
-        let mut snapshot = snapshot(
+        let snapshot = snapshot(
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        snapshot.surface.agent_surface_digest = "different".to_owned();
         let authorizer = ProductRuntimeToolAuthorizer::new(
             Arc::new(BindingFixture {
                 value: Some(binding),
@@ -833,15 +776,14 @@ mod tests {
                 value: Ok(snapshot),
             }),
         );
-        let error = authorizer
+        let grant = authorizer
             .authorize(request("mounts_list"))
             .await
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            RuntimeToolBrokerError::AuthorizationDenied { code, .. }
-                if code == "stale_product_surface"
-        ));
+            .expect("distinct Product and Host surface digests");
+        assert_eq!(
+            grant.applied_surface.agent_surface_digest,
+            "product-surface-test"
+        );
     }
 
     #[tokio::test]
@@ -871,14 +813,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn old_activation_cannot_observe_newer_grant_snapshot() {
+    async fn current_product_authority_is_observed_without_snapshot_pin() {
         let binding = binding();
         let mut newer = snapshot(
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        newer.snapshot_revision = 2;
-        newer.surface.vfs_grants[0]
+        newer.vfs_grants[0]
             .operations
             .insert(AppliedVfsOperation::Write);
         let authorizer = ProductRuntimeToolAuthorizer::new(
@@ -887,15 +828,10 @@ mod tests {
             }),
             Arc::new(SurfaceFixture { value: Ok(newer) }),
         );
-        let error = authorizer
+        authorizer
             .authorize(request("mounts_list"))
             .await
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            RuntimeToolBrokerError::AuthorizationDenied { code, .. }
-                if code == "stale_product_surface"
-        ));
+            .expect("current Product authority is evaluated directly");
     }
 
     #[tokio::test]
@@ -1012,8 +948,7 @@ mod tests {
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        snapshot.surface.vfs_grants[0].path_scopes =
-            vec![AppliedVfsPathScope::Prefix("docs".to_owned())];
+        snapshot.vfs_grants[0].path_scopes = vec![AppliedVfsPathScope::Prefix("docs".to_owned())];
         let authorizer = ProductRuntimeToolAuthorizer::new(
             Arc::new(BindingFixture {
                 value: Some(binding),
@@ -1043,7 +978,7 @@ mod tests {
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        snapshot.surface.vfs_grants = vec![
+        snapshot.vfs_grants = vec![
             AppliedVfsGrant {
                 mount_id: "main".to_owned(),
                 operations: BTreeSet::from([AppliedVfsOperation::Read, AppliedVfsOperation::List]),
@@ -1103,9 +1038,9 @@ mod tests {
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        let project_id = snapshot.surface.project_id;
+        let project_id = snapshot.project_id;
         let task_id = Uuid::new_v4();
-        snapshot.surface.task_grants = vec![AppliedTaskGrant {
+        snapshot.task_grants = vec![AppliedTaskGrant {
             scope: AppliedTaskScope::Task {
                 project_id,
                 task_id,
@@ -1238,23 +1173,15 @@ mod tests {
                 execution_profile,
                 target,
                 runtime_thread_id: RuntimeThreadId::new("thread-test").unwrap(),
-                source_binding: ManagedRuntimeSourceBindingEvidence {
-                    source_ref: RuntimeSourceRef::new("source-test").unwrap(),
-                    committed_at_revision: RuntimeProjectionRevision(1),
-                    applied_surface_revision: SurfaceRevision(1),
-                    activated_at_revision: Some(RuntimeProjectionRevision(1)),
-                },
             },
             binding_digest: "binding-test".to_owned(),
-            applied_resource_snapshot_revision: Some(1),
-            applied_resource_binding_generation: Some(1),
         }
     }
 
     fn snapshot(
         target: AgentRunTarget,
         product_binding_digest: String,
-    ) -> AgentRunAppliedResourceSurfaceSnapshot {
+    ) -> AgentRunAppliedResourceSurface {
         let project_id = Uuid::new_v4();
         let provenance = AgentRunAppliedResourceSurfaceProvenance {
             source_kind: "product".to_owned(),
@@ -1267,53 +1194,48 @@ mod tests {
             "run_id": target.run_id,
             "agent_id": target.agent_id,
         });
-        AgentRunAppliedResourceSurfaceSnapshot {
-            snapshot_revision: 1,
-            surface: AgentRunAppliedResourceSurface {
-                target,
-                project_id,
-                workspace_id: None,
-                vfs_mounts: vec![AppliedVfsMount {
-                    mount_id: "main".to_owned(),
-                    provider: "memory".to_owned(),
-                    backend_id: "backend".to_owned(),
-                    root_ref: "memory://main".to_owned(),
-                    capabilities: BTreeSet::from([
-                        AppliedVfsOperation::Read,
-                        AppliedVfsOperation::List,
-                        AppliedVfsOperation::Search,
-                        AppliedVfsOperation::Write,
-                        AppliedVfsOperation::Exec,
-                    ]),
-                    default_write: false,
-                    display_name: "Main".to_owned(),
-                    metadata: mount_metadata,
-                }],
-                default_mount_id: Some("main".to_owned()),
-                vfs_grants: vec![AppliedVfsGrant {
-                    mount_id: "main".to_owned(),
-                    operations: BTreeSet::from([
-                        AppliedVfsOperation::Read,
-                        AppliedVfsOperation::List,
-                        AppliedVfsOperation::Search,
-                        AppliedVfsOperation::Write,
-                        AppliedVfsOperation::Exec,
-                    ]),
-                    path_scopes: vec![AppliedVfsPathScope::All],
-                }],
-                agent_surface_revision: 1,
-                agent_surface_digest: "applied-test".to_owned(),
-                vfs_digest: "vfs-test".to_owned(),
-                task_grants: vec![AppliedTaskGrant {
-                    scope: AppliedTaskScope::Project { project_id },
-                    operations: BTreeSet::from([AppliedTaskOperation::Read]),
-                }],
-                task_surface_revision: 1,
-                task_surface_digest: "task-test".to_owned(),
-                task_provenance: provenance.clone(),
-                product_binding_digest,
-                provenance,
-            },
+        AgentRunAppliedResourceSurface {
+            target,
+            project_id,
+            workspace_id: None,
+            vfs_mounts: vec![AppliedVfsMount {
+                mount_id: "main".to_owned(),
+                provider: "memory".to_owned(),
+                backend_id: "backend".to_owned(),
+                root_ref: "memory://main".to_owned(),
+                capabilities: BTreeSet::from([
+                    AppliedVfsOperation::Read,
+                    AppliedVfsOperation::List,
+                    AppliedVfsOperation::Search,
+                    AppliedVfsOperation::Write,
+                    AppliedVfsOperation::Exec,
+                ]),
+                default_write: false,
+                display_name: "Main".to_owned(),
+                metadata: mount_metadata,
+            }],
+            default_mount_id: Some("main".to_owned()),
+            vfs_grants: vec![AppliedVfsGrant {
+                mount_id: "main".to_owned(),
+                operations: BTreeSet::from([
+                    AppliedVfsOperation::Read,
+                    AppliedVfsOperation::List,
+                    AppliedVfsOperation::Search,
+                    AppliedVfsOperation::Write,
+                    AppliedVfsOperation::Exec,
+                ]),
+                path_scopes: vec![AppliedVfsPathScope::All],
+            }],
+            agent_surface_revision: 1,
+            agent_surface_digest: "product-surface-test".to_owned(),
+            vfs_digest: "vfs-test".to_owned(),
+            task_grants: vec![AppliedTaskGrant {
+                scope: AppliedTaskScope::Project { project_id },
+                operations: BTreeSet::from([AppliedTaskOperation::Read]),
+            }],
+            task_surface_digest: "task-test".to_owned(),
+            product_binding_digest,
+            provenance,
         }
     }
 

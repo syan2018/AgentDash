@@ -111,7 +111,7 @@ pub enum RuntimeTraceStaleReason {
     ProjectionBindingMissing,
     ProductBindingChanged,
     RuntimeThreadMismatch,
-    RuntimeSourceBindingMismatch,
+    RuntimeAppliedSurfaceMismatch,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -120,7 +120,6 @@ pub struct RuntimeTraceFenceEvidence {
     pub observed_target: Option<AgentRunTarget>,
     pub expected_runtime_thread_id: Option<RuntimeThreadId>,
     pub observed_runtime_thread_id: Option<RuntimeThreadId>,
-    pub expected_source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
     pub observed_source_binding: Option<ManagedRuntimeSourceBindingEvidence>,
     pub observed_snapshot: Option<ManagedRuntimeSnapshot>,
 }
@@ -229,8 +228,8 @@ impl LifecycleRunViewQueryService {
                     AgentRunProductRuntimeSnapshotStaleReason::RuntimeThreadMismatch => {
                         RuntimeTraceStaleReason::RuntimeThreadMismatch
                     }
-                    AgentRunProductRuntimeSnapshotStaleReason::RuntimeSourceBindingMismatch => {
-                        RuntimeTraceStaleReason::RuntimeSourceBindingMismatch
+                    AgentRunProductRuntimeSnapshotStaleReason::RuntimeAppliedSurfaceMismatch => {
+                        RuntimeTraceStaleReason::RuntimeAppliedSurfaceMismatch
                     }
                 };
                 Ok(RuntimeExecutionTraceView::Stale {
@@ -409,10 +408,9 @@ fn stale_fence_evidence(
             Some(snapshot) => Some(snapshot.thread_id.clone()),
             None => observed_binding.map(|binding| binding.runtime_thread_id.clone()),
         },
-        expected_source_binding: expected_binding.map(|binding| binding.source_binding.clone()),
         observed_source_binding: match observed_snapshot {
             Some(snapshot) => snapshot.source_binding.clone(),
-            None => observed_binding.map(|binding| binding.source_binding.clone()),
+            None => None,
         },
         observed_snapshot: observed_snapshot.cloned(),
     }
@@ -810,8 +808,11 @@ mod tests {
                 Some(AgentRunProductRuntimeSnapshotStaleReason::ProductBindingTargetMismatch)
             } else if binding.runtime_thread_id != snapshot.thread_id {
                 Some(AgentRunProductRuntimeSnapshotStaleReason::RuntimeThreadMismatch)
-            } else if snapshot.source_binding.as_ref() != Some(&binding.source_binding) {
-                Some(AgentRunProductRuntimeSnapshotStaleReason::RuntimeSourceBindingMismatch)
+            } else if snapshot.source_binding.as_ref().is_none_or(|source| {
+                source.activated_at_revision.is_none()
+                    || source.applied_surface_revision.0 != binding.launch_frame.revision
+            }) {
+                Some(AgentRunProductRuntimeSnapshotStaleReason::RuntimeAppliedSurfaceMismatch)
             } else {
                 None
             };
@@ -921,11 +922,10 @@ mod tests {
                 launch_frame: ProductAgentFrameRef {
                     frame_id: Uuid::new_v4(),
                     agent_id: target.agent_id,
-                    revision: 1,
+                    revision: source.applied_surface_revision.0,
                 },
                 execution_profile_digest: execution_profile.profile_digest.clone(),
                 execution_profile,
-                source_binding: source.clone(),
             };
             self.bindings
                 .bindings
@@ -1131,7 +1131,7 @@ mod tests {
         assert!(view.agents.iter().any(|view| matches!(
             view.runtime,
             RuntimeExecutionTraceView::Stale {
-                reason: RuntimeTraceStaleReason::RuntimeSourceBindingMismatch,
+                reason: RuntimeTraceStaleReason::RuntimeAppliedSurfaceMismatch,
                 ..
             }
         )));
@@ -1170,7 +1170,7 @@ mod tests {
         };
         assert_eq!(
             *reason,
-            RuntimeTraceStaleReason::RuntimeSourceBindingMismatch
+            RuntimeTraceStaleReason::RuntimeAppliedSurfaceMismatch
         );
         assert_eq!(
             evidence
@@ -1187,10 +1187,6 @@ mod tests {
                 .unwrap()
                 .as_str(),
             "thread-missing-source"
-        );
-        assert_eq!(
-            evidence.expected_source_binding.as_ref(),
-            Some(&expected_source)
         );
         assert_eq!(evidence.observed_source_binding, None);
         assert_eq!(
@@ -1232,7 +1228,6 @@ mod tests {
                     },
                     execution_profile_digest: execution_profile.profile_digest.clone(),
                     execution_profile,
-                    source_binding: observed_source.clone(),
                 }
             });
         fixture.projections.snapshots.lock().await.insert(
@@ -1263,10 +1258,6 @@ mod tests {
                 .unwrap()
                 .as_str(),
             "thread-after"
-        );
-        assert_eq!(
-            evidence.expected_source_binding.as_ref(),
-            Some(&expected_source)
         );
         assert_eq!(
             evidence.observed_source_binding.as_ref(),

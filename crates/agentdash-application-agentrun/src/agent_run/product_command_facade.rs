@@ -86,7 +86,6 @@ impl AgentRunProductCommand {
 pub struct AgentRunProductCommandRequest {
     pub target: AgentRunTarget,
     pub client_command_id: String,
-    pub expected_revision: RuntimeProjectionRevision,
     pub command: AgentRunProductCommand,
 }
 
@@ -180,16 +179,12 @@ impl AgentRunProductCommandFacade {
             })
             .await?;
         if snapshot.thread_id != binding.runtime_thread_id
-            || snapshot.source_binding.as_ref() != Some(&binding.source_binding)
+            || snapshot.source_binding.as_ref().is_none_or(|source| {
+                source.activated_at_revision.is_none()
+                    || source.applied_surface_revision.0 != binding.launch_frame.revision
+            })
         {
             return Err(AgentRunProductCommandError::RuntimeBindingMismatch);
-        }
-        if snapshot.revision != request.expected_revision {
-            return Err(AgentRunProductCommandError::Runtime(
-                ManagedRuntimeGatewayError::Conflict {
-                    actual: snapshot.revision,
-                },
-            ));
         }
         let runtime_kind = request
             .command
@@ -256,7 +251,6 @@ impl AgentRunProductCommandFacade {
                     ))
                     .map_err(|_| AgentRunProductCommandError::InvalidClientCommandId)?,
                     thread_id: binding.runtime_thread_id,
-                    expected_revision: Some(request.expected_revision),
                     command,
                 },
             })
@@ -607,7 +601,6 @@ mod tests {
             },
             execution_profile_digest: fixture_execution_profile().profile_digest,
             execution_profile: fixture_execution_profile(),
-            source_binding,
         };
         (target, binding, snapshot)
     }
@@ -660,7 +653,6 @@ mod tests {
         AgentRunProductCommandRequest {
             target,
             client_command_id: client_command_id.to_owned(),
-            expected_revision: RuntimeProjectionRevision(7),
             command,
         }
     }
@@ -706,9 +698,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replay_uses_claimed_envelope_when_projection_revision_has_advanced() {
+    async fn replay_uses_claimed_envelope_without_rechecking_projection_revision() {
         let (target, facade, runtime) = facade(false);
-        let mut request = request(
+        let request = request(
             target,
             "client-revision-advanced",
             AgentRunProductCommand::SubmitInput {
@@ -717,8 +709,7 @@ mod tests {
                 }],
             },
         );
-        let first = facade.execute(request.clone()).await.expect("first");
-        request.expected_revision = RuntimeProjectionRevision(first.accepted_revision.0 + 10);
+        facade.execute(request.clone()).await.expect("first");
         let replay = facade.execute(request).await.expect("replay");
         assert!(replay.duplicate);
         let observed = runtime.observed.lock().await;
@@ -783,7 +774,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_binding_target_and_runtime_source_mismatch() {
+    async fn rejects_binding_target_and_runtime_surface_mismatch() {
         let (target, mut binding, snapshot) = fixture(false);
         binding.target = AgentRunTarget {
             run_id: Uuid::new_v4(),
@@ -800,18 +791,19 @@ mod tests {
         assert!(matches!(error, AgentRunProductCommandError::TargetMismatch));
 
         let (target, binding, mut snapshot) = fixture(false);
-        snapshot.source_binding = Some(ManagedRuntimeSourceBindingEvidence {
-            source_ref: RuntimeSourceRef::new("source:different").expect("source"),
-            ..binding.source_binding.clone()
-        });
+        snapshot
+            .source_binding
+            .as_mut()
+            .expect("runtime source")
+            .applied_surface_revision = SurfaceRevision(99);
         let error = facade_from_parts(binding, snapshot)
             .execute(request(
                 target,
-                "binding-source-mismatch",
+                "binding-surface-mismatch",
                 AgentRunProductCommand::RequestCompaction,
             ))
             .await
-            .expect_err("source binding fence");
+            .expect_err("applied surface fence");
         assert!(matches!(
             error,
             AgentRunProductCommandError::RuntimeBindingMismatch
@@ -819,24 +811,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_expected_revision_conflict_before_claim() {
+    async fn admits_command_without_a_coarse_projection_revision_fence() {
         let (target, binding, snapshot) = fixture(false);
-        let mut request = request(
+        let request = request(
             target,
-            "revision-conflict",
+            "no-coarse-revision-fence",
             AgentRunProductCommand::RequestCompaction,
         );
-        request.expected_revision = RuntimeProjectionRevision(6);
-        let error = facade_from_parts(binding, snapshot)
+        let receipt = facade_from_parts(binding, snapshot)
             .execute(request)
             .await
-            .expect_err("revision conflict");
-        assert!(matches!(
-            error,
-            AgentRunProductCommandError::Runtime(ManagedRuntimeGatewayError::Conflict {
-                actual: RuntimeProjectionRevision(7)
-            })
-        ));
+            .expect("command admission");
+        assert_eq!(receipt.accepted_revision, RuntimeProjectionRevision(7));
     }
 
     #[tokio::test]

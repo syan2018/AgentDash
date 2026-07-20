@@ -365,7 +365,7 @@ fn map_projection_error(error: AgentRunProductProjectionError) -> AgentRunProduc
     match error {
         AgentRunProductProjectionError::TargetNotBound => AgentRunProductForkError::TargetNotBound,
         AgentRunProductProjectionError::RuntimeThreadMismatch
-        | AgentRunProductProjectionError::RuntimeSourceBindingMismatch
+        | AgentRunProductProjectionError::RuntimeAppliedSurfaceMismatch
         | AgentRunProductProjectionError::TargetMismatch => {
             AgentRunProductForkError::StaleProjection
         }

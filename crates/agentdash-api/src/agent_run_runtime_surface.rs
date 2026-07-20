@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_application_agentrun::agent_run::{
-    AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryPort,
-    AgentRunProductRuntimeBindingRepository, AppliedVfsMount, AppliedVfsOperation,
+    AgentRunAppliedResourceSurface, AgentRunProductRuntimeBindingRepository, AppliedVfsMount,
+    AppliedVfsOperation,
 };
 use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -148,11 +148,9 @@ async fn load_applied_surface(
 ) -> Result<AgentRunAppliedResourceSurface, ApiError> {
     state
         .services
-        .agent_run_product_persistence_composition
-        .applied_resource_surfaces
-        .applied_resource_surface(target, None)
+        .agent_run_product_resource_surfaces
+        .applied_resource_surface(target)
         .await
-        .map(|snapshot| snapshot.surface)
         .map_err(|error| ApiError::Conflict(error.to_string()))
 }
 

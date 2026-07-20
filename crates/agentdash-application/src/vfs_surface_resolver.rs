@@ -253,12 +253,11 @@ impl VfsSurfaceResolver {
         &self,
         target: &AgentRunTarget,
     ) -> Result<(Vfs, Uuid), ApplicationError> {
-        let snapshot = self
+        let surface = self
             .applied_resource_surfaces
-            .applied_resource_surface(target, None)
+            .applied_resource_surface(target)
             .await
             .map_err(applied_resource_surface_query_error)?;
-        let surface = snapshot.surface;
         let project_id = surface.project_id;
         let vfs = Vfs {
             mounts: surface
@@ -361,9 +360,9 @@ fn applied_resource_surface_query_error(
     error: AgentRunAppliedResourceSurfaceQueryError,
 ) -> ApplicationError {
     match error {
-        AgentRunAppliedResourceSurfaceQueryError::SurfaceNotApplied
+        AgentRunAppliedResourceSurfaceQueryError::MissingFacts
         | AgentRunAppliedResourceSurfaceQueryError::TargetMismatch
-        | AgentRunAppliedResourceSurfaceQueryError::ProjectionStale { .. }
+        | AgentRunAppliedResourceSurfaceQueryError::Conflict { .. }
         | AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence { .. } => {
             ApplicationError::Conflict(error.to_string())
         }

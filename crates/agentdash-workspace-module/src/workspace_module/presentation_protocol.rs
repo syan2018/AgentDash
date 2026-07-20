@@ -1,6 +1,6 @@
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeSourceBindingEvidence, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
-    RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
+    RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest, RuntimeSourceRef, RuntimeThreadId,
+    RuntimeTurnId, SurfaceRevision,
 };
 use agentdash_contracts::workspace_module::WorkspaceModulePresentation;
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -116,7 +116,7 @@ pub struct WorkspaceModulePresentationActor {
 #[serde(rename_all = "snake_case")]
 pub struct WorkspaceModulePresentationCurrentnessFence {
     pub runtime_thread_id: RuntimeThreadId,
-    pub source_binding: ManagedRuntimeSourceBindingEvidence,
+    pub source_ref: RuntimeSourceRef,
     pub surface_revision: SurfaceRevision,
     pub module_id: String,
     pub view_key: String,
@@ -172,13 +172,7 @@ impl WorkspaceModulePresentationIntent {
                 "actor_id",
             ));
         }
-        if self.cause.runtime_thread_id != self.currentness_fence.runtime_thread_id
-            || self
-                .currentness_fence
-                .source_binding
-                .applied_surface_revision
-                != self.currentness_fence.surface_revision
-        {
+        if self.cause.runtime_thread_id != self.currentness_fence.runtime_thread_id {
             return Err(WorkspaceModulePresentationProtocolError::BindingFenceMismatch);
         }
         if !self.currentness_fence.matches(&self.presentation) {
@@ -232,7 +226,7 @@ pub struct WorkspaceModulePresentationCommand {
     pub target: AgentRunTarget,
     pub actor: WorkspaceModulePresentationActor,
     pub cause: WorkspaceModulePresentationCause,
-    pub source_binding: ManagedRuntimeSourceBindingEvidence,
+    pub source_ref: RuntimeSourceRef,
     pub surface_revision: SurfaceRevision,
     pub presentation: WorkspaceModulePresentation,
     pub committed_at_ms: u64,
@@ -265,7 +259,7 @@ pub fn build_pending_workspace_module_presentation_commit(
         cause: command.cause.clone(),
         currentness_fence: WorkspaceModulePresentationCurrentnessFence {
             runtime_thread_id: command.cause.runtime_thread_id,
-            source_binding: command.source_binding,
+            source_ref: command.source_ref,
             surface_revision: command.surface_revision,
             module_id: command.presentation.module_id.clone(),
             view_key: command.presentation.view_key.clone(),
@@ -421,7 +415,7 @@ impl From<WorkspaceModulePresentationIntent> for wire::WorkspaceModulePresentati
             },
             currentness_fence: wire::WorkspaceModulePresentationCurrentnessFence {
                 runtime_thread_id: value.currentness_fence.runtime_thread_id.to_string(),
-                source_binding: value.currentness_fence.source_binding,
+                source_ref: value.currentness_fence.source_ref,
                 surface_revision: value.currentness_fence.surface_revision.0,
                 module_id: value.currentness_fence.module_id,
                 view_key: value.currentness_fence.view_key,
@@ -612,7 +606,7 @@ fn replayed_change(
         || intent.actor != command.actor
         || intent.cause != command.cause
         || fence.runtime_thread_id != command.cause.runtime_thread_id
-        || fence.source_binding != command.source_binding
+        || fence.source_ref != command.source_ref
         || fence.surface_revision != command.surface_revision
         || intent.presentation != command.presentation
         || intent.presentation_digest != presentation_digest(&command.presentation)?
@@ -733,16 +727,7 @@ mod tests {
             },
             currentness_fence: WorkspaceModulePresentationCurrentnessFence {
                 runtime_thread_id: RuntimeThreadId::new("thread-1").expect("thread"),
-                source_binding: ManagedRuntimeSourceBindingEvidence {
-                    source_ref: agentdash_agent_runtime_contract::RuntimeSourceRef::new("source-1")
-                        .expect("source"),
-                    committed_at_revision:
-                        agentdash_agent_runtime_contract::RuntimeProjectionRevision(2),
-                    applied_surface_revision: SurfaceRevision(3),
-                    activated_at_revision: Some(
-                        agentdash_agent_runtime_contract::RuntimeProjectionRevision(3),
-                    ),
-                },
+                source_ref: RuntimeSourceRef::new("source-1").expect("source"),
                 surface_revision: SurfaceRevision(3),
                 module_id: presentation.module_id.clone(),
                 view_key: presentation.view_key.clone(),
@@ -792,19 +777,7 @@ mod tests {
                 runtime_turn_id: RuntimeTurnId::new("turn-command").expect("turn"),
                 runtime_item_id: RuntimeItemId::new("item-command").expect("item"),
             },
-            source_binding: ManagedRuntimeSourceBindingEvidence {
-                source_ref: agentdash_agent_runtime_contract::RuntimeSourceRef::new(
-                    "source-command",
-                )
-                .expect("source"),
-                committed_at_revision: agentdash_agent_runtime_contract::RuntimeProjectionRevision(
-                    7,
-                ),
-                applied_surface_revision: SurfaceRevision(8),
-                activated_at_revision: Some(
-                    agentdash_agent_runtime_contract::RuntimeProjectionRevision(9),
-                ),
-            },
+            source_ref: RuntimeSourceRef::new("source-command").expect("source"),
             surface_revision: SurfaceRevision(8),
             presentation: presentation.clone(),
             committed_at_ms: 10,

@@ -7,9 +7,8 @@ use std::{
 };
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeOperationReceipt, ManagedRuntimeOperationStatus,
-    ManagedRuntimeSourceBindingEvidence, RuntimeOperationId, RuntimeProjectionRevision,
-    RuntimeSourceRef, SurfaceRevision,
+    ManagedRuntimeOperationReceipt, ManagedRuntimeOperationStatus, RuntimeOperationId,
+    RuntimeProjectionRevision,
 };
 use agentdash_agent_service_api::AgentInputContent;
 use agentdash_application::project_agent_run_start::{
@@ -263,22 +262,10 @@ impl AgentRunProductLaunchPort for RecordingLaunch {
     ) -> Result<AgentRunProductLaunchOutcome, AgentRunProductLaunchError> {
         self.requests.lock().await.push(request.clone());
         if self.fail_first.swap(false, Ordering::SeqCst) {
-            return Err(AgentRunProductLaunchError::ResourceSurface(
+            return Err(AgentRunProductLaunchError::Binding(
                 "injected unknown launch outcome".to_owned(),
             ));
         }
-        let source_binding = ManagedRuntimeSourceBindingEvidence {
-            source_ref: RuntimeSourceRef::new(format!(
-                "source:{}",
-                request.provisioning.runtime_thread_id
-            ))
-            .expect("source"),
-            committed_at_revision: RuntimeProjectionRevision(1),
-            applied_surface_revision: SurfaceRevision(
-                request.provisioning.surface_facts.surface_revision,
-            ),
-            activated_at_revision: Some(RuntimeProjectionRevision(2)),
-        };
         let binding = AgentRunProductRuntimeBinding {
             target: request.provisioning.target.clone(),
             runtime_thread_id: request.provisioning.runtime_thread_id.clone(),
@@ -289,7 +276,6 @@ impl AgentRunProductLaunchPort for RecordingLaunch {
                 .profile_digest
                 .clone(),
             execution_profile: request.provisioning.execution_profile.clone(),
-            source_binding,
         };
         let receipt = |phase: &str, revision| ManagedRuntimeOperationReceipt {
             operation_id: RuntimeOperationId::new(format!(
@@ -305,7 +291,6 @@ impl AgentRunProductLaunchPort for RecordingLaunch {
         };
         Ok(AgentRunProductLaunchOutcome {
             binding,
-            resource_snapshot_revision: 1,
             create_receipt: receipt("create", 1),
             activate_receipt: receipt("activate", 2),
             input_receipt: None,

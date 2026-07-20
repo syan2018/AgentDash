@@ -218,7 +218,10 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
         turn_id: &RuntimeTurnId,
     ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
         if snapshot.thread_id != binding.runtime_thread_id
-            || snapshot.source_binding.as_ref() != Some(&binding.source_binding)
+            || snapshot.source_binding.as_ref().is_none_or(|source| {
+                source.activated_at_revision.is_none()
+                    || source.applied_surface_revision.0 != binding.launch_frame.revision
+            })
         {
             return Ok(None);
         }

@@ -295,9 +295,7 @@ async fn ensure_canonical_product_binding(
     .ok_or_else(|| "Workflow AgentCall canonical Product binding is missing".to_string())?;
     let binding: AgentRunProductRuntimeBinding =
         serde_json::from_value(stored).map_err(|error| error.to_string())?;
-    if binding.target != mutation.target
-        || binding.runtime_thread_id != mutation.runtime_thread_id
-        || binding.source_binding != mutation.binding
+    if binding.target != mutation.target || binding.runtime_thread_id != mutation.runtime_thread_id
     {
         return Err("Workflow AgentCall canonical Product binding drifted".to_string());
     }

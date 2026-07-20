@@ -186,7 +186,6 @@ impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
                 command_request: AgentRunProductCommandRequest {
                     target: command.target,
                     client_command_id,
-                    expected_revision: snapshot.revision,
                     command: AgentRunProductCommand::SubmitInput {
                         content: managed_content,
                     },
@@ -331,7 +330,6 @@ impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
             .execute(AgentRunProductCommandRequest {
                 target: command.target,
                 client_command_id: client_command_id.to_string(),
-                expected_revision: snapshot.revision,
                 command: AgentRunProductCommand::SubmitInput {
                     content: managed_content,
                 },
@@ -504,7 +502,6 @@ impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
             .execute(AgentRunProductCommandRequest {
                 target,
                 client_command_id: queued_command.client_command_id,
-                expected_revision: snapshot.revision,
                 command: runtime_command,
             })
             .await;

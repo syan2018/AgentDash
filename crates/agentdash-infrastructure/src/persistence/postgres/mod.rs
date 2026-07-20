@@ -161,8 +161,7 @@ pub use agent_run_lineage_repository::PostgresAgentRunLineageRepository;
 pub use agent_run_mailbox_repository::PostgresAgentRunMailboxRepository;
 pub use agent_run_message_submission_store::PostgresAgentRunMessageSubmissionStore;
 pub use agent_run_product_persistence::{
-    PostgresAgentRunAppliedResourceSurfaceRepository, PostgresProductMailboxRepository,
-    PostgresProductRuntimeCommandClaimRepository,
+    PostgresProductMailboxRepository, PostgresProductRuntimeCommandClaimRepository,
 };
 pub use agent_run_product_projection_repository::{
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,

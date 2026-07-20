@@ -11,9 +11,9 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunProductForkError, AgentRunProductForkMessageRef, AgentRunProductForkRequest,
     AgentRunProductForkResult, AgentRunProductForkService, AgentRunProductInputDeliveryError,
     AgentRunProductProjectionError, AgentRunProductRuntimeRecoveryError,
-    AgentRunProductRuntimeRecoveryRequest, AgentRunProductRuntimeSnapshotObservation,
-    AgentRunTerminalChangeSequence, DeliverAgentRunProductInput, ProductMailboxCommand,
-    ProductMailboxCommandRequest, ProductMailboxError,
+    AgentRunProductRuntimeRecoveryRequest, AgentRunTerminalChangeSequence,
+    DeliverAgentRunProductInput, ProductMailboxCommand, ProductMailboxCommandRequest,
+    ProductMailboxError,
 };
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandOnlyRequest, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
@@ -406,25 +406,6 @@ async fn cancel_agent_run(
         ProjectPermission::Use,
     )
     .await?;
-    let observation = state
-        .services
-        .agent_run_product_projection
-        .runtime_snapshot_observation(&target)
-        .await
-        .map_err(agent_run_product_projection_error)?;
-    let snapshot = match observation {
-        AgentRunProductRuntimeSnapshotObservation::Current { snapshot, .. } => snapshot,
-        AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
-            return Err(ApiError::Conflict(
-                "AgentRun 尚未建立 committed Runtime binding".to_owned(),
-            ));
-        }
-        AgentRunProductRuntimeSnapshotObservation::Stale(_) => {
-            return Err(ApiError::Conflict(
-                "AgentRun Runtime projection 当前不可用于取消".to_owned(),
-            ));
-        }
-    };
     let receipt = state
         .services
         .agent_run_product_projection_composition
@@ -432,7 +413,6 @@ async fn cancel_agent_run(
         .execute(AgentRunProductCommandRequest {
             target,
             client_command_id: body.client_command_id.clone(),
-            expected_revision: snapshot.revision,
             command: AgentRunProductCommand::Interrupt,
         })
         .await
@@ -1109,7 +1089,6 @@ async fn execute_managed_runtime_command(
             .recover(AgentRunProductRuntimeRecoveryRequest {
                 target,
                 client_command_id: body.client_command_id,
-                expected_revision: body.expected_revision,
             })
             .await
             .map(|outcome| Json(outcome.activate_receipt))
@@ -1147,7 +1126,6 @@ async fn execute_managed_runtime_command(
         .execute(AgentRunProductCommandRequest {
             target,
             client_command_id: body.client_command_id,
-            expected_revision: body.expected_revision,
             command,
         })
         .await
@@ -1169,7 +1147,6 @@ fn agent_run_product_recovery_error(error: AgentRunProductRuntimeRecoveryError) 
             ..
         }) => ApiError::Conflict(error.to_string()),
         AgentRunProductRuntimeRecoveryError::Binding(_)
-        | AgentRunProductRuntimeRecoveryError::ResourceSurface(_)
         | AgentRunProductRuntimeRecoveryError::Runtime(ManagedRuntimeGatewayError::NotFound)
         | AgentRunProductRuntimeRecoveryError::Runtime(ManagedRuntimeGatewayError::Persistence {
             ..
@@ -1365,7 +1342,7 @@ fn agent_run_product_projection_error(error: AgentRunProductProjectionError) -> 
         | AgentRunProductProjectionError::Workspace(message)
         | AgentRunProductProjectionError::Terminal(message) => ApiError::Internal(message),
         AgentRunProductProjectionError::RuntimeThreadMismatch
-        | AgentRunProductProjectionError::RuntimeSourceBindingMismatch
+        | AgentRunProductProjectionError::RuntimeAppliedSurfaceMismatch
         | AgentRunProductProjectionError::TargetMismatch => ApiError::Internal(error.to_string()),
     }
 }

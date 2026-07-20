@@ -67,7 +67,6 @@ impl AgentRunProductProjectionComposition {
                 change_claim_owner,
                 change_claim_lease_duration_ms,
             )?,
-            runtime_bindings.clone(),
             thread_name_observer,
         ));
         let gateway: Arc<dyn AgentRunProductProjectionQueryPort> =

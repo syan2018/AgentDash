@@ -297,11 +297,9 @@ function interactionPresentation(interaction: AgentRunRuntimeInteraction) {
 export function ManagedRuntimeInteractionView({
   interaction,
   target,
-  expectedRevision,
 }: {
   interaction: AgentRunRuntimeInteraction;
   target: AgentRunRuntimeTarget;
-  expectedRevision: bigint;
 }) {
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
@@ -317,7 +315,6 @@ export function ManagedRuntimeInteractionView({
         interaction.id,
         response,
         crypto.randomUUID(),
-        expectedRevision,
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "提交 interaction 回应失败");

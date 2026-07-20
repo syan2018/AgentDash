@@ -811,10 +811,6 @@ mod tests {
                                             agent_id: saga.request().child_agent_id,
                                         },
                                         client_command_id: identity.idempotency_key.clone(),
-                                        expected_revision:
-                                            agentdash_agent_runtime_contract::RuntimeProjectionRevision(
-                                                7,
-                                            ),
                                         command:
                                             crate::agent_run::AgentRunProductCommand::SubmitInput {
                                                 content: vec![
@@ -1066,10 +1062,6 @@ mod tests {
         else {
             panic!("Full Companion must persist a Product delivery envelope");
         };
-        assert_eq!(
-            envelope.command_request.expected_revision,
-            agentdash_agent_runtime_contract::RuntimeProjectionRevision(7)
-        );
         assert!(matches!(
             envelope.command_request.command,
             crate::agent_run::AgentRunProductCommand::SubmitInput { .. }

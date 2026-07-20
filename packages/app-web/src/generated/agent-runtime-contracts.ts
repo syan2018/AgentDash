@@ -32,7 +32,7 @@ export type ManagedRuntimeCommand = { "kind": "create", initial_context: Managed
 
 export type ManagedRuntimeCommandAvailability = { "status": "available", evidence: ManagedRuntimeAvailabilityEvidence, } | { "status": "unavailable", reason: ManagedRuntimeUnavailabilityReason, evidence: ManagedRuntimeAvailabilityEvidence, };
 
-export type ManagedRuntimeCommandEnvelope = { operation_id: RuntimeOperationId, idempotency_key: RuntimeIdempotencyKey, thread_id: RuntimeThreadId, expected_revision: RuntimeProjectionRevision | null, command: ManagedRuntimeCommand, };
+export type ManagedRuntimeCommandEnvelope = { operation_id: RuntimeOperationId, idempotency_key: RuntimeIdempotencyKey, thread_id: RuntimeThreadId, command: ManagedRuntimeCommand, };
 
 export type ManagedRuntimeCommandKind = "create" | "resume" | "rebind" | "activate" | "submit_input" | "steer" | "interrupt" | "request_compaction" | "resolve_interaction" | "close" | "fork";
 

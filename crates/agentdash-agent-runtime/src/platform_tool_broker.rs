@@ -83,15 +83,11 @@ pub struct RuntimeToolProductTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeToolAppliedSurfaceEvidence {
-    pub snapshot_revision: u64,
     pub agent_surface_revision: u64,
     pub agent_surface_digest: String,
-    pub vfs_revision: u64,
     pub vfs_digest: String,
     pub vfs_provenance: RuntimeToolProvenanceEvidence,
-    pub task_revision: u64,
     pub task_digest: String,
-    pub task_provenance: RuntimeToolProvenanceEvidence,
     pub product_binding_digest: String,
     pub host_binding_generation: u64,
 }
@@ -115,7 +111,6 @@ pub enum RuntimeToolResourceGrant {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeTaskExecutionGrant {
     pub scope: RuntimeTaskExecutionScope,
-    pub plan_revision: u64,
     pub plan_digest: String,
     pub operations: Vec<RuntimeTaskGrantedOperation>,
 }
@@ -382,15 +377,11 @@ mod tests {
                     agent_id: "agent-test".into(),
                 },
                 applied_surface: RuntimeToolAppliedSurfaceEvidence {
-                    snapshot_revision: 1,
                     agent_surface_revision: 1,
                     agent_surface_digest: "surface-test".into(),
-                    vfs_revision: 1,
                     vfs_digest: "vfs-test".into(),
                     vfs_provenance: provenance(),
-                    task_revision: 1,
                     task_digest: "task-test".into(),
-                    task_provenance: provenance(),
                     product_binding_digest: "binding-test".into(),
                     host_binding_generation: 1,
                 },

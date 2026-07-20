@@ -54,18 +54,12 @@ describe("lifecycleRuntimeTraceSummaries", () => {
         agent: agent("agent-stale"),
         runtime: {
           state: "stale",
-          reason: "runtime_source_binding_mismatch",
+          reason: "runtime_applied_surface_mismatch",
           evidence: {
             expected_target: { run_id: "run-1", agent_id: "agent-stale" },
             observed_target: { run_id: "run-1", agent_id: "agent-stale" },
             expected_runtime_thread_id: "thread-expected",
             observed_runtime_thread_id: "thread-stale",
-            expected_source_binding: {
-              source_ref: "source-expected",
-              committed_at_revision: runtimeU64(6),
-              applied_surface_revision: runtimeU64(5),
-              activated_at_revision: runtimeU64(6),
-            },
             observed_source_binding: {
               source_ref: "source-stale",
               committed_at_revision: runtimeU64(7),

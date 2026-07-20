@@ -1,6 +1,5 @@
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeOperationReceipt, RuntimeIdempotencyKey, RuntimeOperationId,
-    RuntimeProjectionRevision, RuntimeThreadId,
+    ManagedRuntimeOperationReceipt, RuntimeIdempotencyKey, RuntimeOperationId, RuntimeThreadId,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
@@ -48,9 +47,6 @@ impl AgentRunProductRuntimeRecoveryId {
 pub enum AgentRunProductRuntimeRecoveryPhase {
     Requested,
     RebindApplied,
-    ProductBindingPrepared,
-    ResourceMaterialized,
-    RuntimeActivated,
     Succeeded,
 }
 
@@ -66,7 +62,6 @@ pub struct AgentRunProductRuntimeRecoverySaga {
     target: AgentRunTarget,
     client_command_id: String,
     runtime_thread_id: RuntimeThreadId,
-    rebind_expected_revision: RuntimeProjectionRevision,
     previous_binding: AgentRunProductRuntimeBinding,
     previous_binding_digest: String,
     rebind_identity: AgentRunProductRuntimeRecoveryOperationIdentity,
@@ -74,18 +69,13 @@ pub struct AgentRunProductRuntimeRecoverySaga {
     phase: AgentRunProductRuntimeRecoveryPhase,
     version: u64,
     rebind_receipt: Option<ManagedRuntimeOperationReceipt>,
-    prepared_binding: Option<AgentRunProductRuntimeBinding>,
-    prepared_binding_digest: Option<String>,
-    resource_snapshot_revision: Option<u64>,
     activate_receipt: Option<ManagedRuntimeOperationReceipt>,
-    activated_binding: Option<AgentRunProductRuntimeBinding>,
 }
 
 impl AgentRunProductRuntimeRecoverySaga {
     pub fn requested(
         target: AgentRunTarget,
         client_command_id: impl Into<String>,
-        rebind_expected_revision: RuntimeProjectionRevision,
         previous_binding: AgentRunProductRuntimeBinding,
     ) -> Result<Self, String> {
         let client_command_id = client_command_id.into();
@@ -102,7 +92,6 @@ impl AgentRunProductRuntimeRecoverySaga {
             target,
             client_command_id,
             runtime_thread_id: previous_binding.runtime_thread_id.clone(),
-            rebind_expected_revision,
             previous_binding,
             previous_binding_digest,
             rebind_identity,
@@ -110,11 +99,7 @@ impl AgentRunProductRuntimeRecoverySaga {
             phase: AgentRunProductRuntimeRecoveryPhase::Requested,
             version: 0,
             rebind_receipt: None,
-            prepared_binding: None,
-            prepared_binding_digest: None,
-            resource_snapshot_revision: None,
             activate_receipt: None,
-            activated_binding: None,
         })
     }
 
@@ -132,10 +117,6 @@ impl AgentRunProductRuntimeRecoverySaga {
 
     pub fn runtime_thread_id(&self) -> &RuntimeThreadId {
         &self.runtime_thread_id
-    }
-
-    pub fn rebind_expected_revision(&self) -> RuntimeProjectionRevision {
-        self.rebind_expected_revision
     }
 
     pub fn previous_binding(&self) -> &AgentRunProductRuntimeBinding {
@@ -166,104 +147,28 @@ impl AgentRunProductRuntimeRecoverySaga {
         self.rebind_receipt.as_ref()
     }
 
-    pub fn prepared_binding(&self) -> Option<&AgentRunProductRuntimeBinding> {
-        self.prepared_binding.as_ref()
-    }
-
-    pub fn prepared_binding_digest(&self) -> Option<&str> {
-        self.prepared_binding_digest.as_deref()
-    }
-
-    pub fn resource_snapshot_revision(&self) -> Option<u64> {
-        self.resource_snapshot_revision
-    }
-
     pub fn activate_receipt(&self) -> Option<&ManagedRuntimeOperationReceipt> {
         self.activate_receipt.as_ref()
-    }
-
-    pub fn activated_binding(&self) -> Option<&AgentRunProductRuntimeBinding> {
-        self.activated_binding.as_ref()
     }
 
     pub fn record_rebind_applied(
         mut self,
         receipt: ManagedRuntimeOperationReceipt,
-        prepared_binding: AgentRunProductRuntimeBinding,
     ) -> Result<Self, String> {
         self.require_phase(AgentRunProductRuntimeRecoveryPhase::Requested)?;
         self.validate_receipt(&receipt, &self.rebind_identity)?;
-        if prepared_binding.target != self.target
-            || prepared_binding.runtime_thread_id != self.runtime_thread_id
-            || prepared_binding.source_binding.source_ref
-                != self.previous_binding.source_binding.source_ref
-            || prepared_binding
-                .source_binding
-                .activated_at_revision
-                .is_some()
-        {
-            return Err("Rebind evidence does not match the durable recovery intent".to_string());
-        }
-        let prepared_binding_digest = prepared_binding.calculated_digest()?;
         self.rebind_receipt = Some(receipt);
-        self.prepared_binding = Some(prepared_binding);
-        self.prepared_binding_digest = Some(prepared_binding_digest);
         self.phase = AgentRunProductRuntimeRecoveryPhase::RebindApplied;
         Ok(self)
     }
 
-    pub fn record_product_binding_prepared(mut self) -> Result<Self, String> {
-        self.require_phase(AgentRunProductRuntimeRecoveryPhase::RebindApplied)?;
-        self.phase = AgentRunProductRuntimeRecoveryPhase::ProductBindingPrepared;
-        Ok(self)
-    }
-
-    pub fn record_resource_materialized(mut self, snapshot_revision: u64) -> Result<Self, String> {
-        self.require_phase(AgentRunProductRuntimeRecoveryPhase::ProductBindingPrepared)?;
-        if snapshot_revision == 0 {
-            return Err("Product recovery resource snapshot revision must be positive".to_string());
-        }
-        self.resource_snapshot_revision = Some(snapshot_revision);
-        self.phase = AgentRunProductRuntimeRecoveryPhase::ResourceMaterialized;
-        Ok(self)
-    }
-
-    pub fn record_runtime_activated(
+    pub fn record_succeeded(
         mut self,
         receipt: ManagedRuntimeOperationReceipt,
-        activated_binding: AgentRunProductRuntimeBinding,
     ) -> Result<Self, String> {
-        self.require_phase(AgentRunProductRuntimeRecoveryPhase::ResourceMaterialized)?;
+        self.require_phase(AgentRunProductRuntimeRecoveryPhase::RebindApplied)?;
         self.validate_receipt(&receipt, &self.activate_identity)?;
-        let activated_at_revision = activated_binding
-            .source_binding
-            .activated_at_revision
-            .ok_or_else(|| {
-                "Activation evidence does not match the durable recovery intent".to_string()
-            })?;
-        let mut pre_activation_binding = activated_binding.clone();
-        pre_activation_binding.source_binding.activated_at_revision = None;
-        if activated_binding.target != self.target
-            || activated_binding.runtime_thread_id != self.runtime_thread_id
-            || activated_at_revision != receipt.accepted_revision
-            || pre_activation_binding.calculated_digest()?
-                != self
-                    .prepared_binding_digest
-                    .as_deref()
-                    .ok_or_else(|| "Product recovery prepared binding is missing".to_string())?
-        {
-            return Err(
-                "Activation evidence does not match the durable recovery intent".to_string(),
-            );
-        }
         self.activate_receipt = Some(receipt);
-        self.activated_binding = Some(activated_binding);
-        self.phase = AgentRunProductRuntimeRecoveryPhase::RuntimeActivated;
-        Ok(self)
-    }
-
-    pub fn record_succeeded(mut self) -> Result<Self, String> {
-        self.require_phase(AgentRunProductRuntimeRecoveryPhase::RuntimeActivated)?;
         self.phase = AgentRunProductRuntimeRecoveryPhase::Succeeded;
         Ok(self)
     }
@@ -374,8 +279,7 @@ pub trait AgentRunProductRuntimeRecoverySagaRepository: Send + Sync {
 #[cfg(test)]
 mod tests {
     use agentdash_agent_runtime_contract::{
-        ManagedRuntimeOperationStatus, ManagedRuntimeSourceBindingEvidence, RuntimeSourceRef,
-        SurfaceRevision,
+        ManagedRuntimeOperationStatus, RuntimeProjectionRevision,
     };
     use uuid::Uuid;
 
@@ -394,7 +298,7 @@ mod tests {
         profile
     }
 
-    fn binding(target: AgentRunTarget, activated_at: Option<u64>) -> AgentRunProductRuntimeBinding {
+    fn binding(target: AgentRunTarget) -> AgentRunProductRuntimeBinding {
         let agent_id = target.agent_id;
         AgentRunProductRuntimeBinding {
             target,
@@ -406,12 +310,6 @@ mod tests {
             },
             execution_profile_digest: fixture_execution_profile().profile_digest,
             execution_profile: fixture_execution_profile(),
-            source_binding: ManagedRuntimeSourceBindingEvidence {
-                source_ref: RuntimeSourceRef::new("source").unwrap(),
-                committed_at_revision: RuntimeProjectionRevision(8),
-                applied_surface_revision: SurfaceRevision(5),
-                activated_at_revision: activated_at.map(RuntimeProjectionRevision),
-            },
         }
     }
 
@@ -430,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn durable_recovery_freezes_revision_and_operation_identities_across_roundtrip() {
+    fn durable_recovery_freezes_operation_identities_across_roundtrip() {
         let target = AgentRunTarget {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
@@ -438,8 +336,7 @@ mod tests {
         let saga = AgentRunProductRuntimeRecoverySaga::requested(
             target.clone(),
             "remote-placement-epoch",
-            RuntimeProjectionRevision(11),
-            binding(target, Some(8)),
+            binding(target),
         )
         .unwrap()
         .advance_persisted_version(0)
@@ -449,16 +346,12 @@ mod tests {
             serde_json::from_value(serde_json::to_value(&saga).unwrap()).unwrap();
 
         assert_eq!(restored.recovery_id(), saga.recovery_id());
-        assert_eq!(
-            restored.rebind_expected_revision(),
-            RuntimeProjectionRevision(11)
-        );
         assert_eq!(restored.rebind_identity(), saga.rebind_identity());
         assert_eq!(restored.activate_identity(), saga.activate_identity());
     }
 
     #[test]
-    fn durable_recovery_records_the_post_rebind_revision_for_activation() {
+    fn durable_recovery_records_runtime_operation_receipts() {
         let target = AgentRunTarget {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
@@ -466,28 +359,13 @@ mod tests {
         let saga = AgentRunProductRuntimeRecoverySaga::requested(
             target.clone(),
             "remote-placement-epoch",
-            RuntimeProjectionRevision(11),
-            binding(target.clone(), Some(8)),
+            binding(target.clone()),
         )
         .unwrap();
         let rebind_receipt = receipt(saga.rebind_identity(), 12);
-        let prepared_binding = binding(target.clone(), None);
-        let saga = saga
-            .record_rebind_applied(rebind_receipt, prepared_binding.clone())
-            .unwrap()
-            .record_product_binding_prepared()
-            .unwrap()
-            .record_resource_materialized(4)
-            .unwrap();
+        let saga = saga.record_rebind_applied(rebind_receipt).unwrap();
         let activate_receipt = receipt(saga.activate_identity(), 13);
-        let mut activated_binding = prepared_binding;
-        activated_binding.source_binding.activated_at_revision =
-            Some(RuntimeProjectionRevision(13));
-        let saga = saga
-            .record_runtime_activated(activate_receipt, activated_binding)
-            .unwrap()
-            .record_succeeded()
-            .unwrap();
+        let saga = saga.record_succeeded(activate_receipt).unwrap();
 
         assert_eq!(
             saga.rebind_receipt().unwrap().accepted_revision,

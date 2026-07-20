@@ -8,21 +8,20 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductRuntimeBindingRepository, AgentRunTerminalAvailability,
-    AgentRunTerminalCapability, AgentRunTerminalControlRoutingRepository, AgentRunTerminalId,
-    AgentRunTerminalLifecycleState, AgentRunTerminalOutputProjection,
-    AgentRunTerminalOutputSequence, AgentRunTerminalOwnerEpochId, AgentRunTerminalOwnerFence,
-    AgentRunTerminalProjection, AgentRunTerminalSourceSequence,
+    AgentRunTerminalAvailability, AgentRunTerminalCapability,
+    AgentRunTerminalControlRoutingRepository, AgentRunTerminalId, AgentRunTerminalLifecycleState,
+    AgentRunTerminalOutputProjection, AgentRunTerminalOutputSequence, AgentRunTerminalOwnerEpochId,
+    AgentRunTerminalOwnerFence, AgentRunTerminalProjection, AgentRunTerminalSourceSequence,
 };
 use agentdash_application_ports::agent_run_surface::AgentRunTerminalLaunchTarget;
 use agentdash_relay::*;
 
+use crate::agent_run_runtime_surface::resolve_current_runtime_surface_with_backend_for_agent_run_for_api;
 use crate::auth::{CurrentUser, ProjectPermission};
 use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
 use crate::relay::registry::BackendCommandError;
-use crate::agent_run_runtime_surface::resolve_current_runtime_surface_with_backend_for_agent_run_for_api;
-use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use crate::{app_state::AppState, rpc::ApiError};
+use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 
 const TERMINAL_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 
@@ -67,7 +66,9 @@ pub async fn spawn_terminal(
         .runtime_backend_anchor
         .root_ref
         .clone()
-        .ok_or_else(|| ApiError::Conflict("Terminal Runtime backend anchor 缺少 root_ref".into()))?;
+        .ok_or_else(|| {
+            ApiError::Conflict("Terminal Runtime backend anchor 缺少 root_ref".into())
+        })?;
     spawn_terminal_for_runtime_thread(
         &state,
         &runtime.runtime_thread_id,
@@ -138,13 +139,15 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
                 agent_id: uuid::Uuid::parse_str(agent_id)
                     .map_err(|_| ApiError::BadRequest("无效的 agent_id".into()))?,
             };
-            let binding = state
+            let runtime = state
                 .services
-                .agent_run_product_runtime_bindings
-                .load_product_binding(&target_ref)
+                .agent_run_product_projection
+                .runtime_snapshot(&target_ref)
                 .await
-                .map_err(ApiError::Internal)?
-                .ok_or_else(|| ApiError::Conflict("Terminal 缺少 Product Runtime binding".into()))?;
+                .map_err(|error| ApiError::Conflict(error.to_string()))?;
+            let source_binding = runtime.source_binding.ok_or_else(|| {
+                ApiError::Conflict("Terminal 缺少 Managed Runtime source evidence".into())
+            })?;
             let latest_source_sequence = u64::max(resp.latest_source_sequence, 1);
             state
                 .services
@@ -159,8 +162,8 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
                             )
                             .map_err(|error| ApiError::Internal(error.to_string()))?,
                             target: target_ref,
-                            runtime_thread_id: binding.runtime_thread_id,
-                            source_binding: binding.source_binding,
+                            runtime_thread_id: runtime.thread_id,
+                            source_binding,
                             backend_id,
                         },
                         mount_id: None,
@@ -202,20 +205,16 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
         }
         Ok(RelayMessage::ResponseTerminalSpawn {
             error: Some(err), ..
-        }) => {
-            Ok((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": err.message })),
-            )
-                .into_response())
-        }
-        _ => {
-            Ok((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": "unexpected response" })),
-            )
-                .into_response())
-        }
+        }) => Ok((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": err.message })),
+        )
+            .into_response()),
+        _ => Ok((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "unexpected response" })),
+        )
+            .into_response()),
     }
 }
 
@@ -355,8 +354,8 @@ async fn load_terminal_for_user(
         ProjectPermission::Use,
     )
     .await?;
-    let terminal_id =
-        AgentRunTerminalId::new(terminal_id).map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let terminal_id = AgentRunTerminalId::new(terminal_id)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let route = state
         .services
         .terminal_projections

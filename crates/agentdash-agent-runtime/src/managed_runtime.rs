@@ -896,12 +896,8 @@ where
         if snapshot.facts.projection.is_none()
             && matches!(command.command, ManagedRuntimeCommand::Create { .. })
         {
-            if command.expected_revision.is_some()
-                || snapshot.facts != ManagedRuntimeFacts::default()
-            {
-                return invariant(
-                    "Create requires one empty Runtime thread and no expected revision",
-                );
+            if snapshot.facts != ManagedRuntimeFacts::default() {
+                return invariant("Create requires one empty Runtime thread");
             }
             snapshot.facts.projection = Some(initial_projection(
                 command.thread_id.clone(),
@@ -915,18 +911,6 @@ where
         })?;
         if projection.thread_id != command.thread_id {
             return invariant("command thread does not match the admitted projection");
-        }
-        let expected_revision = if matches!(command.command, ManagedRuntimeCommand::Create { .. }) {
-            command.expected_revision.unwrap_or_default()
-        } else {
-            command
-                .expected_revision
-                .ok_or_else(|| ManagedRuntimeStateStoreError::Invariant {
-                    reason: "command requires an expected Runtime revision".to_owned(),
-                })?
-        };
-        if expected_revision != projection.revision {
-            return invariant("command expected revision does not match the admitted projection");
         }
         if !matches!(
             projection.command_availability.get(&command.command.kind()),
@@ -1687,7 +1671,6 @@ mod tests {
             operation_id: RuntimeOperationId::new("operation").expect("operation"),
             idempotency_key: RuntimeIdempotencyKey::new("idempotency").expect("idempotency"),
             thread_id: RuntimeThreadId::new("thread").expect("thread"),
-            expected_revision: Some(RuntimeProjectionRevision(7)),
             command: ManagedRuntimeCommand::SubmitInput {
                 content: vec![
                     agentdash_agent_runtime_contract::ManagedRuntimeContentBlock::Text {

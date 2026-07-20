@@ -2,12 +2,11 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use agentdash_application_agentrun::agent_run::{
-    AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceCompilerPort,
-    AgentRunAppliedResourceSurfaceMaterializeRequest, AgentRunAppliedResourceSurfaceProvenance,
-    AgentRunAppliedResourceSurfaceWriteError, AgentRunProductRuntimeBinding,
-    AgentRunProductRuntimeBindingRepository, AppliedTaskGrant, AppliedTaskOperation,
-    AppliedTaskScope, AppliedVfsGrant, AppliedVfsMount, AppliedVfsOperation, AppliedVfsPathScope,
-    ProductAgentSurfaceFacts,
+    AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceProvenance,
+    AgentRunAppliedResourceSurfaceQueryError, AgentRunAppliedResourceSurfaceQueryPort,
+    AgentRunProductRuntimeBinding, AgentRunProductRuntimeBindingRepository, AppliedTaskGrant,
+    AppliedTaskOperation, AppliedTaskScope, AppliedVfsGrant, AppliedVfsMount, AppliedVfsOperation,
+    AppliedVfsPathScope, ProductAgentSurfaceFacts,
 };
 use agentdash_application_lifecycle::{
     AgentRunLifecycleMountFacts, AgentRunLifecycleMountFactsQueryPort,
@@ -63,13 +62,13 @@ impl ProductAgentRunFactsResolver {
     async fn resolve(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<ResolvedProductAgentRunFacts, AgentRunAppliedResourceSurfaceWriteError> {
+    ) -> Result<ResolvedProductAgentRunFacts, AgentRunAppliedResourceSurfaceQueryError> {
         let binding = self
             .bindings
             .load_product_binding(target)
             .await
             .map_err(repository)?
-            .ok_or(AgentRunAppliedResourceSurfaceWriteError::Missing)?;
+            .ok_or(AgentRunAppliedResourceSurfaceQueryError::MissingFacts)?;
         if binding.target != *target || binding.launch_frame.agent_id != target.agent_id {
             return Err(conflict("Product binding target/frame mismatch"));
         }
@@ -80,14 +79,14 @@ impl ProductAgentRunFactsResolver {
             .get_by_id(target.run_id)
             .await
             .map_err(|error| repository(error.to_string()))?
-            .ok_or(AgentRunAppliedResourceSurfaceWriteError::Missing)?;
+            .ok_or(AgentRunAppliedResourceSurfaceQueryError::MissingFacts)?;
         let agent = self
             .repos
             .lifecycle_agent_repo
             .get(target.agent_id)
             .await
             .map_err(|error| repository(error.to_string()))?
-            .ok_or(AgentRunAppliedResourceSurfaceWriteError::Missing)?;
+            .ok_or(AgentRunAppliedResourceSurfaceQueryError::MissingFacts)?;
         if agent.run_id != run.id
             || agent.project_id != run.project_id
             || agent.id != target.agent_id
@@ -102,7 +101,7 @@ impl ProductAgentRunFactsResolver {
             .get(binding.launch_frame.frame_id)
             .await
             .map_err(|error| repository(error.to_string()))?
-            .ok_or(AgentRunAppliedResourceSurfaceWriteError::Missing)?;
+            .ok_or(AgentRunAppliedResourceSurfaceQueryError::MissingFacts)?;
         if launch_frame.agent_id != agent.id
             || u64::try_from(launch_frame.revision).ok() != Some(binding.launch_frame.revision)
         {
@@ -110,18 +109,7 @@ impl ProductAgentRunFactsResolver {
                 "immutable launch AgentFrame does not match Product binding",
             ));
         }
-        let frame = self
-            .repos
-            .agent_frame_repo
-            .get_latest(agent.id)
-            .await
-            .map_err(|error| repository(error.to_string()))?
-            .ok_or(AgentRunAppliedResourceSurfaceWriteError::Missing)?;
-        if frame.agent_id != agent.id || frame.revision < launch_frame.revision {
-            return Err(conflict(
-                "current AgentFrame does not descend from the immutable launch frame",
-            ));
-        }
+        let frame = launch_frame;
         let vfs = frame
             .surface_document()
             .vfs_surface
@@ -133,7 +121,7 @@ impl ProductAgentRunFactsResolver {
             .get_by_id(run.project_id)
             .await
             .map_err(|error| repository(error.to_string()))?
-            .ok_or(AgentRunAppliedResourceSurfaceWriteError::Missing)?;
+            .ok_or(AgentRunAppliedResourceSurfaceQueryError::MissingFacts)?;
         let node = active_workflow_node(&run, target);
         let skill_asset_keys = lifecycle_skill_asset_keys(&vfs);
         Ok(ResolvedProductAgentRunFacts {
@@ -161,17 +149,12 @@ impl ProductAgentRunAppliedResourceSurfaceCompiler {
 }
 
 #[async_trait]
-impl AgentRunAppliedResourceSurfaceCompilerPort for ProductAgentRunAppliedResourceSurfaceCompiler {
-    async fn compile_applied_resource_surface(
+impl AgentRunAppliedResourceSurfaceQueryPort for ProductAgentRunAppliedResourceSurfaceCompiler {
+    async fn applied_resource_surface(
         &self,
-        request: &AgentRunAppliedResourceSurfaceMaterializeRequest,
-    ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceWriteError> {
-        let facts = self.facts.resolve(&request.target).await?;
-        if facts.binding_digest != request.product_binding_digest {
-            return Err(conflict(
-                "materialize request does not match committed Product binding",
-            ));
-        }
+        target: &AgentRunTarget,
+    ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError> {
+        let facts = self.facts.resolve(target).await?;
         let candidate_default_mount_id = facts.vfs.default_mount_id.clone();
         let mut mounts = Vec::new();
         let mut grants = Vec::new();
@@ -221,7 +204,7 @@ impl AgentRunAppliedResourceSurfaceCompilerPort for ProductAgentRunAppliedResour
             &grants,
         ))?;
         let surface = AgentRunAppliedResourceSurface {
-            target: request.target.clone(),
+            target: target.clone(),
             project_id: facts.run.project_id,
             workspace_id: facts.workspace_id,
             vfs_mounts: mounts,
@@ -231,20 +214,12 @@ impl AgentRunAppliedResourceSurfaceCompilerPort for ProductAgentRunAppliedResour
             agent_surface_digest: surface_facts.surface_digest,
             vfs_digest,
             task_grants,
-            task_surface_revision: 1,
             task_surface_digest: task_digest,
-            task_provenance: AgentRunAppliedResourceSurfaceProvenance {
-                source_kind: "agent_run_subjects".to_string(),
-                source_id: format!("{}:{}", request.target.run_id, request.target.agent_id),
-                source_revision: 1,
-                projection_revision: 1,
-                captured_at_ms,
-            },
             product_binding_digest: facts.binding_digest,
             provenance,
         };
-        surface.validate_for(&request.target).map_err(|error| {
-            AgentRunAppliedResourceSurfaceWriteError::CorruptEvidence {
+        surface.validate_for(target).map_err(|error| {
+            AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence {
                 message: error.to_string(),
             }
         })?;
@@ -257,7 +232,7 @@ impl AgentRunLifecycleMountFactsQueryPort for ProductAgentRunFactsResolver {
     async fn lifecycle_mount_facts(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<AgentRunLifecycleMountFacts, AgentRunAppliedResourceSurfaceWriteError> {
+    ) -> Result<AgentRunLifecycleMountFacts, AgentRunAppliedResourceSurfaceQueryError> {
         let facts = self.resolve(target).await?;
         let (orchestration_id, node_path, node_attempt, node_lifecycle_key, writable_port_keys) =
             facts
@@ -290,7 +265,7 @@ impl AgentRunLifecycleMountFactsQueryPort for ProductAgentRunFactsResolver {
 async fn product_task_grants(
     repos: &RepositorySet,
     facts: &ResolvedProductAgentRunFacts,
-) -> Result<Vec<AppliedTaskGrant>, AgentRunAppliedResourceSurfaceWriteError> {
+) -> Result<Vec<AppliedTaskGrant>, AgentRunAppliedResourceSurfaceQueryError> {
     let mut grants = vec![AppliedTaskGrant {
         scope: AppliedTaskScope::Project {
             project_id: facts.run.project_id,
@@ -402,23 +377,23 @@ fn applied_vfs_operation(capability: &MountCapability) -> Option<AppliedVfsOpera
     }
 }
 
-fn digest(value: &impl Serialize) -> Result<String, AgentRunAppliedResourceSurfaceWriteError> {
+fn digest(value: &impl Serialize) -> Result<String, AgentRunAppliedResourceSurfaceQueryError> {
     let bytes = serde_json::to_vec(value).map_err(|error| {
-        AgentRunAppliedResourceSurfaceWriteError::CorruptEvidence {
+        AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence {
             message: error.to_string(),
         }
     })?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
 }
 
-fn repository(message: impl Into<String>) -> AgentRunAppliedResourceSurfaceWriteError {
-    AgentRunAppliedResourceSurfaceWriteError::Repository {
+fn repository(message: impl Into<String>) -> AgentRunAppliedResourceSurfaceQueryError {
+    AgentRunAppliedResourceSurfaceQueryError::Repository {
         message: message.into(),
     }
 }
 
-fn conflict(message: impl Into<String>) -> AgentRunAppliedResourceSurfaceWriteError {
-    AgentRunAppliedResourceSurfaceWriteError::Conflict {
+fn conflict(message: impl Into<String>) -> AgentRunAppliedResourceSurfaceQueryError {
+    AgentRunAppliedResourceSurfaceQueryError::Conflict {
         message: message.into(),
     }
 }

@@ -3,9 +3,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductRuntimeProvisioningRequest, ProductAgentFrameRef, ProductAgentSurfaceFacts,
-    ProductExecutionProfileRef, WorkflowAgentCallProductGraphPort,
-    WorkflowAgentCallProductGraphRepository, WorkflowAgentCallProductProvisioningPort,
-    WorkflowAgentCallProductSaga, WorkflowAgentCallTargetMaterialization,
+    ProductExecutionProfileRef, WorkflowAgentCallProductPort,
 };
 use agentdash_application_ports::lifecycle_materialization::{
     WorkflowAgentNodeMaterializationPort, WorkflowAgentNodeMaterializationRequest,
@@ -21,7 +19,6 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 pub struct ApplicationWorkflowAgentCallProductAdapter {
-    graph: Arc<dyn WorkflowAgentCallProductGraphRepository>,
     materialization: Arc<dyn WorkflowAgentNodeMaterializationPort>,
     lifecycle_agents: Arc<dyn LifecycleAgentRepository>,
     frames: Arc<dyn AgentFrameRepository>,
@@ -30,14 +27,12 @@ pub struct ApplicationWorkflowAgentCallProductAdapter {
 
 impl ApplicationWorkflowAgentCallProductAdapter {
     pub fn new(
-        graph: Arc<dyn WorkflowAgentCallProductGraphRepository>,
         materialization: Arc<dyn WorkflowAgentNodeMaterializationPort>,
         lifecycle_agents: Arc<dyn LifecycleAgentRepository>,
         frames: Arc<dyn AgentFrameRepository>,
         project_agents: Arc<dyn ProjectAgentRepository>,
     ) -> Self {
         Self {
-            graph,
             materialization,
             lifecycle_agents,
             frames,
@@ -112,12 +107,11 @@ impl ApplicationWorkflowAgentCallProductAdapter {
 }
 
 #[async_trait]
-impl WorkflowAgentCallProductGraphPort for ApplicationWorkflowAgentCallProductAdapter {
+impl WorkflowAgentCallProductPort for ApplicationWorkflowAgentCallProductAdapter {
     async fn materialize_target(
         &self,
         request: &WorkflowAgentCallRequest,
         runtime_thread_id: &RuntimeThreadId,
-        effect_id: &str,
     ) -> Result<(), String> {
         let target = request.target_intent.target();
         let project_agent_id = self.resolve_project_agent_id(request).await?;
@@ -142,7 +136,7 @@ impl WorkflowAgentCallProductGraphPort for ApplicationWorkflowAgentCallProductAd
                 frame_created_by_id: Some(request.identity.request_id.clone()),
                 workflow_contract: Some(request.procedure_contract.clone()),
                 inherited_executor_config: Some(
-                    serde_json::from_value(execution_profile.configuration.clone())
+                    serde_json::from_value(execution_profile.configuration)
                         .map_err(|error| error.to_string())?,
                 ),
             })
@@ -156,62 +150,22 @@ impl WorkflowAgentCallProductGraphPort for ApplicationWorkflowAgentCallProductAd
                 "Workflow AgentCall lifecycle materialization evidence drifted".to_string(),
             );
         }
-
-        let expected = WorkflowAgentCallTargetMaterialization {
-            request_id: request.identity.request_id.clone(),
-            payload_digest: request.payload_digest.clone(),
-            target: target.clone(),
-            project_agent_id: Some(project_agent_id),
-            effect_id: effect_id.to_string(),
-        };
-        let committed = self
-            .graph
-            .materialize_target_idempotent(expected.clone())
-            .await?;
-        if committed != expected {
-            return Err("Workflow AgentCall Product graph evidence drifted".to_string());
-        }
         Ok(())
     }
 
-    async fn commit_runtime_binding(
-        &self,
-        request_id: &str,
-        payload_digest: &str,
-        target: &agentdash_domain::agent_run_target::AgentRunTarget,
-        runtime_thread_id: &RuntimeThreadId,
-        binding: &agentdash_agent_runtime_contract::ManagedRuntimeSourceBindingEvidence,
-        effect_id: &str,
-    ) -> Result<(), String> {
-        let adapter = agentdash_application_agentrun::agent_run::
-            DurableWorkflowAgentCallProductGraphAdapter::new(self.graph.clone());
-        adapter
-            .commit_runtime_binding(
-                request_id,
-                payload_digest,
-                target,
-                runtime_thread_id,
-                binding,
-                effect_id,
-            )
-            .await
-    }
-}
-
-#[async_trait]
-impl WorkflowAgentCallProductProvisioningPort for ApplicationWorkflowAgentCallProductAdapter {
     async fn resolve_provisioning(
         &self,
-        saga: &WorkflowAgentCallProductSaga,
+        request: &WorkflowAgentCallRequest,
+        runtime_thread_id: &RuntimeThreadId,
     ) -> Result<AgentRunProductRuntimeProvisioningRequest, String> {
-        let target = saga.target();
+        let target = request.target_intent.target();
         let agent = self
             .lifecycle_agents
             .get(target.agent_id)
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "Workflow AgentCall LifecycleAgent is not materialized".to_string())?;
-        if agent.run_id != target.run_id || agent.project_id != saga.request.project_id {
+        if agent.run_id != target.run_id || agent.project_id != request.project_id {
             return Err("Workflow AgentCall LifecycleAgent authority drifted".to_string());
         }
         let project_agent_id = agent.project_agent_id.ok_or_else(|| {
@@ -223,16 +177,16 @@ impl WorkflowAgentCallProductProvisioningPort for ApplicationWorkflowAgentCallPr
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "Workflow AgentCall AgentFrame is not materialized".to_string())?;
-        if frame.created_by_id.as_deref() != Some(&saga.request.identity.request_id) {
+        if frame.created_by_id.as_deref() != Some(&request.identity.request_id) {
             return Err("Workflow AgentCall AgentFrame provenance drifted".to_string());
         }
         let execution_profile = self
-            .execution_profile(saga.request.project_id, project_agent_id)
+            .execution_profile(request.project_id, project_agent_id)
             .await?;
         Ok(AgentRunProductRuntimeProvisioningRequest {
             target: target.clone(),
-            runtime_thread_id: saga.runtime_thread_id.clone(),
-            idempotency_key: format!("{}:runtime", saga.request.identity.request_id),
+            runtime_thread_id: runtime_thread_id.clone(),
+            idempotency_key: format!("{}:runtime", request.identity.request_id),
             frame: ProductAgentFrameRef {
                 frame_id: frame.id,
                 agent_id: frame.agent_id,

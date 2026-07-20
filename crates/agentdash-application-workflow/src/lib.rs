@@ -24,8 +24,8 @@ pub use orchestration::{
     LaunchedAgentNode, OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher,
     SubmitHumanGateDecisionInput, SubmitHumanGateDecisionResult, WorkflowAgentCallContentBlock,
     WorkflowAgentCallDispatchError, WorkflowAgentCallDispatchOutcome,
-    WorkflowAgentCallDispatchPort, WorkflowAgentCallIdentity, WorkflowAgentCallMailboxState,
-    WorkflowAgentCallRequest, WorkflowAgentCallTargetIntent,
+    WorkflowAgentCallDispatchPort, WorkflowAgentCallIdentity, WorkflowAgentCallRequest,
+    WorkflowAgentCallTargetIntent,
 };
 pub use orchestration::{
     ScriptCompileDiagnostic, ScriptCompileInput, ScriptCompileOutput, ScriptCompiler,

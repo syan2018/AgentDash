@@ -255,7 +255,6 @@ impl OrchestrationExecutorLauncher {
                                 Err(error) => return Err(error),
                             }
                         }
-                        WorkflowAgentCallLaunchOutcome::Pending => return Ok(result),
                         WorkflowAgentCallLaunchOutcome::Accepted {
                             target,
                             runtime_thread_id,
@@ -1026,7 +1025,7 @@ impl WorkflowExecutorEffectRepository for RecordingWorkflowExecutorEffectReposit
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use agentdash_domain::{
         DomainError,
@@ -1051,8 +1050,8 @@ mod tests {
     use super::*;
     use crate::orchestration::{
         WorkflowAgentCallDispatchError, WorkflowAgentCallDispatchOutcome,
-        WorkflowAgentCallDispatchPort, WorkflowAgentCallMailboxState, WorkflowAgentCallRequest,
-        WorkflowAgentCallTargetIntent, activate_root_orchestration,
+        WorkflowAgentCallDispatchPort, WorkflowAgentCallRequest, WorkflowAgentCallTargetIntent,
+        activate_root_orchestration,
     };
 
     #[derive(Default)]
@@ -1225,7 +1224,6 @@ mod tests {
     struct RecordingDispatch {
         calls: AtomicUsize,
         requests: Mutex<Vec<WorkflowAgentCallRequest>>,
-        pending_once: AtomicBool,
     }
 
     #[async_trait]
@@ -1240,10 +1238,8 @@ mod tests {
                 crate::orchestration::WorkflowAgentCallTargetIntent::CreateNew { .. } => (
                     "runtime-thread-workflow-1".to_owned(),
                     agentdash_domain::workflow::WorkflowAgentCallSourceBindingRef {
+                        service_instance_id: "dash:workflow-agent".to_owned(),
                         source_ref: "source:workflow-agent".to_owned(),
-                        committed_at_revision: 2,
-                        applied_surface_revision: 3,
-                        activated_at_revision: Some(4),
                     },
                 ),
                 crate::orchestration::WorkflowAgentCallTargetIntent::ContinueCurrent {
@@ -1253,14 +1249,10 @@ mod tests {
                 } => (runtime_thread_id.clone(), source_binding.clone()),
             };
             self.requests.lock().await.push(request);
-            if self.pending_once.swap(false, Ordering::SeqCst) {
-                return Ok(WorkflowAgentCallDispatchOutcome::Pending);
-            }
             Ok(WorkflowAgentCallDispatchOutcome::Accepted {
                 target,
                 runtime_thread_id: authority.0,
                 source_binding: authority.1,
-                mailbox_state: WorkflowAgentCallMailboxState::Submitted,
             })
         }
     }
@@ -1617,10 +1609,8 @@ mod tests {
             runtime_thread_id: Some("thread:first".to_owned()),
             source_binding: Some(
                 agentdash_domain::workflow::WorkflowAgentCallSourceBindingRef {
+                    service_instance_id: "dash:first".to_owned(),
                     source_ref: "source:first".to_owned(),
-                    committed_at_revision: 1,
-                    applied_surface_revision: 2,
-                    activated_at_revision: Some(3),
                 },
             ),
             claim_id: Some("claim:first".to_owned()),
@@ -1765,35 +1755,6 @@ mod tests {
 
         assert_eq!(result.failed_nodes, vec!["continue"]);
         assert_eq!(dispatch.calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn pending_retry_replays_byte_identical_durable_request() {
-        let run = run_with_agent_policy(
-            AgentReusePolicy::CreateActivityAgent,
-            RuntimeThreadPolicy::CreateNew,
-        );
-        let run_id = run.id;
-        let repo = Arc::new(RunRepo {
-            run: Mutex::new(Some(run)),
-            ..Default::default()
-        });
-        let dispatch = Arc::new(RecordingDispatch {
-            pending_once: AtomicBool::new(true),
-            ..Default::default()
-        });
-        let launcher = launcher(repo, dispatch.clone());
-
-        let first = launcher.drain_ready_nodes(run_id).await.expect("pending");
-        assert!(first.launched_agent_nodes.is_empty());
-        let second = launcher.drain_ready_nodes(run_id).await.expect("retry");
-        assert_eq!(second.launched_agent_nodes.len(), 1, "{second:?}");
-        let requests = dispatch.requests.lock().await;
-        assert_eq!(requests.len(), 2);
-        assert_eq!(
-            serde_json::to_vec(&requests[0]).unwrap(),
-            serde_json::to_vec(&requests[1]).unwrap()
-        );
     }
 
     #[tokio::test]

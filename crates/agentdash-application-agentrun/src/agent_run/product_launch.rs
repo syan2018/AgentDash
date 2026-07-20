@@ -257,6 +257,17 @@ impl AgentRunProductLaunchService {
             .await
             .map_err(|error| AgentRunProductLaunchError::Command(error.to_string()))
     }
+
+    pub async fn load_product_binding(
+        &self,
+        target: &AgentRunTarget,
+    ) -> Result<AgentRunProductRuntimeBinding, AgentRunProductLaunchError> {
+        self.bindings
+            .load_product_binding(target)
+            .await
+            .map_err(AgentRunProductLaunchError::Binding)?
+            .ok_or(AgentRunProductLaunchError::AssociationMismatch)
+    }
 }
 
 #[async_trait]

@@ -371,11 +371,8 @@ pub struct WorkflowAgentCallRuntimeState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct WorkflowAgentCallSourceBindingRef {
+    pub service_instance_id: String,
     pub source_ref: String,
-    pub committed_at_revision: u64,
-    pub applied_surface_revision: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activated_at_revision: Option<u64>,
 }
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

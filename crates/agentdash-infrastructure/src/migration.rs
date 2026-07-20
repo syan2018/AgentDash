@@ -60,14 +60,14 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "views",
     "workflow_graphs",
     "workflow_executor_effects",
-    "workflow_agent_call_product_sagas",
-    "workflow_agent_call_product_effects",
-    "workflow_agent_call_product_graph_effects",
     "workspace_bindings",
     "workspaces",
 ];
 
 const RETIRED_POSTGRES_TABLES: &[&str] = &[
+    "workflow_agent_call_product_sagas",
+    "workflow_agent_call_product_effects",
+    "workflow_agent_call_product_graph_effects",
     "agent_service_instance",
     "agent_service_verification",
     "agent_runtime_offer",

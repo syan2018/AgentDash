@@ -98,21 +98,12 @@ impl WorkflowAgentCallRequest {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowAgentCallMailboxState {
-    Queued,
-    Submitted,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkflowAgentCallDispatchOutcome {
-    Pending,
     Accepted {
         target: AgentRunTarget,
         runtime_thread_id: String,
         source_binding: WorkflowAgentCallSourceBindingRef,
-        mailbox_state: WorkflowAgentCallMailboxState,
     },
 }
 
@@ -341,9 +332,6 @@ impl WorkflowAgentCallLauncher {
             ));
         };
         match dispatch.dispatch(request.clone()).await {
-            Ok(WorkflowAgentCallDispatchOutcome::Pending) => {
-                Ok(WorkflowAgentCallLaunchOutcome::Pending)
-            }
             Ok(WorkflowAgentCallDispatchOutcome::Accepted {
                 target: accepted_target,
                 runtime_thread_id,
@@ -581,7 +569,6 @@ pub(super) enum WorkflowAgentCallLaunchOutcome {
     Prepared {
         event: OrchestrationRuntimeEvent,
     },
-    Pending,
     Accepted {
         target: AgentRunTarget,
         runtime_thread_id: String,

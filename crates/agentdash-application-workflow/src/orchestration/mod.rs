@@ -10,8 +10,8 @@ pub mod script_compiler;
 pub use agent_call::{
     WORKFLOW_AGENT_CALL_INPUT_PORT_SCHEMA_V1, WorkflowAgentCallContentBlock,
     WorkflowAgentCallDispatchError, WorkflowAgentCallDispatchOutcome,
-    WorkflowAgentCallDispatchPort, WorkflowAgentCallIdentity, WorkflowAgentCallMailboxState,
-    WorkflowAgentCallRequest, WorkflowAgentCallTargetIntent,
+    WorkflowAgentCallDispatchPort, WorkflowAgentCallIdentity, WorkflowAgentCallRequest,
+    WorkflowAgentCallTargetIntent,
 };
 pub use compiler::{
     WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION, WorkflowGraphCompileDiagnostic,

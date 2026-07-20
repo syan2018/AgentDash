@@ -52,8 +52,7 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunTerminalSourceReconcilePort, CompanionContinuationEffectPort,
     CompanionContinuationSagaRepository, ProductAgentRunForkGraphAdapter,
     ProductAgentRunForkRuntimeAdapter, ProductAgentRunRuntimeProjectionAdapter,
-    ProductCompanionFreshRuntimeAdapter, ProductManagedRuntimeCommandAdapter,
-    build_durable_workflow_agent_call_dispatch,
+    ProductCompanionFreshRuntimeAdapter, build_workflow_agent_call_dispatch,
 };
 use agentdash_application_extension_gateway::{
     ExtensionGateway, ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeChannelInvoker,
@@ -89,9 +88,9 @@ use agentdash_infrastructure::{
     PostgresAgentRunForkSagaRepository, PostgresAgentRunMailboxRepository,
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
     PostgresCompanionContinuationSagaRepository, PostgresCompanionFreshSagaRepository,
-    PostgresWorkflowAgentCallRepository, PostgresWorkflowExecutorEffectRepository,
-    PostgresWorkflowRecoveryRepository, PostgresWorkspaceModulePresentationStore,
-    ProcessShellTerminalRegistry, ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
+    PostgresWorkflowExecutorEffectRepository, PostgresWorkflowRecoveryRepository,
+    PostgresWorkspaceModulePresentationStore, ProcessShellTerminalRegistry,
+    ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
     ProductionCompleteAgentServiceSelector, WorkspaceModulePresentRuntimeTool,
     final_runtime_tool_catalog, product_runtime_tool_catalog,
 };
@@ -721,7 +720,6 @@ impl AppState {
                 companion_runtime_tool_deps,
             )))
             .map_err(anyhow::Error::msg)?;
-        let workflow_agent_call = Arc::new(PostgresWorkflowAgentCallRepository::new(pool.clone()));
         let workflow_recovery = Arc::new(PostgresWorkflowRecoveryRepository::new(pool));
         let workflow_materialization =
             Arc::new(LifecycleWorkflowAgentNodeMaterializationAdapter::new(
@@ -738,16 +736,12 @@ impl AppState {
                 },
             ));
         let workflow_product = Arc::new(ApplicationWorkflowAgentCallProductAdapter::new(
-            workflow_agent_call.clone(),
             workflow_materialization,
             repos.lifecycle_agent_repo.clone(),
             repos.agent_frame_repo.clone(),
             repos.project_agent_repo.clone(),
         ));
-        let workflow_agent_call_dispatch = build_durable_workflow_agent_call_dispatch(
-            workflow_agent_call.clone(),
-            workflow_product.clone(),
-            ProductManagedRuntimeCommandAdapter::new(complete_agent.runtime.clone()),
+        let workflow_agent_call_dispatch = build_workflow_agent_call_dispatch(
             workflow_product,
             product_launch.clone(),
             product_input_delivery.clone(),

@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use agentdash_agent_runtime::{
@@ -11,29 +14,15 @@ use agentdash_agent_runtime::{
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_agent_runtime_host::{
-    CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingState,
-    CompleteAgentBindingTarget, CompleteAgentCallbackBroker, CompleteAgentCallbackCommit,
-    CompleteAgentCallbackRepository, CompleteAgentCallbackRoute, CompleteAgentCallbackSnapshot,
-    CompleteAgentCallbackStoreError, CompleteAgentHookHandler, CompleteAgentHostCommit,
-    CompleteAgentHostFacts, CompleteAgentHostRepository, CompleteAgentHostSnapshot,
-    CompleteAgentHostStoreError, CompleteAgentPlacement, CompleteAgentRuntimeTarget,
-    CompleteAgentToolHandler, ResolvedCompleteAgentCallbackContext,
-    ResolvedCompleteAgentHookCallback, ResolvedCompleteAgentToolCallback,
-    RuntimePlatformToolHandler, apply_complete_agent_callback_commit,
-    apply_complete_agent_host_commit,
+    CompleteAgentBindingId, CompleteAgentCallbackBroker, CompleteAgentHookHandler,
+    CompleteAgentHost, CompleteAgentPlacement, CompleteAgentRuntimeTarget,
+    CompleteAgentRuntimeTargetProvisioningRequest, CompleteAgentServiceVerification,
+    CompleteAgentToolHandler, CompleteAgentVerificationMethod, CompleteAgentVerifiedBuildEvidence,
+    CompleteAgentVerifiedServiceRegistration, ProcessCompleteAgentLiveCatalog,
+    ResolvedCompleteAgentCallbackContext, ResolvedCompleteAgentHookCallback,
+    ResolvedCompleteAgentToolCallback, RuntimePlatformToolHandler,
 };
-use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentCallbackRouteId, AgentEffectIdentity, AgentHookDecision,
-    AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbackMeta, AgentHostCallbacks,
-    AgentIdempotencyKey, AgentItemId, AgentPayloadDigest, AgentProfileDigest,
-    AgentServiceDefinitionId, AgentServiceInstanceId, AgentSourceCoordinate,
-    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentToolDelivery, AgentToolInvocation, AgentToolName,
-    AgentToolResult, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnId,
-    AppliedAgentSurface, AppliedAgentSurfaceContribution, AppliedContributionStatus,
-    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentLiveAttachmentId,
-    SemanticFidelity,
-};
+use agentdash_agent_service_api::*;
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
     ProductRuntimeToolService,
@@ -143,45 +132,6 @@ impl ProductRuntimeToolService for RecordingProductToolService {
     }
 }
 
-struct FixtureHostRepository {
-    snapshot: Mutex<CompleteAgentHostSnapshot>,
-}
-
-#[async_trait]
-impl CompleteAgentHostRepository for FixtureHostRepository {
-    async fn load(&self) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
-        Ok(self.snapshot.lock().await.clone())
-    }
-
-    async fn commit(
-        &self,
-        commit: CompleteAgentHostCommit,
-    ) -> Result<CompleteAgentHostSnapshot, CompleteAgentHostStoreError> {
-        let mut snapshot = self.snapshot.lock().await;
-        apply_complete_agent_host_commit(&mut snapshot, commit)
-    }
-}
-
-#[derive(Default)]
-struct FixtureCallbackRepository {
-    snapshot: Mutex<CompleteAgentCallbackSnapshot>,
-}
-
-#[async_trait]
-impl CompleteAgentCallbackRepository for FixtureCallbackRepository {
-    async fn load(&self) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
-        Ok(self.snapshot.lock().await.clone())
-    }
-
-    async fn commit(
-        &self,
-        commit: CompleteAgentCallbackCommit,
-    ) -> Result<CompleteAgentCallbackSnapshot, CompleteAgentCallbackStoreError> {
-        let mut snapshot = self.snapshot.lock().await;
-        apply_complete_agent_callback_commit(&mut snapshot, commit)
-    }
-}
-
 struct AllowHookHandler;
 
 #[async_trait]
@@ -210,7 +160,7 @@ impl WorkspaceModulePresentationCommandPort for RejectingPresentationPort {
 }
 
 #[tokio::test]
-async fn companion_callbacks_keep_stable_effects_and_replay_after_broker_restart() {
+async fn companion_callbacks_forward_stable_owner_identities_without_host_replay() {
     let request_service = Arc::new(RecordingProductToolService::new(
         ProductRuntimeToolKind::CompanionRequest,
     ));
@@ -219,21 +169,11 @@ async fn companion_callbacks_keep_stable_effects_and_replay_after_broker_restart
     ));
     let services: Vec<Arc<dyn ProductRuntimeToolService>> =
         vec![request_service.clone(), respond_service.clone()];
-    let host_repository: Arc<dyn CompleteAgentHostRepository> = Arc::new(FixtureHostRepository {
-        snapshot: Mutex::new(callback_host_snapshot(&[
-            "companion_request",
-            "companion_respond",
-        ])),
-    });
-    let callback_repository: Arc<dyn CompleteAgentCallbackRepository> =
-        Arc::new(FixtureCallbackRepository::default());
+    let (host, target) = callback_host(&["companion_request", "companion_respond"]).await;
 
-    let first_broker = complete_agent_callback_broker(
-        services.clone(),
-        host_repository.clone(),
-        callback_repository.clone(),
-    );
-    let request_call = callback_call(
+    let first_broker = complete_agent_callback_broker(services.clone(), host.clone());
+    let request_call = callback_call_for_target(
+        &target,
         "companion_request",
         "companion-request-effect",
         "companion-request-callback",
@@ -244,19 +184,16 @@ async fn companion_callbacks_keep_stable_effects_and_replay_after_broker_restart
         .await
         .expect("Companion request callback");
 
-    let restarted_broker = complete_agent_callback_broker(
-        services.clone(),
-        host_repository.clone(),
-        callback_repository.clone(),
-    );
-    let replayed_request = restarted_broker
+    let restarted_broker = complete_agent_callback_broker(services.clone(), host.clone());
+    let retried_request = restarted_broker
         .invoke_tool(request_call)
         .await
-        .expect("Companion request callback replay");
-    assert_eq!(first_request, replayed_request);
-    assert_eq!(request_service.calls.load(Ordering::SeqCst), 1);
+        .expect("Companion request callback retry");
+    assert_eq!(first_request, retried_request);
+    assert_eq!(request_service.calls.load(Ordering::SeqCst), 2);
 
-    let respond_call = callback_call(
+    let respond_call = callback_call_for_target(
+        &target,
         "companion_respond",
         "companion-respond-effect",
         "companion-respond-callback",
@@ -267,17 +204,16 @@ async fn companion_callbacks_keep_stable_effects_and_replay_after_broker_restart
         .await
         .expect("Companion response callback");
 
-    let second_restart =
-        complete_agent_callback_broker(services, host_repository, callback_repository);
-    let replayed_response = second_restart
+    let second_restart = complete_agent_callback_broker(services, host);
+    let retried_response = second_restart
         .invoke_tool(respond_call)
         .await
-        .expect("Companion response callback replay");
-    assert_eq!(first_response, replayed_response);
-    assert_eq!(respond_service.calls.load(Ordering::SeqCst), 1);
+        .expect("Companion response callback retry");
+    assert_eq!(first_response, retried_response);
+    assert_eq!(respond_service.calls.load(Ordering::SeqCst), 2);
 
     let request_records = request_service.requests.lock().await;
-    assert_eq!(request_records.len(), 1);
+    assert_eq!(request_records.len(), 2);
     assert_eq!(
         request_records[0].context.effect_id,
         "companion-request-effect"
@@ -290,10 +226,11 @@ async fn companion_callbacks_keep_stable_effects_and_replay_after_broker_restart
         request_records[0].context.runtime_thread_id.as_str(),
         RUNTIME_THREAD_ID
     );
+    assert_eq!(request_records[0].context, request_records[1].context);
     drop(request_records);
 
     let response_records = respond_service.requests.lock().await;
-    assert_eq!(response_records.len(), 1);
+    assert_eq!(response_records.len(), 2);
     assert_eq!(
         response_records[0].context.effect_id,
         "companion-respond-effect"
@@ -302,6 +239,7 @@ async fn companion_callbacks_keep_stable_effects_and_replay_after_broker_restart
         response_records[0].context.invocation_id,
         "companion-respond-callback"
     );
+    assert_eq!(response_records[0].context, response_records[1].context);
 }
 
 #[tokio::test]
@@ -451,8 +389,7 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
 
 fn complete_agent_callback_broker(
     services: Vec<Arc<dyn ProductRuntimeToolService>>,
-    host_repository: Arc<dyn CompleteAgentHostRepository>,
-    callback_repository: Arc<dyn CompleteAgentCallbackRepository>,
+    host: Arc<CompleteAgentHost>,
 ) -> CompleteAgentCallbackBroker {
     let broker = Arc::new(
         PlatformToolBroker::new(product_runtime_tool_catalog(services), product_authorizer())
@@ -461,8 +398,7 @@ fn complete_agent_callback_broker(
     CompleteAgentCallbackBroker::new(
         Arc::new(RuntimePlatformToolHandler::new(broker)),
         Arc::new(AllowHookHandler),
-        host_repository,
-        callback_repository,
+        host,
     )
 }
 
@@ -474,113 +410,86 @@ fn product_authorizer() -> Arc<dyn RuntimeToolAuthorizationPort> {
     })
 }
 
-fn callback_host_snapshot(tool_names: &[&str]) -> CompleteAgentHostSnapshot {
-    let generation = AgentBindingGeneration(1);
-    let source = AgentSourceCoordinate::new(SOURCE_COORDINATE).expect("source");
-    let service_instance_id =
-        AgentServiceInstanceId::new(SERVICE_INSTANCE_ID).expect("service instance");
-    let profile_digest = AgentProfileDigest::new(PROFILE_DIGEST).expect("profile digest");
-    let bound_surface = bound_tool_surface(tool_names, profile_digest.clone());
-    let applied_surface = AppliedAgentSurface {
-        revision: bound_surface.revision,
-        digest: bound_surface.digest.clone(),
-        contributions: bound_surface
-            .contributions
-            .iter()
-            .map(|contribution| AppliedAgentSurfaceContribution {
-                key: contribution.key.clone(),
-                route: contribution.route,
-                fidelity: contribution.fidelity,
-                semantics: contribution.semantics.clone(),
-                payload_digest: contribution.payload_digest.clone(),
-                status: AppliedContributionStatus::Applied,
-                evidence: Some("product-runtime-tracer".to_owned()),
-            })
-            .collect(),
-    };
-    let binding_id = CompleteAgentBindingId::new("product-tools-binding").expect("binding");
-    let callback_binding = AgentHostCallbackBinding {
-        route_id: AgentCallbackRouteId::new(CALLBACK_ROUTE_ID).expect("callback route"),
-        binding_generation: generation,
-        delivery: AgentSurfaceRoute::AgentNativeCallback,
-        default_deadline_ms: u64::MAX,
-    };
-    let callback_route = CompleteAgentCallbackRoute::from_binding(
-        binding_id.clone(),
-        callback_binding.clone(),
-        source.clone(),
-        bound_surface.clone(),
-    )
-    .expect("Complete Agent callback route");
-    let target = CompleteAgentBindingTarget {
-        logical_instance_id: service_instance_id,
-        live_attachment_id: CompleteAgentLiveAttachmentId::new("product-tools-attachment")
-            .expect("attachment"),
-        definition_id: AgentServiceDefinitionId::new("product-tools-definition")
-            .expect("definition"),
-        verified_build_digest: AgentPayloadDigest::new("sha256:product-tools-build")
-            .expect("build"),
-        verified_profile_digest: profile_digest.clone(),
-        offer_profile_digest: profile_digest.clone(),
-        placement: CompleteAgentPlacement::InProcess {
-            host_incarnation_id: "product-tools-host".to_owned(),
-        },
-        remote_binding: None,
-    };
-    let binding = CompleteAgentBinding {
-        id: binding_id.clone(),
-        target: target.clone(),
-        generation,
-        source: source.clone(),
-        profile_digest: profile_digest.clone(),
-        bound_surface: bound_surface.clone(),
-        applied_surface: Some(applied_surface),
-        state: CompleteAgentBindingState::Available,
-    };
+async fn callback_host(
+    tool_names: &[&str],
+) -> (Arc<CompleteAgentHost>, CompleteAgentRuntimeTarget) {
+    let catalog = Arc::new(ProcessCompleteAgentLiveCatalog::new());
+    let host = Arc::new(CompleteAgentHost::new(catalog));
+    let service = Arc::new(TracerCompleteAgentService::new());
+    let instance_id = AgentServiceInstanceId::new(SERVICE_INSTANCE_ID).expect("service instance");
+    let selection = host
+        .attach_verified_service(
+            CompleteAgentVerifiedServiceRegistration {
+                instance_id: instance_id.clone(),
+                descriptor: service.descriptor.clone(),
+                placement: CompleteAgentPlacement::InProcess {
+                    host_incarnation_id: "product-tools-host".to_owned(),
+                },
+                verification: CompleteAgentServiceVerification {
+                    service_instance_id: instance_id,
+                    publisher_integration: "product-runtime-tracer".to_owned(),
+                    service_version: "fixture-v1".to_owned(),
+                    verifier_identity: "product-runtime-tracer".to_owned(),
+                    verifier_revision: "fixture-v1".to_owned(),
+                    method: CompleteAgentVerificationMethod::PinnedBuiltin,
+                    verified_profile_digest: service.descriptor.profile_digest.clone(),
+                    claimed_conformance_suite_revision: "fixture-v1".to_owned(),
+                    verified_build: CompleteAgentVerifiedBuildEvidence {
+                        claimed_build_digest: AgentPayloadDigest::new("sha256:product-tools-build")
+                            .expect("build digest"),
+                        evidence_digest: AgentPayloadDigest::new("sha256:product-tools-evidence")
+                            .expect("evidence digest"),
+                    },
+                },
+                remote_binding: None,
+            },
+            service,
+        )
+        .await
+        .expect("attach tracer Complete Agent");
     let runtime_thread_id = RuntimeThreadId::new(RUNTIME_THREAD_ID).expect("Runtime thread");
-    let runtime_target = CompleteAgentRuntimeTarget {
-        runtime_thread_id: runtime_thread_id.clone(),
-        target,
-        generation,
-        profile_digest,
-        bound_surface,
-        callbacks: callback_binding,
-    };
-    let mut facts = CompleteAgentHostFacts::default();
-    facts.bindings.insert(binding_id.clone(), binding);
-    facts.source_coordinates.insert(binding_id, source);
-    facts
-        .callback_routes
-        .insert(callback_route.route_id.clone(), callback_route);
-    facts
-        .runtime_targets
-        .insert(runtime_thread_id, runtime_target);
-    CompleteAgentHostSnapshot {
-        revision: Default::default(),
-        facts,
-    }
+    let target = host
+        .provision_runtime_target(CompleteAgentRuntimeTargetProvisioningRequest {
+            idempotency_key: AgentIdempotencyKey::new("product-tools-provision")
+                .expect("provision idempotency"),
+            request_digest: AgentPayloadDigest::new("product-tools-provision-request")
+                .expect("provision digest"),
+            runtime_thread_id: runtime_thread_id.clone(),
+            target: selection.target,
+            desired_surface: desired_tool_surface(tool_names),
+            callback_deadline_ms: u64::MAX,
+        })
+        .await
+        .expect("provision tracer Runtime target")
+        .target;
+    host.restore_runtime_source_route(
+        &runtime_thread_id,
+        AgentSourceCoordinate::new(SOURCE_COORDINATE).expect("source"),
+        AgentEffectIdentity::new("product-tools-restore").expect("restore effect"),
+        "product-runtime-tracer".to_owned(),
+        1,
+    )
+    .await
+    .expect("restore tracer source route");
+    (host, target)
 }
 
-fn bound_tool_surface(
-    tool_names: &[&str],
-    profile_digest: AgentProfileDigest,
-) -> BoundAgentSurface {
+fn desired_tool_surface(tool_names: &[&str]) -> AgentSurfaceSnapshot {
     let semantics = AgentSurfaceSemanticFacet::Tool(AgentToolSemanticFacet {
         delivery: AgentToolDelivery::AgentNativeCallback,
         invocation: SemanticFidelity::Exact,
         update: AgentToolUpdateSemantics::BindingOnly,
     });
-    BoundAgentSurface {
+    AgentSurfaceSnapshot {
         revision: AgentSurfaceRevision(1),
         digest: AgentSurfaceDigest::new("product-tools-surface").expect("surface digest"),
-        offer_profile_digest: profile_digest,
-        contributions: tool_names
+        requirements: tool_names
             .iter()
-            .map(|name| BoundAgentSurfaceContribution {
+            .map(|name| AgentSurfaceRequirement {
                 key: format!("tool:{name}"),
                 required: true,
-                route: AgentSurfaceRoute::AgentNativeCallback,
-                fidelity: SemanticFidelity::Exact,
+                minimum_fidelity: SemanticFidelity::Exact,
+                allowed_routes: BTreeSet::from([AgentSurfaceRoute::AgentNativeCallback]),
                 semantics: semantics.clone(),
                 payload: AgentSurfaceContributionPayload::Tool {
                     name: AgentToolName::new(*name).expect("tool name"),
@@ -593,6 +502,172 @@ fn bound_tool_surface(
             })
             .collect(),
     }
+}
+
+struct TracerCompleteAgentService {
+    descriptor: AgentServiceDescriptor,
+}
+
+impl TracerCompleteAgentService {
+    fn new() -> Self {
+        Self {
+            descriptor: AgentServiceDescriptor {
+                definition_id: AgentServiceDefinitionId::new("product-tools-definition")
+                    .expect("definition"),
+                title: "Product Runtime Tool Tracer".to_owned(),
+                protocol_revision: 1,
+                profile: AgentCapabilityProfile {
+                    lifecycle: BTreeSet::from([
+                        AgentLifecycleCapability::Create,
+                        AgentLifecycleCapability::Resume,
+                    ]),
+                    commands: BTreeSet::from([AgentCommandCapability::SubmitInput]),
+                    fork: AgentForkCapability {
+                        cutoffs: BTreeMap::new(),
+                        lineage_fidelity: SemanticFidelity::Unsupported,
+                        native_durability: SemanticFidelity::Unsupported,
+                    },
+                    compaction: BTreeMap::new(),
+                    source_changes: AgentSourceChangeLevel::SnapshotOnly,
+                    initial_context: InitialContextProfile {
+                        contribution_fidelity: BTreeMap::new(),
+                        applied_evidence: InitialContextAppliedEvidence::PackageDigest,
+                        renderer_versions: BTreeSet::new(),
+                    },
+                    surface: AgentSurfaceProfile {
+                        facets: vec![AgentSurfaceCapabilityFacet {
+                            semantics: AgentSurfaceSemanticFacet::Tool(AgentToolSemanticFacet {
+                                delivery: AgentToolDelivery::AgentNativeCallback,
+                                invocation: SemanticFidelity::Exact,
+                                update: AgentToolUpdateSemantics::BindingOnly,
+                            }),
+                            routes: BTreeSet::from([AgentSurfaceRoute::AgentNativeCallback]),
+                            fidelity: SemanticFidelity::Exact,
+                            configuration_boundary: AgentConfigurationBoundary::Binding,
+                        }],
+                    },
+                    inspect_effects: SemanticFidelity::Exact,
+                },
+                profile_digest: AgentProfileDigest::new(PROFILE_DIGEST).expect("profile digest"),
+                configuration_boundary: AgentConfigurationBoundary::Binding,
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl CompleteAgentService for TracerCompleteAgentService {
+    async fn describe(&self) -> Result<AgentServiceDescriptor, AgentServiceError> {
+        Ok(self.descriptor.clone())
+    }
+
+    async fn create(
+        &self,
+        _command: CreateAgentCommand,
+    ) -> Result<AgentCommandReceipt, AgentServiceError> {
+        Err(unused_agent_operation())
+    }
+
+    async fn resume(
+        &self,
+        _command: ResumeAgentCommand,
+    ) -> Result<AgentCommandReceipt, AgentServiceError> {
+        Err(unused_agent_operation())
+    }
+
+    async fn fork(
+        &self,
+        _command: ForkAgentCommand,
+    ) -> Result<ForkAgentReceipt, AgentServiceError> {
+        Err(unused_agent_operation())
+    }
+
+    async fn execute(
+        &self,
+        _command: AgentCommandEnvelope,
+    ) -> Result<AgentCommandReceipt, AgentServiceError> {
+        Err(unused_agent_operation())
+    }
+
+    async fn read(&self, _query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError> {
+        Err(unused_agent_operation())
+    }
+
+    async fn changes(
+        &self,
+        _query: AgentChangesQuery,
+    ) -> Result<AgentChangePage, AgentServiceError> {
+        Err(unused_agent_operation())
+    }
+
+    async fn inspect(
+        &self,
+        effect_id: AgentEffectIdentity,
+    ) -> Result<AgentEffectInspection, AgentServiceError> {
+        Ok(AgentEffectInspection {
+            effect_id,
+            command_id: None,
+            state: AgentEffectInspectionState::NotApplied,
+        })
+    }
+
+    async fn apply_surface(
+        &self,
+        command: ApplyBoundAgentSurface,
+    ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
+        let applied = AppliedAgentSurface {
+            revision: command.bound_surface.revision,
+            digest: command.bound_surface.digest.clone(),
+            contributions: command
+                .bound_surface
+                .contributions
+                .iter()
+                .map(|contribution| AppliedAgentSurfaceContribution {
+                    key: contribution.key.clone(),
+                    route: contribution.route,
+                    fidelity: contribution.fidelity,
+                    semantics: contribution.semantics.clone(),
+                    payload_digest: contribution.payload_digest.clone(),
+                    status: AppliedContributionStatus::Applied,
+                    evidence: Some("product-runtime-tracer".to_owned()),
+                })
+                .collect(),
+        };
+        Ok(AppliedAgentSurfaceReceipt {
+            command_id: command.command_id,
+            effect_id: command.effect_id,
+            source: command.source,
+            applied,
+        })
+    }
+
+    async fn revoke_surface(
+        &self,
+        _command: RevokeBoundAgentSurface,
+    ) -> Result<AgentCommandReceipt, AgentServiceError> {
+        Err(unused_agent_operation())
+    }
+}
+
+fn unused_agent_operation() -> AgentServiceError {
+    AgentServiceError::new(
+        AgentServiceErrorCode::Unsupported,
+        "not used by Product Runtime tool tracer",
+        false,
+    )
+}
+
+fn callback_call_for_target(
+    target: &CompleteAgentRuntimeTarget,
+    tool: &str,
+    effect_id: &str,
+    idempotency_key: &str,
+    arguments: Value,
+) -> AgentToolInvocation {
+    let mut invocation = callback_call(tool, effect_id, idempotency_key, arguments);
+    invocation.meta.route_id = target.callbacks.route_id.clone();
+    invocation.meta.binding_generation = target.generation;
+    invocation
 }
 
 fn callback_call(

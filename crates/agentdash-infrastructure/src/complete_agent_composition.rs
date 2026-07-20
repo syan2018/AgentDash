@@ -7,7 +7,7 @@ use agentdash_agent_runtime_host::{
     CompleteAgentServiceVerification, CompleteAgentToolHandler, CompleteAgentVerificationError,
     CompleteAgentVerificationRecord, CompleteAgentVerificationRequest,
     CompleteAgentVerifiedBuildEvidence, CompleteAgentVerifiedServiceRegistration,
-    ProcessCompleteAgentHostRepository, ProcessCompleteAgentLiveCatalog,
+    ProcessCompleteAgentLiveCatalog,
 };
 use agentdash_agent_service_api::{AgentHostCallbacks, AgentServiceInstanceId};
 use agentdash_integration_api::{
@@ -252,7 +252,6 @@ fn template_matches(
 /// Concrete Agents own source history and effect inspection. Runtime/Host state intentionally
 /// disappears with this process, fencing old routes and forcing authoritative reconstruction.
 pub struct CompleteAgentComposition {
-    pub host_repository: Arc<ProcessCompleteAgentHostRepository>,
     pub live_catalog: Arc<ProcessCompleteAgentLiveCatalog>,
     pub host: Arc<CompleteAgentHost>,
     pub callbacks: Arc<CompleteAgentCallbackBroker>,
@@ -271,19 +270,14 @@ impl CompleteAgentComposition {
         if host_incarnation_id.trim().is_empty() {
             return Err(CompleteAgentCompositionError::InvalidHostIncarnation);
         }
-        let host_repository = Arc::new(ProcessCompleteAgentHostRepository::new());
         let live_catalog = Arc::new(ProcessCompleteAgentLiveCatalog::new());
-        let host = Arc::new(CompleteAgentHost::new(
-            host_repository.clone(),
-            live_catalog.clone(),
-        ));
+        let host = Arc::new(CompleteAgentHost::new(live_catalog.clone()));
         let callbacks = Arc::new(CompleteAgentCallbackBroker::new(
             tool_handler,
             hook_handler,
             host.clone(),
         ));
         Ok(Self {
-            host_repository,
             live_catalog,
             host,
             callbacks,

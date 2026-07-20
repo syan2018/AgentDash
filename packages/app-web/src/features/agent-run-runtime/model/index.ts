@@ -1,15 +1,8 @@
 export {
-  computeAgentRunRuntimeProjectionRefreshKey,
   isAgentRunWorkspaceActionRunning,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./AgentRunRuntimeViewModel";
-export {
-  applyManagedRuntimeChangePage,
-  consumeManagedRuntimeChangePage,
-  managedRuntimeCommandAvailability,
-  ManagedRuntimeFeedProtocolError,
-} from "./managedRuntimeProjection";
 export {
   useManagedRuntimeFeed,
   type UseManagedRuntimeFeedOptions,

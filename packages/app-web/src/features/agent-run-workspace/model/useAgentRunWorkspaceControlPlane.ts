@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-validators";
 import { acknowledgeWorkspacePresentation } from "../../../services/agentRunProductProjections";
 import type { ExecutorConfig } from "../../../services/executor";
 import { subscribeProjectEvents } from "../../../stores/eventStore";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
-import { useTaskPlanStore } from "../../../stores/taskPlanStore";
 import type {
   AgentRunWorkspaceView,
   CreateProjectAgentRunRequest,
@@ -27,7 +25,6 @@ import { isWorkspaceModulePresentationCurrent } from "../../workspace-module/mod
 import {
   planAgentRunMessageSent,
   planAgentRunProjectEvent,
-  planAgentRunRuntimeChanges,
   planAgentRunWorkspaceModuleOpened,
   planWorkspaceModulePresentationIntent,
   resolveAgentRunSubmitCommand,
@@ -78,7 +75,6 @@ interface UseAgentRunWorkspaceControlPlaneResult {
   refreshAgentRunWorkspaceState: () => Promise<unknown>;
   refreshAgentRunHookRuntime: () => Promise<unknown>;
   handleMessageSent: () => void;
-  handleRuntimeChanges: (changes: readonly ManagedRuntimePlatformChange[]) => void;
   handleWorkspaceModuleOpened: () => void;
 }
 
@@ -427,25 +423,6 @@ export function useAgentRunWorkspaceControlPlane({
     applyControlPlaneEffectPlan(planAgentRunMessageSent());
   }, [applyControlPlaneEffectPlan]);
 
-  const refreshStatusBarTasks = useCallback(() => {
-    if (currentRunId && currentAgentId) {
-      void useTaskPlanStore
-        .getState()
-        .fetchAgentRunTasks(currentRunId, currentAgentId)
-        .catch(() => {});
-    }
-  }, [currentAgentId, currentRunId]);
-
-  const handleRuntimeChanges = useCallback((
-    changes: readonly ManagedRuntimePlatformChange[],
-  ) => {
-    const plan = planAgentRunRuntimeChanges(changes);
-    applyControlPlaneEffectPlan(plan.effects);
-    if (plan.refreshTaskPlan) {
-      refreshStatusBarTasks();
-    }
-  }, [applyControlPlaneEffectPlan, refreshStatusBarTasks]);
-
   useEffect(() => {
     if (!currentRunId || !currentAgentId) return;
     return subscribeProjectEvents((event) => {
@@ -513,7 +490,6 @@ export function useAgentRunWorkspaceControlPlane({
     refreshAgentRunWorkspaceState,
     refreshAgentRunHookRuntime,
     handleMessageSent,
-    handleRuntimeChanges,
     handleWorkspaceModuleOpened,
   };
 }

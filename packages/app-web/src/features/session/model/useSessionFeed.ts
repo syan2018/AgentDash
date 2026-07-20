@@ -9,7 +9,6 @@ import { useMemo } from "react";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import { useSessionStream } from "./useSessionStream";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
-import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-validators";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { parseBoundedOutputText } from "./boundedOutput";
 import { getPlatformEventPolicy } from "./systemEventPolicy";
@@ -38,7 +37,6 @@ export interface UseSessionFeedResult {
   rawEntries: SessionDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
   historyReplayBoundarySeq: number | null;
-  runtimeChanges: ManagedRuntimePlatformChange[];
   boundTargetKey: string | null;
   isConnected: boolean;
   isLoading: boolean;
@@ -848,7 +846,6 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     entries,
     rawEvents,
     historyReplayBoundarySeq,
-    runtimeChanges,
     boundTargetKey,
     providerWaitingSeqs,
     isConnected,
@@ -890,7 +887,6 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     rawEntries: entries,
     rawEvents,
     historyReplayBoundarySeq,
-    runtimeChanges,
     boundTargetKey,
     isConnected,
     isLoading,

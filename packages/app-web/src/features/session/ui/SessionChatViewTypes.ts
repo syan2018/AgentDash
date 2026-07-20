@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-validators";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
@@ -132,7 +131,6 @@ export interface SessionChatViewProps {
   onTaskPlanChanged?: () => void;
 
   /** Baseline 之后提交的 Runtime typed changes，供页面级 Product 投影刷新。 */
-  onRuntimeChanges?: (changes: readonly ManagedRuntimePlatformChange[]) => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 

@@ -74,7 +74,6 @@ describe("Managed Runtime feed connection", () => {
           }),
         ]),
       }),
-      [],
     );
   });
 
@@ -110,7 +109,7 @@ describe("Managed Runtime feed connection", () => {
     await Promise.resolve();
 
     expect(fetchSnapshot).toHaveBeenCalledTimes(2);
-    expect(connectionObserver.onProjection).toHaveBeenLastCalledWith(lost, []);
+    expect(connectionObserver.onProjection).toHaveBeenLastCalledWith(lost);
     expect(transports).toHaveLength(1);
   });
 

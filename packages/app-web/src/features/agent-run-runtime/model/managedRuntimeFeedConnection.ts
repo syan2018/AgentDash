@@ -1,7 +1,4 @@
-import type {
-  ManagedRuntimePlatformChange,
-  ManagedRuntimeSnapshot,
-} from "../../../generated/agent-runtime-validators";
+import type { ManagedRuntimeSnapshot } from "../../../generated/agent-runtime-validators";
 import {
   fetchManagedRuntimeSnapshot,
   type AgentRunRuntimeTarget,
@@ -16,10 +13,7 @@ import { applyAgentLiveEvent } from "./agentLiveProjection";
 
 export interface ManagedRuntimeFeedConnectionObserver {
   onBaseline: (snapshot: ManagedRuntimeSnapshot) => void;
-  onProjection: (
-    snapshot: ManagedRuntimeSnapshot,
-    changes: ManagedRuntimePlatformChange[],
-  ) => void;
+  onProjection: (snapshot: ManagedRuntimeSnapshot) => void;
   onLifecycleChange: (lifecycle: ManagedRuntimeFeedLifecycle) => void;
   onError: (error: Error) => void;
 }
@@ -64,7 +58,7 @@ export function connectManagedRuntimeFeed(
       .then((snapshot) => {
         if (closed) return;
         currentSnapshot = snapshot;
-        observer.onProjection(snapshot, []);
+        observer.onProjection(snapshot);
       })
       .finally(() => {
         reloadInFlight = null;
@@ -99,7 +93,7 @@ export function connectManagedRuntimeFeed(
         const projected = applyAgentLiveEvent(current, event);
         if (projected !== current) {
           currentSnapshot = projected;
-          observer.onProjection(projected, []);
+          observer.onProjection(projected);
         }
         if (event.payload.kind === "provider_round_completed") {
           void reloadAuthoritativeSnapshot().catch((error: unknown) => {

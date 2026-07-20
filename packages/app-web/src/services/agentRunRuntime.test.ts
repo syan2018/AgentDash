@@ -14,15 +14,11 @@ vi.mock("../api/client", () => ({
 
 import {
   compactAgentRunContext,
-  fetchManagedRuntimeChangePage,
   fetchManagedRuntimeSnapshot,
   respondAgentRunInteraction,
 } from "./agentRunRuntime";
 import { managedRuntimeTestFixtures } from "../features/agent-run-runtime/model/managedRuntimeTestFixtures";
-import {
-  encodeManagedRuntimeChangePage,
-  encodeManagedRuntimeSnapshot,
-} from "../generated/agent-runtime-validators";
+import { encodeManagedRuntimeSnapshot } from "../generated/agent-runtime-validators";
 
 describe("AgentRun runtime service", () => {
   beforeEach(() => {
@@ -74,41 +70,6 @@ describe("AgentRun runtime service", () => {
     ).resolves.toEqual(managedRuntimeTestFixtures.snapshots.started);
     expect(mocks.apiGetMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/runtime/snapshot",
-    );
-  });
-
-  it("loads canonical committed changes after the durable cursor", async () => {
-    mocks.apiGetMock.mockResolvedValue(
-      encodeManagedRuntimeChangePage(managedRuntimeTestFixtures.changePage),
-    );
-    await expect(
-      fetchManagedRuntimeChangePage(
-        { runId: "run/1", agentId: "agent/1" },
-        8n,
-      ),
-    ).resolves.toEqual(managedRuntimeTestFixtures.changePage);
-    expect(mocks.apiGetMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/runtime/changes?limit=256&after=8",
-    );
-  });
-
-  it("round-trips the full u64 cursor through the URL without numeric coercion", async () => {
-    mocks.apiGetMock.mockResolvedValue(
-      encodeManagedRuntimeChangePage({
-        ...managedRuntimeTestFixtures.changePage,
-        changes: [],
-        next: 18_446_744_073_709_551_615n,
-      }),
-    );
-
-    await expect(
-      fetchManagedRuntimeChangePage(
-        { runId: "run/1", agentId: "agent/1" },
-        18_446_744_073_709_551_614n,
-      ),
-    ).resolves.toMatchObject({ next: 18_446_744_073_709_551_615n });
-    expect(mocks.apiGetMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/runtime/changes?limit=256&after=18446744073709551614",
     );
   });
 

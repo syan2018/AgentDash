@@ -380,7 +380,7 @@ mod tests {
 
     use super::*;
     use agentdash_agent_runtime_contract::{
-        ManagedRuntimeChangePage, ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
+        ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
         ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot,
         ManagedRuntimeSourceBindingEvidence, RuntimeChangeSequence, RuntimeProjectionRevision,
         RuntimeSourceRef, SurfaceRevision,
@@ -460,14 +460,6 @@ mod tests {
                 ));
             }
             Ok(self.thread_name.clone().map(runtime_snapshot))
-        }
-
-        async fn runtime_changes(
-            &self,
-            _: &AgentRunTarget,
-            _: Option<RuntimeChangeSequence>,
-        ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError> {
-            Err(AgentRunProductProjectionError::Runtime("unused".into()))
         }
 
         async fn runtime_live_events(

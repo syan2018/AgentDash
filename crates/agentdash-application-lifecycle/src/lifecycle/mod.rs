@@ -11,7 +11,6 @@ pub(crate) mod run;
 pub mod run_command_service;
 pub mod run_view_builder;
 mod runtime_thread_association;
-mod runtime_turn_terminal_observer;
 mod session_run_context_resolver;
 mod session_tool_result_cache;
 pub mod surface;
@@ -56,7 +55,6 @@ pub use runtime_thread_association::{
     lifecycle_activity_parts_from_label, resolve_activity_runtime_association_from_runtime_thread,
     resolve_current_frame_from_delivery_trace_ref,
 };
-pub use runtime_turn_terminal_observer::LifecycleRuntimeTurnTerminalObserver;
 pub use session_run_context_resolver::{SubjectRunContextResolver, build_subject_run_context};
 pub use session_tool_result_cache::{
     SessionToolResultCache, SessionToolResultCacheRead, SessionToolResultCacheStatus,

@@ -2,7 +2,6 @@ import { useMemo } from "react";
 
 import type {
   ManagedRuntimeCommandAvailability,
-  ManagedRuntimePlatformChange,
   ManagedRuntimeSnapshot,
 } from "../../../generated/agent-runtime-validators";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
@@ -44,7 +43,6 @@ export interface AgentRunRuntimeTurnSegment {
 
 export interface UseAgentRunRuntimeFeedResult {
   snapshot: ManagedRuntimeSnapshot | null;
-  changes: ManagedRuntimePlatformChange[];
   interactions: AgentRunRuntimeInteraction[];
   commandAvailability: ManagedRuntimeSnapshot["command_availability"];
   displayItems: AgentRunRuntimeItem[];
@@ -138,7 +136,6 @@ export function useAgentRunRuntimeFeed({
 
   return {
     snapshot: feed.snapshot,
-    changes: feed.changes,
     interactions: projection?.interactions ?? [],
     commandAvailability: feed.snapshot?.command_availability ?? {},
     displayItems: projection?.displayItems ?? [],

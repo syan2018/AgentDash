@@ -3162,7 +3162,7 @@ async fn compile_durable_companion_plan(
             })?;
     let snapshot = services
         .product_protocols
-        .runtime_projection
+        .runtime_snapshot
         .load_snapshot(&parent_runtime_thread_id)
         .await
         .map_err(|error| {

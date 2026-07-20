@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime::project_authoritative_agent_snapshot;
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeChangePage, ManagedRuntimeSnapshot, RuntimeChangeSequence, RuntimeThreadId,
-};
+use agentdash_agent_runtime_contract::{ManagedRuntimeSnapshot, RuntimeThreadId};
 use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentLiveEventStream, AgentReadQuery, AgentServiceInstanceId,
     CompleteAgentService,
@@ -245,21 +243,6 @@ impl AgentRunProductProjectionGateway {
         }
     }
 
-    pub async fn runtime_changes(
-        &self,
-        target: &AgentRunTarget,
-        after: Option<RuntimeChangeSequence>,
-    ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError> {
-        let binding = self.binding(target).await?;
-        let next = after.unwrap_or(RuntimeChangeSequence(0));
-        Ok(ManagedRuntimeChangePage {
-            thread_id: binding.runtime_thread_id,
-            changes: Vec::new(),
-            next,
-            gap: None,
-        })
-    }
-
     pub async fn runtime_live_events(
         &self,
         target: &AgentRunTarget,
@@ -386,11 +369,6 @@ pub trait AgentRunProductProjectionQueryPort: Send + Sync {
             AgentRunProductRuntimeSnapshotObservation::Current { snapshot, .. } => Some(snapshot),
         })
     }
-    async fn runtime_changes(
-        &self,
-        target: &AgentRunTarget,
-        after: Option<RuntimeChangeSequence>,
-    ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError>;
     async fn runtime_live_events(
         &self,
         target: &AgentRunTarget,
@@ -442,14 +420,6 @@ impl AgentRunProductProjectionQueryPort for AgentRunProductProjectionGateway {
         target: &AgentRunTarget,
     ) -> Result<Option<ManagedRuntimeSnapshot>, AgentRunProductProjectionError> {
         AgentRunProductProjectionGateway::runtime_presentation_snapshot(self, target).await
-    }
-
-    async fn runtime_changes(
-        &self,
-        target: &AgentRunTarget,
-        after: Option<RuntimeChangeSequence>,
-    ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError> {
-        AgentRunProductProjectionGateway::runtime_changes(self, target, after).await
     }
 
     async fn runtime_live_events(

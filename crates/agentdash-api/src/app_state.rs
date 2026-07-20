@@ -51,7 +51,7 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunTerminalSourceReconcilePort, CompanionContinuationEffectPort,
     CompanionContinuationSagaRepository, ProcessAgentRunForkSagaRepository,
     ProcessCompanionFreshSagaRepository, ProductAgentRunForkGraphAdapter,
-    ProductAgentRunForkRuntimeAdapter, ProductAgentRunRuntimeProjectionAdapter,
+    ProductAgentRunForkRuntimeAdapter, ProductAgentRunRuntimeSnapshotAdapter,
     ProductCompanionFreshRuntimeAdapter, build_workflow_agent_call_dispatch,
 };
 use agentdash_application_extension_gateway::{
@@ -574,7 +574,7 @@ impl AppState {
                 product_launch.clone(),
             )),
             product_launch.clone(),
-            Arc::new(ProductAgentRunRuntimeProjectionAdapter::new(
+            Arc::new(ProductAgentRunRuntimeSnapshotAdapter::new(
                 runtime_product_bindings.clone(),
                 product.agents.clone(),
             )),

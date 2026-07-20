@@ -1,9 +1,6 @@
 import { useEffect, useMemo } from "react";
 
 import type { CanonicalConversationRecord } from "../../../generated/backbone-protocol";
-import type {
-  ManagedRuntimePlatformChange,
-} from "../../../generated/agent-runtime-validators";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import { useManagedRuntimeFeed } from "../../agent-run-runtime/model/useManagedRuntimeFeed";
 import {
@@ -29,7 +26,6 @@ export interface UseSessionStreamResult {
   rawEvents: SessionEventEnvelope[];
   historyReplayBoundarySeq: number | null;
   providerWaitingSeqs: ReadonlyMap<string, number>;
-  runtimeChanges: ManagedRuntimePlatformChange[];
   boundTargetKey: string | null;
   isConnected: boolean;
   isLoading: boolean;
@@ -49,7 +45,6 @@ interface RuntimePresentationCoordinate {
 
 function presentationCoordinates(
   records: readonly CanonicalConversationRecord[],
-  changes: readonly ManagedRuntimePlatformChange[],
 ): Map<string, RuntimePresentationCoordinate> {
   const coordinates = new Map<string, RuntimePresentationCoordinate>();
   for (const record of records) {
@@ -57,15 +52,6 @@ function presentationCoordinates(
       runtimeSequence: null,
       baseline: true,
     });
-  }
-  for (const change of changes) {
-    if (change.delta.kind !== "conversation_presentation_appended") continue;
-    for (const record of change.delta.records) {
-      coordinates.set(record.presentation_id, {
-        runtimeSequence: change.sequence,
-        baseline: false,
-      });
-    }
   }
   return coordinates;
 }
@@ -118,8 +104,8 @@ export function useSessionStream({
   });
   const records = feed.snapshot?.conversation_history ?? [];
   const coordinates = useMemo(
-    () => presentationCoordinates(records, feed.changes),
-    [feed.changes, records],
+    () => presentationCoordinates(records),
+    [records],
   );
   const events = useMemo(
     () =>
@@ -159,7 +145,6 @@ export function useSessionStream({
     rawEvents: state.rawEvents,
     historyReplayBoundarySeq: baselineBoundary,
     providerWaitingSeqs: state.providerWaitingSeqs,
-    runtimeChanges: feed.changes,
     boundTargetKey: feed.boundTargetKey,
     isConnected: feed.lifecycle === "connected",
     isLoading: feed.isLoading,

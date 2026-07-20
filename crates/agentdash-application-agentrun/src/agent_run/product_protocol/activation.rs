@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::managed_projection::{
-    ManagedRuntimeChangePage, ManagedRuntimeSnapshot,
-};
-use agentdash_agent_runtime_contract::{RuntimeChangeSequence, RuntimeThreadId};
+use agentdash_agent_runtime_contract::{ManagedRuntimeSnapshot, RuntimeThreadId};
 use async_trait::async_trait;
 
 use super::{
@@ -253,21 +250,15 @@ pub const AGENT_RUN_TARGET_S5_ACTIVATION_GATES: &[AgentRunS5ActivationGate] = &[
     },
 ];
 
+/// S5 显式 composition boundary。生产 constructor 必须完整注入这些 final ports，
 #[async_trait]
-pub trait AgentRunRuntimeProjectionPort: Send + Sync {
+pub trait AgentRunRuntimeSnapshotPort: Send + Sync {
     async fn load_snapshot(
         &self,
         thread_id: &RuntimeThreadId,
     ) -> Result<ManagedRuntimeSnapshot, String>;
-
-    async fn load_changes(
-        &self,
-        thread_id: &RuntimeThreadId,
-        after: Option<RuntimeChangeSequence>,
-    ) -> Result<ManagedRuntimeChangePage, String>;
 }
 
-/// S5 显式 composition boundary。生产 constructor 必须完整注入这些 final ports，
 /// 不存在 legacy/default 分支。
 pub struct AgentRunProductProtocolPorts {
     pub fork_sagas: Arc<dyn AgentRunForkSagaRepository>,
@@ -276,7 +267,7 @@ pub struct AgentRunProductProtocolPorts {
     pub companion_fresh_sagas: Arc<dyn CompanionFreshSagaRepository>,
     pub companion_fresh_runtime: Arc<dyn CompanionFreshRuntimePort>,
     pub product_launch: Arc<crate::agent_run::AgentRunProductLaunchService>,
-    pub runtime_projection: Arc<dyn AgentRunRuntimeProjectionPort>,
+    pub runtime_snapshot: Arc<dyn AgentRunRuntimeSnapshotPort>,
 }
 
 impl AgentRunProductProtocolPorts {
@@ -287,7 +278,7 @@ impl AgentRunProductProtocolPorts {
         companion_fresh_sagas: Arc<dyn CompanionFreshSagaRepository>,
         companion_fresh_runtime: Arc<dyn CompanionFreshRuntimePort>,
         product_launch: Arc<crate::agent_run::AgentRunProductLaunchService>,
-        runtime_projection: Arc<dyn AgentRunRuntimeProjectionPort>,
+        runtime_snapshot: Arc<dyn AgentRunRuntimeSnapshotPort>,
     ) -> Self {
         Self {
             fork_sagas,
@@ -296,7 +287,7 @@ impl AgentRunProductProtocolPorts {
             companion_fresh_sagas,
             companion_fresh_runtime,
             product_launch,
-            runtime_projection,
+            runtime_snapshot,
         }
     }
 }

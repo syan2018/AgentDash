@@ -1,7 +1,6 @@
 import type {
   BackboneEvent,
 } from "../../../generated/backbone-protocol";
-import type { ManagedRuntimePlatformChange } from "../../../generated/agent-runtime-validators";
 import type {
   ControlPlaneProjectionChanged,
   ProjectEventStreamEnvelope,
@@ -82,58 +81,6 @@ export function planAgentRunMessageSent(): AgentRunControlPlaneEffectPlan {
     refreshAgentRunListReason: "message_sent",
     hookRuntimeRefresh: { reason: "message_sent", immediate: true },
   };
-}
-
-export function planAgentRunRuntimeChanges(
-  changes: readonly ManagedRuntimePlatformChange[],
-): AgentRunLiveEventPlan {
-  const effects: AgentRunControlPlaneEffectPlan = {};
-  let refreshTaskPlan = false;
-
-  for (const change of changes) {
-    const delta = change.delta;
-    if (delta.kind === "source_projection_changed") {
-      effects.refreshWorkspaceState = true;
-      effects.refreshAgentRunListReason = "managed_runtime_projection_changed";
-      if (
-        delta.section === "snapshot"
-        || delta.section === "lifecycle"
-        || delta.section === "turns"
-        || delta.section === "items"
-        || delta.section === "interactions"
-      ) {
-        refreshTaskPlan = true;
-      }
-      if (delta.section === "surface") {
-        effects.hookRuntimeRefresh = {
-          reason: "managed_runtime_surface_changed",
-        };
-      }
-      continue;
-    }
-    if (
-      delta.kind === "runtime_lifecycle_changed"
-      || delta.kind === "source_binding_changed"
-    ) {
-      effects.refreshWorkspaceState = true;
-      effects.refreshAgentRunListReason = "managed_runtime_state_changed";
-      refreshTaskPlan = delta.kind === "runtime_lifecycle_changed"
-        || refreshTaskPlan;
-      continue;
-    }
-    if (delta.kind === "surface_evidence_changed") {
-      effects.refreshWorkspaceState = true;
-      effects.hookRuntimeRefresh = {
-        reason: "managed_runtime_surface_changed",
-      };
-      continue;
-    }
-    if (delta.kind === "operation_upserted") {
-      effects.refreshAgentRunListReason = "managed_runtime_operation_changed";
-    }
-  }
-
-  return { effects, refreshTaskPlan };
 }
 
 export function planAgentRunProjectEvent(

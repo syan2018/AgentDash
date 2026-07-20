@@ -66,7 +66,6 @@ export function SessionChatView({
   onTurnEnd,
   onSystemEvent,
   onTaskPlanChanged,
-  onRuntimeChanges,
   headerSlot,
   inputPrefix,
   inputToolbarSlot,
@@ -282,7 +281,6 @@ export function SessionChatView({
     rawEntries,
     rawEvents,
     historyReplayBoundarySeq,
-    runtimeChanges,
     boundTargetKey,
     isConnected,
     isLoading,
@@ -314,21 +312,6 @@ export function SessionChatView({
     rawEventsBelongToCurrentSession &&
     rawEvents.length > 0 &&
     historyReplayBoundarySeq != null;
-
-  const dispatchedRuntimeSequenceRef = useRef(0n);
-  useEffect(() => {
-    dispatchedRuntimeSequenceRef.current = 0n;
-  }, [agentRunTargetKey]);
-  useEffect(() => {
-    if (!onRuntimeChanges) return;
-    const pending = runtimeChanges.filter(
-      (change) => change.sequence > dispatchedRuntimeSequenceRef.current,
-    );
-    if (pending.length === 0) return;
-    dispatchedRuntimeSequenceRef.current =
-      pending[pending.length - 1]?.sequence ?? dispatchedRuntimeSequenceRef.current;
-    onRuntimeChanges(pending);
-  }, [onRuntimeChanges, runtimeChanges]);
 
   // ─── Action running 检测 ──────────────────────────────
 

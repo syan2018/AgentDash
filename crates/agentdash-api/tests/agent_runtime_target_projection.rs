@@ -20,10 +20,6 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeTerminalStatus, RuntimeChangeSequence, RuntimeItemId, RuntimeOperationId,
     RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
 };
-use agentdash_application_agentrun::agent_run::product_protocol::{
-    consume_managed_runtime_change_page, consume_managed_runtime_snapshot,
-    managed_runtime_change_page_requires_snapshot_reload,
-};
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -282,20 +278,10 @@ fn check_or_update_activation_artifact(path: PathBuf, expected: &str) {
 #[test]
 fn app_server_projection_serializes_the_canonical_runtime_contract_losslessly() {
     let fixture = canonical_frontend_fixture();
-    for snapshot in fixture.snapshots.values() {
-        assert_eq!(
-            consume_managed_runtime_snapshot(snapshot.clone()).expect("canonical snapshot"),
-            *snapshot
-        );
-    }
-    assert_eq!(
-        consume_managed_runtime_change_page(fixture.change_page.clone())
-            .expect("canonical change page"),
-        fixture.change_page
-    );
-    assert!(managed_runtime_change_page_requires_snapshot_reload(
-        &fixture.gap_page
-    ));
+    let encoded = serde_json::to_vec(&fixture).expect("serialize canonical fixture");
+    let decoded: CanonicalFrontendFixture =
+        serde_json::from_slice(&encoded).expect("deserialize canonical fixture");
+    assert_eq!(decoded, fixture);
 }
 
 #[test]

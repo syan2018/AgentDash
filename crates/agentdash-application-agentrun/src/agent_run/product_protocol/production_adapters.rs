@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use agentdash_agent_runtime::project_authoritative_agent_snapshot;
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeChangePage, ManagedRuntimeContentBlock, ManagedRuntimeContextAuthority,
-    ManagedRuntimeContextProvenance, ManagedRuntimeInitialContextContribution,
-    ManagedRuntimeInitialContextContributionContent, ManagedRuntimeInitialContextMode,
-    ManagedRuntimeInitialContextPackage, ManagedRuntimeSnapshot, RuntimeChangeSequence,
+    ManagedRuntimeContentBlock, ManagedRuntimeContextAuthority, ManagedRuntimeContextProvenance,
+    ManagedRuntimeInitialContextContribution, ManagedRuntimeInitialContextContributionContent,
+    ManagedRuntimeInitialContextMode, ManagedRuntimeInitialContextPackage, ManagedRuntimeSnapshot,
     RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
     RuntimeContextSourceRevision, RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId,
 };
@@ -34,7 +33,7 @@ use crate::agent_run::{
 use super::{
     AcceptedRuntimeOperation, AgentRunForkChildProductSelection, AgentRunForkGraph,
     AgentRunForkOperationIdentity, AgentRunForkProductGraphPort, AgentRunForkRuntimeOperation,
-    AgentRunForkRuntimePort, AgentRunForkSaga, AgentRunRuntimeProjectionPort,
+    AgentRunForkRuntimePort, AgentRunForkSaga, AgentRunRuntimeSnapshotPort,
     CompanionFreshEffectEvidence, CompanionFreshEffectOutcome, CompanionFreshOperation,
     CompanionFreshOperationIdentity, CompanionFreshRuntimePort, CompanionFreshSaga,
     CompanionRuntimePreparation, CompiledContextApplication, CompiledContextAuthority,
@@ -42,6 +41,48 @@ use super::{
     CompiledFreshContextMode, CompiledInitialContextContribution, CompiledInitialContextPackage,
     PreparedAgentRunForkGraph, RuntimeForkPhaseEvidence, RuntimeOperationOutcome,
 };
+
+/// Product flow snapshot access backed directly by the associated concrete Agent.
+pub struct ProductAgentRunRuntimeSnapshotAdapter {
+    bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+    agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
+}
+
+impl ProductAgentRunRuntimeSnapshotAdapter {
+    pub fn new(
+        bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+        agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
+    ) -> Self {
+        Self { bindings, agents }
+    }
+}
+
+#[async_trait]
+impl AgentRunRuntimeSnapshotPort for ProductAgentRunRuntimeSnapshotAdapter {
+    async fn load_snapshot(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<ManagedRuntimeSnapshot, String> {
+        let binding = self
+            .bindings
+            .load_product_binding_by_runtime_thread(thread_id)
+            .await?
+            .ok_or_else(|| format!("Product binding for Runtime thread {thread_id} is missing"))?;
+        let service = self
+            .agents
+            .resolve(&binding.agent.service_instance_id)
+            .await?;
+        let snapshot = service
+            .read(AgentReadQuery {
+                source: binding.agent.source,
+                at_revision: None,
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        project_authoritative_agent_snapshot(thread_id.clone(), snapshot)
+            .map_err(|error| error.to_string())
+    }
+}
 
 /// Direct concrete-Agent fork protocol adapter.
 ///
@@ -329,66 +370,6 @@ fn map_agent_initial_context_evidence(
             .as_ref()
             .map(|digest| digest.as_str().to_owned()),
     })
-}
-
-/// Product protocol read adapter backed by the Product association and authoritative Agent read.
-pub struct ProductAgentRunRuntimeProjectionAdapter {
-    bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
-    agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
-}
-
-impl ProductAgentRunRuntimeProjectionAdapter {
-    pub fn new(
-        bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
-        agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
-    ) -> Self {
-        Self { bindings, agents }
-    }
-}
-
-#[async_trait]
-impl AgentRunRuntimeProjectionPort for ProductAgentRunRuntimeProjectionAdapter {
-    async fn load_snapshot(
-        &self,
-        thread_id: &RuntimeThreadId,
-    ) -> Result<ManagedRuntimeSnapshot, String> {
-        let binding = self
-            .bindings
-            .load_product_binding_by_runtime_thread(thread_id)
-            .await?
-            .ok_or_else(|| format!("Product binding for Runtime thread {thread_id} is missing"))?;
-        let service = self
-            .agents
-            .resolve(&binding.agent.service_instance_id)
-            .await?;
-        let snapshot = service
-            .read(AgentReadQuery {
-                source: binding.agent.source,
-                at_revision: None,
-            })
-            .await
-            .map_err(|error| error.to_string())?;
-        let snapshot = project_authoritative_agent_snapshot(thread_id.clone(), snapshot)
-            .map_err(|error| error.to_string())?;
-        if &snapshot.thread_id != thread_id {
-            return Err("Complete Agent returned a snapshot for another thread".to_owned());
-        }
-        Ok(snapshot)
-    }
-
-    async fn load_changes(
-        &self,
-        thread_id: &RuntimeThreadId,
-        after: Option<RuntimeChangeSequence>,
-    ) -> Result<agentdash_agent_runtime_contract::ManagedRuntimeChangePage, String> {
-        let next = after.unwrap_or(RuntimeChangeSequence(0));
-        Ok(ManagedRuntimeChangePage {
-            thread_id: thread_id.clone(),
-            changes: Vec::new(),
-            next,
-            gap: None,
-        })
-    }
 }
 
 fn compile_runtime_initial_context(

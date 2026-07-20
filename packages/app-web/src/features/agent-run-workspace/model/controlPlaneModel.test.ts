@@ -12,7 +12,6 @@ import type {
   ConversationCommandStaleGuardView,
 } from "../../../generated/agent-run-mailbox-contracts";
 import type { ProjectAgentSummary } from "../../../types";
-import { managedRuntimeTestFixtures } from "../../agent-run-runtime/model/managedRuntimeTestFixtures";
 import {
   type AgentRunChatSubmitIntent,
   buildAgentRunConversationCommandState,
@@ -22,7 +21,6 @@ import {
   planAgentRunLiveEvent,
   planAgentRunMessageSent,
   planAgentRunProjectEvent,
-  planAgentRunRuntimeChanges,
   planAgentRunTurnEnded,
   planAgentRunWorkspaceModuleOpened,
   resolveAgentRunSubmitCommand,
@@ -231,53 +229,6 @@ describe("AgentRun control-plane model", () => {
         refreshAgentRunListReason: "turn_ended",
       },
       refreshTaskPlan: true,
-    });
-  });
-
-  it("refreshes product projections from committed Runtime snapshot changes", () => {
-    expect(
-      planAgentRunRuntimeChanges(
-        managedRuntimeTestFixtures.changePage.changes,
-      ),
-    ).toEqual({
-      effects: {
-        refreshWorkspaceState: true,
-        refreshAgentRunListReason: "managed_runtime_projection_changed",
-      },
-      refreshTaskPlan: true,
-    });
-  });
-
-  it("maps a Runtime surface change to workspace and hook projection refresh", () => {
-    expect(
-      planAgentRunRuntimeChanges([
-        {
-          thread_id: "runtime-thread",
-          sequence: 12n,
-          revision: 8n,
-          delta: {
-            kind: "source_projection_changed",
-            source_change_sequence: 12n,
-            source_projection_revision: 8n,
-            observation_digest: "sha256:observation",
-            section: "surface",
-            section_digest: "sha256:surface",
-            delta: {
-              kind: "surface_changed",
-              applied_surface_revision: 7n,
-            },
-          },
-        },
-      ]),
-    ).toEqual({
-      effects: {
-        refreshWorkspaceState: true,
-        refreshAgentRunListReason: "managed_runtime_projection_changed",
-        hookRuntimeRefresh: {
-          reason: "managed_runtime_surface_changed",
-        },
-      },
-      refreshTaskPlan: false,
     });
   });
 

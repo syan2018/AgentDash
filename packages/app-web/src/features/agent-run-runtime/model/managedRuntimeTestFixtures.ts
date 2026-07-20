@@ -3,7 +3,6 @@ import type {
   ManagedRuntimeOperationStatus,
 } from "../../../generated/agent-runtime-contracts";
 import type {
-  ManagedRuntimeChangePage,
   ManagedRuntimeCommandAvailability,
   ManagedRuntimeSnapshot,
 } from "../../../generated/agent-runtime-validators";
@@ -123,52 +122,6 @@ const completed = runtimeSnapshot("completed", 6n, 9n);
 const failed = runtimeSnapshot("failed", 7n, 10n);
 const lost = runtimeSnapshot("lost", 8n, 11n);
 
-const changePage: ManagedRuntimeChangePage = {
-  thread_id: started.thread_id,
-  changes: [
-    {
-      thread_id: started.thread_id,
-      sequence: 9n,
-      revision: 6n,
-      delta: {
-        kind: "source_projection_changed",
-        source_change_sequence: 9n,
-        source_projection_revision: 6n,
-        observation_digest: "sha256:observation-6",
-        section: "snapshot",
-        section_digest: "sha256:snapshot-6",
-        delta: {
-          kind: "snapshot_replaced",
-          lifecycle: completed.lifecycle,
-          active_turn_id: completed.active_turn_id,
-          turns: completed.turns,
-          items: completed.items,
-          interactions: completed.interactions,
-          authority: completed.authority,
-          fidelity: completed.fidelity,
-          applied_surface_revision: null,
-        },
-      },
-    },
-  ],
-  next: 9n,
-  gap: null,
-};
-
-const gapPage: ManagedRuntimeChangePage = {
-  thread_id: started.thread_id,
-  changes: [],
-  next: 12n,
-  gap: {
-    requested_after: 4n,
-    earliest_available: 9n,
-    latest_available: 12n,
-    snapshot_revision: 8n,
-  },
-};
-
 export const managedRuntimeTestFixtures = {
   snapshots: { started, completed, failed, lost },
-  changePage,
-  gapPage,
 };

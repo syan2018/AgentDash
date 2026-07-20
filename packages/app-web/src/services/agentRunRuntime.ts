@@ -8,11 +8,8 @@ import type {
   ManagedRuntimeInteractionResponse,
 } from "../generated/agent-runtime-contracts";
 import {
-  decodeManagedRuntimeChangePage,
   decodeManagedRuntimeOperationReceipt,
   decodeManagedRuntimeSnapshot,
-  encodeRuntimeU64,
-  type ManagedRuntimeChangePage,
   type ManagedRuntimeOperationReceipt,
   type ManagedRuntimeSnapshot,
 } from "../generated/agent-runtime-validators";
@@ -31,22 +28,6 @@ export async function fetchManagedRuntimeSnapshot(
 ): Promise<ManagedRuntimeSnapshot> {
   const payload = await api.get<unknown>(agentRunScopedPath(target, "/runtime/snapshot"));
   return decodeManagedRuntimeSnapshot(payload);
-}
-
-export async function fetchManagedRuntimeChangePage(
-  target: AgentRunRuntimeTarget,
-  after?: bigint,
-  limit = 256,
-): Promise<ManagedRuntimeChangePage> {
-  const params = new URLSearchParams();
-  params.set("limit", String(limit));
-  if (after !== undefined) {
-    params.set("after", encodeRuntimeU64(after));
-  }
-  const payload = await api.get<unknown>(
-    agentRunScopedPath(target, `/runtime/changes?${params.toString()}`),
-  );
-  return decodeManagedRuntimeChangePage(payload);
 }
 
 export async function fetchAgentRunRuntimeContextProjection(

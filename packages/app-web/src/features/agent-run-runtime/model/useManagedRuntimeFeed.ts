@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
-  ManagedRuntimePlatformChange,
   ManagedRuntimeSnapshot,
 } from "../../../generated/agent-runtime-validators";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
@@ -18,7 +17,6 @@ export interface UseManagedRuntimeFeedOptions {
 
 export interface UseManagedRuntimeFeedResult {
   snapshot: ManagedRuntimeSnapshot | null;
-  changes: ManagedRuntimePlatformChange[];
   boundTargetKey: string | null;
   lifecycle: ManagedRuntimeFeedLifecycle;
   isLoading: boolean;
@@ -32,7 +30,6 @@ export function useManagedRuntimeFeed({
   enabled,
 }: UseManagedRuntimeFeedOptions): UseManagedRuntimeFeedResult {
   const [snapshot, setSnapshot] = useState<ManagedRuntimeSnapshot | null>(null);
-  const [changes, setChanges] = useState<ManagedRuntimePlatformChange[]>([]);
   const [boundTargetKey, setBoundTargetKey] = useState<string | null>(null);
   const [lifecycle, setLifecycle] =
     useState<ManagedRuntimeFeedLifecycle>("closed");
@@ -50,7 +47,6 @@ export function useManagedRuntimeFeed({
   const connect = useCallback(() => {
     close();
     setSnapshot(null);
-    setChanges([]);
     if (!enabled || !agentRunTarget) {
       setIsLoading(false);
       return;
@@ -63,15 +59,13 @@ export function useManagedRuntimeFeed({
     const connection = connectManagedRuntimeFeed(agentRunTarget, {
       onBaseline: (loaded) => {
         setSnapshot(loaded);
-        setChanges([]);
         setBoundTargetKey(
           `${agentRunTarget.runId}:${agentRunTarget.agentId}`,
         );
         setIsLoading(false);
       },
-      onProjection: (projected, appliedChanges) => {
+      onProjection: (projected) => {
         setSnapshot(projected);
-        setChanges((previous) => [...previous, ...appliedChanges]);
       },
       onLifecycleChange: setLifecycle,
       onError: (connectionError) => {
@@ -89,7 +83,6 @@ export function useManagedRuntimeFeed({
 
   return {
     snapshot,
-    changes,
     boundTargetKey,
     lifecycle,
     isLoading,

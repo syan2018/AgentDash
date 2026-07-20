@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::RuntimeChangeSequence;
 use agentdash_agent_service_api::AgentServiceErrorCode;
 use agentdash_application::agent_run_list::{
     AgentRunListChildModel, AgentRunListRuntimeSummaryModel, ProjectAgentRunListInput,
@@ -43,15 +42,8 @@ use crate::{
     rpc::ApiError,
 };
 
-const CANONICAL_RUNTIME_CHANGE_PAGE_LIMIT: u32 = 256;
 const DEFAULT_PRODUCT_CHANGE_PAGE_LIMIT: usize = 256;
 const MAX_PRODUCT_CHANGE_PAGE_LIMIT: usize = 256;
-
-#[derive(Debug, Deserialize)]
-pub struct ManagedRuntimeChangesQuery {
-    pub after: Option<u64>,
-    pub limit: Option<u32>,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct ProductProjectionChangesQuery {
@@ -64,10 +56,6 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/snapshot",
             axum::routing::get(get_managed_runtime_snapshot),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/changes",
-            axum::routing::get(get_managed_runtime_changes),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/live",
@@ -693,36 +681,6 @@ async fn get_managed_runtime_snapshot(
         .services
         .agent_run_product_projection
         .runtime_snapshot(&target)
-        .await
-        .map(Json)
-        .map_err(agent_run_product_projection_error)
-}
-
-async fn get_managed_runtime_changes(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Query(query): Query<ManagedRuntimeChangesQuery>,
-) -> Result<Json<agentdash_agent_runtime_contract::ManagedRuntimeChangePage>, ApiError> {
-    if query.limit.unwrap_or(CANONICAL_RUNTIME_CHANGE_PAGE_LIMIT)
-        != CANONICAL_RUNTIME_CHANGE_PAGE_LIMIT
-    {
-        return Err(ApiError::BadRequest(
-            "Managed Runtime change page limit 必须为 canonical 256".to_string(),
-        ));
-    }
-    let target = authorize_agent_run_target(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    state
-        .services
-        .agent_run_product_projection
-        .runtime_changes(&target, query.after.map(RuntimeChangeSequence))
         .await
         .map(Json)
         .map_err(agent_run_product_projection_error)

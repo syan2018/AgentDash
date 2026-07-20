@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   decodeManagedRuntimeOperationReceipt,
-  decodeManagedRuntimeChangePage,
   decodeManagedRuntimeSnapshot,
-  encodeManagedRuntimeChangePage,
   encodeManagedRuntimeOperationReceipt,
   encodeManagedRuntimeSnapshot,
 } from "../../../generated/agent-runtime-validators";
@@ -116,139 +114,6 @@ describe("Managed Runtime canonical u64 codecs", () => {
         duration_ms: MAX_U64,
       },
     });
-  });
-
-  it("recursively round-trips ItemTransitioned presentation and update bodies", () => {
-    const decoded = decodeManagedRuntimeChangePage({
-      thread_id: "thread-1",
-      changes: [{
-        thread_id: "thread-1",
-        sequence: MAX_U64,
-        revision: MAX_U64,
-        delta: {
-          kind: "source_projection_changed",
-          source_change_sequence: MAX_U64,
-          source_projection_revision: MAX_U64,
-          observation_digest: "sha256:observation",
-          section: "items",
-          section_digest: "sha256:section",
-          delta: {
-            kind: "item_transitioned",
-            item_id: "item-1",
-            transition: {
-              kind: "updated",
-              update: {
-                kind: "body_replaced",
-                body: { kind: "sleep", duration_ms: MAX_U64 },
-              },
-              presentation: {
-                body: { kind: "sleep", duration_ms: MAX_U64 },
-                started_at_ms: MAX_U64,
-                updated_at_ms: MAX_U64,
-                terminal: null,
-                body_digest: "sha256:body",
-                presentation_digest: "sha256:presentation",
-              },
-            },
-          },
-        },
-      }],
-      next: MAX_U64,
-      gap: null,
-    });
-    const change = decoded.changes[0];
-    if (
-      change?.delta.kind !== "source_projection_changed"
-      || change.delta.delta.kind !== "item_transitioned"
-      || change.delta.delta.transition.kind !== "updated"
-      || change.delta.delta.transition.update.kind !== "body_replaced"
-    ) {
-      throw new Error("expected typed ItemTransitioned update");
-    }
-    expect(change.delta.delta.transition.presentation.started_at_ms)
-      .toBe(MAX_U64_BIGINT);
-    expect(change.delta.delta.transition.presentation.body).toMatchObject({
-      duration_ms: MAX_U64_BIGINT,
-    });
-    expect(change.delta.delta.transition.update.body).toMatchObject({
-      duration_ms: MAX_U64_BIGINT,
-    });
-
-    const encoded = encodeManagedRuntimeChangePage(decoded);
-    expect(encoded.changes[0]).toMatchObject({
-      delta: {
-        delta: {
-          transition: {
-            update: { body: { duration_ms: MAX_U64 } },
-            presentation: {
-              started_at_ms: MAX_U64,
-              body: { duration_ms: MAX_U64 },
-            },
-          },
-        },
-      },
-    });
-  });
-
-  it.each([
-    ["snapshot body", "future_body"],
-    ["transition", "future_transition"],
-    ["update", "future_update"],
-  ])("rejects unknown presentation %s discriminant", (family, kind) => {
-    const transition =
-      family === "transition"
-        ? { kind }
-        : {
-            kind: "updated",
-            update:
-              family === "update"
-                ? { kind }
-                : { kind: "text_appended", text: "delta" },
-            presentation: {
-              body: { kind: "sleep", duration_ms: "1" },
-              started_at_ms: null,
-              updated_at_ms: null,
-              terminal: null,
-              body_digest: "sha256:body",
-              presentation_digest: "sha256:presentation",
-            },
-          };
-    const page = {
-      thread_id: "thread-1",
-      changes: [{
-        thread_id: "thread-1",
-        sequence: "1",
-        revision: "1",
-        delta: {
-          kind: "source_projection_changed",
-          source_change_sequence: "1",
-          source_projection_revision: "1",
-          observation_digest: "sha256:observation",
-          section: "items",
-          section_digest: "sha256:section",
-          delta: {
-            kind: "item_transitioned",
-            item_id: "item-1",
-            transition,
-          },
-        },
-      }],
-      next: "1",
-      gap: null,
-    };
-    if (family === "snapshot body") {
-      (page.changes[0]!.delta.delta.transition as Record<string, unknown>)
-        .presentation = {
-        body: { kind },
-        started_at_ms: null,
-        updated_at_ms: null,
-        terminal: null,
-        body_digest: "sha256:body",
-        presentation_digest: "sha256:presentation",
-      };
-    }
-
-    expect(() => decodeManagedRuntimeChangePage(page)).toThrow("kind");
   });
 
   it.each([

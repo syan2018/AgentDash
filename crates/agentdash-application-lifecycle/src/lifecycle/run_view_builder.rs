@@ -593,12 +593,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use agentdash_agent_runtime_contract::{
-        ManagedRuntimeAvailabilityEvidence, ManagedRuntimeChangePage,
-        ManagedRuntimeCommandAvailability, ManagedRuntimeCommandKind,
-        ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
-        ManagedRuntimeProjectionFidelity, ManagedRuntimeSourceBindingEvidence,
-        RuntimeChangeSequence, RuntimeProjectionRevision, RuntimeSourceRef, RuntimeThreadId,
-        SurfaceRevision,
+        ManagedRuntimeAvailabilityEvidence, ManagedRuntimeCommandAvailability,
+        ManagedRuntimeCommandKind, ManagedRuntimeLifecycleStatus,
+        ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
+        ManagedRuntimeSourceBindingEvidence, RuntimeChangeSequence, RuntimeProjectionRevision,
+        RuntimeSourceRef, RuntimeThreadId, SurfaceRevision,
     };
     use agentdash_application_agentrun::agent_run::{
         AgentRunProductProjectionError, AgentRunTerminalChangePage, AgentRunTerminalChangeSequence,
@@ -664,14 +663,6 @@ mod tests {
                 product_binding: binding,
                 snapshot,
             })
-        }
-
-        async fn runtime_changes(
-            &self,
-            _target: &AgentRunTarget,
-            _after: Option<RuntimeChangeSequence>,
-        ) -> Result<ManagedRuntimeChangePage, AgentRunProductProjectionError> {
-            Err(AgentRunProductProjectionError::Runtime("unused".into()))
         }
 
         async fn runtime_live_events(

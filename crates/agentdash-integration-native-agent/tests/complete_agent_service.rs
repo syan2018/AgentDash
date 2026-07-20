@@ -4,15 +4,16 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 
 use agentdash_agent::dash::{
     AgentSessionId, AgentTurnId as DashTurnId, ContextRevision, DashAgentRepository,
     DashAgentRepositoryState, DashAgentRepositoryStore, DashCompactionRequest,
-    DashCompactionResult, DashCompactor, DashCoreError, DashCoreEvent, DashExecutionCallbacks,
-    DashExecutionDependencies, DashFinishReason, DashProvider, DashProviderEvent,
-    DashProviderEventStream, DashProviderRequest, DashServiceError, DashToolCall,
-    DashToolCallbacks, DashToolResult,
+    DashCompactionResult, DashCompactor, DashCoreError, DashExecutionCallbacks,
+    DashExecutionDependencies, DashExecutionEvent, DashFinishReason, DashProvider,
+    DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashServiceError,
+    DashToolCall, DashToolCallbacks, DashToolResult,
 };
 use agentdash_agent_protocol::{BackboneEvent, codex_app_server_protocol as codex};
 use agentdash_agent_service_api::{
@@ -23,16 +24,17 @@ use agentdash_agent_service_api::{
     AgentHookAction, AgentHookBlockingSemantics, AgentHookDecision, AgentHookDefinitionId,
     AgentHookInvocation, AgentHookMutationKind, AgentHookPoint, AgentHookTiming,
     AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbacks, AgentIdempotencyKey,
-    AgentInput, AgentInputContent, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
-    AgentReceiptState, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
-    AgentSnapshotRevision, AgentSourceCoordinate, AgentSurfaceContributionPayload,
-    AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
-    AgentTerminalOutcome, AgentToolDelivery, AgentToolInvocation, AgentToolName, AgentToolResult,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, ApplyBoundAgentSurface, BoundAgentSurface,
-    BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind, ContextProvenance,
-    CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
-    InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
-    InitialContextMode, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentInput, AgentInputContent, AgentLiveEventPayload, AgentPayloadDigest, AgentProfileDigest,
+    AgentReadQuery, AgentReceiptState, AgentServiceError, AgentServiceErrorCode,
+    AgentServiceInstanceId, AgentSnapshotRevision, AgentSourceCoordinate,
+    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
+    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolInvocation,
+    AgentToolName, AgentToolResult, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
+    ContextAuthorityKind, ContextProvenance, CreateAgentCommand, ForkAgentCommand,
+    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContribution,
+    InitialContextDeliveryFidelity, InitialContextMode, ResumeAgentCommand,
+    RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_native_agent::{
     DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
@@ -307,7 +309,7 @@ struct FixtureCallbacks;
 
 #[async_trait]
 impl DashExecutionCallbacks for FixtureCallbacks {
-    async fn emit(&self, _: DashCoreEvent) -> Result<(), DashCoreError> {
+    async fn emit(&self, _: DashExecutionEvent) -> Result<(), DashCoreError> {
         Ok(())
     }
 }
@@ -2272,6 +2274,52 @@ fn submit_envelope(
             },
         },
     }
+}
+
+#[tokio::test]
+async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persisting_a_tail() {
+    let service = service();
+    let source = create_source(&service, "dash-live-events").await;
+    let mut live_events = service.live_events(source.clone()).await.unwrap();
+
+    let receipt = service
+        .execute(submit_envelope(source.clone(), "live-input", "live-effect"))
+        .await
+        .unwrap();
+    assert_eq!(
+        receipt.state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Succeeded
+        }
+    );
+
+    let mut previous_sequence = 0;
+    let text_delta = loop {
+        let event = tokio::time::timeout(Duration::from_secs(1), live_events.next())
+            .await
+            .expect("live event should arrive")
+            .expect("live event stream should remain available")
+            .expect("live event stream should remain open");
+        assert_eq!(event.source, source);
+        assert!(event.sequence.0 > previous_sequence);
+        previous_sequence = event.sequence.0;
+        if let AgentLiveEventPayload::TextDelta { delta, .. } = event.payload {
+            break delta;
+        }
+    };
+    assert_eq!(text_delta, "fixture answer");
+
+    let snapshot = service
+        .read(AgentReadQuery {
+            source,
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert!(snapshot.conversation_history.iter().any(|record| matches!(
+        &record.presentation.envelope.event,
+        BackboneEvent::TurnCompleted(_)
+    )));
 }
 
 #[tokio::test]

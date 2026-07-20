@@ -8,9 +8,10 @@ use agentdash_agent::dash::{
     AgentTurnId as DashTurnId, BranchId, CommandId, CompactionId, CompactionMode, CompactionState,
     ContextDeliveryFidelity, DashAgentChange, DashAgentChangePayload, DashAgentRepositoryState,
     DashAgentRepositoryStore, DashAgentService, DashChangeCursor, DashCommandRequest,
-    DashExecutionDependencies, DashExecutionFailure, DashPublicCommand, DashReceiptState,
-    DashServiceError, DashSurface, DashTerminalOutcome, DashToolDefinition, ForkCutoff,
-    HistoryPayload, InitialContextContribution, InitialContextInstallation, InitialContextMode,
+    DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
+    DashExecutionFailure, DashFinishReason, DashPublicCommand, DashReceiptState, DashServiceError,
+    DashSurface, DashTerminalOutcome, DashToolDefinition, ForkCutoff, HistoryPayload,
+    InitialContextContribution, InitialContextInstallation, InitialContextMode,
     InteractionId as DashInteractionId, InteractionState, ItemDetails,
 };
 use agentdash_agent_service_api::{
@@ -24,18 +25,19 @@ use agentdash_agent_service_api::{
     AgentInteractionRequest, AgentInteractionResolution, AgentInteractionSnapshot,
     AgentInteractionStatus, AgentItemBody, AgentItemPresentation, AgentItemSnapshot,
     AgentItemTerminalEvidence, AgentItemTransition, AgentItemUpdate, AgentLifecycleCapability,
-    AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
+    AgentLifecycleStatus, AgentLiveEvent, AgentLiveEventPayload, AgentLiveEventStream,
+    AgentLiveFinishReason, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
     AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
-    AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshot, AgentSnapshotAuthority,
-    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
-    AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile,
-    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentTerminalStatus,
-    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnSnapshot,
-    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
-    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
-    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
-    BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
-    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
+    AgentServiceErrorCode, AgentServiceInstanceId, AgentServiceU64, AgentSnapshot,
+    AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel,
+    AgentSourceCoordinate, AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet,
+    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
+    AgentTerminalStatus, AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    AgentTurnSnapshot, AppliedAgentCommandReceipt, AppliedAgentSurface,
+    AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt, AppliedContributionStatus,
+    AppliedForkAgentReceipt, AppliedInitialContextEvidence, ApplyBoundAgentSurface,
+    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand,
+    ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
     InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
     ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
@@ -134,6 +136,8 @@ pub struct DashAgentCompleteService {
     execution: DashExecutionDependencies,
     host_callbacks: Option<Arc<dyn AgentHostCallbacks>>,
     live_sources: tokio::sync::Mutex<BTreeMap<AgentSourceCoordinate, DashAgentService>>,
+    live_event_channels:
+        tokio::sync::Mutex<BTreeMap<AgentSourceCoordinate, DashCompleteLiveChannel>>,
 }
 
 impl DashAgentCompleteService {
@@ -146,6 +150,7 @@ impl DashAgentCompleteService {
             execution,
             host_callbacks: None,
             live_sources: tokio::sync::Mutex::new(BTreeMap::new()),
+            live_event_channels: tokio::sync::Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -159,6 +164,7 @@ impl DashAgentCompleteService {
             execution,
             host_callbacks: Some(host_callbacks),
             live_sources: tokio::sync::Mutex::new(BTreeMap::new()),
+            live_event_channels: tokio::sync::Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -293,13 +299,14 @@ impl DashAgentCompleteService {
             .load_source(source)
             .await?
             .ok_or_else(|| not_found("Dash Agent source does not exist"))?;
+        let live_channel = self.live_channel_for_source(source).await;
         let service = if let Some(service) = self.live_sources.lock().await.get(source).cloned() {
             service
         } else {
             let service = DashAgentService::open_with_store(
                 self.store.repositories(),
                 &AgentSessionId::new(source.as_str()),
-                self.execution.clone(),
+                self.execution_for_source(source, live_channel),
             )
             .await
             .map_err(map_dash_error)?
@@ -313,6 +320,31 @@ impl DashAgentCompleteService {
         self.materialize_live_surface(source, &service, &metadata)
             .await?;
         Ok((service, metadata))
+    }
+
+    async fn live_channel_for_source(
+        &self,
+        source: &AgentSourceCoordinate,
+    ) -> DashCompleteLiveChannel {
+        self.live_event_channels
+            .lock()
+            .await
+            .entry(source.clone())
+            .or_insert_with(DashCompleteLiveChannel::new)
+            .clone()
+    }
+
+    fn execution_for_source(
+        &self,
+        source: &AgentSourceCoordinate,
+        live_channel: DashCompleteLiveChannel,
+    ) -> DashExecutionDependencies {
+        let mut execution = self.execution.clone();
+        execution.callbacks = Arc::new(DashCompleteLiveCallbacks {
+            source: source.clone(),
+            live_channel,
+        });
+        execution
     }
 
     async fn reconcile_live_surface_from_durable_metadata(
@@ -807,6 +839,17 @@ impl CompleteAgentService for DashAgentCompleteService {
             next,
             gap: false,
         })
+    }
+
+    async fn live_events(
+        &self,
+        source: AgentSourceCoordinate,
+    ) -> Result<Box<dyn AgentLiveEventStream>, AgentServiceError> {
+        self.open_source(&source).await?;
+        let live_channel = self.live_channel_for_source(&source).await;
+        Ok(Box::new(DashCompleteLiveEventStream {
+            receiver: live_channel.sender.subscribe(),
+        }))
     }
 
     async fn inspect(
@@ -1824,6 +1867,123 @@ fn dash_change_payload(change: &DashAgentChange) -> Result<AgentChangePayload, A
             Ok(AgentChangePayload::ActiveTurnChanged {
                 active_turn_id: active_turn_id.as_ref().map(service_turn_id).transpose()?,
             })
+        }
+    }
+}
+
+const DASH_COMPLETE_LIVE_EVENT_CAPACITY: usize = 1024;
+
+#[derive(Clone)]
+struct DashCompleteLiveChannel {
+    sender: tokio::sync::broadcast::Sender<AgentLiveEvent>,
+    sequence: Arc<tokio::sync::Mutex<u64>>,
+}
+
+impl DashCompleteLiveChannel {
+    fn new() -> Self {
+        let (sender, _) = tokio::sync::broadcast::channel(DASH_COMPLETE_LIVE_EVENT_CAPACITY);
+        Self {
+            sender,
+            sequence: Arc::new(tokio::sync::Mutex::new(0)),
+        }
+    }
+}
+
+struct DashCompleteLiveCallbacks {
+    source: AgentSourceCoordinate,
+    live_channel: DashCompleteLiveChannel,
+}
+
+#[async_trait]
+impl DashExecutionCallbacks for DashCompleteLiveCallbacks {
+    async fn emit(
+        &self,
+        event: DashExecutionEvent,
+    ) -> Result<(), agentdash_agent::dash::DashCoreError> {
+        let sequence = {
+            let mut sequence = self.live_channel.sequence.lock().await;
+            *sequence = sequence.saturating_add(1);
+            *sequence
+        };
+        let turn_id =
+            agentdash_agent_service_api::AgentTurnId::new(event.turn_id.0).map_err(|error| {
+                agentdash_agent::dash::DashCoreError::Callback {
+                    message: error.to_string(),
+                }
+            })?;
+        let item_id =
+            agentdash_agent_service_api::AgentItemId::new(event.item_id.0).map_err(|error| {
+                agentdash_agent::dash::DashCoreError::Callback {
+                    message: error.to_string(),
+                }
+            })?;
+        let payload = match event.event {
+            DashCoreEvent::ProviderRoundStarted { round } => {
+                AgentLiveEventPayload::ProviderRoundStarted { round }
+            }
+            DashCoreEvent::TextDelta { round, delta } => {
+                AgentLiveEventPayload::TextDelta { round, delta }
+            }
+            DashCoreEvent::ReasoningDelta { round, delta } => {
+                AgentLiveEventPayload::ReasoningDelta { round, delta }
+            }
+            DashCoreEvent::ToolCallRequested { round, call } => {
+                AgentLiveEventPayload::ToolCallRequested {
+                    round,
+                    call_id: call.call_id,
+                    name: call.name,
+                    arguments: call.arguments,
+                }
+            }
+            DashCoreEvent::ToolCallCompleted { round, result } => {
+                AgentLiveEventPayload::ToolCallCompleted {
+                    round,
+                    call_id: result.call_id,
+                    content: result.content,
+                    is_error: result.is_error,
+                }
+            }
+            DashCoreEvent::ProviderRoundCompleted {
+                round,
+                finish_reason,
+            } => AgentLiveEventPayload::ProviderRoundCompleted {
+                round,
+                finish_reason: match finish_reason {
+                    DashFinishReason::Stop => AgentLiveFinishReason::Stop,
+                    DashFinishReason::ToolCalls => AgentLiveFinishReason::ToolCalls,
+                },
+            },
+        };
+        let _ = self.live_channel.sender.send(AgentLiveEvent {
+            source: self.source.clone(),
+            turn_id,
+            item_id,
+            sequence: AgentServiceU64(sequence),
+            payload,
+        });
+        Ok(())
+    }
+}
+
+struct DashCompleteLiveEventStream {
+    receiver: tokio::sync::broadcast::Receiver<AgentLiveEvent>,
+}
+
+#[async_trait]
+impl AgentLiveEventStream for DashCompleteLiveEventStream {
+    async fn next(&mut self) -> Result<Option<AgentLiveEvent>, AgentServiceError> {
+        match self.receiver.recv().await {
+            Ok(event) => Ok(Some(event)),
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => Ok(None),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                Err(AgentServiceError::new(
+                    AgentServiceErrorCode::Unavailable,
+                    format!(
+                        "Dash live event stream lagged by {skipped}; reload authoritative snapshot"
+                    ),
+                    true,
+                ))
+            }
         }
     }
 }

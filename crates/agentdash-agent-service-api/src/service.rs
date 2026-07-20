@@ -11,8 +11,8 @@ use crate::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentChangePage, AgentChangesQuery,
     AgentCommandEnvelope, AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection,
     AgentHookAction, AgentHookDefinitionId, AgentHookPoint, AgentHookTiming, AgentIdempotencyKey,
-    AgentInteractionId, AgentItemId, AgentReadQuery, AgentServiceDescriptor, AgentSnapshot,
-    AgentSourceCoordinate, AgentToolName, AgentTurnId, AppliedAgentSurfaceReceipt,
+    AgentInteractionId, AgentItemId, AgentLiveEventStream, AgentReadQuery, AgentServiceDescriptor,
+    AgentSnapshot, AgentSourceCoordinate, AgentToolName, AgentTurnId, AppliedAgentSurfaceReceipt,
     ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
     ResumeAgentCommand, RevokeBoundAgentSurface,
 };
@@ -190,6 +190,17 @@ pub trait CompleteAgentService: Send + Sync {
 
     async fn changes(&self, query: AgentChangesQuery)
     -> Result<AgentChangePage, AgentServiceError>;
+
+    async fn live_events(
+        &self,
+        _source: AgentSourceCoordinate,
+    ) -> Result<Box<dyn AgentLiveEventStream>, AgentServiceError> {
+        Err(AgentServiceError::new(
+            AgentServiceErrorCode::Unsupported,
+            "Complete Agent does not expose process-local live events",
+            false,
+        ))
+    }
 
     async fn inspect(
         &self,

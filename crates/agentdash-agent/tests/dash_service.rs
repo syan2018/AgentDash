@@ -7,8 +7,8 @@ use agentdash_agent::dash::{
     ActivityStatus, AgentHistory, AgentSessionId, AgentTurnId, BranchId, CommandId, CompactionId,
     ContextRevision, DashAgentRepository, DashAgentRepositoryState, DashAgentService,
     DashCommandRequest, DashCompactionRequest, DashCompactionResult, DashCompactor, DashCoreError,
-    DashCoreEvent, DashExecutionCallbacks, DashExecutionConsistency, DashExecutionDependencies,
-    DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
+    DashExecutionCallbacks, DashExecutionConsistency, DashExecutionDependencies,
+    DashExecutionEvent, DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
     DashProviderRequest, DashPublicCommand, DashReceiptState, DashServiceError, DashSurface,
     DashTerminalOutcome, DashToolCall, DashToolCallbacks, DashToolResult, EffectId, HistoryPayload,
 };
@@ -109,7 +109,7 @@ struct NoCallbacks;
 
 #[async_trait]
 impl DashExecutionCallbacks for NoCallbacks {
-    async fn emit(&self, _: DashCoreEvent) -> Result<(), DashCoreError> {
+    async fn emit(&self, _: DashExecutionEvent) -> Result<(), DashCoreError> {
         Ok(())
     }
 }

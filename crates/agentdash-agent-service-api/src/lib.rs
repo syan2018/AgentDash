@@ -9,6 +9,7 @@ pub mod canonical_json;
 pub mod command;
 pub mod context;
 pub mod ids;
+pub mod live;
 pub mod presentation;
 pub mod profile;
 pub mod service;
@@ -16,17 +17,18 @@ pub mod snapshot;
 pub mod surface;
 pub mod wire_u64;
 
+pub use agentdash_agent_protocol::CanonicalConversationRecord;
 pub use canonical_json::*;
 pub use command::*;
 pub use context::*;
 pub use ids::*;
+pub use live::*;
 pub use presentation::*;
 pub use profile::*;
 pub use service::*;
 pub use snapshot::*;
 pub use surface::*;
 pub use wire_u64::*;
-pub use agentdash_agent_protocol::CanonicalConversationRecord;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -48,6 +50,7 @@ pub struct AgentServiceApiSchema {
     pub snapshot: AgentSnapshot,
     pub changes: AgentChangesQuery,
     pub change_page: AgentChangePage,
+    pub live_event: AgentLiveEvent,
     pub inspection: AgentEffectInspection,
     pub applied_effect_outcome: AgentAppliedEffectOutcome,
     pub desired_surface: AgentSurfaceSnapshot,
@@ -93,6 +96,7 @@ mod tests {
             "snapshot",
             "changes",
             "change_page",
+            "live_event",
             "inspection",
             "applied_effect_outcome",
             "desired_surface",
@@ -128,6 +132,8 @@ mod tests {
             "AgentThreadNameSnapshot",
             "AgentHostCallbackBinding",
             "AgentCreateEvidence",
+            "AgentLiveEvent",
+            "AgentLiveEventPayload",
             "AgentSurfaceContributionKind",
         ] {
             assert!(typescript.contains(contract), "missing {contract}");

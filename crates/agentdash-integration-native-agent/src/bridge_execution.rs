@@ -5,7 +5,7 @@ use agentdash_agent::{
     StopReason, StreamChunk, ThinkingLevel, ToolDefinition,
     dash::{
         CompactionId, ContextRevision, DashCompactionRequest, DashCompactionResult, DashCompactor,
-        DashCoreError, DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies,
+        DashCoreError, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
         DashFinishReason, DashMessageRole, DashProvider, DashProviderEvent,
         DashProviderEventStream, DashProviderRequest, DashServiceError, DashToolCall,
         DashToolCallbacks, DashToolResult, HistoryEntryId, HistoryPayload,
@@ -180,7 +180,7 @@ pub fn bridge_dash_execution_dependencies(
     DashExecutionDependencies {
         provider: Arc::new(BridgeDashProvider::new(bridge.clone(), thinking_level)),
         tools: Arc::new(UnboundDashToolCallbacks),
-        callbacks: Arc::new(NoopDashExecutionCallbacks),
+        callbacks: Arc::new(UnboundDashExecutionCallbacks),
         compactor: Arc::new(BridgeDashCompactor::new(bridge, thinking_level)),
     }
 }
@@ -201,13 +201,14 @@ impl DashToolCallbacks for UnboundDashToolCallbacks {
     }
 }
 
-#[derive(Default)]
-pub struct NoopDashExecutionCallbacks;
+struct UnboundDashExecutionCallbacks;
 
 #[async_trait]
-impl DashExecutionCallbacks for NoopDashExecutionCallbacks {
-    async fn emit(&self, _event: DashCoreEvent) -> Result<(), DashCoreError> {
-        Ok(())
+impl DashExecutionCallbacks for UnboundDashExecutionCallbacks {
+    async fn emit(&self, _event: DashExecutionEvent) -> Result<(), DashCoreError> {
+        Err(DashCoreError::Callback {
+            message: "Dash execution has no source-scoped Complete Agent live sink".to_owned(),
+        })
     }
 }
 

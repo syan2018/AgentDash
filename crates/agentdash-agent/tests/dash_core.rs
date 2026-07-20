@@ -1,6 +1,6 @@
 use agentdash_agent::dash::{
     AgentHistory, AgentItemId, AgentSessionId, AgentTurnId, BranchId, DashCancellation,
-    DashCoreContext, DashCoreError, DashCoreEvent, DashCoreTurn, DashExecutionCallbacks,
+    DashCoreContext, DashCoreError, DashCoreTurn, DashExecutionCallbacks, DashExecutionEvent,
     DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
     DashProviderRequest, DashToolCall, DashToolCallbacks, DashToolResult, HistoryContribution,
     HistoryEntryId, HistoryPayload,
@@ -46,7 +46,7 @@ struct NoopCallbacks;
 
 #[async_trait]
 impl DashExecutionCallbacks for NoopCallbacks {
-    async fn emit(&self, _: DashCoreEvent) -> Result<(), DashCoreError> {
+    async fn emit(&self, _: DashExecutionEvent) -> Result<(), DashCoreError> {
         Ok(())
     }
 }

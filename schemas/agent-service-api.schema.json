@@ -40,6 +40,9 @@
     "change_page": {
       "$ref": "#/$defs/AgentChangePage"
     },
+    "live_event": {
+      "$ref": "#/$defs/AgentLiveEvent"
+    },
     "inspection": {
       "$ref": "#/$defs/AgentEffectInspection"
     },
@@ -96,6 +99,7 @@
     "snapshot",
     "changes",
     "change_page",
+    "live_event",
     "inspection",
     "applied_effect_outcome",
     "desired_surface",
@@ -12127,6 +12131,187 @@
             "body"
           ]
         }
+      ]
+    },
+    "AgentLiveEvent": {
+      "description": "Process-local, source-scoped observation of an in-flight Agent execution.\n\nThis event is presentation data, not Agent history. `sequence` is only ordered within the\ncurrent Complete Agent service process and may reset after restart. Consumers recover any gap\nby reading the authoritative Agent snapshot.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "sequence": {
+          "$ref": "#/$defs/AgentServiceU64"
+        },
+        "payload": {
+          "$ref": "#/$defs/AgentLiveEventPayload"
+        }
+      },
+      "required": [
+        "source",
+        "turn_id",
+        "item_id",
+        "sequence",
+        "payload"
+      ]
+    },
+    "AgentLiveEventPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "round": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "provider_round_started"
+            }
+          },
+          "required": [
+            "kind",
+            "round"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "round": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "delta": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "text_delta"
+            }
+          },
+          "required": [
+            "kind",
+            "round",
+            "delta"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "round": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "delta": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "reasoning_delta"
+            }
+          },
+          "required": [
+            "kind",
+            "round",
+            "delta"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "round": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "call_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "arguments": true,
+            "kind": {
+              "type": "string",
+              "const": "tool_call_requested"
+            }
+          },
+          "required": [
+            "kind",
+            "round",
+            "call_id",
+            "name",
+            "arguments"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "round": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "call_id": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "is_error": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "tool_call_completed"
+            }
+          },
+          "required": [
+            "kind",
+            "round",
+            "call_id",
+            "content",
+            "is_error"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "round": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "finish_reason": {
+              "$ref": "#/$defs/AgentLiveFinishReason"
+            },
+            "kind": {
+              "type": "string",
+              "const": "provider_round_completed"
+            }
+          },
+          "required": [
+            "kind",
+            "round",
+            "finish_reason"
+          ]
+        }
+      ]
+    },
+    "AgentLiveFinishReason": {
+      "type": "string",
+      "enum": [
+        "stop",
+        "tool_calls"
       ]
     },
     "AgentEffectInspection": {

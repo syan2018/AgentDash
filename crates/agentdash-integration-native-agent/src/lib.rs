@@ -10,8 +10,7 @@ mod core_callbacks;
 mod service;
 
 pub use bridge_execution::{
-    BridgeDashCompactor, BridgeDashProvider, NoopDashExecutionCallbacks,
-    bridge_dash_execution_dependencies,
+    BridgeDashCompactor, BridgeDashProvider, bridge_dash_execution_dependencies,
 };
 pub use core_callbacks::DashAgentCoreToolCallbacks;
 pub use service::{

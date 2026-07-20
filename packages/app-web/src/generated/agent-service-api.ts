@@ -3,6 +3,15 @@
 import type { CanonicalConversationRecord } from "./backbone-protocol";
 
 /**
+ * Process-local, source-scoped observation of an in-flight Agent execution.
+ *
+ * This event is presentation data, not Agent history. `sequence` is only ordered within the
+ * current Complete Agent service process and may reset after restart. Consumers recover any gap
+ * by reading the authoritative Agent snapshot.
+ */
+export type AgentLiveEvent = { source: AgentSourceCoordinate, turn_id: AgentTurnId, item_id: AgentItemId, sequence: AgentServiceU64, payload: AgentLiveEventPayload, };
+
+/**
  * Raw Complete Agent wire representation of a semantic Rust `u64`.
  */
 export type AgentServiceU64 = string & { readonly __agent_service_u64: "canonical_unsigned_decimal" };
@@ -10,7 +19,7 @@ export type AgentServiceU64 = string & { readonly __agent_service_u64: "canonica
 /**
  * Schema root covering every public Complete Agent contract family.
  */
-export type AgentServiceApiSchema = { descriptor: AgentServiceDescriptor, create: CreateAgentCommand, resume: ResumeAgentCommand, fork: ForkAgentCommand, execute: AgentCommandEnvelope, receipt: AgentCommandReceipt, fork_receipt: ForkAgentReceipt, create_evidence: AgentCreateEvidence, read: AgentReadQuery, snapshot: AgentSnapshot, changes: AgentChangesQuery, change_page: AgentChangePage, inspection: AgentEffectInspection, applied_effect_outcome: AgentAppliedEffectOutcome, desired_surface: AgentSurfaceSnapshot, surface_contribution_kind: AgentSurfaceContributionKind, offer: AgentRuntimeOffer, bound_surface: BoundAgentSurface, applied_surface: AppliedAgentSurface, apply_surface: ApplyBoundAgentSurface, revoke_surface: RevokeBoundAgentSurface, tool_invocation: AgentToolInvocation, tool_result: AgentToolResult, hook_invocation: AgentHookInvocation, hook_decision: AgentHookDecision, error: AgentServiceError, };
+export type AgentServiceApiSchema = { descriptor: AgentServiceDescriptor, create: CreateAgentCommand, resume: ResumeAgentCommand, fork: ForkAgentCommand, execute: AgentCommandEnvelope, receipt: AgentCommandReceipt, fork_receipt: ForkAgentReceipt, create_evidence: AgentCreateEvidence, read: AgentReadQuery, snapshot: AgentSnapshot, changes: AgentChangesQuery, change_page: AgentChangePage, live_event: AgentLiveEvent, inspection: AgentEffectInspection, applied_effect_outcome: AgentAppliedEffectOutcome, desired_surface: AgentSurfaceSnapshot, surface_contribution_kind: AgentSurfaceContributionKind, offer: AgentRuntimeOffer, bound_surface: BoundAgentSurface, applied_surface: AppliedAgentSurface, apply_surface: ApplyBoundAgentSurface, revoke_surface: RevokeBoundAgentSurface, tool_invocation: AgentToolInvocation, tool_result: AgentToolResult, hook_invocation: AgentHookInvocation, hook_decision: AgentHookDecision, error: AgentServiceError, };
 
 export type AgentAppliedEffectOutcome = { "kind": "create", receipt: AppliedAgentCommandReceipt, } | { "kind": "resume", receipt: AppliedAgentCommandReceipt, } | { "kind": "fork", receipt: AppliedForkAgentReceipt, } | { "kind": "command", receipt: AppliedAgentCommandReceipt, } | { "kind": "surface_apply", receipt: AppliedAgentSurfaceReceipt, } | { "kind": "surface_revoke", receipt: AppliedAgentCommandReceipt, };
 
@@ -153,6 +162,10 @@ export type AgentItemUpdate = { "kind": "text_appended", text: string, } | { "ki
 export type AgentLifecycleCapability = "create" | "start" | "resume" | "close";
 
 export type AgentLifecycleStatus = "creating" | "active" | "suspended" | "closed" | "lost";
+
+export type AgentLiveEventPayload = { "kind": "provider_round_started", round: number, } | { "kind": "text_delta", round: number, delta: string, } | { "kind": "reasoning_delta", round: number, delta: string, } | { "kind": "tool_call_requested", round: number, call_id: string, name: string, arguments: JsonValue, } | { "kind": "tool_call_completed", round: number, call_id: string, content: string, is_error: boolean, } | { "kind": "provider_round_completed", round: number, finish_reason: AgentLiveFinishReason, };
+
+export type AgentLiveFinishReason = "stop" | "tool_calls";
 
 export type AgentPayloadDigest = string;
 

@@ -56,6 +56,29 @@ enum ResponsesEventDisposition {
 }
 ```
 
+```rust
+pub struct AgentLiveEvent {
+    pub source: AgentSourceCoordinate,
+    pub turn_id: AgentTurnId,
+    pub item_id: AgentItemId,
+    pub sequence: AgentServiceU64,
+    pub payload: AgentLiveEventPayload,
+}
+
+#[async_trait]
+pub trait AgentLiveEventStream: Send {
+    async fn next(&mut self) -> Result<Option<AgentLiveEvent>, AgentServiceError>;
+}
+
+#[async_trait]
+pub trait CompleteAgentService: Send + Sync {
+    async fn live_events(
+        &self,
+        source: AgentSourceCoordinate,
+    ) -> Result<Box<dyn AgentLiveEventStream>, AgentServiceError>;
+}
+```
+
 Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver只解析真实Native bridge；生产composition显式构造Integration，不使用全局静态connector。
 
 ## 3. Contracts
@@ -75,6 +98,16 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
   写入 native history，并由 Complete Agent snapshot/change 原样投影。原因是 Agent history
   是执行结果的恢复权威；如果先压缩成通用错误文案，Runtime、Product 与 UI 都无法在重连后
   恢复已经丢失的失败语义。
+- Dash execution callback 在 source service 打开时一次性绑定到 Complete Agent live sink。
+  `AgentLiveEvent.sequence` 只在当前 Complete Agent 进程和 source 内保证递增；事件只用于
+  in-flight presentation，不是 history/change receipt，也不进入 Runtime、Host 或 Product
+  持久化。原因是 partial delta 在终态前可以丢失，而断线恢复需要的是 concrete Agent 已提交的
+  authoritative snapshot，不是平台复制的 durable tail。
+- Complete Agent live stream 慢消费者发生 broadcast gap 时返回 retryable typed
+  `Unavailable`，消费者必须重新 `read(source)` 建立权威 baseline 后再订阅。没有订阅者时
+  callback 仍成功完成，因为 live observation 不参与 Agent execution commit；production
+  composition 若根本没有绑定 source-scoped sink，则必须在执行边界暴露 callback 配置错误，
+  原因是缺失观测链路与暂时没有消费者是两种不同的系统状态。
 - `ThreadStart`/`TurnStart` 的 canonical Turn identity 由 Managed Runtime 根据 accepted operation分配，并通过`DriverCommandEnvelope.runtime_turn_id`交给Driver。Native只生成`DriverTurnId`作为source coordinate；普通事件、Tool callback与Hook callback都必须同时保留这两套坐标，不能把source ID转换成Runtime ID。
 - `TurnStart` acceptance已经把canonical `TurnStarted`写入Runtime projection；Driver回报相同`runtime_turn_id`的`TurnStarted`是同身份ack，不新增第二条lifecycle transition。不同identity仍属于critical protocol violation。
 - Driver一旦已经发送`TurnTerminal`，底层Agent task返回同一失败只能形成成功的dispatch completion；否则durable outbox会把已终态命令当成“acceptance前拒绝”重派。只有尚未产生authoritative terminal的Rejected/Lost才向dispatch caller返回错误。
@@ -114,6 +147,10 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 | compaction activation digest不匹配 | reject，不改变live context |
 | mapper/sink/Agent task失败 | error传播且active-turn fence清理 |
 | Provider retry/status | 仅一份ephemeral presentation；无internal fact、durable revision或binding loss |
+| Complete Agent live subscriber 正常跟随 | 同一 source 的事件 sequence 单调递增，delta 保留 turn/item identity |
+| live subscriber 落后于进程内 broadcast 容量 | retryable `Unavailable`；重读 authoritative snapshot，不回放平台 durable tail |
+| 当前没有 live subscriber | Agent execution/history commit 不受影响；后续读取从 authoritative snapshot 恢复 |
+| production source 未绑定 live sink | 返回 callback 配置错误，使缺失链路与暂时没有消费者保持可区分 |
 | sink返回`Terminalized` | accepted-turn pump停止并清理fence，不追加`BindingLost` |
 | 首个成功terminal后命名成功 | terminal先可观察；随后唯一binding-level durable名称事件 |
 | 命名provider或sink失败 | 主turn结果保持成功；gate回到可重试状态，后续成功turn可再次claim |
@@ -145,6 +182,10 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 
 **Provider terminal case:** `response.completed`到达后即使HTTP/2 body仍开放，Agent Core也取得完整assistant/tool-call/usage并继续tool loop或结束Turn；没有协议terminal的断流保持可诊断失败。
 
+**Live stream case:** UI 连接期间消费 Complete Agent source 的进程内 delta；连接断开或出现
+gap 后丢弃 partial presentation，重新读取同一 source 的 authoritative history，再建立新的
+live subscription。Runtime 只做 normalize/broadcast，不保存 replay tail。
+
 **Conversation naming case:** 首个含可见final assistant文本的成功turn先提交terminal，再异步调用
 无tools命名请求并提交binding-level标准事件；reasoning-only terminal不产生候选，也不占用gate。
 
@@ -162,6 +203,10 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 - Agent Core dependency tree与source scan必须证明无Application/Domain/Codex/Backbone/repository依赖；Core/Native strict clippy与tests通过。
 - WP08必须验证provider registry抽离后legacy Pi与dead runtime-session compaction SPI物理删除、生产Host composition使用Native Integration。
 - Responses bridge测试覆盖terminal后transport挂起、terminal后decoder error、terminal前EOF/read error、命名非法JSON、合法`response.failed`，并断言content/reasoning/tool calls/usage与`Done` exactly-once。
+- Complete Agent integration测试必须在执行前订阅 live stream，断言 source/turn/item identity、
+  source-local sequence 与真实 text delta；执行后再从 authoritative snapshot 断言同一 turn
+  已终态。production composition测试必须由同一 service registration 同时证明 live delta 和
+  authoritative read，原因是孤立的 Core callback 单测不能证明用户可见链路已经连通。
 - Conversation naming测试覆盖同turn全部User（含steer）+最后可见Assistant候选、reasoning-only/
   Error/Aborted排除、terminal-before-name时序、single in-flight、provider/sink失败重试、cold bind
   已命名跳过、无tools请求、nested wrapper清理与22字符Unicode截断。

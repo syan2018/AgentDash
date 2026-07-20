@@ -139,6 +139,13 @@ pub enum DashCoreEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DashExecutionEvent {
+    pub turn_id: AgentTurnId,
+    pub item_id: AgentItemId,
+    pub event: DashCoreEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DashCoreOutput {
     pub assistant_message: DashMessage,
     pub transcript_delta: Vec<DashMessage>,
@@ -257,7 +264,7 @@ pub trait DashToolCallbacks: Send + Sync {
 
 #[async_trait]
 pub trait DashExecutionCallbacks: Send + Sync {
-    async fn emit(&self, event: DashCoreEvent) -> Result<(), DashCoreError>;
+    async fn emit(&self, event: DashExecutionEvent) -> Result<(), DashCoreError>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -311,7 +318,11 @@ impl DashCoreTurn {
             inner: tools,
             turn_id: self.turn_id.clone(),
         };
-        let callbacks = CallbackAdapter(callbacks);
+        let callbacks = CallbackAdapter {
+            inner: callbacks,
+            turn_id: self.turn_id.clone(),
+            item_id: self.output_item_id.clone(),
+        };
         let core_output = run_agent_loop(
             CoreInput {
                 message: CoreMessage::user(self.input),
@@ -477,12 +488,23 @@ impl CoreToolCallbacks for ToolAdapter<'_> {
     }
 }
 
-struct CallbackAdapter<'a>(&'a dyn DashExecutionCallbacks);
+struct CallbackAdapter<'a> {
+    inner: &'a dyn DashExecutionCallbacks,
+    turn_id: AgentTurnId,
+    item_id: AgentItemId,
+}
 
 #[async_trait]
 impl CoreCallbacks for CallbackAdapter<'_> {
     async fn emit(&self, event: CoreEvent) -> Result<(), CoreError> {
-        self.0.emit(dash_event(event)).await.map_err(core_error)
+        self.inner
+            .emit(DashExecutionEvent {
+                turn_id: self.turn_id.clone(),
+                item_id: self.item_id.clone(),
+                event: dash_event(event),
+            })
+            .await
+            .map_err(core_error)
     }
 }
 

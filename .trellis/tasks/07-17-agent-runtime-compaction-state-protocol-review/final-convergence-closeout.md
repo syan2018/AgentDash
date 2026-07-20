@@ -3,7 +3,7 @@
 ## 2026-07-20 Persistence authority closure
 
 最终权威模型由
-[`07-20-agent-runtime-persistence-authority-convergence`](../07-20-agent-runtime-persistence-authority-convergence/)
+[`07-20-agent-runtime-persistence-authority-convergence`](../archive/2026-07/07-20-agent-runtime-persistence-authority-convergence/)
 完成：
 
 - Product使用LifecycleAgent owner document保存AgentFrame history与concrete Agent association；

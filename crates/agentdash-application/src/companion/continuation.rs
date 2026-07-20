@@ -159,15 +159,12 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
                     .dispatch_prepared(envelope.clone())
                     .await
                     .map_err(|error| error.to_string())?;
-                if outcome.queued {
-                    return Ok(CompanionEffectProgress::Pending);
-                }
                 Ok(CompanionEffectProgress::Applied(
                     CompanionFirstInputEvidence {
                         mailbox_message_id: outcome.mailbox_message_id,
-                        runtime_operation_id: outcome
-                            .operation_receipt
-                            .map(|receipt| receipt.operation_id.to_string()),
+                        runtime_operation_id: Some(
+                            outcome.operation_receipt.operation_id.to_string(),
+                        ),
                         submitted_by_runtime_protocol: false,
                     },
                 ))

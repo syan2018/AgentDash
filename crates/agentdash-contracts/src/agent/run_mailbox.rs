@@ -225,7 +225,6 @@ pub struct AgentRunComposerSubmitRequest {
 #[serde(rename_all = "snake_case")]
 pub enum AgentRunMessageCommandOutcome {
     Launched,
-    Queued,
     Steered,
     Deleted,
     Moved,
@@ -422,21 +421,21 @@ mod tests {
     }
 
     #[test]
-    fn queued_message_response_exposes_mailbox_message() {
+    fn launched_message_response_exposes_command_receipt() {
         let response = AgentRunMessageCommandResponse {
             command_receipt: AgentRunCommandReceipt {
                 client_command_id: "command-1".to_string(),
-                status: "queued".to_string(),
+                status: "accepted".to_string(),
                 duplicate: false,
                 message: None,
             },
-            outcome: AgentRunMessageCommandOutcome::Queued,
+            outcome: AgentRunMessageCommandOutcome::Launched,
             mailbox_message: None,
             accepted_refs: None,
             fork: None,
         };
 
-        let value = serde_json::to_value(response).expect("serialize queued response");
+        let value = serde_json::to_value(response).expect("serialize launched response");
         assert!(value.get("mailbox_message_id").is_none());
         assert!(value.get("mailbox_message").is_none());
         assert!(value.get("accepted_refs").is_none());

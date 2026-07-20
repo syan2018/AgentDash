@@ -198,7 +198,7 @@ impl AgentRunProductInputDeliveryPort for RecordingInput {
         .expect("thread");
         Ok(AgentRunProductInputDelivery {
             mailbox_message_id: stable_test_uuid(command.target.run_id, &command.client_command_id),
-            operation_receipt: Some(ManagedRuntimeOperationReceipt {
+            operation_receipt: ManagedRuntimeOperationReceipt {
                 operation_id: RuntimeOperationId::new(format!(
                     "input:{}:{}",
                     command.target.agent_id, command.client_command_id
@@ -209,8 +209,7 @@ impl AgentRunProductInputDeliveryPort for RecordingInput {
                 status: ManagedRuntimeOperationStatus::Succeeded,
                 evidence: None,
                 duplicate: false,
-            }),
-            queued: false,
+            },
         })
     }
 

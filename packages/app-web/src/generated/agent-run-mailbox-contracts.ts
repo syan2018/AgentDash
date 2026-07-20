@@ -49,7 +49,7 @@ export type AgentRunMailboxView = { state: MailboxStateView, messages: Array<Mai
 
 export type AgentRunMessageAcceptedRefs = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref?: AgentFrameRefDto, agent_run_turn_id?: string, protocol_turn_id?: string, };
 
-export type AgentRunMessageCommandOutcome = "launched" | "queued" | "steered" | "deleted" | "moved" | "resumed" | "blocked" | "failed";
+export type AgentRunMessageCommandOutcome = "launched" | "steered" | "deleted" | "moved" | "resumed" | "blocked" | "failed";
 
 export type AgentRunMessageCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunMessageCommandOutcome, mailbox_message?: MailboxMessageView, accepted_refs?: AgentRunMessageAcceptedRefs, fork?: AgentRunForkOutcomeView, };
 

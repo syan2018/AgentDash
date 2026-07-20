@@ -15,7 +15,7 @@ function forkCommandResponse(): AgentRunMessageCommandResponse {
       status: "accepted",
       duplicate: false,
     },
-    outcome: "queued",
+    outcome: "launched",
     accepted_refs: {
       run_ref: { run_id: "child-run" },
       agent_ref: { run_id: "child-run", agent_id: "child-agent" },
@@ -102,4 +102,3 @@ describe("AgentRun workspace command fork handling", () => {
     });
   });
 });
-

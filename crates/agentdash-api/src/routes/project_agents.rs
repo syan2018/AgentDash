@@ -123,7 +123,7 @@ fn project_agent_run_start_contract(
     };
     let receipt = AgentRunCommandReceipt {
         client_command_id: outcome.client_command_id.clone(),
-        status: if outcome.queued { "queued" } else { "accepted" }.to_owned(),
+        status: "accepted".to_owned(),
         duplicate: result.duplicate,
         message: None,
     };
@@ -158,11 +158,7 @@ fn project_agent_run_start_contract(
         },
         initial_message: AgentRunMessageCommandResponse {
             command_receipt: receipt,
-            outcome: if outcome.queued {
-                AgentRunMessageCommandOutcome::Queued
-            } else {
-                AgentRunMessageCommandOutcome::Launched
-            },
+            outcome: AgentRunMessageCommandOutcome::Launched,
             mailbox_message: None,
             accepted_refs: None,
             fork: None,

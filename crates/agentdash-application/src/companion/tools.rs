@@ -997,25 +997,10 @@ async fn deliver_companion_mailbox_message(
         mailbox_message_id,
         accepted_runtime_operation_id: None,
         command_receipt_client_command_id: client_command_id,
-        command_receipt_status: if delivery.queued {
-            "queued"
-        } else {
-            "accepted"
-        }
-        .to_string(),
-        command_receipt_duplicate: delivery
-            .operation_receipt
-            .as_ref()
-            .is_some_and(|receipt| receipt.duplicate),
-        outcome: if delivery.queued {
-            "queued"
-        } else {
-            "dispatched"
-        }
-        .to_string(),
-        runtime_operation_id: delivery
-            .operation_receipt
-            .map(|receipt| receipt.operation_id.to_string()),
+        command_receipt_status: "accepted".to_string(),
+        command_receipt_duplicate: delivery.operation_receipt.duplicate,
+        outcome: "dispatched".to_string(),
+        runtime_operation_id: Some(delivery.operation_receipt.operation_id.to_string()),
     })
 }
 

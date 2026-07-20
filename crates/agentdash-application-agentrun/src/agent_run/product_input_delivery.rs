@@ -28,8 +28,7 @@ pub struct AgentRunProductInputDelivery {
     /// Deterministic handoff identity retained for Product workflow evidence. It is not a durable
     /// mailbox row and has no independent lifecycle.
     pub mailbox_message_id: Uuid,
-    pub operation_receipt: Option<ManagedRuntimeOperationReceipt>,
-    pub queued: bool,
+    pub operation_receipt: ManagedRuntimeOperationReceipt,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -132,8 +131,7 @@ impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
             .map_err(|error| AgentRunProductInputDeliveryError::Command(error.to_string()))?;
         Ok(AgentRunProductInputDelivery {
             mailbox_message_id: prepared.mailbox_message_id,
-            operation_receipt: Some(receipt),
-            queued: false,
+            operation_receipt: receipt,
         })
     }
 

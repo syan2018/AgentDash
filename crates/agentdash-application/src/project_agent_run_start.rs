@@ -71,7 +71,6 @@ pub struct ProjectAgentRunStartOutcome {
     pub runtime_thread_id: String,
     pub runtime_operation_id: Option<String>,
     pub mailbox_message_id: Uuid,
-    pub queued: bool,
     pub subject_kind: String,
     pub subject_id: Uuid,
     pub effective_executor: ProjectAgentRunStartEffectiveExecutor,
@@ -284,12 +283,8 @@ impl ProjectAgentRunStartService {
             frame_id: identities.frame_id,
             frame_revision: frame.revision,
             runtime_thread_id: runtime_thread_id.to_string(),
-            runtime_operation_id: input
-                .operation_receipt
-                .as_ref()
-                .map(|receipt| receipt.operation_id.to_string()),
+            runtime_operation_id: Some(input.operation_receipt.operation_id.to_string()),
             mailbox_message_id: input.mailbox_message_id,
-            queued: input.queued,
             subject_kind: subject_ref.kind,
             subject_id: subject_ref.id,
             effective_executor: effective_executor_snapshot(effective_executor),

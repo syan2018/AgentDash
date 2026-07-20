@@ -5,7 +5,7 @@ use std::sync::Arc;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductInputDeliveryPort, AgentRunProductLaunchRequest, AgentRunProductLaunchService,
     AgentRunProductRuntimeProvisioningRequest, DeliverAgentRunProductInput, ProductAgentFrameRef,
-    ProductAgentSurfaceFacts, ProductExecutionProfileRef, stable_product_command_operation_id,
+    ProductAgentSurfaceFacts, ProductExecutionProfileRef,
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
@@ -437,8 +437,6 @@ impl RoutineExecutor {
         target: AgentRunTarget,
     ) -> Result<(), ApplicationError> {
         let client_command_id = format!("routine_execution:{}", execution.id);
-        let stable_operation_id = stable_product_command_operation_id(&target, &client_command_id)
-            .map_err(|error| ApplicationError::Internal(error.to_string()))?;
         let result = self
             .product_input_delivery
             .deliver(DeliverAgentRunProductInput {
@@ -457,17 +455,8 @@ impl RoutineExecutor {
         let mailbox_refs = RoutineMailboxDispatchRefs {
             mailbox_message_id: result.mailbox_message_id,
             client_command_id,
-            outcome: if result.queued {
-                "queued"
-            } else {
-                "dispatched"
-            }
-            .to_string(),
-            runtime_operation_id: result
-                .operation_receipt
-                .as_ref()
-                .map(|receipt| receipt.operation_id.to_string())
-                .or_else(|| Some(stable_operation_id.to_string())),
+            outcome: "dispatched".to_string(),
+            runtime_operation_id: Some(result.operation_receipt.operation_id.to_string()),
         };
         let refs = execution
             .dispatch_refs

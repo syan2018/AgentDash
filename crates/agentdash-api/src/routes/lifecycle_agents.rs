@@ -189,27 +189,15 @@ async fn fork_submit_agent_run(
         })
         .await
         .map_err(product_input_delivery_error)?;
-    let duplicate = fork.replayed
-        || delivery
-            .operation_receipt
-            .as_ref()
-            .is_some_and(|receipt| receipt.duplicate);
+    let duplicate = fork.replayed || delivery.operation_receipt.duplicate;
     Ok(Json(AgentRunMessageCommandResponse {
         command_receipt: AgentRunCommandReceipt {
             client_command_id: body.client_command_id,
-            status: if delivery.queued {
-                "queued".to_owned()
-            } else {
-                "accepted".to_owned()
-            },
+            status: "accepted".to_owned(),
             duplicate,
             message: None,
         },
-        outcome: if delivery.queued {
-            AgentRunMessageCommandOutcome::Queued
-        } else {
-            AgentRunMessageCommandOutcome::Launched
-        },
+        outcome: AgentRunMessageCommandOutcome::Launched,
         mailbox_message: None,
         accepted_refs: Some(agent_run_child_message_refs(&fork)),
         fork: Some(fork_outcome_view(&fork)),
@@ -408,18 +396,11 @@ async fn submit_agent_run_composer_input(
         })
         .await
         .map_err(product_input_delivery_error)?;
-    let duplicate = delivery
-        .operation_receipt
-        .as_ref()
-        .is_some_and(|receipt| receipt.duplicate);
+    let duplicate = delivery.operation_receipt.duplicate;
     Ok(Json(AgentRunMessageCommandResponse {
         command_receipt: AgentRunCommandReceipt {
             client_command_id: body.client_command_id,
-            status: if delivery.queued {
-                "queued".to_owned()
-            } else {
-                "accepted".to_owned()
-            },
+            status: "accepted".to_owned(),
             duplicate,
             message: None,
         },

@@ -140,8 +140,7 @@ impl ProductWorkflowAgentCallDispatchService {
             }
         };
 
-        let delivery = self
-            .product_input_delivery
+        self.product_input_delivery
             .deliver(DeliverAgentRunProductInput {
                 target: request.target_intent.target().clone(),
                 content: workflow_input_blocks(&request.input),
@@ -158,13 +157,6 @@ impl ProductWorkflowAgentCallDispatchService {
                     format!("Workflow AgentCall 同步输入交接失败: {error}"),
                 )
             })?;
-        if delivery.queued {
-            return Err(permanent(
-                "agent_call_offline_queue_forbidden",
-                "Workflow AgentCall Product 输入合同不允许离线排队",
-            ));
-        }
-
         Ok(WorkflowAgentCallDispatchOutcome::Accepted {
             target: request.target_intent.target().clone(),
             runtime_thread_id: runtime_thread_id.to_string(),

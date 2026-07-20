@@ -6,15 +6,8 @@ use std::{
     },
 };
 
-use agentdash_agent_runtime::{
-    CompleteAgentRuntimeIdentityMap, CompleteAgentStateReconciler, ManagedRuntimeStateCommit,
-    ManagedRuntimeStateRepository, ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError,
-    apply_managed_runtime_state_commit, bind_complete_agent_surface,
-};
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeAvailabilityEvidence, ManagedRuntimeCommandAvailability,
-    ManagedRuntimeCommandKind, RuntimeProjectionRevision, RuntimeThreadId, SurfaceRevision,
-};
+use agentdash_agent_runtime::bind_complete_agent_surface;
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_agent_runtime_host::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingState,
     CompleteAgentCallbackBroker, CompleteAgentCallbackCommit, CompleteAgentCallbackRepository,
@@ -54,29 +47,6 @@ impl CompleteAgentHostRepository for FixtureHostRepository {
 }
 
 #[derive(Default)]
-struct FixtureManagedRuntimeStateRepository {
-    snapshot: Mutex<ManagedRuntimeStateSnapshot>,
-}
-
-#[async_trait]
-impl ManagedRuntimeStateRepository for FixtureManagedRuntimeStateRepository {
-    async fn load(
-        &self,
-        _thread_id: &RuntimeThreadId,
-    ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
-        Ok(self.snapshot.lock().await.clone())
-    }
-
-    async fn commit(
-        &self,
-        commit: ManagedRuntimeStateCommit,
-    ) -> Result<ManagedRuntimeStateSnapshot, ManagedRuntimeStateStoreError> {
-        let mut snapshot = self.snapshot.lock().await;
-        apply_managed_runtime_state_commit(&mut snapshot, commit)
-    }
-}
-
-#[derive(Default)]
 struct FixtureCallbackRepository {
     snapshot: Mutex<CompleteAgentCallbackSnapshot>,
 }
@@ -97,7 +67,7 @@ impl CompleteAgentCallbackRepository for FixtureCallbackRepository {
 }
 
 #[tokio::test]
-async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
+async fn target_lane_runs_surface_command_and_reverse_callback() {
     let source = AgentSourceCoordinate::new("source-1").expect("source");
     let service = Arc::new(FixtureService::new(source.clone()));
     let service_id = AgentServiceInstanceId::new("service-1").expect("service");
@@ -250,53 +220,6 @@ async fn target_lane_runs_surface_command_state_sync_and_reverse_callback() {
         receipt.state,
         AgentReceiptState::AlreadyApplied { .. }
     ));
-
-    let state_repository = Arc::new(FixtureManagedRuntimeStateRepository::default());
-    let mut identities =
-        CompleteAgentRuntimeIdentityMap::new(source.clone(), runtime_thread_id.clone());
-    identities
-        .bind_surface_revision(AgentSurfaceRevision(1), SurfaceRevision(1))
-        .expect("surface identity");
-    let command_availability = ManagedRuntimeCommandKind::ALL
-        .into_iter()
-        .map(|command| {
-            (
-                command,
-                ManagedRuntimeCommandAvailability::Available {
-                    evidence: ManagedRuntimeAvailabilityEvidence {
-                        decided_at_revision: RuntimeProjectionRevision(1),
-                        blocking_operation_id: None,
-                        bound_surface_revision: Some(SurfaceRevision(1)),
-                        applied_surface_revision: Some(SurfaceRevision(1)),
-                    },
-                },
-            )
-        })
-        .collect();
-    let reconciler = CompleteAgentStateReconciler::new(
-        state_repository.clone(),
-        identities,
-        command_availability,
-    );
-    let sync = reconciler
-        .synchronize_source(service.as_ref(), source.clone(), 32)
-        .await
-        .expect("source sync");
-    assert!(sync.reloaded_snapshot);
-    assert_eq!(
-        sync.projection.applied_surface,
-        Some(applied.applied.clone())
-    );
-    assert_eq!(
-        state_repository
-            .load(&runtime_thread_id)
-            .await
-            .expect("managed Runtime state")
-            .facts
-            .source_changes
-            .len(),
-        1
-    );
 
     let tool_handler = Arc::new(CountingToolHandler::default());
     let callback_repository = Arc::new(FixtureCallbackRepository::default());

@@ -1,6 +1,6 @@
 [package]
 name = "agentdash-agent-runtime"
-description = "Managed Agent Runtime state kernel and persistence ports"
+description = "In-memory Agent coordination and authoritative snapshot projection"
 version.workspace = true
 edition.workspace = true
 

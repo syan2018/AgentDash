@@ -433,7 +433,6 @@ mod tests {
             tool_name: Some("shell_exec".to_string()),
             tool_call_id: Some("call-shell-1".to_string()),
             subagent_type: None,
-            snapshot: None,
             payload: Some(serde_json::json!({
                 "default_mount_root_ref": "/tmp/test-workspace",
                 "args": {
@@ -488,7 +487,6 @@ mod tests {
             tool_name: None,
             tool_call_id: None,
             subagent_type: None,
-            snapshot: None,
             payload: None,
             token_stats: None,
         };
@@ -531,7 +529,6 @@ mod tests {
             tool_name: None,
             tool_call_id: None,
             subagent_type: None,
-            snapshot: None,
             payload: None,
             token_stats: None,
         };
@@ -574,7 +571,6 @@ mod tests {
             tool_name: None,
             tool_call_id: None,
             subagent_type: None,
-            snapshot: None,
             payload: None,
             token_stats: None,
         };
@@ -604,7 +600,6 @@ mod tests {
             tool_name: None,
             tool_call_id: None,
             subagent_type: None,
-            snapshot: None,
             payload: Some(serde_json::json!({
                 "assistant_message": {
                     "role": "assistant",
@@ -686,7 +681,6 @@ mod tests {
             tool_name: None,
             tool_call_id: None,
             subagent_type: Some("companion".to_string()),
-            snapshot: None,
             payload: Some(serde_json::json!({
                 "prompt": "请帮我 review"
             })),
@@ -741,7 +735,6 @@ mod tests {
             tool_name: None,
             tool_call_id: None,
             subagent_type: Some("companion".to_string()),
-            snapshot: None,
             payload: Some(serde_json::json!({
                 "dispatch_id": "dispatch-1",
                 "companion_session_id": "sess-companion-1",

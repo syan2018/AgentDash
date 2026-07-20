@@ -361,7 +361,6 @@ mod tests {
             tool_name: Some("shell_exec".to_string()),
             tool_call_id: Some("call-1".to_string()),
             subagent_type: None,
-            snapshot: None,
             payload: None,
             token_stats: None,
         });

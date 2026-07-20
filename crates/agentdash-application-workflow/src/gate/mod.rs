@@ -18,6 +18,6 @@ pub use gate_wait_policy::{
 pub use outcome::{
     CompanionChildResultDeliveryIntent, CompanionHumanResponseDeliveryIntent,
     CompanionParentRequestDeliveryIntent, CompanionParentResponseDeliveryIntent,
-    GateDeliveryIntent, GateMailboxWakeIntent, GateTransitionKind, GateTransitionOutcome,
+    GateDeliveryIntent, GateInputHandoffWakeIntent, GateTransitionKind, GateTransitionOutcome,
 };
 pub use resolver::LifecycleGateResolver;

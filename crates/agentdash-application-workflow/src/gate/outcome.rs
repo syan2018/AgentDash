@@ -17,7 +17,7 @@ pub struct GateTransitionOutcome {
 
 #[derive(Debug, Clone)]
 pub enum GateDeliveryIntent {
-    MailboxWake(GateMailboxWakeIntent),
+    InputHandoffWake(GateInputHandoffWakeIntent),
     CompanionHumanResponse(CompanionHumanResponseDeliveryIntent),
     CompanionParentRequest(CompanionParentRequestDeliveryIntent),
     CompanionParentResponseToChild(CompanionParentResponseDeliveryIntent),
@@ -25,7 +25,7 @@ pub enum GateDeliveryIntent {
 }
 
 #[derive(Debug, Clone)]
-pub struct GateMailboxWakeIntent {
+pub struct GateInputHandoffWakeIntent {
     pub gate_id: Uuid,
     pub namespace: String,
     pub request_id: String,

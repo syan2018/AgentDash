@@ -13,12 +13,13 @@ pub mod workflow_script_preflight;
 pub use continuation::ApplicationCompanionContinuationEffects;
 pub use gate_control::{
     CompanionGateControlDeps, CompanionGateControlRepos, CompanionGateControlService,
-    CompanionGateRespondResult, CompanionHumanResponseMailboxDelivery,
-    CompanionHumanResponseMailboxDeliveryCommand, CompanionParentMailboxDelivery,
-    CompanionParentMailboxDeliveryCommand, CompanionParentMailboxDeliveryResult,
-    CompanionParentRequestMailboxDeliveryCommand, CompanionParentResponseMailboxDeliveryCommand,
-    CompleteCompanionChildResultCommand, OpenCompanionParentRequestCommand,
-    ResolveCompanionParentRequestCommand, RespondCompanionGateCommand,
+    CompanionGateRespondResult, CompanionHumanResponseInputHandoffDelivery,
+    CompanionHumanResponseInputHandoffDeliveryCommand, CompanionParentInputHandoffDelivery,
+    CompanionParentInputHandoffDeliveryCommand, CompanionParentInputHandoffDeliveryResult,
+    CompanionParentRequestInputHandoffDeliveryCommand,
+    CompanionParentResponseInputHandoffDeliveryCommand, CompleteCompanionChildResultCommand,
+    OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
+    RespondCompanionGateCommand,
 };
 pub use model_preflight::{
     CompanionModelPreflightError, CompanionModelPreflightPort, CompanionModelPreflightRequest,
@@ -29,7 +30,7 @@ pub use runtime_tool_service::{
     RuntimeThreadToolServices, SharedRuntimeThreadToolServicesHandle,
 };
 pub use tools::{
-    AgentRunCompanionMailboxDelivery, CompanionRequestTool, CompanionRespondTool,
+    AgentRunCompanionInputHandoffDelivery, CompanionRequestTool, CompanionRespondTool,
     build_hook_action_resolved_notification,
 };
 pub use workflow_script_preflight::{

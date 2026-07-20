@@ -80,7 +80,7 @@ pub struct CompanionParentRequestOpenResult {
     pub child_frame_id: Uuid,
     pub child_runtime_thread_id: String,
     pub companion_label: String,
-    pub parent_mailbox_delivery: CompanionParentMailboxDeliveryResult,
+    pub parent_input_handoff_delivery: CompanionParentInputHandoffDeliveryResult,
     pub payload: serde_json::Value,
 }
 
@@ -101,7 +101,7 @@ pub struct CompanionParentRequestResolveResult {
     pub child_agent_id: Uuid,
     pub child_frame_id: Uuid,
     pub child_runtime_thread_id: String,
-    pub child_mailbox_delivery: CompanionParentMailboxDeliveryResult,
+    pub child_input_handoff_delivery: CompanionParentInputHandoffDeliveryResult,
     pub payload: serde_json::Value,
 }
 
@@ -111,7 +111,7 @@ pub struct CompanionChildResultCompleteResult {
     pub parent_agent_id: Uuid,
     pub parent_runtime_thread_id: Option<String>,
     pub child_runtime_thread_id: Option<String>,
-    pub parent_mailbox_delivery: CompanionParentMailboxDeliveryResult,
+    pub parent_input_handoff_delivery: CompanionParentInputHandoffDeliveryResult,
     pub payload: serde_json::Value,
 }
 
@@ -145,7 +145,7 @@ struct CurrentRuntimeBindingSelection {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompanionParentMailboxDeliveryCommand {
+pub struct CompanionParentInputHandoffDeliveryCommand {
     pub gate_id: Uuid,
     pub request_id: String,
     pub run_id: Uuid,
@@ -159,7 +159,7 @@ pub struct CompanionParentMailboxDeliveryCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompanionParentRequestMailboxDeliveryCommand {
+pub struct CompanionParentRequestInputHandoffDeliveryCommand {
     pub gate_id: Uuid,
     pub request_id: String,
     pub run_id: Uuid,
@@ -174,7 +174,7 @@ pub struct CompanionParentRequestMailboxDeliveryCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompanionParentResponseMailboxDeliveryCommand {
+pub struct CompanionParentResponseInputHandoffDeliveryCommand {
     pub gate_id: Uuid,
     pub request_id: String,
     pub run_id: Uuid,
@@ -188,7 +188,7 @@ pub struct CompanionParentResponseMailboxDeliveryCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompanionHumanResponseMailboxDeliveryCommand {
+pub struct CompanionHumanResponseInputHandoffDeliveryCommand {
     pub gate_id: Uuid,
     pub request_id: String,
     pub run_id: Uuid,
@@ -201,7 +201,7 @@ pub struct CompanionHumanResponseMailboxDeliveryCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompanionParentMailboxDeliveryResult {
+pub struct CompanionParentInputHandoffDeliveryResult {
     pub input_handoff_id: Option<Uuid>,
     pub accepted_operation_id: Option<String>,
     pub command_receipt_client_command_id: String,
@@ -211,75 +211,75 @@ pub struct CompanionParentMailboxDeliveryResult {
 }
 
 #[async_trait]
-pub trait CompanionParentMailboxDelivery: Send + Sync {
+pub trait CompanionParentInputHandoffDelivery: Send + Sync {
     async fn deliver_child_result_to_parent(
         &self,
-        command: CompanionParentMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError>;
+        command: CompanionParentInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError>;
 
     async fn deliver_parent_request_to_parent(
         &self,
-        command: CompanionParentRequestMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError>;
+        command: CompanionParentRequestInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError>;
 
     async fn deliver_parent_response_to_child(
         &self,
-        command: CompanionParentResponseMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError>;
+        command: CompanionParentResponseInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError>;
 }
 
 #[async_trait]
-pub trait CompanionHumanResponseMailboxDelivery: Send + Sync {
+pub trait CompanionHumanResponseInputHandoffDelivery: Send + Sync {
     async fn deliver_human_response_to_requesting_agent(
         &self,
-        command: CompanionHumanResponseMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError>;
+        command: CompanionHumanResponseInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError>;
 }
 
 #[derive(Clone, Default)]
-pub struct NoopCompanionParentMailboxDelivery;
+pub struct NoopCompanionParentInputHandoffDelivery;
 
 #[derive(Clone, Default)]
-pub struct NoopCompanionHumanResponseMailboxDelivery;
+pub struct NoopCompanionHumanResponseInputHandoffDelivery;
 
 #[async_trait]
-impl CompanionParentMailboxDelivery for NoopCompanionParentMailboxDelivery {
+impl CompanionParentInputHandoffDelivery for NoopCompanionParentInputHandoffDelivery {
     async fn deliver_child_result_to_parent(
         &self,
-        _command: CompanionParentMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+        _command: CompanionParentInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
         Err(ApplicationError::Internal(
-            "companion parent mailbox delivery 未配置".to_string(),
+            "companion parent Agent input handoff 未配置".to_string(),
         ))
     }
 
     async fn deliver_parent_request_to_parent(
         &self,
-        _command: CompanionParentRequestMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+        _command: CompanionParentRequestInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
         Err(ApplicationError::Internal(
-            "companion parent request mailbox delivery 未配置".to_string(),
+            "companion parent request Agent input handoff 未配置".to_string(),
         ))
     }
 
     async fn deliver_parent_response_to_child(
         &self,
-        _command: CompanionParentResponseMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+        _command: CompanionParentResponseInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
         Err(ApplicationError::Internal(
-            "companion parent response mailbox delivery 未配置".to_string(),
+            "companion parent response Agent input handoff 未配置".to_string(),
         ))
     }
 }
 
 #[async_trait]
-impl CompanionHumanResponseMailboxDelivery for NoopCompanionHumanResponseMailboxDelivery {
+impl CompanionHumanResponseInputHandoffDelivery for NoopCompanionHumanResponseInputHandoffDelivery {
     async fn deliver_human_response_to_requesting_agent(
         &self,
-        _command: CompanionHumanResponseMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+        _command: CompanionHumanResponseInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
         Err(ApplicationError::Internal(
-            "companion human response mailbox delivery 未配置".to_string(),
+            "companion human response Agent input handoff 未配置".to_string(),
         ))
     }
 }
@@ -291,8 +291,8 @@ pub struct CompanionGateControlService {
     agent_repo: Arc<dyn LifecycleAgentRepository>,
     runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     lineage_repo: Arc<dyn AgentLineageRepository>,
-    parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>,
-    human_response_mailbox_delivery: Arc<dyn CompanionHumanResponseMailboxDelivery>,
+    parent_input_handoff_delivery: Arc<dyn CompanionParentInputHandoffDelivery>,
+    human_response_input_handoff_delivery: Arc<dyn CompanionHumanResponseInputHandoffDelivery>,
 }
 
 #[derive(Clone)]
@@ -318,24 +318,26 @@ impl CompanionGateControlService {
             agent_repo: repos.agent_repo,
             runtime_binding_repo: repos.runtime_binding_repo,
             lineage_repo: repos.lineage_repo,
-            parent_mailbox_delivery: Arc::new(NoopCompanionParentMailboxDelivery),
-            human_response_mailbox_delivery: Arc::new(NoopCompanionHumanResponseMailboxDelivery),
+            parent_input_handoff_delivery: Arc::new(NoopCompanionParentInputHandoffDelivery),
+            human_response_input_handoff_delivery: Arc::new(
+                NoopCompanionHumanResponseInputHandoffDelivery,
+            ),
         }
     }
 
-    pub fn with_parent_mailbox_delivery(
+    pub fn with_parent_input_handoff_delivery(
         mut self,
-        parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>,
+        parent_input_handoff_delivery: Arc<dyn CompanionParentInputHandoffDelivery>,
     ) -> Self {
-        self.parent_mailbox_delivery = parent_mailbox_delivery;
+        self.parent_input_handoff_delivery = parent_input_handoff_delivery;
         self
     }
 
-    pub fn with_human_response_mailbox_delivery(
+    pub fn with_human_response_input_handoff_delivery(
         mut self,
-        human_response_mailbox_delivery: Arc<dyn CompanionHumanResponseMailboxDelivery>,
+        human_response_input_handoff_delivery: Arc<dyn CompanionHumanResponseInputHandoffDelivery>,
     ) -> Self {
-        self.human_response_mailbox_delivery = human_response_mailbox_delivery;
+        self.human_response_input_handoff_delivery = human_response_input_handoff_delivery;
         self
     }
 
@@ -405,15 +407,15 @@ impl CompanionGateControlService {
                     gate.id
                 ))
             })?;
-        let input_text = build_human_response_mailbox_input_text(
+        let input_text = build_human_response_input_handoff_input_text(
             human_response_intent.gate_id,
             &human_response_intent.request_id,
             human_response_intent.turn_id.as_deref(),
             &human_response_intent.payload,
         );
-        self.human_response_mailbox_delivery
+        self.human_response_input_handoff_delivery
             .deliver_human_response_to_requesting_agent(
-                CompanionHumanResponseMailboxDeliveryCommand {
+                CompanionHumanResponseInputHandoffDeliveryCommand {
                     gate_id: human_response_intent.gate_id,
                     request_id: human_response_intent.request_id.clone(),
                     run_id: human_response_intent.run_id,
@@ -500,9 +502,9 @@ impl CompanionGateControlService {
             summary,
             &input.payload,
         );
-        let mailbox_result = self
-            .parent_mailbox_delivery
-            .deliver_child_result_to_parent(CompanionParentMailboxDeliveryCommand {
+        let input_handoff_result = self
+            .parent_input_handoff_delivery
+            .deliver_child_result_to_parent(CompanionParentInputHandoffDeliveryCommand {
                 gate_id: input.gate_id,
                 request_id: input.request_id,
                 run_id: input.run_id,
@@ -521,7 +523,7 @@ impl CompanionGateControlService {
             parent_agent_id: input.parent_agent_id,
             parent_runtime_thread_id: Some(input.parent_runtime_thread_id),
             child_runtime_thread_id: input.child_runtime_thread_id,
-            parent_mailbox_delivery: mailbox_result,
+            parent_input_handoff_delivery: input_handoff_result,
             payload: input.payload,
         })
     }
@@ -690,11 +692,11 @@ impl CompanionGateControlService {
         &self,
         event: GateProducerTerminalEvent,
     ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
-        crate::gate_wait_policy::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
+        crate::gate_wait_policy::GateProducerTerminalConvergenceServiceAdapter::with_input_handoff_wake_delivery(
             self.gate_repo.clone(),
             self.runtime_binding_repo.clone(),
-            Arc::new(crate::gate_wait_policy::CompanionGateMailboxWakeDelivery::new(
-                self.parent_mailbox_delivery.clone(),
+            Arc::new(crate::gate_wait_policy::CompanionGateInputHandoffWakeDelivery::new(
+                self.parent_input_handoff_delivery.clone(),
             )),
         )
         .observe_gate_producer_terminal(event)
@@ -801,7 +803,7 @@ impl CompanionGateControlService {
                 ))
             })?;
 
-        let input_text = build_parent_request_mailbox_input_text(
+        let input_text = build_parent_request_input_handoff_input_text(
             parent_request_intent.gate_id,
             &parent_request_intent.request_id,
             &companion_label,
@@ -809,9 +811,9 @@ impl CompanionGateControlService {
             parent_request_intent.wait,
             &parent_request_intent.payload,
         );
-        let mailbox_result = self
-            .parent_mailbox_delivery
-            .deliver_parent_request_to_parent(CompanionParentRequestMailboxDeliveryCommand {
+        let input_handoff_result = self
+            .parent_input_handoff_delivery
+            .deliver_parent_request_to_parent(CompanionParentRequestInputHandoffDeliveryCommand {
                 gate_id: parent_request_intent.gate_id,
                 request_id: parent_request_intent.request_id.clone(),
                 run_id: parent_request_intent.run_id,
@@ -837,7 +839,7 @@ impl CompanionGateControlService {
             child_frame_id: child_frame.id,
             child_runtime_thread_id,
             companion_label,
-            parent_mailbox_delivery: mailbox_result,
+            parent_input_handoff_delivery: input_handoff_result,
             payload: review_payload,
         })
     }
@@ -964,15 +966,15 @@ impl CompanionGateControlService {
             })?;
         let resolution_payload = parent_response_intent.payload.clone();
 
-        let input_text = build_parent_response_mailbox_input_text(
+        let input_text = build_parent_response_input_handoff_input_text(
             parent_response_intent.gate_id,
             &parent_response_intent.request_id,
             &parent_response_intent.resolved_turn_id,
             &parent_response_intent.payload,
         );
-        let mailbox_result = self
-            .parent_mailbox_delivery
-            .deliver_parent_response_to_child(CompanionParentResponseMailboxDeliveryCommand {
+        let input_handoff_result = self
+            .parent_input_handoff_delivery
+            .deliver_parent_response_to_child(CompanionParentResponseInputHandoffDeliveryCommand {
                 gate_id: parent_response_intent.gate_id,
                 request_id: parent_response_intent.request_id.clone(),
                 run_id: parent_response_intent.run_id,
@@ -994,7 +996,7 @@ impl CompanionGateControlService {
             child_agent_id,
             child_frame_id,
             child_runtime_thread_id,
-            child_mailbox_delivery: mailbox_result,
+            child_input_handoff_delivery: input_handoff_result,
             payload: resolution_payload,
         }))
     }
@@ -1196,7 +1198,7 @@ fn bounded_projection_text(text: &str, max_chars: usize) -> String {
     bounded
 }
 
-fn build_parent_request_mailbox_input_text(
+fn build_parent_request_input_handoff_input_text(
     gate_id: Uuid,
     request_id: &str,
     companion_label: &str,
@@ -1221,7 +1223,7 @@ fn build_parent_request_mailbox_input_text(
     lines.join("\n")
 }
 
-fn build_parent_response_mailbox_input_text(
+fn build_parent_response_input_handoff_input_text(
     gate_id: Uuid,
     request_id: &str,
     resolved_turn_id: &str,
@@ -1249,7 +1251,7 @@ fn build_parent_response_mailbox_input_text(
     lines.join("\n")
 }
 
-fn build_human_response_mailbox_input_text(
+fn build_human_response_input_handoff_input_text(
     gate_id: Uuid,
     request_id: &str,
     turn_id: Option<&str>,
@@ -1684,42 +1686,42 @@ mod tests {
         _delivery: Arc<CapturingDelivery>,
         run_id: Uuid,
     ) -> CompanionGateControlService {
-        service_for_test_with_parent_mailbox(
+        service_for_test_with_parent_input_handoff(
             gate_repo,
             frame_repo,
             lineage_repo,
             Arc::new(CapturingDelivery::default()),
-            Arc::new(CapturingParentMailboxDelivery::default()),
+            Arc::new(CapturingParentInputHandoffDelivery::default()),
             run_id,
         )
     }
 
-    fn service_for_test_with_parent_mailbox(
+    fn service_for_test_with_parent_input_handoff(
         gate_repo: Arc<FixtureGateRepo>,
         frame_repo: Arc<FixtureFrameRepo>,
         lineage_repo: Arc<FixtureLineageRepo>,
         _delivery: Arc<CapturingDelivery>,
-        parent_mailbox_delivery: Arc<CapturingParentMailboxDelivery>,
+        parent_input_handoff_delivery: Arc<CapturingParentInputHandoffDelivery>,
         run_id: Uuid,
     ) -> CompanionGateControlService {
-        service_for_test_with_mailboxes(
+        service_for_test_with_input_handoffs(
             gate_repo,
             frame_repo,
             lineage_repo,
             Arc::new(CapturingDelivery::default()),
-            parent_mailbox_delivery,
-            Arc::new(CapturingHumanMailboxDelivery::default()),
+            parent_input_handoff_delivery,
+            Arc::new(CapturingHumanInputHandoffDelivery::default()),
             run_id,
         )
     }
 
-    fn service_for_test_with_mailboxes(
+    fn service_for_test_with_input_handoffs(
         gate_repo: Arc<FixtureGateRepo>,
         frame_repo: Arc<FixtureFrameRepo>,
         lineage_repo: Arc<FixtureLineageRepo>,
         _delivery: Arc<CapturingDelivery>,
-        parent_mailbox_delivery: Arc<CapturingParentMailboxDelivery>,
-        human_mailbox_delivery: Arc<CapturingHumanMailboxDelivery>,
+        parent_input_handoff_delivery: Arc<CapturingParentInputHandoffDelivery>,
+        human_input_handoff_delivery: Arc<CapturingHumanInputHandoffDelivery>,
         run_id: Uuid,
     ) -> CompanionGateControlService {
         let project_id = Uuid::new_v4();
@@ -1741,8 +1743,8 @@ mod tests {
                 lineage_repo,
             },
         })
-        .with_parent_mailbox_delivery(parent_mailbox_delivery)
-        .with_human_response_mailbox_delivery(human_mailbox_delivery)
+        .with_parent_input_handoff_delivery(parent_input_handoff_delivery)
+        .with_human_response_input_handoff_delivery(human_input_handoff_delivery)
     }
 
     #[derive(Default)]
@@ -1752,59 +1754,61 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct CapturingParentMailboxDelivery {
-        commands: Mutex<Vec<CompanionParentMailboxDeliveryCommand>>,
-        parent_request_commands: Mutex<Vec<CompanionParentRequestMailboxDeliveryCommand>>,
-        parent_response_commands: Mutex<Vec<CompanionParentResponseMailboxDeliveryCommand>>,
+    struct CapturingParentInputHandoffDelivery {
+        commands: Mutex<Vec<CompanionParentInputHandoffDeliveryCommand>>,
+        parent_request_commands: Mutex<Vec<CompanionParentRequestInputHandoffDeliveryCommand>>,
+        parent_response_commands: Mutex<Vec<CompanionParentResponseInputHandoffDeliveryCommand>>,
         delivered_child_result_gate_ids: Mutex<HashSet<Uuid>>,
         fail_with: Mutex<Option<String>>,
     }
 
     #[derive(Default)]
-    struct CapturingHumanMailboxDelivery {
-        commands: Mutex<Vec<CompanionHumanResponseMailboxDeliveryCommand>>,
+    struct CapturingHumanInputHandoffDelivery {
+        commands: Mutex<Vec<CompanionHumanResponseInputHandoffDeliveryCommand>>,
         fail_with: Mutex<Option<String>>,
     }
 
-    impl CapturingHumanMailboxDelivery {
+    impl CapturingHumanInputHandoffDelivery {
         fn fail_next(&self, message: impl Into<String>) {
             *self.fail_with.lock().unwrap() = Some(message.into());
         }
     }
 
     #[async_trait]
-    impl CompanionHumanResponseMailboxDelivery for CapturingHumanMailboxDelivery {
+    impl CompanionHumanResponseInputHandoffDelivery for CapturingHumanInputHandoffDelivery {
         async fn deliver_human_response_to_requesting_agent(
             &self,
-            command: CompanionHumanResponseMailboxDeliveryCommand,
-        ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+            command: CompanionHumanResponseInputHandoffDeliveryCommand,
+        ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
             self.commands.lock().unwrap().push(command);
             if let Some(message) = self.fail_with.lock().unwrap().take() {
                 return Err(ApplicationError::Internal(message));
             }
-            Ok(captured_mailbox_result("companion-human-response:test"))
+            Ok(captured_input_handoff_result(
+                "companion-human-response:test",
+            ))
         }
     }
 
-    impl CapturingParentMailboxDelivery {
+    impl CapturingParentInputHandoffDelivery {
         fn fail_next(&self, message: impl Into<String>) {
             *self.fail_with.lock().unwrap() = Some(message.into());
         }
     }
 
     #[async_trait]
-    impl CompanionParentMailboxDelivery for CapturingParentMailboxDelivery {
+    impl CompanionParentInputHandoffDelivery for CapturingParentInputHandoffDelivery {
         async fn deliver_child_result_to_parent(
             &self,
-            command: CompanionParentMailboxDeliveryCommand,
-        ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+            command: CompanionParentInputHandoffDeliveryCommand,
+        ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
             if self
                 .delivered_child_result_gate_ids
                 .lock()
                 .unwrap()
                 .contains(&command.gate_id)
             {
-                return Ok(captured_mailbox_result_with_duplicate(
+                return Ok(captured_input_handoff_result_with_duplicate(
                     "companion-result:test",
                     true,
                 ));
@@ -1817,43 +1821,47 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(command.gate_id);
-            Ok(captured_mailbox_result("companion-result:test"))
+            Ok(captured_input_handoff_result("companion-result:test"))
         }
 
         async fn deliver_parent_request_to_parent(
             &self,
-            command: CompanionParentRequestMailboxDeliveryCommand,
-        ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+            command: CompanionParentRequestInputHandoffDeliveryCommand,
+        ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
             self.parent_request_commands.lock().unwrap().push(command);
             if let Some(message) = self.fail_with.lock().unwrap().take() {
                 return Err(ApplicationError::Internal(message));
             }
-            Ok(captured_mailbox_result("companion-parent-request:test"))
+            Ok(captured_input_handoff_result(
+                "companion-parent-request:test",
+            ))
         }
 
         async fn deliver_parent_response_to_child(
             &self,
-            command: CompanionParentResponseMailboxDeliveryCommand,
-        ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+            command: CompanionParentResponseInputHandoffDeliveryCommand,
+        ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
             self.parent_response_commands.lock().unwrap().push(command);
             if let Some(message) = self.fail_with.lock().unwrap().take() {
                 return Err(ApplicationError::Internal(message));
             }
-            Ok(captured_mailbox_result("companion-parent-response:test"))
+            Ok(captured_input_handoff_result(
+                "companion-parent-response:test",
+            ))
         }
     }
 
-    fn captured_mailbox_result(
+    fn captured_input_handoff_result(
         client_command_id: impl Into<String>,
-    ) -> CompanionParentMailboxDeliveryResult {
-        captured_mailbox_result_with_duplicate(client_command_id, false)
+    ) -> CompanionParentInputHandoffDeliveryResult {
+        captured_input_handoff_result_with_duplicate(client_command_id, false)
     }
 
-    fn captured_mailbox_result_with_duplicate(
+    fn captured_input_handoff_result_with_duplicate(
         client_command_id: impl Into<String>,
         duplicate: bool,
-    ) -> CompanionParentMailboxDeliveryResult {
-        CompanionParentMailboxDeliveryResult {
+    ) -> CompanionParentInputHandoffDeliveryResult {
+        CompanionParentInputHandoffDeliveryResult {
             input_handoff_id: Some(Uuid::new_v4()),
             accepted_operation_id: Some("operation-test".to_string()),
             command_receipt_client_command_id: client_command_id.into(),
@@ -1889,15 +1897,16 @@ mod tests {
         frame_repo.seed_runtime_threads(frame_id, ["session-old", "session-latest"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let human_mailbox_delivery = Arc::new(CapturingHumanMailboxDelivery::default());
-        let service = service_for_test_with_mailboxes(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let human_input_handoff_delivery = Arc::new(CapturingHumanInputHandoffDelivery::default());
+        let service = service_for_test_with_input_handoffs(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery,
-            human_mailbox_delivery.clone(),
+            parent_input_handoff_delivery,
+            human_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -1935,13 +1944,13 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("human_mailbox_delivery"))
+                .and_then(|payload| payload.get("human_input_handoff_delivery"))
                 .is_none()
         );
 
         let notifications = delivery.response_notifications.lock().unwrap();
         assert!(notifications.is_empty());
-        let commands = human_mailbox_delivery.commands.lock().unwrap();
+        let commands = human_input_handoff_delivery.commands.lock().unwrap();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].gate_id, gate_id);
         assert_eq!(commands[0].agent_id, agent_id);
@@ -2018,16 +2027,17 @@ mod tests {
         frame_repo.seed_runtime_threads(frame_id, ["session-latest"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let human_mailbox_delivery = Arc::new(CapturingHumanMailboxDelivery::default());
-        human_mailbox_delivery.fail_next("mailbox unavailable");
-        let service = service_for_test_with_mailboxes(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let human_input_handoff_delivery = Arc::new(CapturingHumanInputHandoffDelivery::default());
+        human_input_handoff_delivery.fail_next("Agent input handoff unavailable");
+        let service = service_for_test_with_input_handoffs(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery,
-            parent_mailbox_delivery,
-            human_mailbox_delivery.clone(),
+            parent_input_handoff_delivery,
+            human_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -2042,7 +2052,7 @@ mod tests {
                 }),
             })
             .await
-            .expect_err("mailbox failure should be returned");
+            .expect_err("input_handoff failure should be returned");
 
         assert!(matches!(error, ApplicationError::Internal(_)));
         let stored = gate_repo
@@ -2063,14 +2073,18 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("human_mailbox_delivery"))
+                .and_then(|payload| payload.get("human_input_handoff_delivery"))
                 .is_none()
         );
-        assert_eq!(human_mailbox_delivery.commands.lock().unwrap().len(), 1);
+        assert_eq!(
+            human_input_handoff_delivery.commands.lock().unwrap().len(),
+            1
+        );
     }
 
     #[tokio::test]
-    async fn complete_child_result_resolves_child_owned_gate_and_delivers_parent_mailbox_wake() {
+    async fn complete_child_result_resolves_child_owned_gate_and_delivers_parent_input_handoff_wake()
+     {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2115,13 +2129,14 @@ mod tests {
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -2152,7 +2167,7 @@ mod tests {
             result.child_runtime_thread_id.as_deref(),
             Some("child-session")
         );
-        assert_eq!(result.parent_mailbox_delivery.outcome, "queued");
+        assert_eq!(result.parent_input_handoff_delivery.outcome, "queued");
 
         let stored = gate_repo
             .get(gate_id)
@@ -2177,36 +2192,36 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("parent_mailbox_delivery"))
+                .and_then(|payload| payload.get("parent_input_handoff_delivery"))
                 .and_then(|delivery| delivery.get("status"))
                 .and_then(serde_json::Value::as_str),
             None
         );
 
         {
-            let mailbox_commands = parent_mailbox_delivery.commands.lock().unwrap();
-            assert_eq!(mailbox_commands.len(), 1);
-            assert_eq!(mailbox_commands[0].gate_id, gate_id);
-            assert_eq!(mailbox_commands[0].request_id, "dispatch-1");
-            assert_eq!(mailbox_commands[0].run_id, run_id);
-            assert_eq!(mailbox_commands[0].parent_agent_id, parent_agent_id);
-            assert_eq!(mailbox_commands[0].child_agent_id, child_agent_id);
+            let input_handoff_commands = parent_input_handoff_delivery.commands.lock().unwrap();
+            assert_eq!(input_handoff_commands.len(), 1);
+            assert_eq!(input_handoff_commands[0].gate_id, gate_id);
+            assert_eq!(input_handoff_commands[0].request_id, "dispatch-1");
+            assert_eq!(input_handoff_commands[0].run_id, run_id);
+            assert_eq!(input_handoff_commands[0].parent_agent_id, parent_agent_id);
+            assert_eq!(input_handoff_commands[0].child_agent_id, child_agent_id);
             assert_eq!(
-                mailbox_commands[0].parent_runtime_thread_id,
+                input_handoff_commands[0].parent_runtime_thread_id,
                 "parent-session"
             );
             assert!(
-                mailbox_commands[0]
+                input_handoff_commands[0]
                     .input_text
                     .contains("- status: completed")
             );
             assert!(
-                mailbox_commands[0]
+                input_handoff_commands[0]
                     .input_text
                     .contains("- summary: review complete")
             );
             assert!(
-                mailbox_commands[0]
+                input_handoff_commands[0]
                     .input_text
                     .starts_with("Companion result delivery projection.")
             );
@@ -2228,8 +2243,15 @@ mod tests {
             .await
             .expect("duplicate child result should ensure delivery")
             .expect("resolved gate should return delivery result");
-        assert!(duplicate.parent_mailbox_delivery.command_receipt_duplicate);
-        assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
+        assert!(
+            duplicate
+                .parent_input_handoff_delivery
+                .command_receipt_duplicate
+        );
+        assert_eq!(
+            parent_input_handoff_delivery.commands.lock().unwrap().len(),
+            1
+        );
         assert!(delivery.event_notifications.lock().unwrap().is_empty());
     }
 
@@ -2317,13 +2339,14 @@ mod tests {
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -2402,13 +2425,17 @@ mod tests {
         );
 
         {
-            let mailbox_commands = parent_mailbox_delivery.commands.lock().unwrap();
-            assert_eq!(mailbox_commands.len(), 1);
-            assert_eq!(mailbox_commands[0].gate_id, gate_id);
-            assert_eq!(mailbox_commands[0].request_id, "dispatch-terminal");
-            assert_eq!(mailbox_commands[0].parent_agent_id, parent_agent_id);
-            assert_eq!(mailbox_commands[0].child_agent_id, child_agent_id);
-            assert!(mailbox_commands[0].input_text.contains("- status: failed"));
+            let input_handoff_commands = parent_input_handoff_delivery.commands.lock().unwrap();
+            assert_eq!(input_handoff_commands.len(), 1);
+            assert_eq!(input_handoff_commands[0].gate_id, gate_id);
+            assert_eq!(input_handoff_commands[0].request_id, "dispatch-terminal");
+            assert_eq!(input_handoff_commands[0].parent_agent_id, parent_agent_id);
+            assert_eq!(input_handoff_commands[0].child_agent_id, child_agent_id);
+            assert!(
+                input_handoff_commands[0]
+                    .input_text
+                    .contains("- status: failed")
+            );
         }
 
         let replay = service
@@ -2420,7 +2447,10 @@ mod tests {
             replay.outcomes[0].kind,
             agentdash_application_workflow::gate::GateProducerTerminalConvergenceOutcomeKind::AlreadyResolvedEnsuredDelivery
         );
-        assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
+        assert_eq!(
+            parent_input_handoff_delivery.commands.lock().unwrap().len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -2457,13 +2487,14 @@ mod tests {
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -2508,17 +2539,17 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("parent_mailbox_delivery"))
+                .and_then(|payload| payload.get("parent_input_handoff_delivery"))
                 .is_none()
         );
         assert_eq!(
             result
-                .parent_mailbox_delivery
+                .parent_input_handoff_delivery
                 .command_receipt_client_command_id,
             "companion-parent-request:test"
         );
 
-        let parent_request_commands = parent_mailbox_delivery
+        let parent_request_commands = parent_input_handoff_delivery
             .parent_request_commands
             .lock()
             .unwrap();
@@ -2540,7 +2571,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn open_parent_request_keeps_mailbox_failure_out_of_gate_payload() {
+    async fn open_parent_request_keeps_input_handoff_failure_out_of_gate_payload() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2570,14 +2601,15 @@ mod tests {
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        parent_mailbox_delivery.fail_next("parent mailbox unavailable");
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        parent_input_handoff_delivery.fail_next("parent Agent input handoff unavailable");
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -2589,7 +2621,7 @@ mod tests {
                 payload: serde_json::json!({ "message": "please review" }),
             })
             .await
-            .expect_err("mailbox failure should fail command");
+            .expect_err("input_handoff failure should fail command");
 
         assert!(matches!(error, ApplicationError::Internal(_)));
         assert!(delivery.event_notifications.lock().unwrap().is_empty());
@@ -2600,11 +2632,11 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("parent_mailbox_delivery"))
+                .and_then(|payload| payload.get("parent_input_handoff_delivery"))
                 .is_none()
         );
         assert_eq!(
-            parent_mailbox_delivery
+            parent_input_handoff_delivery
                 .parent_request_commands
                 .lock()
                 .unwrap()
@@ -2614,7 +2646,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_child_result_keeps_mailbox_failure_out_of_gate_payload() {
+    async fn complete_child_result_keeps_input_handoff_failure_out_of_gate_payload() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2659,14 +2691,15 @@ mod tests {
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        parent_mailbox_delivery.fail_next("mailbox unavailable");
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        parent_input_handoff_delivery.fail_next("Agent input handoff unavailable");
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -2682,7 +2715,7 @@ mod tests {
         let error = service
             .complete_child_result_to_parent(command.clone())
             .await
-            .expect_err("mailbox failure should be returned");
+            .expect_err("input_handoff failure should be returned");
 
         assert!(matches!(error, ApplicationError::Internal(_)));
         let stored = gate_repo
@@ -2695,12 +2728,15 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("parent_mailbox_delivery"))
+                .and_then(|payload| payload.get("parent_input_handoff_delivery"))
                 .and_then(|delivery| delivery.get("status"))
                 .and_then(serde_json::Value::as_str),
             None
         );
-        assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
+        assert_eq!(
+            parent_input_handoff_delivery.commands.lock().unwrap().len(),
+            1
+        );
         assert!(delivery.event_notifications.lock().unwrap().is_empty());
 
         let retry = service
@@ -2708,12 +2744,19 @@ mod tests {
             .await
             .expect("resolved gate delivery retry")
             .expect("resolved gate should retry delivery");
-        assert!(!retry.parent_mailbox_delivery.command_receipt_duplicate);
-        assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 2);
+        assert!(
+            !retry
+                .parent_input_handoff_delivery
+                .command_receipt_duplicate
+        );
+        assert_eq!(
+            parent_input_handoff_delivery.commands.lock().unwrap().len(),
+            2
+        );
     }
 
     #[tokio::test]
-    async fn duplicate_child_result_does_not_deliver_second_parent_mailbox_message() {
+    async fn duplicate_child_result_does_not_deliver_second_parent_input_handoff_message() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2753,13 +2796,14 @@ mod tests {
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo,
             frame_repo,
             lineage_repo,
             delivery,
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -2785,10 +2829,13 @@ mod tests {
                 .await
                 .expect("duplicate completion")
                 .expect("resolved gate should ensure delivery")
-                .parent_mailbox_delivery
+                .parent_input_handoff_delivery
                 .command_receipt_duplicate
         );
-        assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
+        assert_eq!(
+            parent_input_handoff_delivery.commands.lock().unwrap().len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -2913,13 +2960,14 @@ mod tests {
         frame_repo.seed_runtime_threads(child_frame_id, ["child-session"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -2946,7 +2994,7 @@ mod tests {
         assert_eq!(result.child_runtime_thread_id, "child-session");
         assert_eq!(
             result
-                .child_mailbox_delivery
+                .child_input_handoff_delivery
                 .command_receipt_client_command_id,
             "companion-parent-response:test"
         );
@@ -2974,7 +3022,7 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("child_mailbox_delivery"))
+                .and_then(|payload| payload.get("child_input_handoff_delivery"))
                 .is_none()
         );
         assert_eq!(
@@ -2987,7 +3035,7 @@ mod tests {
         );
 
         {
-            let parent_response_commands = parent_mailbox_delivery
+            let parent_response_commands = parent_input_handoff_delivery
                 .parent_response_commands
                 .lock()
                 .unwrap();
@@ -3018,7 +3066,7 @@ mod tests {
             .expect_err("closed gate should reject duplicate response");
         assert!(matches!(duplicate_error, ApplicationError::Conflict(_)));
         assert_eq!(
-            parent_mailbox_delivery
+            parent_input_handoff_delivery
                 .parent_response_commands
                 .lock()
                 .unwrap()
@@ -3028,7 +3076,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_parent_request_keeps_child_mailbox_failure_out_of_gate_payload() {
+    async fn resolve_parent_request_keeps_child_input_handoff_failure_out_of_gate_payload() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -3066,14 +3114,15 @@ mod tests {
         frame_repo.seed_runtime_threads(child_frame.id, ["child-session"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        parent_mailbox_delivery.fail_next("child mailbox unavailable");
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        parent_input_handoff_delivery.fail_next("child Agent input handoff unavailable");
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -3088,7 +3137,7 @@ mod tests {
                 }),
             })
             .await
-            .expect_err("mailbox failure should fail command");
+            .expect_err("input_handoff failure should fail command");
 
         assert!(matches!(error, ApplicationError::Internal(_)));
         assert!(delivery.event_notifications.lock().unwrap().is_empty());
@@ -3102,11 +3151,11 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("child_mailbox_delivery"))
+                .and_then(|payload| payload.get("child_input_handoff_delivery"))
                 .is_none()
         );
         assert_eq!(
-            parent_mailbox_delivery
+            parent_input_handoff_delivery
                 .parent_response_commands
                 .lock()
                 .unwrap()

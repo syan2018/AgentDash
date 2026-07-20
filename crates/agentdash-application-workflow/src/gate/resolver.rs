@@ -543,7 +543,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn respond_human_resolves_gate_without_mailbox_payload_blob() {
+    async fn respond_human_resolves_gate_without_input_handoff_payload_blob() {
         let repo = Arc::new(FixtureGateRepo::default());
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
@@ -585,7 +585,7 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("human_mailbox_delivery"))
+                .and_then(|payload| payload.get("human_input_handoff_delivery"))
                 .is_none()
         );
     }
@@ -630,7 +630,7 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("human_mailbox_delivery")),
+                .and_then(|payload| payload.get("human_input_handoff_delivery")),
             None
         );
     }
@@ -666,7 +666,7 @@ mod tests {
         assert_eq!(outcome.delivery_intents.len(), 1);
         let payload = outcome.gate.payload_json.as_ref().expect("payload");
         assert_eq!(payload["status"], json!("pending"));
-        assert!(payload.get("parent_mailbox_delivery").is_none());
+        assert!(payload.get("parent_input_handoff_delivery").is_none());
     }
 
     #[tokio::test]

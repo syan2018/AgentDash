@@ -29,8 +29,8 @@ pub struct ProducerLastMessageEvidence {
 use crate::WorkflowApplicationError;
 
 use super::{
-    GateDeliveryIntent, GateMailboxWakeIntent, LifecycleGateResolver, ResolveGatePayloadCommand,
-    child_evidence::child_evidence_result_refs,
+    GateDeliveryIntent, GateInputHandoffWakeIntent, LifecycleGateResolver,
+    ResolveGatePayloadCommand, child_evidence::child_evidence_result_refs,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,7 +136,7 @@ impl GateProducerTerminalConvergenceService {
             .and_then(Value::as_str)
             .map(str::to_string);
         let intent = self
-            .mailbox_wake_intent(&gate, &envelope, event, result_payload.clone())
+            .input_handoff_wake_intent(&gate, &envelope, event, result_payload.clone())
             .await?;
         match LifecycleGateResolver::new(self.gate_repo.clone())
             .resolve_gate_payload(ResolveGatePayloadCommand {
@@ -173,7 +173,7 @@ impl GateProducerTerminalConvergenceService {
             gate_id: gate.id,
             kind: GateProducerTerminalConvergenceOutcomeKind::Resolved,
             result_status,
-            delivery_intents: vec![GateDeliveryIntent::MailboxWake(intent)],
+            delivery_intents: vec![GateDeliveryIntent::InputHandoffWake(intent)],
         })
     }
 
@@ -189,23 +189,23 @@ impl GateProducerTerminalConvergenceService {
             .and_then(Value::as_str)
             .map(str::to_string);
         let intent = self
-            .mailbox_wake_intent(&gate, &envelope, event, payload)
+            .input_handoff_wake_intent(&gate, &envelope, event, payload)
             .await?;
         Ok(GateProducerTerminalConvergenceOutcome {
             gate_id: gate.id,
             kind: GateProducerTerminalConvergenceOutcomeKind::AlreadyResolvedEnsuredDelivery,
             result_status,
-            delivery_intents: vec![GateDeliveryIntent::MailboxWake(intent)],
+            delivery_intents: vec![GateDeliveryIntent::InputHandoffWake(intent)],
         })
     }
 
-    async fn mailbox_wake_intent(
+    async fn input_handoff_wake_intent(
         &self,
         gate: &LifecycleGate,
         envelope: &GateWaitPolicyEnvelope,
         event: &GateProducerTerminalEvent,
         payload: Value,
-    ) -> Result<GateMailboxWakeIntent, WorkflowApplicationError> {
+    ) -> Result<GateInputHandoffWakeIntent, WorkflowApplicationError> {
         let WaitProducerRef::AgentRunDelivery { agent_id, .. } = &event.producer;
         let wake_target = &envelope.wait_policy.wake_target;
         let target_runtime_thread_id = self
@@ -219,7 +219,7 @@ impl GateProducerTerminalConvergenceService {
                     gate.id
                 ))
             })?;
-        Ok(GateMailboxWakeIntent {
+        Ok(GateInputHandoffWakeIntent {
             gate_id: gate.id,
             namespace: wake_target.namespace.clone(),
             request_id: payload_request_id(gate, envelope, &payload),
@@ -657,7 +657,7 @@ mod tests {
         assert!(payload.get("wait_policy").is_some());
         assert!(matches!(
             &first.outcomes[0].delivery_intents[0],
-            GateDeliveryIntent::MailboxWake(intent) if intent.namespace == "companion"
+            GateDeliveryIntent::InputHandoffWake(intent) if intent.namespace == "companion"
         ));
 
         let replay = service

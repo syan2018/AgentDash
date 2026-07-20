@@ -58,12 +58,12 @@ use super::workflow_script_preflight::{
     CompanionWorkflowScriptPreflightPort, CompanionWorkflowScriptPreflightRequest,
 };
 use super::{
-    CompanionGateControlRepos, CompanionGateControlService, CompanionHumanResponseMailboxDelivery,
-    CompanionHumanResponseMailboxDeliveryCommand, CompanionParentMailboxDelivery,
-    CompanionParentMailboxDeliveryCommand, CompanionParentMailboxDeliveryResult,
-    CompanionParentRequestMailboxDeliveryCommand, CompanionParentResponseMailboxDeliveryCommand,
-    CompleteCompanionChildResultCommand, OpenCompanionParentRequestCommand,
-    ResolveCompanionParentRequestCommand,
+    CompanionGateControlRepos, CompanionGateControlService,
+    CompanionHumanResponseInputHandoffDelivery, CompanionHumanResponseInputHandoffDeliveryCommand,
+    CompanionParentInputHandoffDelivery, CompanionParentInputHandoffDeliveryCommand,
+    CompanionParentInputHandoffDeliveryResult, CompanionParentRequestInputHandoffDeliveryCommand,
+    CompanionParentResponseInputHandoffDeliveryCommand, CompleteCompanionChildResultCommand,
+    OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
 };
 use crate::channel::{
     ChannelService, LifecycleRunChannelOwnerStore, UnsupportedChannelBindingResolver,
@@ -165,12 +165,12 @@ impl<'a> CompanionGateControlFactory<'a> {
             runtime_binding_repo: runtime_thread_services.product_runtime_bindings.clone(),
             lineage_repo: self.repos.agent_lineage_repo.clone(),
         })
-        .with_parent_mailbox_delivery(Arc::new(AgentRunCompanionMailboxDelivery::new(
+        .with_parent_input_handoff_delivery(Arc::new(AgentRunCompanionInputHandoffDelivery::new(
             self.repos.clone(),
             runtime_thread_services.clone(),
         )))
-        .with_human_response_mailbox_delivery(Arc::new(
-            AgentRunCompanionMailboxDelivery::new(
+        .with_human_response_input_handoff_delivery(Arc::new(
+            AgentRunCompanionInputHandoffDelivery::new(
                 self.repos.clone(),
                 runtime_thread_services.clone(),
             ),
@@ -179,12 +179,12 @@ impl<'a> CompanionGateControlFactory<'a> {
 }
 
 #[derive(Clone)]
-pub struct AgentRunCompanionMailboxDelivery {
+pub struct AgentRunCompanionInputHandoffDelivery {
     repos: crate::repository_set::RepositorySet,
     product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
 }
 
-impl AgentRunCompanionMailboxDelivery {
+impl AgentRunCompanionInputHandoffDelivery {
     pub fn new(
         repos: crate::repository_set::RepositorySet,
         runtime_thread_services: RuntimeThreadToolServices,
@@ -609,7 +609,7 @@ fn companion_parent_request_agent_tool_result(
                     "uri": child_messages_uri(opened.child_agent_id),
                 },
             },
-            "mailbox": companion_parent_mailbox_delivery_details(&opened.parent_mailbox_delivery),
+            "input_handoff": companion_parent_input_handoff_delivery_details(&opened.parent_input_handoff_delivery),
         })),
     }
 }
@@ -679,8 +679,8 @@ fn companion_human_wait_agent_tool_result(
     }
 }
 
-fn companion_parent_mailbox_delivery_details(
-    delivery: &CompanionParentMailboxDeliveryResult,
+fn companion_parent_input_handoff_delivery_details(
+    delivery: &CompanionParentInputHandoffDeliveryResult,
 ) -> serde_json::Value {
     serde_json::json!({
         "input_handoff_id": delivery.input_handoff_id.map(|id| id.to_string()),
@@ -693,11 +693,11 @@ fn companion_parent_mailbox_delivery_details(
 }
 
 #[async_trait]
-impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
+impl CompanionParentInputHandoffDelivery for AgentRunCompanionInputHandoffDelivery {
     async fn deliver_child_result_to_parent(
         &self,
-        command: CompanionParentMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+        command: CompanionParentInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, crate::ApplicationError> {
         let client_command_id = format!("companion-result:{}", command.gate_id);
         let marker_claim_token = Uuid::new_v4();
         let marker_claim = self
@@ -748,10 +748,10 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "resolved_turn_id": command.resolved_turn_id.clone(),
             }),
         );
-        let mailbox_result = deliver_companion_mailbox_message(
+        let input_handoff_result = deliver_companion_input_handoff_message(
             &self.repos,
             self.product_input_delivery.as_ref(),
-            CompanionMailboxDeliveryInput {
+            CompanionInputHandoffDeliveryInput {
                 channel_id,
                 run_id: command.run_id,
                 agent_id: command.parent_agent_id,
@@ -767,7 +767,7 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
         )
         .await?;
         let dispatched_to_parent = matches!(
-            mailbox_result.outcome.as_str(),
+            input_handoff_result.outcome.as_str(),
             "launched" | "steered" | "resumed"
         );
         self.repos
@@ -776,18 +776,18 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 gate_id: command.gate_id,
                 result_attempt: GATE_RESULT_DELIVERY_ATTEMPT,
                 claim_token: marker_claim_token,
-                input_handoff_id: mailbox_result.input_handoff_id,
-                accepted_operation_id: mailbox_result.accepted_operation_id.clone(),
+                input_handoff_id: input_handoff_result.input_handoff_id,
+                accepted_operation_id: input_handoff_result.accepted_operation_id.clone(),
                 dispatched_to_parent,
             })
             .await?;
-        Ok(mailbox_result)
+        Ok(input_handoff_result)
     }
 
     async fn deliver_parent_request_to_parent(
         &self,
-        command: CompanionParentRequestMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+        command: CompanionParentRequestInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, crate::ApplicationError> {
         let channel_id = ensure_companion_agent_channel(
             &self.repos,
             command.run_id,
@@ -813,10 +813,10 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "wait": command.wait,
             }),
         );
-        deliver_companion_mailbox_message(
+        deliver_companion_input_handoff_message(
             &self.repos,
             self.product_input_delivery.as_ref(),
-            CompanionMailboxDeliveryInput {
+            CompanionInputHandoffDeliveryInput {
                 channel_id,
                 run_id: command.run_id,
                 agent_id: command.parent_agent_id,
@@ -835,8 +835,8 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
 
     async fn deliver_parent_response_to_child(
         &self,
-        command: CompanionParentResponseMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+        command: CompanionParentResponseInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, crate::ApplicationError> {
         let channel_id = ensure_companion_agent_channel(
             &self.repos,
             command.run_id,
@@ -861,10 +861,10 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "resolved_turn_id": command.resolved_turn_id.clone(),
             }),
         );
-        deliver_companion_mailbox_message(
+        deliver_companion_input_handoff_message(
             &self.repos,
             self.product_input_delivery.as_ref(),
-            CompanionMailboxDeliveryInput {
+            CompanionInputHandoffDeliveryInput {
                 channel_id,
                 run_id: command.run_id,
                 agent_id: command.child_agent_id,
@@ -883,11 +883,11 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
 }
 
 #[async_trait]
-impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery {
+impl CompanionHumanResponseInputHandoffDelivery for AgentRunCompanionInputHandoffDelivery {
     async fn deliver_human_response_to_requesting_agent(
         &self,
-        command: CompanionHumanResponseMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+        command: CompanionHumanResponseInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, crate::ApplicationError> {
         let channel_id = ensure_companion_human_channel(
             &self.repos,
             command.run_id,
@@ -911,10 +911,10 @@ impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery 
                 "request_type": command.request_type.clone(),
             }),
         );
-        deliver_companion_mailbox_message(
+        deliver_companion_input_handoff_message(
             &self.repos,
             self.product_input_delivery.as_ref(),
-            CompanionMailboxDeliveryInput {
+            CompanionInputHandoffDeliveryInput {
                 channel_id,
                 run_id: command.run_id,
                 agent_id: command.agent_id,
@@ -931,7 +931,7 @@ impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery 
     }
 }
 
-struct CompanionMailboxDeliveryInput {
+struct CompanionInputHandoffDeliveryInput {
     channel_id: Uuid,
     run_id: Uuid,
     agent_id: Uuid,
@@ -942,11 +942,11 @@ struct CompanionMailboxDeliveryInput {
     client_command_id: String,
 }
 
-async fn deliver_companion_mailbox_message(
+async fn deliver_companion_input_handoff_message(
     repos: &crate::repository_set::RepositorySet,
     product_input_delivery: &dyn AgentRunProductInputDeliveryPort,
-    input: CompanionMailboxDeliveryInput,
-) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+    input: CompanionInputHandoffDeliveryInput,
+) -> Result<CompanionParentInputHandoffDeliveryResult, crate::ApplicationError> {
     let channel_intent = companion_channel_delivery_intent(
         input.channel_id,
         input.run_id,
@@ -994,7 +994,7 @@ async fn deliver_companion_mailbox_message(
         )
         .await?;
 
-    Ok(CompanionParentMailboxDeliveryResult {
+    Ok(CompanionParentInputHandoffDeliveryResult {
         input_handoff_id,
         accepted_operation_id: Some(delivery.operation_receipt.operation_id.to_string()),
         command_receipt_client_command_id: client_command_id,
@@ -1008,8 +1008,8 @@ fn marker_delivery_replay_result(
     marker: &GateResultDeliveryMarker,
     client_command_id: String,
     duplicate: bool,
-) -> CompanionParentMailboxDeliveryResult {
-    CompanionParentMailboxDeliveryResult {
+) -> CompanionParentInputHandoffDeliveryResult {
+    CompanionParentInputHandoffDeliveryResult {
         input_handoff_id: marker.input_handoff_id,
         accepted_operation_id: marker.accepted_operation_id.clone(),
         command_receipt_client_command_id: client_command_id,
@@ -1723,9 +1723,9 @@ impl CompanionRequestTool {
         Ok(companion_parent_request_agent_tool_result(&opened, wait))
     }
 
-    /// target=human：请求作为前端可回应事件展示；用户回应后通过 mailbox 投递给 requesting AgentRun。
+    /// target=human：请求作为前端可回应事件展示；用户回应后通过 input_handoff 投递给 requesting AgentRun。
     /// wait=true → 当前工具轮询 durable LifecycleGate payload。
-    /// wait=false → agent 继续，后续回应进入 requesting AgentRun mailbox。
+    /// wait=false → agent 继续，后续回应进入 requesting AgentRun input_handoff。
     async fn execute_human_request(
         &self,
         wait: bool,
@@ -1859,7 +1859,7 @@ impl CompanionRequestTool {
         } else {
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(format!(
-                    "已向用户发送请求。\n- request_id: {request_id}\n- 用户回应后会进入当前 AgentRun mailbox。"
+                    "已向用户发送请求。\n- request_id: {request_id}\n- 用户回应后会进入当前 AgentRun input_handoff。"
                 ))],
                 is_error: false,
                 details: Some(serde_json::json!({
@@ -2396,12 +2396,12 @@ impl CompanionRespondTool {
                     },
                 },
                 "input_handoff": {
-                    "handoff_id": result.child_mailbox_delivery.input_handoff_id.map(|id| id.to_string()),
-                    "operation_id": result.child_mailbox_delivery.accepted_operation_id,
-                    "command_receipt_client_command_id": result.child_mailbox_delivery.command_receipt_client_command_id,
-                    "command_receipt_status": result.child_mailbox_delivery.command_receipt_status,
-                    "command_receipt_duplicate": result.child_mailbox_delivery.command_receipt_duplicate,
-                    "outcome": result.child_mailbox_delivery.outcome,
+                    "handoff_id": result.child_input_handoff_delivery.input_handoff_id.map(|id| id.to_string()),
+                    "operation_id": result.child_input_handoff_delivery.accepted_operation_id,
+                    "command_receipt_client_command_id": result.child_input_handoff_delivery.command_receipt_client_command_id,
+                    "command_receipt_status": result.child_input_handoff_delivery.command_receipt_status,
+                    "command_receipt_duplicate": result.child_input_handoff_delivery.command_receipt_duplicate,
+                    "outcome": result.child_input_handoff_delivery.outcome,
                 },
                 "payload": result.payload,
             })),
@@ -2529,12 +2529,12 @@ impl CompanionRespondTool {
                     },
                 },
                 "input_handoff": {
-                    "handoff_id": result.parent_mailbox_delivery.input_handoff_id.map(|id| id.to_string()),
-                    "operation_id": result.parent_mailbox_delivery.accepted_operation_id,
-                    "command_receipt_client_command_id": result.parent_mailbox_delivery.command_receipt_client_command_id,
-                    "command_receipt_status": result.parent_mailbox_delivery.command_receipt_status,
-                    "command_receipt_duplicate": result.parent_mailbox_delivery.command_receipt_duplicate,
-                    "outcome": result.parent_mailbox_delivery.outcome,
+                    "handoff_id": result.parent_input_handoff_delivery.input_handoff_id.map(|id| id.to_string()),
+                    "operation_id": result.parent_input_handoff_delivery.accepted_operation_id,
+                    "command_receipt_client_command_id": result.parent_input_handoff_delivery.command_receipt_client_command_id,
+                    "command_receipt_status": result.parent_input_handoff_delivery.command_receipt_status,
+                    "command_receipt_duplicate": result.parent_input_handoff_delivery.command_receipt_duplicate,
+                    "outcome": result.parent_input_handoff_delivery.outcome,
                 },
                 "payload": result.payload,
             })),
@@ -3823,8 +3823,8 @@ mod companion_tests {
         );
     }
 
-    fn mailbox_delivery_fixture() -> super::CompanionParentMailboxDeliveryResult {
-        super::CompanionParentMailboxDeliveryResult {
+    fn input_handoff_delivery_fixture() -> super::CompanionParentInputHandoffDeliveryResult {
+        super::CompanionParentInputHandoffDeliveryResult {
             input_handoff_id: Some(
                 Uuid::parse_str("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee").expect("handoff uuid"),
             ),
@@ -3857,7 +3857,7 @@ mod companion_tests {
             child_frame_id,
             child_runtime_thread_id: "child-session".to_string(),
             companion_label: "parent".to_string(),
-            parent_mailbox_delivery: mailbox_delivery_fixture(),
+            parent_input_handoff_delivery: input_handoff_delivery_fixture(),
             payload: serde_json::json!({ "status": "pending" }),
         };
 
@@ -4055,7 +4055,7 @@ mod companion_tests {
         gate.payload_json = Some(serde_json::json!({
             "status": "completed",
             "summary": "done",
-            "artifact_refs": ["mailbox:result"]
+            "artifact_refs": ["input_handoff:result"]
         }));
         gate.resolve("child-agent");
         repo.create(&gate).await.expect("seed gate");
@@ -4076,7 +4076,7 @@ mod companion_tests {
                 assert_eq!(payload["summary"], serde_json::json!("done"));
                 assert_eq!(
                     payload["artifact_refs"],
-                    serde_json::json!(["mailbox:result"])
+                    serde_json::json!(["input_handoff:result"])
                 );
             }
             CompanionGateWaitOutcome::TimedOut => panic!("resolved gate should not time out"),

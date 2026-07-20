@@ -891,32 +891,10 @@ mod tests {
         (run_id, agent_id)
     }
 
-    async fn seed_runtime_operation(pool: &sqlx::PgPool) -> (String, String) {
+    fn runtime_operation_coordinates() -> (String, String) {
         let suffix = Uuid::new_v4().simple().to_string();
-        let binding_id = format!("binding-submission-{suffix}");
-        let source_thread_id = format!("source-submission-{suffix}");
         let thread_id = format!("thread-submission-{suffix}");
         let operation_id = format!("operation-submission-{suffix}");
-        let profile_digest = format!("profile-submission-{suffix}");
-        sqlx::query(
-            "INSERT INTO agent_runtime_binding (id,driver_generation,profile_digest) VALUES ($1,1,$2)",
-        )
-        .bind(&binding_id)
-        .bind(&profile_digest)
-        .execute(pool)
-        .await
-        .expect("seed runtime binding");
-        sqlx::query("INSERT INTO agent_runtime_source_coordinate (binding_id,source_thread_id,thread_id) VALUES ($1,$2,$3)")
-            .bind(&binding_id).bind(&source_thread_id).bind(&thread_id).execute(pool).await
-            .expect("seed runtime coordinate");
-        sqlx::query("INSERT INTO agent_runtime_thread (id,revision,next_event_sequence,next_operation_sequence,status,binding_id,driver_generation,source_thread_id,profile_digest,context_revision,settings_revision,tool_set_revision,projection) VALUES ($1,0,0,2,'active',$2,1,$3,$4,0,0,0,$5)")
-            .bind(&thread_id).bind(&binding_id).bind(&source_thread_id).bind(&profile_digest)
-            .bind(json!({})).execute(pool).await.expect("seed runtime thread");
-        sqlx::query("INSERT INTO agent_runtime_operation (id,thread_id,operation_sequence,idempotency_key,accepted_revision,status,actor,command,terminal,record) VALUES ($1,$2,1,$3,0,'active',$4,$5,NULL,$6)")
-            .bind(&operation_id).bind(&thread_id).bind(format!("key-submission-{suffix}"))
-            .bind(json!({"kind":"system","component":"message-submission-test"}))
-            .bind(json!({"kind":"context_compact","thread_id":thread_id,"compaction_id":format!("compact-{suffix}")}))
-            .bind(json!({})).execute(pool).await.expect("seed runtime operation");
         (thread_id, operation_id)
     }
 
@@ -1142,7 +1120,7 @@ mod tests {
         };
         let (claimed_id, claim_token) = claim(&mailbox, run_id, agent_id).await;
         assert_eq!(claimed_id, accepted_message_id);
-        let (thread_id, operation_id) = seed_runtime_operation(&pool).await;
+        let (thread_id, operation_id) = runtime_operation_coordinates();
         let accepted_result = store
             .settle_delivery_accepted(AgentRunMailboxAcceptedSettlement {
                 mailbox_message_id: accepted_message_id,
@@ -1244,7 +1222,7 @@ mod tests {
         };
         let (claimed_id, claim_token) = claim(&mailbox, run_id, agent_id).await;
         assert_eq!(claimed_id, race_message_id);
-        let (thread_id, operation_id) = seed_runtime_operation(&pool).await;
+        let (thread_id, operation_id) = runtime_operation_coordinates();
         let complete_store = store.clone();
         let settle_store = store.clone();
         let race_result = tokio::time::timeout(Duration::from_secs(5), async move {

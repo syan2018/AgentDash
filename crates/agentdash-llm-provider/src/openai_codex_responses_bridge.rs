@@ -352,6 +352,7 @@ mod tests {
                 system_prompt: Some("system".to_string()),
                 messages: vec![AgentMessage::user("hello")],
                 tools: vec![],
+                thinking_level: None,
             },
         );
         assert_eq!(body["instructions"], "system");
@@ -379,6 +380,7 @@ mod tests {
                         "additionalProperties": false
                     }),
                 }],
+                thinking_level: None,
             },
         );
 

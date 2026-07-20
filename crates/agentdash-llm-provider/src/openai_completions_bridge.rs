@@ -161,8 +161,23 @@ fn build_request_body(model_id: &str, request: &BridgeRequest) -> serde_json::Va
             .collect();
         body["tools"] = serde_json::Value::Array(tools);
     }
+    if let Some(effort) = openai_reasoning_effort(request.thinking_level) {
+        body["reasoning_effort"] = serde_json::json!(effort);
+    }
 
     body
+}
+
+fn openai_reasoning_effort(level: Option<agentdash_agent::ThinkingLevel>) -> Option<&'static str> {
+    match level {
+        None => None,
+        Some(agentdash_agent::ThinkingLevel::Off) => Some("none"),
+        Some(agentdash_agent::ThinkingLevel::Minimal) => Some("minimal"),
+        Some(agentdash_agent::ThinkingLevel::Low) => Some("low"),
+        Some(agentdash_agent::ThinkingLevel::Medium) => Some("medium"),
+        Some(agentdash_agent::ThinkingLevel::High) => Some("high"),
+        Some(agentdash_agent::ThinkingLevel::Xhigh) => Some("xhigh"),
+    }
 }
 
 fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
@@ -454,6 +469,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chat_completions_body_maps_profile_thinking_level() {
+        let body = build_request_body(
+            "gpt-5.5",
+            &BridgeRequest {
+                system_prompt: None,
+                messages: vec![AgentMessage::user("hello")],
+                tools: vec![],
+                thinking_level: Some(agentdash_agent::ThinkingLevel::Medium),
+            },
+        );
+
+        assert_eq!(body["reasoning_effort"], "medium");
+    }
+
+    #[test]
     fn chat_completions_input_keeps_user_images() {
         let body = build_request_body(
             "gpt-5.5",
@@ -470,6 +500,7 @@ mod tests {
                     timestamp: None,
                 }],
                 tools: vec![],
+                thinking_level: None,
             },
         );
 
@@ -505,6 +536,7 @@ mod tests {
                     false,
                 )],
                 tools: vec![],
+                thinking_level: None,
             },
         );
 

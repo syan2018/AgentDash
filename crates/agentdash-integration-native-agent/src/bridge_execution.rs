@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use agentdash_agent::{
     AgentMessage, BridgeError, BridgeRequest, ContentPart, LlmBridge, ProviderErrorKind,
-    StopReason, StreamChunk, ToolDefinition,
+    StopReason, StreamChunk, ThinkingLevel, ToolDefinition,
     dash::{
         CompactionId, ContextRevision, DashCompactionRequest, DashCompactionResult, DashCompactor,
         DashCoreError, DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies,
@@ -21,11 +21,15 @@ const DEFAULT_RETAINED_CONVERSATION_MESSAGES: usize = 8;
 /// Core provider port.
 pub struct BridgeDashProvider {
     bridge: Arc<dyn LlmBridge>,
+    thinking_level: Option<ThinkingLevel>,
 }
 
 impl BridgeDashProvider {
-    pub fn new(bridge: Arc<dyn LlmBridge>) -> Self {
-        Self { bridge }
+    pub fn new(bridge: Arc<dyn LlmBridge>, thinking_level: Option<ThinkingLevel>) -> Self {
+        Self {
+            bridge,
+            thinking_level,
+        }
     }
 }
 
@@ -35,7 +39,7 @@ impl DashProvider for BridgeDashProvider {
         &self,
         request: DashProviderRequest,
     ) -> Result<DashProviderEventStream, DashCoreError> {
-        let request = bridge_request(request)?;
+        let request = bridge_request(request, self.thinking_level)?;
         let stream = self.bridge.stream_complete(request).await;
         Ok(Box::pin(stream.filter_map(|chunk| async move {
             match chunk {
@@ -80,13 +84,15 @@ impl DashProvider for BridgeDashProvider {
 /// bounded recent tail identified by a durable history entry coordinate.
 pub struct BridgeDashCompactor {
     bridge: Arc<dyn LlmBridge>,
+    thinking_level: Option<ThinkingLevel>,
     retained_conversation_messages: usize,
 }
 
 impl BridgeDashCompactor {
-    pub fn new(bridge: Arc<dyn LlmBridge>) -> Self {
+    pub fn new(bridge: Arc<dyn LlmBridge>, thinking_level: Option<ThinkingLevel>) -> Self {
         Self {
             bridge,
+            thinking_level,
             retained_conversation_messages: DEFAULT_RETAINED_CONVERSATION_MESSAGES,
         }
     }
@@ -143,6 +149,7 @@ impl DashCompactor for BridgeDashCompactor {
                 ),
                 messages: summary_messages,
                 tools: Vec::new(),
+                thinking_level: self.thinking_level,
             })
             .await
             .map_err(map_compaction_error)?;
@@ -166,12 +173,15 @@ impl DashCompactor for BridgeDashCompactor {
     }
 }
 
-pub fn bridge_dash_execution_dependencies(bridge: Arc<dyn LlmBridge>) -> DashExecutionDependencies {
+pub fn bridge_dash_execution_dependencies(
+    bridge: Arc<dyn LlmBridge>,
+    thinking_level: Option<ThinkingLevel>,
+) -> DashExecutionDependencies {
     DashExecutionDependencies {
-        provider: Arc::new(BridgeDashProvider::new(bridge.clone())),
+        provider: Arc::new(BridgeDashProvider::new(bridge.clone(), thinking_level)),
         tools: Arc::new(UnboundDashToolCallbacks),
         callbacks: Arc::new(NoopDashExecutionCallbacks),
-        compactor: Arc::new(BridgeDashCompactor::new(bridge)),
+        compactor: Arc::new(BridgeDashCompactor::new(bridge, thinking_level)),
     }
 }
 
@@ -279,7 +289,10 @@ fn effective_conversation(request: &DashCompactionRequest) -> EffectiveConversat
     }
 }
 
-fn bridge_request(request: DashProviderRequest) -> Result<BridgeRequest, DashCoreError> {
+fn bridge_request(
+    request: DashProviderRequest,
+    thinking_level: Option<ThinkingLevel>,
+) -> Result<BridgeRequest, DashCoreError> {
     let messages = request
         .messages
         .into_iter()
@@ -327,6 +340,7 @@ fn bridge_request(request: DashProviderRequest) -> Result<BridgeRequest, DashCor
                 parameters: tool.input_schema,
             })
             .collect(),
+        thinking_level,
     })
 }
 
@@ -432,6 +446,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn dash_profile_thinking_level_reaches_provider_request() {
+        let request = bridge_request(
+            DashProviderRequest {
+                system_prompt: "system".to_owned(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+                round: 1,
+            },
+            Some(ThinkingLevel::High),
+        )
+        .expect("Dash request should map to bridge request");
+
+        assert_eq!(request.thinking_level, Some(ThinkingLevel::High));
+    }
+
     #[tokio::test]
     async fn compactor_uses_durable_entry_as_retained_boundary() {
         let mut history =
@@ -466,7 +496,7 @@ mod tests {
                 })
                 .unwrap();
         }
-        let result = BridgeDashCompactor::new(Arc::new(FixtureBridge))
+        let result = BridgeDashCompactor::new(Arc::new(FixtureBridge), Some(ThinkingLevel::Off))
             .with_retained_conversation_messages(1)
             .compact(DashCompactionRequest {
                 compaction_id: CompactionId::new("compact"),

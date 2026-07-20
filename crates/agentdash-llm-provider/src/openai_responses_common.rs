@@ -90,6 +90,9 @@ pub(super) fn build_responses_request_body(
     if let Some(parallel_tool_calls) = options.parallel_tool_calls {
         body["parallel_tool_calls"] = serde_json::json!(parallel_tool_calls);
     }
+    if let Some(effort) = openai_reasoning_effort(request.thinking_level) {
+        body["reasoning"] = serde_json::json!({ "effort": effort });
+    }
 
     if !request.tools.is_empty() {
         let tools: Vec<serde_json::Value> = request
@@ -112,6 +115,18 @@ pub(super) fn build_responses_request_body(
     }
 
     body
+}
+
+fn openai_reasoning_effort(level: Option<agentdash_agent::ThinkingLevel>) -> Option<&'static str> {
+    match level {
+        None => None,
+        Some(agentdash_agent::ThinkingLevel::Off) => Some("none"),
+        Some(agentdash_agent::ThinkingLevel::Minimal) => Some("minimal"),
+        Some(agentdash_agent::ThinkingLevel::Low) => Some("low"),
+        Some(agentdash_agent::ThinkingLevel::Medium) => Some("medium"),
+        Some(agentdash_agent::ThinkingLevel::High) => Some("high"),
+        Some(agentdash_agent::ThinkingLevel::Xhigh) => Some("xhigh"),
+    }
 }
 
 fn convert_responses_input(
@@ -550,6 +565,7 @@ mod tests {
                 system_prompt: Some("system".to_string()),
                 messages: vec![AgentMessage::user("hello")],
                 tools: vec![],
+                thinking_level: None,
             },
             ResponsesRequestOptions::openai_api(),
         );
@@ -558,6 +574,22 @@ mod tests {
         assert_eq!(input.len(), 2);
         assert_eq!(input[0]["role"], "system");
         assert!(body.get("instructions").is_none());
+    }
+
+    #[test]
+    fn responses_body_maps_profile_thinking_level() {
+        let body = build_responses_request_body(
+            "gpt-5.5",
+            &BridgeRequest {
+                system_prompt: None,
+                messages: vec![AgentMessage::user("hello")],
+                tools: vec![],
+                thinking_level: Some(agentdash_agent::ThinkingLevel::High),
+            },
+            ResponsesRequestOptions::openai_api(),
+        );
+
+        assert_eq!(body["reasoning"]["effort"], "high");
     }
 
     #[test]
@@ -579,6 +611,7 @@ mod tests {
                         "additionalProperties": false
                     }),
                 }],
+                thinking_level: None,
             },
             ResponsesRequestOptions::codex(),
         );
@@ -611,6 +644,7 @@ mod tests {
                     timestamp: None,
                 }],
                 tools: vec![],
+                thinking_level: None,
             },
             ResponsesRequestOptions::openai_api(),
         );
@@ -642,6 +676,7 @@ mod tests {
                     false,
                 )],
                 tools: vec![],
+                thinking_level: None,
             },
             ResponsesRequestOptions::codex(),
         );

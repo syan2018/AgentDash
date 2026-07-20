@@ -506,7 +506,7 @@ fn effective_executor_snapshot(
 
 fn project_agent_summary(context: ResolvedProjectAgentContext) -> ProjectAgentRunStartAgentSummary {
     ProjectAgentRunStartAgentSummary {
-        key: context.project_agent.name,
+        key: context.key,
         display_name: context.display_name,
         description: context.description,
         preset_name: context.preset_name,

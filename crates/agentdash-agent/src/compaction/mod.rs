@@ -409,6 +409,7 @@ async fn generate_summary(
             previous_summary,
         ),
         tools: vec![], // 摘要生成不需要工具
+        thinking_level: None,
     };
 
     let mut stream = bridge.stream_complete(request).await;

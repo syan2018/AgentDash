@@ -68,14 +68,7 @@ impl ProductionCompleteAgentServiceSelector {
         profile: &ProductExecutionProfileRef,
         config: AgentConfig,
     ) -> Result<VerifiedCompleteAgentSelection, AgentRunProductRuntimeProvisioningError> {
-        if config
-            .thinking_level
-            .is_some_and(|level| level != ThinkingLevel::Off)
-        {
-            return Err(incompatible(
-                "Dash Complete Agent does not yet expose a verified thinking-level configuration boundary",
-            ));
-        }
+        let thinking_level = config.thinking_level;
         let provider_id = config
             .provider_id
             .as_deref()
@@ -112,11 +105,23 @@ impl ProductionCompleteAgentServiceSelector {
                 resolved.model.id
             )));
         }
+        if thinking_level.is_some_and(|level| level != ThinkingLevel::Off)
+            && !resolved.model.reasoning
+        {
+            return Err(incompatible(format!(
+                "Dash model `{model_id}` does not support thinking-level configuration"
+            )));
+        }
+        let thinking_level = if resolved.model.reasoning {
+            thinking_level.map(dash_thinking_level)
+        } else {
+            None
+        };
 
         let instance_id = dash_instance_id(profile)?;
         let contribution = native_complete_agent_registration(
             instance_id.clone(),
-            bridge_dash_execution_dependencies(resolved.bridge),
+            bridge_dash_execution_dependencies(resolved.bridge, thinking_level),
             self.complete_agent.host_callbacks(),
             self.dash_store.clone(),
         )
@@ -199,6 +204,17 @@ impl CompleteAgentServiceSelector for ProductionCompleteAgentServiceSelector {
             CODEX_PROFILE_KEY => self.select_codex(profile, &config).await,
             _ => self.exact.select(profile).await,
         }
+    }
+}
+
+fn dash_thinking_level(level: ThinkingLevel) -> agentdash_agent::ThinkingLevel {
+    match level {
+        ThinkingLevel::Off => agentdash_agent::ThinkingLevel::Off,
+        ThinkingLevel::Minimal => agentdash_agent::ThinkingLevel::Minimal,
+        ThinkingLevel::Low => agentdash_agent::ThinkingLevel::Low,
+        ThinkingLevel::Medium => agentdash_agent::ThinkingLevel::Medium,
+        ThinkingLevel::High => agentdash_agent::ThinkingLevel::High,
+        ThinkingLevel::Xhigh => agentdash_agent::ThinkingLevel::Xhigh,
     }
 }
 

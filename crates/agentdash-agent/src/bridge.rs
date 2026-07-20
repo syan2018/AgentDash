@@ -49,6 +49,7 @@ pub struct BridgeRequest {
     pub system_prompt: Option<String>,
     pub messages: Vec<AgentMessage>,
     pub tools: Vec<ToolDefinition>,
+    pub thinking_level: Option<crate::ThinkingLevel>,
 }
 
 #[derive(Debug, Clone)]

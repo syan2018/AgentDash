@@ -245,7 +245,7 @@ fn build_project_agent_summary(agent: &ProjectAgent) -> Result<ProjectAgentSumma
     let description = preset.description.clone().unwrap_or_default();
     let thinking_level = executor.thinking_level.map(thinking_level_response);
     Ok(ProjectAgentSummary {
-        key: agent.name.clone(),
+        key: agent.id.to_string(),
         display_name,
         description,
         executor: ProjectAgentExecutor {

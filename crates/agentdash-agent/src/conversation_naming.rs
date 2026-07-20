@@ -58,6 +58,7 @@ impl ConversationNamer {
                 system_prompt: Some(NAMING_SYSTEM_PROMPT.to_string()),
                 messages: input.messages,
                 tools: Vec::new(),
+                thinking_level: None,
             })
             .await?;
         normalize_conversation_name(

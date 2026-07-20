@@ -151,6 +151,7 @@ pub(super) async fn stream_assistant_response(
         system_prompt: Some(context.system_prompt.clone()),
         messages: messages_for_llm.clone(),
         tools: context.tools.clone(),
+        thinking_level: None,
     };
 
     // BeforeProviderRequest 观测 hook

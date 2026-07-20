@@ -148,8 +148,9 @@ impl AgentHostCallbackError {
 
 /// Reverse channel used by an Agent-native Tool or Hook to call the Runtime Host.
 ///
-/// Implementations must fence `binding_generation`, enforce the semantic deadline, and replay
-/// the previously persisted result for a duplicate `idempotency_key`.
+/// Implementations fence `binding_generation` and enforce the semantic deadline. The stable
+/// `idempotency_key` is passed to the actual Tool/Hook owner, which owns effect inspection and
+/// receipt replay when the handler can produce side effects.
 #[async_trait]
 pub trait AgentHostCallbacks: Send + Sync {
     async fn invoke_tool(

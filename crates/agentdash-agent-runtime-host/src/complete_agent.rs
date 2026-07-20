@@ -18,7 +18,8 @@ use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId, AgentChangePage,
     AgentChangesQuery, AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentCommandReceipt,
     AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkPoint,
-    AgentHostCallbackBinding, AgentIdempotencyKey, AgentPayloadDigest, AgentProfileDigest,
+    AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbackErrorCode,
+    AgentHostCallbackMeta, AgentIdempotencyKey, AgentPayloadDigest, AgentProfileDigest,
     AgentReadQuery, AgentReceiptState, AgentRuntimeOffer, AgentServiceDefinitionId,
     AgentServiceDescriptor, AgentServiceError, AgentServiceInstanceId, AgentSourceCoordinate,
     AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentSurfaceSnapshot,
@@ -968,6 +969,90 @@ impl CompleteAgentHost {
             .ok_or_else(|| CompleteAgentHostError::DispatchRejected {
                 reason: format!("Runtime target {runtime_thread_id} is not registered"),
             })
+    }
+
+    pub async fn resolve_callback_route(
+        &self,
+        meta: &AgentHostCallbackMeta,
+    ) -> Result<
+        (
+            CompleteAgentCallbackRoute,
+            CompleteAgentBinding,
+            CompleteAgentRuntimeTarget,
+        ),
+        AgentHostCallbackError,
+    > {
+        let snapshot = self.repository.load().await.map_err(|error| {
+            AgentHostCallbackError::new(
+                AgentHostCallbackErrorCode::Unavailable,
+                error.to_string(),
+                true,
+            )
+        })?;
+        let route = snapshot
+            .facts
+            .callback_routes
+            .get(&meta.route_id)
+            .cloned()
+            .ok_or_else(|| {
+                AgentHostCallbackError::new(
+                    AgentHostCallbackErrorCode::UnknownRoute,
+                    "callback route is not registered in this Host incarnation",
+                    false,
+                )
+            })?;
+        if snapshot
+            .facts
+            .revoked_callback_routes
+            .contains(&meta.route_id)
+            || route.generation != meta.binding_generation
+        {
+            return Err(AgentHostCallbackError::new(
+                AgentHostCallbackErrorCode::StaleBindingGeneration,
+                "callback binding generation is stale",
+                false,
+            ));
+        }
+        if route.source != meta.source {
+            return Err(AgentHostCallbackError::new(
+                AgentHostCallbackErrorCode::InvalidArgument,
+                "callback source does not match the registered route",
+                false,
+            ));
+        }
+        let binding = snapshot
+            .facts
+            .bindings
+            .get(&route.binding_id)
+            .cloned()
+            .ok_or_else(|| {
+                AgentHostCallbackError::new(
+                    AgentHostCallbackErrorCode::Internal,
+                    "callback route has no owning binding",
+                    false,
+                )
+            })?;
+        let mut targets = snapshot.facts.runtime_targets.values().filter(|target| {
+            target.callbacks.route_id == route.route_id
+                && target.callbacks.binding_generation == route.generation
+                && target.target == binding.target
+                && target.generation == binding.generation
+        });
+        let target = targets.next().cloned().ok_or_else(|| {
+            AgentHostCallbackError::new(
+                AgentHostCallbackErrorCode::Internal,
+                "callback route does not resolve one active Runtime target",
+                false,
+            )
+        })?;
+        if targets.next().is_some() {
+            return Err(AgentHostCallbackError::new(
+                AgentHostCallbackErrorCode::Internal,
+                "callback route resolves multiple Runtime targets",
+                false,
+            ));
+        }
+        Ok((route, binding, target))
     }
 
     /// Returns the concrete Agent authority created for a process-local Runtime route.

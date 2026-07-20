@@ -1010,6 +1010,11 @@ mod tests {
                     .iter_mut()
                     .find(|message| message.id == message_id)
                     .expect("target validated");
+                message.delivery = MailboxDelivery::SteerActiveTurn {
+                    stop_effect: agentdash_domain::agent_run_mailbox::SteeringStopEffect::None,
+                };
+                message.barrier = ConsumptionBarrier::AgentLoopTurnBoundary;
+                message.drain_mode = MailboxDrainMode::All;
                 message.priority = 100;
             }
             ProductMailboxCommand::Delete { message_id } => {
@@ -1337,6 +1342,15 @@ mod tests {
             .expect("promote");
         let promoted = facade.snapshot(target.clone()).await.expect("promoted");
         assert_eq!(promoted.messages[0].id, Uuid::from_u128(2));
+        assert!(matches!(
+            promoted.messages[0].delivery,
+            MailboxDelivery::SteerActiveTurn { .. }
+        ));
+        assert_eq!(
+            promoted.messages[0].barrier,
+            ConsumptionBarrier::AgentLoopTurnBoundary
+        );
+        assert_eq!(promoted.messages[0].drain_mode, MailboxDrainMode::All);
         assert_eq!(
             promote.receipt.commit.snapshot_digest,
             promoted.commit.snapshot_digest

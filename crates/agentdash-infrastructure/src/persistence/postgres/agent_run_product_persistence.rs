@@ -15,7 +15,10 @@ use agentdash_application_agentrun::agent_run::{
     canonical_product_mailbox_digest,
 };
 use agentdash_domain::{
-    agent_run_mailbox::{AgentRunMailboxMessage, AgentRunMailboxState},
+    agent_run_mailbox::{
+        AgentRunMailboxMessage, AgentRunMailboxState, ConsumptionBarrier, MailboxDelivery,
+        MailboxDrainMode,
+    },
     agent_run_target::AgentRunTarget,
 };
 use async_trait::async_trait;
@@ -1213,6 +1216,9 @@ async fn apply_mailbox_command(
 ) -> Result<(), ProductMailboxCommandRepositoryError> {
     match command.command {
         ProductMailboxCommand::Promote { message_id } => {
+            let delivery = MailboxDelivery::SteerActiveTurn {
+                stop_effect: agentdash_domain::agent_run_mailbox::SteeringStopEffect::None,
+            };
             let minimum: Option<i64> = sqlx::query_scalar(
                 "SELECT MIN(order_key) FROM agent_run_mailbox_messages \
                  WHERE run_id=$1 AND agent_id=$2 AND priority=100 AND id<>$3",
@@ -1230,8 +1236,13 @@ async fn apply_mailbox_command(
             })?;
             sqlx::query(
                 "UPDATE agent_run_mailbox_messages \
-                 SET priority=100,order_key=$1,updated_at=clock_timestamp() WHERE id=$2",
+                 SET delivery=$1,delivery_json=$2,barrier=$3,drain_mode=$4,\
+                     priority=100,order_key=$5,updated_at=clock_timestamp() WHERE id=$6",
             )
+            .bind(delivery.kind())
+            .bind(delivery.to_json())
+            .bind(ConsumptionBarrier::AgentLoopTurnBoundary.as_str())
+            .bind(MailboxDrainMode::All.as_str())
             .bind(order_key)
             .bind(message_id.to_string())
             .execute(&mut **tx)
@@ -2188,6 +2199,20 @@ mod tests {
             .await
             .expect("promote commits");
         assert!(!promoted.replayed);
+        let promoted_message = canonical_mailbox
+            .get_message(message_a)
+            .await
+            .expect("read promoted message")
+            .expect("promoted message exists");
+        assert!(matches!(
+            promoted_message.delivery,
+            MailboxDelivery::SteerActiveTurn { .. }
+        ));
+        assert_eq!(
+            promoted_message.barrier,
+            ConsumptionBarrier::AgentLoopTurnBoundary
+        );
+        assert_eq!(promoted_message.drain_mode, MailboxDrainMode::All);
         let deleted = mailbox_repo
             .execute(mailbox_command(
                 &mailbox_target,

@@ -155,17 +155,7 @@ impl AgentRunProductCommandFacade {
         if client_command_id.is_empty() || client_command_id.len() > 256 {
             return Err(AgentRunProductCommandError::InvalidClientCommandId);
         }
-        let request_digest = format!(
-            "sha256:{:x}",
-            Sha256::digest(
-                serde_json::to_vec(&(
-                    "agentdash.product-command-request/v1",
-                    &request.command,
-                    request.expected_revision,
-                ))
-                .expect("Product command request is serializable"),
-            )
-        );
+        let request_digest = product_command_request_digest(&request.command);
         if let Some(envelope) = self
             .claims
             .load(&request.target, client_command_id, &request_digest)
@@ -274,6 +264,48 @@ impl AgentRunProductCommandFacade {
             .map_err(product_command_claim_error)?;
         self.runtime.execute(envelope).await.map_err(Into::into)
     }
+
+    /// Replays an already durably claimed Product command without consulting the latest
+    /// projection. This closes the recovery window where Runtime accepted the command but its
+    /// response was lost before the Product mailbox message could be settled.
+    pub async fn replay_claimed(
+        &self,
+        target: &AgentRunTarget,
+        client_command_id: &str,
+        command: &AgentRunProductCommand,
+    ) -> Result<Option<ManagedRuntimeOperationReceipt>, AgentRunProductCommandError> {
+        let client_command_id = client_command_id.trim();
+        if client_command_id.is_empty() || client_command_id.len() > 256 {
+            return Err(AgentRunProductCommandError::InvalidClientCommandId);
+        }
+        let Some(envelope) = self
+            .claims
+            .load(
+                target,
+                client_command_id,
+                &product_command_request_digest(command),
+            )
+            .await
+            .map_err(product_command_claim_error)?
+        else {
+            return Ok(None);
+        };
+        self.runtime
+            .execute(envelope)
+            .await
+            .map(Some)
+            .map_err(Into::into)
+    }
+}
+
+fn product_command_request_digest(command: &AgentRunProductCommand) -> String {
+    format!(
+        "sha256:{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&("agentdash.product-command-request/v2", command))
+                .expect("Product command request is serializable"),
+        )
+    )
 }
 
 pub fn stable_product_command_operation_id(
@@ -658,6 +690,50 @@ mod tests {
             assert_eq!(observed.len(), 2);
             assert_eq!(observed[0], observed[1]);
         }
+    }
+
+    #[tokio::test]
+    async fn replay_uses_claimed_envelope_when_projection_revision_has_advanced() {
+        let (target, facade, runtime) = facade(false);
+        let mut request = request(
+            target,
+            "client-revision-advanced",
+            AgentRunProductCommand::SubmitInput {
+                content: vec![ManagedRuntimeContentBlock::Text {
+                    text: "durable".to_owned(),
+                }],
+            },
+        );
+        let first = facade.execute(request.clone()).await.expect("first");
+        request.expected_revision = RuntimeProjectionRevision(first.accepted_revision.0 + 10);
+        let replay = facade.execute(request).await.expect("replay");
+        assert!(replay.duplicate);
+        let observed = runtime.observed.lock().await;
+        assert_eq!(observed.len(), 2);
+        assert_eq!(observed[0], observed[1]);
+    }
+
+    #[tokio::test]
+    async fn recovery_replays_claimed_envelope_without_a_projection_request() {
+        let (target, facade, runtime) = facade(true);
+        let command = AgentRunProductCommand::SubmitInput {
+            content: vec![ManagedRuntimeContentBlock::Text {
+                text: "recover".to_owned(),
+            }],
+        };
+        facade
+            .execute(request(target.clone(), "client-recovery", command.clone()))
+            .await
+            .expect("first");
+        let replay = facade
+            .replay_claimed(&target, "client-recovery", &command)
+            .await
+            .expect("replay")
+            .expect("claimed envelope");
+        assert!(replay.duplicate);
+        let observed = runtime.observed.lock().await;
+        assert_eq!(observed.len(), 2);
+        assert_eq!(observed[0], observed[1]);
     }
 
     #[tokio::test]

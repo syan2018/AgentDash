@@ -355,18 +355,48 @@ async fn promote_agent_run_mailbox_message(
     Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
     Json(body): Json<AgentRunCommandOnlyRequest>,
 ) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
-    execute_product_mailbox_command(
-        state,
-        current_user,
-        run_id,
-        agent_id,
-        body.client_command_id,
-        ProductMailboxCommand::Promote {
-            message_id: parse_uuid(&message_id, "message_id")?,
-        },
-        AgentRunMessageCommandOutcome::Queued,
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
     )
-    .await
+    .await?;
+    let message_id = parse_uuid(&message_id, "message_id")?;
+    let client_command_id = body.client_command_id;
+    let promote = state
+        .services
+        .agent_run_product_mailbox
+        .execute(ProductMailboxCommandRequest {
+            target: target.clone(),
+            client_command_id: client_command_id.clone(),
+            command: ProductMailboxCommand::Promote { message_id },
+        })
+        .await
+        .map_err(product_mailbox_error)?;
+    let delivery = state
+        .services
+        .agent_run_product_input_delivery
+        .deliver_queued_message(target, message_id)
+        .await
+        .map_err(product_input_delivery_error)?;
+    Ok(Json(AgentRunMessageCommandResponse {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id,
+            status: "completed".to_owned(),
+            duplicate: promote.replayed,
+            message: None,
+        },
+        outcome: if delivery.is_some_and(|delivery| !delivery.queued) {
+            AgentRunMessageCommandOutcome::Steered
+        } else {
+            AgentRunMessageCommandOutcome::Queued
+        },
+        mailbox_message: None,
+        accepted_refs: None,
+        fork: None,
+    }))
 }
 
 async fn move_agent_run_mailbox_message(

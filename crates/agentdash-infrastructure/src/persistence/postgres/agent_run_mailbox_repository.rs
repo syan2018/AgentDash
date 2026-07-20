@@ -289,6 +289,39 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         rows.into_iter().map(TryInto::try_into).collect()
     }
 
+    async fn claim_message(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        message_id: Uuid,
+        claim_token: Uuid,
+        claim_expires_at: DateTime<Utc>,
+    ) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
+        sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
+            "UPDATE agent_run_mailbox_messages message SET \
+                 status=$4,claim_token=$5,claimed_at=clock_timestamp(),claim_expires_at=$6,\
+                 attempt_count=attempt_count+1,updated_at=clock_timestamp(),last_error=NULL \
+             WHERE message.id=$1 AND message.run_id=$2 AND message.agent_id=$3 \
+               AND message.status = ANY (ARRAY['accepted','queued','ready_to_consume']) \
+               AND NOT EXISTS (\
+                   SELECT 1 FROM agent_run_mailbox_states state \
+                   WHERE state.run_id=$2 AND state.agent_id=$3 AND state.paused=true\
+               ) \
+             RETURNING {MAILBOX_COLS}"
+        ))
+        .bind(message_id.to_string())
+        .bind(run_id.to_string())
+        .bind(agent_id.to_string())
+        .bind(MailboxMessageStatus::Consuming.as_str())
+        .bind(claim_token.to_string())
+        .bind(claim_expires_at)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?
+        .map(TryInto::try_into)
+        .transpose()
+    }
+
     async fn claim_reconciliation(
         &self,
         run_id: Uuid,

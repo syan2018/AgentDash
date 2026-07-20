@@ -1049,6 +1049,48 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         Ok(claimed)
     }
 
+    async fn claim_message(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        message_id: Uuid,
+        claim_token: Uuid,
+        claim_expires_at: chrono::DateTime<Utc>,
+    ) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
+        if self
+            .states
+            .lock()
+            .await
+            .iter()
+            .any(|state| state.run_id == run_id && state.agent_id == agent_id && state.paused)
+        {
+            return Ok(None);
+        }
+        let now = Utc::now();
+        let mut messages = self.messages.lock().await;
+        let Some(message) = messages.iter_mut().find(|message| {
+            message.id == message_id
+                && message.run_id == run_id
+                && message.agent_id == agent_id
+                && matches!(
+                    message.status,
+                    MailboxMessageStatus::Accepted
+                        | MailboxMessageStatus::Queued
+                        | MailboxMessageStatus::ReadyToConsume
+                )
+        }) else {
+            return Ok(None);
+        };
+        message.status = MailboxMessageStatus::Consuming;
+        message.claim_token = Some(claim_token);
+        message.claimed_at = Some(now);
+        message.claim_expires_at = Some(claim_expires_at);
+        message.attempt_count += 1;
+        message.last_error = None;
+        message.updated_at = now;
+        Ok(Some(message.clone()))
+    }
+
     async fn claim_reconciliation(
         &self,
         run_id: Uuid,

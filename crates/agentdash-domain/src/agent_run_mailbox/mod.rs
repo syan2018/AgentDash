@@ -455,6 +455,21 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         request: AgentRunMailboxClaimRequest,
     ) -> Result<Vec<AgentRunMailboxMessage>, DomainError>;
 
+    /// Claims one known mailbox message with the same durable lease fence as `claim_next`.
+    ///
+    /// Product command handlers use this after a durable Promote receipt so retry/recovery keeps
+    /// targeting the exact message instead of consuming a different queue entry.
+    async fn claim_message(
+        &self,
+        _run_id: Uuid,
+        _agent_id: Uuid,
+        _message_id: Uuid,
+        _claim_token: Uuid,
+        _claim_expires_at: DateTime<Utc>,
+    ) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
+        Ok(None)
+    }
+
     async fn claim_reconciliation(
         &self,
         run_id: Uuid,

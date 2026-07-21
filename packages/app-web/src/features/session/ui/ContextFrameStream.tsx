@@ -100,7 +100,9 @@ function compareContextDeliveryOrder(a: ContextFrame, b: ContextFrame): number {
   if (phase !== 0) return phase;
   const order = a.delivery_metadata.delivery_order - b.delivery_metadata.delivery_order;
   if (order !== 0) return order;
-  return a.created_at_ms - b.created_at_ms;
+  const createdAt = a.created_at_ms - b.created_at_ms;
+  if (createdAt !== 0) return createdAt;
+  return a.id.localeCompare(b.id);
 }
 
 function phaseRank(phase: ContextFrame["delivery_metadata"]["delivery_phase"]): number {
@@ -223,6 +225,8 @@ function summarizeRuntimeUpdate(frame: ContextFrame): string | null {
       removed += section.vfs_mounts_removed.length;
     } else if (section.kind === "tool_schema_delta") {
       added += section.added_tools.length;
+      removed += section.removed_tools.length;
+      changed += section.changed_tools.length;
     } else if (section.kind === "skill_delta") {
       added += section.added_skills.length;
       removed += section.removed_skills.length;

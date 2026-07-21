@@ -1285,6 +1285,14 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
                     instruction("instruction:37:persona_summary", "persona", "persona"),
                     instruction("instruction:30:workspace_context", "workspace", "workspace"),
                     instruction("instruction:48:workflow_summary", "workflow", "workflow"),
+                    instruction("instruction:capability:skills", "skills", "skills"),
+                    instruction("instruction:capability:mcp", "mcp", "mcp"),
+                    instruction("instruction:capability:memory", "memory", "memory"),
+                    instruction(
+                        "instruction:55:user_context",
+                        "user_context",
+                        "user context",
+                    ),
                 ],
             },
             callbacks: AgentHostCallbackBinding {
@@ -1321,6 +1329,10 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
             ContextFrameKind::Identity,
             ContextFrameKind::Environment,
             ContextFrameKind::AssignmentContext,
+            ContextFrameKind::CapabilityStateDelta,
+            ContextFrameKind::CapabilityStateDelta,
+            ContextFrameKind::MemoryContext,
+            ContextFrameKind::UserContext,
         ]
     );
 }
@@ -1447,7 +1459,7 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
             if changed.frame.kind == ContextFrameKind::CapabilityStateDelta
                 && changed.frame.sections.iter().any(|section| matches!(
                     section,
-                    ContextFrameSection::ToolSchemaDelta { added_tools }
+                    ContextFrameSection::ToolSchemaDelta { added_tools, .. }
                         if added_tools.iter().any(|tool| tool.name == "read")
                 ))
     )));
@@ -1519,6 +1531,134 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
             && receipt.terminal == Some(AgentTerminalOutcome::Succeeded)
             && receipt.snapshot_revision == revoked.snapshot_revision
     ));
+}
+
+#[tokio::test]
+async fn surface_projection_reports_tool_changes_instead_of_replaying_full_schema_snapshots() {
+    let service = service();
+    let source = AgentSourceCoordinate::new("dash-tool-delta").unwrap();
+    service
+        .create(CreateAgentCommand {
+            meta: meta("create-tool-delta", "effect-create-tool-delta"),
+            requested_source: Some(source.clone()),
+            initial_context: None,
+        })
+        .await
+        .unwrap();
+
+    let tool = |name: &str, description: &str| BoundAgentSurfaceContribution {
+        key: format!("tool:{name}"),
+        required: true,
+        route: AgentSurfaceRoute::AgentNativeCallback,
+        fidelity: SemanticFidelity::Exact,
+        semantics: AgentSurfaceSemanticFacet::Tool(AgentToolSemanticFacet {
+            delivery: AgentToolDelivery::AgentNativeCallback,
+            invocation: SemanticFidelity::Exact,
+            update: AgentToolUpdateSemantics::HotUpdate,
+        }),
+        payload: AgentSurfaceContributionPayload::Tool {
+            name: AgentToolName::new(name).unwrap(),
+            description: description.to_owned(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+            output_schema: None,
+        },
+        payload_digest: AgentPayloadDigest::new(format!("sha256:{name}:{description}")).unwrap(),
+    };
+    let apply = |revision: u64, tools: Vec<BoundAgentSurfaceContribution>| ApplyBoundAgentSurface {
+        command_id: AgentCommandId::new(format!("command-tool-delta-{revision}")).unwrap(),
+        effect_id: AgentEffectIdentity::new(format!("effect-tool-delta-{revision}")).unwrap(),
+        idempotency_key: AgentIdempotencyKey::new(format!("idem-tool-delta-{revision}")).unwrap(),
+        source: source.clone(),
+        bound_surface: BoundAgentSurface {
+            revision: AgentSurfaceRevision(revision),
+            digest: AgentSurfaceDigest::new(format!("tool-delta-{revision}")).unwrap(),
+            offer_profile_digest: AgentProfileDigest::new("dash-agent-profile-v1").unwrap(),
+            contributions: tools,
+        },
+        callbacks: AgentHostCallbackBinding {
+            route_id: AgentCallbackRouteId::new("callbacks-tool-delta").unwrap(),
+            binding_generation: AgentBindingGeneration(revision),
+            delivery: AgentSurfaceRoute::AgentNativeCallback,
+            default_deadline_ms: 5_000,
+        },
+    };
+
+    service
+        .apply_surface(apply(1, vec![tool("read", "Read a file")]))
+        .await
+        .unwrap();
+    service
+        .apply_surface(apply(
+            2,
+            vec![tool("read", "Read text"), tool("write", "Write a file")],
+        ))
+        .await
+        .unwrap();
+    service
+        .apply_surface(apply(3, vec![tool("write", "Write a file")]))
+        .await
+        .unwrap();
+
+    let snapshot = service
+        .read(AgentReadQuery {
+            source,
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    let deltas = snapshot
+        .conversation_history
+        .iter()
+        .filter_map(|record| match &record.presentation.envelope.event {
+            BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed)) => changed
+                .frame
+                .sections
+                .iter()
+                .find_map(|section| match section {
+                    ContextFrameSection::ToolSchemaDelta {
+                        added_tools,
+                        removed_tools,
+                        changed_tools,
+                    } => Some((
+                        added_tools,
+                        removed_tools,
+                        changed_tools,
+                        &changed.frame.rendered_text,
+                    )),
+                    _ => None,
+                }),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(deltas.len(), 3);
+    assert_eq!(
+        deltas[0]
+            .0
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["read"]
+    );
+    assert_eq!(
+        deltas[1]
+            .0
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["write"]
+    );
+    assert_eq!(
+        deltas[1]
+            .2
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["read"]
+    );
+    assert_eq!(deltas[2].1, &vec!["read".to_owned()]);
+    assert!(deltas[1].3.contains("Added Tools"));
+    assert!(deltas[1].3.contains("Changed Tools"));
+    assert!(!deltas[1].3.contains("properties"));
 }
 
 #[tokio::test]

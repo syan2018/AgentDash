@@ -11,6 +11,7 @@ use crate::agent_run::frame::AgentFrameBuilder;
 use super::{
     AgentRunProjectOwnerFrameConstructionAdapter, LifecycleNodeSpec,
     compose_lifecycle_node_to_frame_with_audit,
+    launch_anchor_materialization::materialize_frame_context_discovery,
 };
 
 #[async_trait]
@@ -65,8 +66,21 @@ impl WorkflowAgentNodeFrameMaterializationPort for AgentRunProjectOwnerFrameCons
         )
         .await
         .map_err(|message| AgentRunFrameSurfaceError::ConstructionRejected { message })?;
-        let frame = builder
-            .build(self.repos.agent_frame_repo.as_ref())
+        let mut frame = builder
+            .build_uncommitted(self.repos.agent_frame_repo.as_ref())
+            .await
+            .map_err(construction_error)?;
+        materialize_frame_context_discovery(
+            &mut frame,
+            self.vfs_service.as_ref(),
+            &self.extra_skill_dirs,
+            &self.skill_discovery_providers,
+            &self.memory_discovery_providers,
+        )
+        .await?;
+        self.repos
+            .agent_frame_repo
+            .create(&frame)
             .await
             .map_err(construction_error)?;
         let mut outcome =

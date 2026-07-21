@@ -125,3 +125,24 @@
 目标页面，468ms看到canonical用户消息，首个Agent输出约3.38s、`TurnCompleted`约6.50s；snapshot
 前六条为五个materialized instruction ContextFrame与一个tool capability frame，随后才是
 `UserInputSubmitted -> TurnStarted -> Agent output`。
+
+## 能力发现、授权与 Surface 增量收口
+
+- [x] Project owner与workflow node在持久化final AgentFrame前，从该frame的canonical VFS统一派生
+  Skill baseline、AGENTS.md guidelines与memory inventory；结果写回同一owner-local AgentFrame
+  document，不建立Runtime/Product能力投影表。
+- [x] Complete Agent Product surface从同一frame编译skill、memory、MCP与workspace/context
+  requirements；MCP动态工具仍走native callback，提示词只描述Agent实际接纳的能力。
+- [x] Project AgentRun的Task surface同时授予Read/Write；`mounts_list`用List做调用准入，但返回同一
+  applied VFS surface的完整operation/path scope。
+- [x] Dash Core继续只持有`instructions + tools`；ContextFrame仅由Native Adapter从Dash native
+  history反解，不进入Dash领域层或形成第二prompt事实源。
+- [x] Native Adapter以相邻`SurfaceApplied` state生成instruction/tool真增量；tool delta支持
+  added/removed/changed，authoritative read、changes与live callback共用同一projector。
+- [x] 前端按tool变化语义渲染名称、来源、参数数量与description，不默认展开原始JSON schema；
+  ContextFrame相同phase/order/time时以稳定frame id收敛顺序。
+- [x] 定向验证通过：Rust package check、Product frame discovery、skill/MCP surface、Task/VFS授权、
+  Workspace Module final broker tracer、Native surface delta，以及前端22项ContextFrame测试和
+  typecheck。
+- [ ] 重启`pnpm dev`后完成真实Draft tracer：确认Task Write、Canvas create、mount完整能力、
+  skills/MCP/memory ContextFrame、工具增量展示与会话流均来自同一authoritative Agent history。

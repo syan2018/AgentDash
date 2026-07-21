@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use agentdash_agent::dash::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentItemId,
     HistoryPayload, ItemDetails,
@@ -19,10 +21,24 @@ pub(crate) fn history_records(
 ) -> Result<Vec<CanonicalConversationRecord>, serde_json::Error> {
     let mut records = Vec::new();
     for entry in history.entries() {
+        let previous_state = if entry.sequence > 1 {
+            Some(
+                history
+                    .state_at(entry.sequence - 1)
+                    .expect("validated Dash history prefix must fold"),
+            )
+        } else {
+            None
+        };
         let state = history
             .state_at(entry.sequence)
             .expect("validated Dash history prefix must fold");
-        records.extend(entry_records(&history.session_id.0, entry, &state)?);
+        records.extend(entry_records(
+            &history.session_id.0,
+            entry,
+            previous_state.as_ref(),
+            &state,
+        )?);
     }
     Ok(records)
 }
@@ -30,6 +46,7 @@ pub(crate) fn history_records(
 pub(crate) fn entry_records(
     session_id: &str,
     entry: &AgentHistoryEntry,
+    previous_state: Option<&AgentHistoryState>,
     state: &AgentHistoryState,
 ) -> Result<Vec<CanonicalConversationRecord>, serde_json::Error> {
     let mut events = Vec::new();
@@ -38,7 +55,11 @@ pub(crate) fn entry_records(
             events.extend(initial_context_events(installation));
         }
         HistoryPayload::SurfaceApplied { surface } => {
-            events.extend(surface_events(entry, surface));
+            events.extend(surface_events(
+                entry,
+                previous_state.and_then(|state| state.surface.as_ref()),
+                surface,
+            ));
         }
         HistoryPayload::SurfaceRevoked { surface } => {
             events.push(surface_revoked_event(entry, surface));
@@ -273,10 +294,25 @@ fn initial_context_events(
 
 fn surface_events(
     entry: &AgentHistoryEntry,
+    previous: Option<&agentdash_agent::dash::DashSurface>,
     surface: &agentdash_agent::dash::DashSurface,
 ) -> Vec<BackboneEvent> {
     let mut events = Vec::new();
-    for (index, instruction) in surface.instructions.iter().enumerate() {
+    let previous_instructions = previous
+        .into_iter()
+        .flat_map(|surface| surface.instructions.iter())
+        .map(|instruction| (instruction.key.as_str(), instruction))
+        .collect::<BTreeMap<_, _>>();
+    for (index, instruction) in surface
+        .instructions
+        .iter()
+        .filter(|instruction| {
+            previous_instructions
+                .get(instruction.key.as_str())
+                .is_none_or(|previous| *previous != *instruction)
+        })
+        .enumerate()
+    {
         if instruction.text.trim().is_empty() {
             continue;
         }
@@ -288,7 +324,9 @@ fn surface_events(
         );
         metadata.cache_key = Some(surface.digest.clone());
         metadata.cache_revision = Some(surface.revision.to_string());
-        metadata.delivery_order = u32::try_from(index).unwrap_or(u32::MAX);
+        metadata.delivery_order = metadata
+            .delivery_order
+            .saturating_add(u32::try_from(index).unwrap_or(u32::MAX));
         metadata.agent_consumption = ContextAgentConsumption {
             target: "dash-agent".to_owned(),
             mode: ContextAgentConsumptionMode::SystemAppend,
@@ -316,6 +354,12 @@ fn surface_events(
                 summary: instruction.key.clone(),
                 fragments: vec![fragment],
             }]
+        } else if kind == ContextFrameKind::CapabilityStateDelta {
+            vec![ContextFrameSection::SystemNotice {
+                title: title.to_owned(),
+                summary: instruction.key.clone(),
+                body: Some(instruction.text.clone()),
+            }]
         } else {
             vec![ContextFrameSection::AssignmentContext {
                 title: title.to_owned(),
@@ -330,7 +374,14 @@ fn surface_events(
                     kind,
                     source: ContextFrameSource::RuntimeContextUpdate,
                     phase_node: None,
-                    apply_mode: Some("surface_apply".to_owned()),
+                    apply_mode: Some(
+                        if previous_instructions.contains_key(instruction.key.as_str()) {
+                            "surface_update"
+                        } else {
+                            "surface_apply"
+                        }
+                        .to_owned(),
+                    ),
                     delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
                     delivery_channel: ContextDeliveryChannel::ConnectorContext,
                     message_role: role,
@@ -342,7 +393,90 @@ fn surface_events(
             }),
         )));
     }
-    if !surface.tools.is_empty() {
+    let removed_instructions = previous
+        .into_iter()
+        .flat_map(|surface| surface.instructions.iter())
+        .filter(|instruction| {
+            !surface
+                .instructions
+                .iter()
+                .any(|current| current.key == instruction.key)
+        })
+        .map(|instruction| instruction.key.clone())
+        .collect::<Vec<_>>();
+    if !removed_instructions.is_empty() {
+        let kind = ContextFrameKind::SystemNotice;
+        let role = ContextMessageRole::Context;
+        let mut metadata = ContextDeliveryMetadata::for_frame(
+            kind,
+            ContextDeliveryChannel::ConnectorContext,
+            role,
+        );
+        metadata.cache_key = Some(surface.digest.clone());
+        metadata.cache_revision = Some(surface.revision.to_string());
+        events.push(BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(
+            Box::new(ContextFrameChanged {
+                frame: ContextFrame {
+                    id: format!("{}:instructions-removed", entry.entry_id.0),
+                    kind,
+                    source: ContextFrameSource::RuntimeContextUpdate,
+                    phase_node: None,
+                    apply_mode: Some("surface_update".to_owned()),
+                    delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
+                    delivery_channel: ContextDeliveryChannel::ConnectorContext,
+                    message_role: role,
+                    delivery_metadata: metadata,
+                    rendered_text: format!(
+                        "## Removed Surface Instructions\n{}",
+                        removed_instructions
+                            .iter()
+                            .map(|key| format!("- `{key}`"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ),
+                    sections: vec![ContextFrameSection::SystemNotice {
+                        title: "Surface Instructions Removed".to_owned(),
+                        summary: format!("{} instructions removed", removed_instructions.len()),
+                        body: Some(removed_instructions.join("\n")),
+                    }],
+                    created_at_ms: 0,
+                },
+            }),
+        )));
+    }
+
+    let previous_tools = previous
+        .into_iter()
+        .flat_map(|surface| surface.tools.iter())
+        .map(|tool| (tool.name.as_str(), tool))
+        .collect::<BTreeMap<_, _>>();
+    let current_tools = surface
+        .tools
+        .iter()
+        .map(|tool| (tool.name.as_str(), tool))
+        .collect::<BTreeMap<_, _>>();
+    let added_tools = surface
+        .tools
+        .iter()
+        .filter(|tool| !previous_tools.contains_key(tool.name.as_str()))
+        .map(runtime_tool_schema_entry)
+        .collect::<Vec<_>>();
+    let changed_tools = surface
+        .tools
+        .iter()
+        .filter(|tool| {
+            previous_tools
+                .get(tool.name.as_str())
+                .is_some_and(|previous| *previous != *tool)
+        })
+        .map(runtime_tool_schema_entry)
+        .collect::<Vec<_>>();
+    let removed_tools = previous_tools
+        .keys()
+        .filter(|name| !current_tools.contains_key(**name))
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
+    if !added_tools.is_empty() || !removed_tools.is_empty() || !changed_tools.is_empty() {
         let kind = ContextFrameKind::CapabilityStateDelta;
         let role = ContextMessageRole::Context;
         let mut metadata = ContextDeliveryMetadata::for_frame(
@@ -361,19 +495,6 @@ fn surface_events(
             profile_id: "dash-agent".to_owned(),
             declared_consumption_modes: vec![ContextAgentConsumptionMode::ConnectorNative],
         };
-        let added_tools = surface
-            .tools
-            .iter()
-            .map(|tool| RuntimeToolSchemaEntry {
-                name: tool.name.clone(),
-                description: tool.description.clone(),
-                parameters_schema: tool.input_schema.clone(),
-                capability_key: None,
-                source: Some("dash-agent".to_owned()),
-                tool_path: None,
-                context_usage_kind: Some("agent_surface".to_owned()),
-            })
-            .collect();
         events.push(BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(
             Box::new(ContextFrameChanged {
                 frame: ContextFrame {
@@ -381,22 +502,88 @@ fn surface_events(
                     kind,
                     source: ContextFrameSource::RuntimeContextUpdate,
                     phase_node: None,
-                    apply_mode: Some("surface_apply".to_owned()),
+                    apply_mode: Some(
+                        if previous.is_some() {
+                            "surface_update"
+                        } else {
+                            "surface_apply"
+                        }
+                        .to_owned(),
+                    ),
                     delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
                     delivery_channel: ContextDeliveryChannel::ConnectorContext,
                     message_role: role,
                     delivery_metadata: metadata,
-                    rendered_text: format!(
-                        "Dash materialized {} callable tools",
-                        surface.tools.len()
+                    rendered_text: render_tool_surface_delta(
+                        &added_tools,
+                        &removed_tools,
+                        &changed_tools,
                     ),
-                    sections: vec![ContextFrameSection::ToolSchemaDelta { added_tools }],
+                    sections: vec![ContextFrameSection::ToolSchemaDelta {
+                        added_tools,
+                        removed_tools,
+                        changed_tools,
+                    }],
                     created_at_ms: 0,
                 },
             }),
         )));
     }
     events
+}
+
+fn runtime_tool_schema_entry(
+    tool: &agentdash_agent::dash::DashToolDefinition,
+) -> RuntimeToolSchemaEntry {
+    let mcp = tool.name.starts_with("mcp_");
+    RuntimeToolSchemaEntry {
+        name: tool.name.clone(),
+        description: tool.description.clone(),
+        parameters_schema: tool.input_schema.clone(),
+        capability_key: None,
+        source: Some(if mcp { "mcp" } else { "agentdash" }.to_owned()),
+        tool_path: Some(tool.name.clone()),
+        context_usage_kind: Some("agent_surface".to_owned()),
+    }
+}
+
+fn render_tool_surface_delta(
+    added: &[RuntimeToolSchemaEntry],
+    removed: &[String],
+    changed: &[RuntimeToolSchemaEntry],
+) -> String {
+    let mut sections = vec!["## Tool Surface Delta".to_owned()];
+    if !added.is_empty() {
+        sections.push(format!(
+            "### Added Tools\n{}",
+            added
+                .iter()
+                .map(|tool| format!("- `{}`: {}", tool.name, tool.description))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if !removed.is_empty() {
+        sections.push(format!(
+            "### Removed Tools\n{}",
+            removed
+                .iter()
+                .map(|name| format!("- `{name}`"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if !changed.is_empty() {
+        sections.push(format!(
+            "### Changed Tools\n{}",
+            changed
+                .iter()
+                .map(|tool| format!("- `{}`: {}", tool.name, tool.description))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    sections.join("\n\n")
 }
 
 fn surface_instruction_presentation(
@@ -432,6 +619,16 @@ fn surface_instruction_presentation(
             ContextFrameKind::MemoryContext,
             ContextMessageRole::Context,
             "Memory Context",
+        ),
+        "skills" => (
+            ContextFrameKind::CapabilityStateDelta,
+            ContextMessageRole::Context,
+            "Available Skills",
+        ),
+        "mcp" => (
+            ContextFrameKind::CapabilityStateDelta,
+            ContextMessageRole::Context,
+            "MCP Servers",
         ),
         "user_context" => (
             ContextFrameKind::UserContext,
@@ -477,10 +674,10 @@ fn surface_revoked_event(
                 delivery_channel: ContextDeliveryChannel::ConnectorContext,
                 message_role: role,
                 delivery_metadata: metadata,
-                rendered_text: "Dash Agent surface revoked".to_owned(),
+                rendered_text: format!("Agent surface revision {} revoked", surface.revision),
                 sections: vec![ContextFrameSection::SystemNotice {
                     title: "Agent Surface Revoked".to_owned(),
-                    summary: format!("Removed materialized surface revision {}", surface.revision),
+                    summary: format!("Surface revision {} is no longer active", surface.revision),
                     body: None,
                 }],
                 created_at_ms: 0,

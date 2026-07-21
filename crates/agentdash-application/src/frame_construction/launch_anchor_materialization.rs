@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use agentdash_application_ports::agent_frame_hook_plan::{
     AgentFrameHookPlanCompileQuery, AgentFrameHookPlanCompiler,
@@ -10,7 +10,10 @@ use agentdash_application_ports::agent_frame_materialization::{
 use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
 use agentdash_application_vfs::{VfsService, validate_vfs};
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_platform_spi::{AgentConfig, HookControlTarget, RuntimeAdapterProvenance};
+use agentdash_platform_spi::{
+    AgentConfig, HookControlTarget, MemoryDiscoveryProvider, RuntimeAdapterProvenance,
+    SkillDiscoveryProvider,
+};
 
 use crate::agent_run::frame::{
     AgentFrameBuilder, AgentFrameSurfaceExt, runtime_backend_anchor_from_vfs,
@@ -29,12 +32,15 @@ use super::composer_project_agent::{
 #[derive(Clone)]
 pub struct AgentRunProjectOwnerFrameConstructionAdapter {
     pub(super) repos: RepositorySet,
-    vfs_service: Arc<VfsService>,
+    pub(super) vfs_service: Arc<VfsService>,
     availability: Arc<dyn BackendAvailability>,
     pub(super) platform_config: Arc<PlatformConfig>,
     pub(super) lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
     pub(super) audit_bus: SharedContextAuditBus,
     hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
+    pub(super) extra_skill_dirs: Vec<PathBuf>,
+    pub(super) skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
+    pub(super) memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
     pub(super) product_runtime_bindings:
         Arc<dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository>,
 }
@@ -47,6 +53,9 @@ pub struct AgentRunProjectOwnerFrameConstructionDeps {
     pub lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
     pub audit_bus: SharedContextAuditBus,
     pub hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
+    pub extra_skill_dirs: Vec<PathBuf>,
+    pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
+    pub memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
     pub product_runtime_bindings:
         Arc<dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository>,
 }
@@ -61,6 +70,9 @@ impl AgentRunProjectOwnerFrameConstructionAdapter {
             lifecycle_surface_projection: deps.lifecycle_surface_projection,
             audit_bus: deps.audit_bus,
             hook_plan_compiler: deps.hook_plan_compiler,
+            extra_skill_dirs: deps.extra_skill_dirs,
+            skill_discovery_providers: deps.skill_discovery_providers,
+            memory_discovery_providers: deps.memory_discovery_providers,
             product_runtime_bindings: deps.product_runtime_bindings,
         }
     }
@@ -180,6 +192,14 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
             .build_uncommitted(self.repos.agent_frame_repo.as_ref())
             .await
             .map_err(construction_rejected)?;
+        materialize_frame_context_discovery(
+            &mut frame,
+            self.vfs_service.as_ref(),
+            &self.extra_skill_dirs,
+            &self.skill_discovery_providers,
+            &self.memory_discovery_providers,
+        )
+        .await?;
         let hook_plan = self
             .hook_plan_compiler
             .compile_agent_frame_hook_plan(AgentFrameHookPlanCompileQuery {
@@ -215,6 +235,130 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
         outcome.wrote_frame_revision = true;
         Ok(outcome)
     }
+}
+
+pub(super) async fn materialize_frame_context_discovery(
+    frame: &mut AgentFrame,
+    vfs_service: &VfsService,
+    extra_skill_dirs: &[PathBuf],
+    skill_discovery_providers: &[Arc<dyn SkillDiscoveryProvider>],
+    memory_discovery_providers: &[Arc<dyn MemoryDiscoveryProvider>],
+) -> Result<(), AgentRunFrameSurfaceError> {
+    use crate::agent_run::frame::AgentContextSourceFragment;
+    use agentdash_application_agentrun::agent_run::runtime_capability_projection::{
+        LaunchContextDiscoveryInput, derive_launch_context_discovery,
+        normalize_capability_state_dimensions,
+    };
+
+    let vfs = frame
+        .typed_vfs()
+        .ok_or_else(|| construction_rejected("AgentFrame 缺少 discovery 所需 canonical VFS"))?;
+    let mut capability_state = frame.typed_capability_state().ok_or_else(|| {
+        construction_rejected("AgentFrame 缺少 discovery 所需 canonical CapabilityState")
+    })?;
+    let mcp_servers = frame.typed_mcp_servers();
+    let discovery = derive_launch_context_discovery(LaunchContextDiscoveryInput {
+        vfs_service,
+        launch_vfs: &vfs,
+        identity: None,
+        extra_skill_dirs,
+        skill_discovery_providers,
+        memory_discovery_providers,
+        diagnostics_label: "product_frame_context_discovery",
+    })
+    .await;
+
+    normalize_capability_state_dimensions(
+        &mut capability_state,
+        Some(vfs.clone()),
+        mcp_servers,
+        &discovery.session_capabilities,
+    );
+    capability_state.memory.inventory = discovery.discovered_memory;
+    let discovered_skill_names = capability_state
+        .skill
+        .skills
+        .iter()
+        .flat_map(|skill| [skill.name.as_str(), skill.local_name.as_str()])
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut missing_skill_assets = Vec::new();
+    for mount in &vfs.mounts {
+        if mount
+            .metadata
+            .get(agentdash_application_vfs::SKILL_ASSET_KEYS_METADATA_KEY)
+            .is_none()
+        {
+            continue;
+        }
+        for key in agentdash_application_vfs::projected_skill_asset_keys(mount)
+            .map_err(construction_rejected)?
+        {
+            if !discovered_skill_names.contains(key.as_str()) {
+                missing_skill_assets.push(key);
+            }
+        }
+    }
+    missing_skill_assets.sort();
+    missing_skill_assets.dedup();
+    if !missing_skill_assets.is_empty() {
+        return Err(construction_rejected(format!(
+            "AgentFrame final VFS 声明的 SkillAsset 未进入 discovery: {}",
+            missing_skill_assets.join(", ")
+        )));
+    }
+
+    let mut surface = frame.surface_document();
+    surface.capability_state = Some(
+        serde_json::to_value(capability_state)
+            .map_err(|error| construction_rejected(error.to_string()))?,
+    );
+    if let Some(snapshot) = surface.context_source_snapshot.as_mut() {
+        let mut snapshot = serde_json::from_value::<
+            crate::agent_run::frame::AgentContextSourceSnapshot,
+        >(snapshot.clone())
+        .map_err(|error| {
+            construction_rejected(format!("AgentFrame context source 无法解析: {error}"))
+        })?;
+        snapshot
+            .fragments
+            .retain(|fragment| !fragment.source.starts_with("vfs_guideline:"));
+        let next_order = snapshot
+            .fragments
+            .iter()
+            .map(|fragment| fragment.order)
+            .max()
+            .unwrap_or_default()
+            .saturating_add(10);
+        snapshot
+            .fragments
+            .extend(discovery.discovered_guidelines.into_iter().enumerate().map(
+                |(index, guideline)| {
+                    let uri = format!("{}://{}", guideline.mount_id, guideline.path);
+                    AgentContextSourceFragment {
+                        slot: "constraint".to_owned(),
+                        label: format!("project_guideline:{}", guideline.file_name),
+                        order: next_order.saturating_add(i32::try_from(index).unwrap_or(i32::MAX)),
+                        runtime_agent_scope: true,
+                        source: format!("vfs_guideline:{uri}"),
+                        content: format!("## Project Guidelines — `{uri}`\n{}", guideline.content),
+                        context_usage_kind: Some(
+                            agentdash_platform_spi::context_usage_kind::SYSTEM_DEVELOPER.to_owned(),
+                        ),
+                    }
+                },
+            ));
+        surface.context_source_snapshot = Some(
+            serde_json::to_value(snapshot)
+                .map_err(|error| construction_rejected(error.to_string()))?,
+        );
+    } else if !discovery.discovered_guidelines.is_empty() {
+        return Err(construction_rejected(
+            "AgentFrame 缺少承载已发现 project guidelines 的 canonical context source",
+        ));
+    }
+    frame.surface = Some(surface);
+    frame.apply_surface_projection();
+    Ok(())
 }
 
 fn validate_project_agent_launch_surface(

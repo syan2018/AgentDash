@@ -65,6 +65,15 @@ pub enum HistoryPayload {
     ThreadNameChanged { thread_name: String },
     // other native history facts
 }
+
+pub enum ContextFrameSection {
+    ToolSchemaDelta {
+        added_tools: Vec<RuntimeToolSchemaEntry>,
+        removed_tools: Vec<String>,
+        changed_tools: Vec<RuntimeToolSchemaEntry>,
+    },
+    // other platform presentation sections
+}
 ```
 
 ## 3. Contracts
@@ -78,6 +87,14 @@ pub enum HistoryPayload {
   `[{ key, channel, text }]`与callable tools。provider system prompt通过拼接该instruction列表
   得出，`ContextFrameChanged`按同一列表的key/channel逐项投影；source history不另存一份扁平
   prompt字符串，presentation也不从prompt正文猜测分片。
+- Dash Core只理解`DashSurface { instructions, tools }`。`ContextFrame`是Native Adapter从
+  `SurfaceApplied` history生成的平台展示协议，不进入Dash领域模型，也不作为prompt的另一份输入。
+  Adapter以`state_at(sequence - 1)`与当前surface比较：instruction只发布新增/修改项，tool发布
+  added/removed/changed真增量；authoritative read、changes与live callback共用同一个projector。
+- Product的skill、memory、MCP、workspace与context requirement必须先物化为Agent实际接纳的
+  instruction/tool surface，再由Native Adapter按channel映射为Identity、Environment、
+  SystemGuidelines、AssignmentContext、CapabilityStateDelta、MemoryContext或UserContext。
+  Adapter不读取Product表反补ContextFrame，也不从展示文本反猜Agent输入。
 - source metadata 与 repository描述同一个 concrete Agent source，必须在同一 Dash source
   document/atomic commit 中更新。
 - Create 前还没有 source coordinate 的 effect 可以保留独立 `effect_id` lookup receipt。
@@ -123,6 +140,10 @@ pub enum HistoryPayload {
 | --- | --- |
 | source document CAS conflict | reload owner document并按 typed command重试/冲突 |
 | 同surface digest重放但instruction列表不同 | typed idempotency conflict；迁移必须从已提交callback surface恢复精确列表 |
+| 连续surface只增加一个tool | 只发布该tool的`added_tools`，不重放完整当前schema |
+| tool同名但description/schema变化 | 发布到`changed_tools`，不同时出现在`added_tools` |
+| tool从surface消失 | tool name进入`removed_tools` |
+| surface revision变化但instruction/tool语义未变 | 不发布伪ContextFrame delta |
 | effect identity相同且request相同 | 返回原 receipt |
 | effect identity相同但request不同 | typed idempotency conflict |
 | unsupported input family | Core side effect 前 typed unsupported |
@@ -146,7 +167,10 @@ pub enum HistoryPayload {
   live record；Core callback只在其间发布partial delta，重连从同一document read得到完整终态。
 - Good：首个成功回合提交 terminal 后，Dash 根据该 source 的原生对话生成标题并追加
   `ThreadNameChanged`；列表标题、snapshot与live notification均来自这一个 entry。
+- Good：Product提交skills/MCP/memory instructions与tool surface，Dash原样保存；Native Adapter从
+  同一`SurfaceApplied` entry生成多种typed ContextFrame和真实tool delta，前端只展示变化摘要。
 - Base：live subscriber掉线，Core继续执行并提交 history；新 subscriber先 read再订阅。
+- Base：同一surface幂等重放不产生新的history entry，因此不产生重复ContextFrame。
 - Base：标题生成暂时失败，回合仍保持成功且source保持未命名；下一成功回合可以再次生成。
 - Bad：Dash 同时写 repository JSONB 与 history/effect镜像，再逐次校验相等。镜像没有独立
   owner，只会制造 drift。
@@ -154,6 +178,8 @@ pub enum HistoryPayload {
   并会与 Agent snapshot 形成双写。
 - Bad：生产 composition 注入 Noop execution callback。输入可能执行成功，但用户永远看不到
   live delta。
+- Bad：把`ContextFrame`塞进Dash或在每个`SurfaceApplied`上把完整tools数组写成`added_tools`；前者
+  让展示协议反向污染Agent领域，后者让snapshot历史看起来像能力不断重复新增。
 
 ## 6. Tests Required
 
@@ -168,6 +194,9 @@ pub enum HistoryPayload {
 - surface/context tests断言 native history保存实际instruction边界与tools，provider prompt由
   instructions派生，snapshot与live逐项投影`ContextFrameChanged`，repository root不存在平行
   surface字段。
+- surface delta tests连续应用三版surface，覆盖tool新增、修改、删除，断言read重放只返回真实
+  变化且`rendered_text`不包含原始JSON schema；context channel矩阵覆盖system、identity、
+  workspace、workflow、skills、MCP、memory与user context的typed frame映射。
 - naming test断言成功回合把 accepted user input与最终Agent output交给namer，只提交一次非空
   `ThreadNameChanged`，且 `read/changes/live` 均投影同一标题；命名失败不改变回合terminal。
 - lag/no-subscriber tests区分临时没有观察者与 callback未装配。
@@ -202,4 +231,13 @@ let snapshot = dash_complete_agent.read(AgentReadQuery {
     source,
     at_revision: None,
 }).await?;
+```
+
+```rust
+// Wrong: 把当前完整snapshot伪装成每次都新增的tool delta。
+let added_tools = surface.tools.iter().map(runtime_tool_schema_entry).collect();
+
+// Correct: Native Adapter比较同一source history中的相邻surface事实。
+let previous = history.state_at(entry.sequence - 1)?.surface;
+let (added_tools, removed_tools, changed_tools) = diff_tools(previous, &surface);
 ```

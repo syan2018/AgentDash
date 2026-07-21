@@ -463,6 +463,10 @@ pub enum ContextFrameSection {
     ToolSchemaDelta {
         #[serde(default)]
         added_tools: Vec<RuntimeToolSchemaEntry>,
+        #[serde(default)]
+        removed_tools: Vec<String>,
+        #[serde(default)]
+        changed_tools: Vec<RuntimeToolSchemaEntry>,
     },
     SkillDelta {
         #[serde(default)]

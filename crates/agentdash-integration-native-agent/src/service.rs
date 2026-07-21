@@ -791,15 +791,23 @@ impl CompleteAgentService for DashAgentCompleteService {
         let changes = service
             .changes(Some(after), query.limit as usize)
             .await
-            .map_err(map_dash_error)?
+            .map_err(map_dash_error)?;
+        let history = service.history().await.map_err(map_dash_error)?;
+        let changes = changes
             .into_iter()
             .map(|change| {
                 let state_payload = dash_change_payload(&change)?;
                 let presentation = match &change.payload {
                     DashAgentChangePayload::HistoryEntry { entry } => {
+                        let previous_state = if entry.sequence > 1 {
+                            Some(history.state_at(entry.sequence - 1).map_err(internal)?)
+                        } else {
+                            None
+                        };
                         crate::canonical_projection::entry_records(
                             query.source.as_str(),
                             entry,
+                            previous_state.as_ref(),
                             &change.state,
                         )
                         .map_err(internal)?
@@ -1365,7 +1373,21 @@ fn dash_surface_from_bound(
                 description: description.clone(),
                 input_schema: input_schema.clone(),
             }),
-            _ => {}
+            agentdash_agent_service_api::AgentSurfaceContributionPayload::Workspace {
+                requirement,
+            } => instructions.push(DashSurfaceInstruction {
+                key: contribution.key.clone(),
+                channel: "workspace".to_owned(),
+                text: format!("## Workspace\n- requirement: `{requirement}`"),
+            }),
+            agentdash_agent_service_api::AgentSurfaceContributionPayload::ContextRequirement {
+                requirement,
+            } => instructions.push(DashSurfaceInstruction {
+                key: contribution.key.clone(),
+                channel: "constraint".to_owned(),
+                text: requirement.clone(),
+            }),
+            agentdash_agent_service_api::AgentSurfaceContributionPayload::Hook { .. } => {}
         }
     }
     Ok(DashSurface {
@@ -1698,13 +1720,28 @@ impl DashHistoryCallbacks for DashCompleteLiveCallbacks {
     ) -> Result<(), agentdash_agent::dash::DashCoreError> {
         let mut records = Vec::new();
         for entry in commit.entries {
+            let previous_state = if entry.sequence > 1 {
+                Some(
+                    commit
+                        .history
+                        .state_at(entry.sequence - 1)
+                        .map_err(live_callback_error)?,
+                )
+            } else {
+                None
+            };
             let state = commit
                 .history
                 .state_at(entry.sequence)
                 .map_err(live_callback_error)?;
             records.extend(
-                crate::canonical_projection::entry_records(self.source.as_str(), &entry, &state)
-                    .map_err(live_callback_error)?,
+                crate::canonical_projection::entry_records(
+                    self.source.as_str(),
+                    &entry,
+                    previous_state.as_ref(),
+                    &state,
+                )
+                .map_err(live_callback_error)?,
             );
         }
         self.live_channel.publish(&self.source, records).await;

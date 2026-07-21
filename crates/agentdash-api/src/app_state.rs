@@ -535,6 +535,13 @@ impl AppState {
                 lifecycle_surface_projection,
                 audit_bus: audit_bus.clone(),
                 hook_plan_compiler: hook_provider.clone(),
+                extra_skill_dirs: integration_registration.extra_skill_dirs.clone(),
+                skill_discovery_providers: integration_registration
+                    .skill_discovery_providers
+                    .clone(),
+                memory_discovery_providers: integration_registration
+                    .memory_discovery_providers
+                    .clone(),
                 product_runtime_bindings: product.runtime_bindings.clone(),
             },
         ));

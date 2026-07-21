@@ -396,8 +396,17 @@ fn vfs_grant(
         {
             continue;
         }
+        let described_grants = if list_all {
+            surface
+                .vfs_grants
+                .iter()
+                .filter(|grant| grant.mount_id == mount.mount_id)
+                .collect::<Vec<_>>()
+        } else {
+            matching_grants.clone()
+        };
         let mut path_scopes = Vec::new();
-        for scope in matching_grants
+        for scope in described_grants
             .iter()
             .flat_map(|grant| grant.path_scopes.iter())
             .cloned()
@@ -414,7 +423,17 @@ fn vfs_grant(
             root_ref: mount.root_ref.clone(),
             display_name: mount.display_name.clone(),
             metadata: mount.metadata.clone(),
-            operations: vec![map_vfs_operation(required)],
+            operations: if list_all {
+                described_grants
+                    .iter()
+                    .flat_map(|grant| grant.operations.iter().copied())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .map(map_vfs_operation)
+                    .collect()
+            } else {
+                vec![map_vfs_operation(required)]
+            },
             path_scopes,
         });
     }
@@ -789,10 +808,11 @@ mod tests {
     #[tokio::test]
     async fn task_read_grant_does_not_authorize_task_write() {
         let binding = binding();
-        let snapshot = snapshot(
+        let mut snapshot = snapshot(
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
+        snapshot.task_grants[0].operations = BTreeSet::from([AppliedTaskOperation::Read]);
         let authorizer = ProductRuntimeToolAuthorizer::new(
             Arc::new(BindingFixture {
                 value: Some(binding),
@@ -810,6 +830,28 @@ mod tests {
             RuntimeToolBrokerError::AuthorizationDenied { code, .. }
                 if code == "missing_task_grant"
         ));
+    }
+
+    #[tokio::test]
+    async fn project_agent_run_task_surface_authorizes_run_scoped_task_write() {
+        let binding = binding();
+        let snapshot = snapshot(
+            binding.binding.target.clone(),
+            binding.binding_digest.clone(),
+        );
+        let authorizer = ProductRuntimeToolAuthorizer::new(
+            Arc::new(BindingFixture {
+                value: Some(binding),
+            }),
+            Arc::new(SurfaceFixture {
+                value: Ok(snapshot),
+            }),
+        );
+
+        authorizer
+            .authorize(request("task_write"))
+            .await
+            .expect("Project AgentRun owns the run-scoped Task write boundary");
     }
 
     #[tokio::test]
@@ -906,6 +948,46 @@ mod tests {
             assert_eq!(grant.applied_surface.task_digest, "task-test");
             assert_eq!(grant.applied_surface.product_binding_digest, "binding-test");
             assert_eq!(grant.applied_surface.host_binding_generation, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn mounts_list_reports_the_full_applied_mount_capability_surface() {
+        let binding = binding();
+        let snapshot = snapshot(
+            binding.binding.target.clone(),
+            binding.binding_digest.clone(),
+        );
+        let authorizer = ProductRuntimeToolAuthorizer::new(
+            Arc::new(BindingFixture {
+                value: Some(binding),
+            }),
+            Arc::new(SurfaceFixture {
+                value: Ok(snapshot),
+            }),
+        );
+
+        let grant = authorizer
+            .authorize(request("mounts_list"))
+            .await
+            .expect("mount catalog is readable");
+        let RuntimeToolResourceGrant::Vfs(vfs) = grant.resources else {
+            panic!("mounts_list must produce a VFS catalog grant");
+        };
+        let main = vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "main")
+            .expect("main mount is visible");
+        assert_eq!(main.operations.len(), 5);
+        for expected in [
+            RuntimeVfsGrantedOperation::Read,
+            RuntimeVfsGrantedOperation::Write,
+            RuntimeVfsGrantedOperation::List,
+            RuntimeVfsGrantedOperation::Search,
+            RuntimeVfsGrantedOperation::Execute,
+        ] {
+            assert!(main.operations.contains(&expected), "missing {expected:?}");
         }
     }
 
@@ -1243,7 +1325,10 @@ mod tests {
             vfs_digest: "vfs-test".to_owned(),
             task_grants: vec![AppliedTaskGrant {
                 scope: AppliedTaskScope::Project { project_id },
-                operations: BTreeSet::from([AppliedTaskOperation::Read]),
+                operations: BTreeSet::from([
+                    AppliedTaskOperation::Read,
+                    AppliedTaskOperation::Write,
+                ]),
             }],
             task_surface_digest: "task-test".to_owned(),
             product_binding_digest,

@@ -17,7 +17,7 @@ pub(crate) const CONTEXT_OWNER_ID_METADATA_KEY: &str = "agentdash_context_owner_
 pub(crate) const CONTEXT_CONTAINER_ID_METADATA_KEY: &str = "agentdash_context_container_id";
 pub(crate) const PROJECT_VFS_MOUNT_METADATA_KEY: &str = "agentdash_project_vfs_mount";
 pub(crate) const SKILL_ASSET_PROJECT_ID_METADATA_KEY: &str = "skill_asset_project_id";
-pub(crate) const SKILL_ASSET_KEYS_METADATA_KEY: &str = "skill_asset_keys";
+pub const SKILL_ASSET_KEYS_METADATA_KEY: &str = "skill_asset_keys";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionMountTarget {

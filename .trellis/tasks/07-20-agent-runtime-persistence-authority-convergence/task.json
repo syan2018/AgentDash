@@ -26,6 +26,6 @@
     ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/",
     ".trellis/tasks/07-20-database-persistence-boundary-cleanup/"
   ],
-  "notes": "canonical 会话单一事实链路已完成真实运行验证：ContextFrame、用户输入、流式Agent输出、TurnCompleted与Agent原生标题均由同一source history/read/live链路收敛。按协作约定保持任务进行中，待开发者复核后再决定归档。",
+  "notes": "任务保持进行中。canonical 会话主链已验证；本轮已收口final AgentFrame能力发现、Task/VFS授权、Complete Agent surface编译、Native ContextFrame真增量与前端typed变化渲染，待重启开发环境完成Task Write、Canvas、skills/MCP/memory与会话流的真实Draft tracer后再评估完成。",
   "meta": {}
 }

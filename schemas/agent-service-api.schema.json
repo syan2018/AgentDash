@@ -9200,6 +9200,20 @@
               },
               "default": []
             },
+            "removed_tools": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "changed_tools": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeToolSchemaEntry"
+              },
+              "default": []
+            },
             "kind": {
               "type": "string",
               "const": "tool_schema_delta"

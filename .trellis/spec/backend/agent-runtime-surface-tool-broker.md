@@ -73,6 +73,14 @@ struct ToolCallCoordinates {
 - `AgentSurfaceSnapshot` 是业务期望的immutable事实，`BoundAgentSurface`是与实际RuntimeProfile求交后的业务admission结果。Driver Host只能持久化revision/digest/hook refs等轻量reference，不得复制或重新编译contribution。
 - Required contribution不满足即typed incompatible；只有显式optional贡献可以省略。`PromptOnly`不满足callable Tool、exact Workspace/Skill或required Hook语义。
 - Tool需要真实callable route：Direct Callback、session-scoped MCP façade或Driver Native。runtime tool name、tool path、MCP server identity、configuration boundary和schema/provenance必须无冲突。
+- Complete Agent Product surface从同一canonical AgentFrame闭包编译：final VFS先派生skills、guidelines
+  与memory inventory；MCP server事实同时产生动态callable tools和模型可见server instruction；
+  workspace/context requirement按Complete Agent声明的immutable delivery route投递。编译器不得绕过
+  AgentFrame在launch时重新读取另一份Product capability表。
+- tool可见性与调用授权必须来自同一applied Product resource surface。`task_write`可见时必须存在
+  对应project/task Write grant。`mounts_list`自身只需要List准入，但返回的mount catalog必须描述
+  该mount在applied surface中的完整Read/Write/List/Search/Exec集合与path scopes，不能把本次调用
+  的List grant误当成mount全部能力。
 - 每个进入最终Tool Catalog的`ToolContribution`必须由owner声明protocol projector与family；Surface compile缺projector即typed reject。Command、FileChange、FS、MCP、VFS、RuntimeAction、Workspace Module、Companion、Task、Wait、LifecycleComplete与explicit Dynamic使用各自typed family，禁止按tool name猜测或以Dynamic作为缺省。
 - 每个binding的effective presentation route必须把owner projector与`VendorStream|ToolBroker` emitter作为一个原子事实发布和替换。owner显式声明Dynamic时才允许Dynamic；route缺失是typed protocol violation，不能把原本的FS、Command、FileChange或MCP静默换型。
 - Tool item lifecycle必须exactly-one presentation producer：`VendorStream`由connector mapper发布、Broker只维护internal canonical state；`ToolBroker`由`ToolContribution + ManagedRuntimeToolJournal`发布、connector mapper抑制同一tool的vendor lifecycle。Native、Codex与Remote均消费binding effective route，不能由全局默认或工具名推断owner。
@@ -106,6 +114,10 @@ struct ToolCallCoordinates {
 | contribution稳定key相同但内容不同 | typed compile conflict，不覆盖 |
 | required Tool/Skill/Hook/Workspace仅有PromptOnly或弱route | `IncompatibleContribution` |
 | ProjectAgent launch 无 canonical workspace default mount | frame construction typed reject；不创建 Host binding，不使用进程 cwd 或任意 backend |
+| lifecycle VFS声明SkillAsset keys但final frame discovery未发现对应skill | frame construction typed reject；不持久化缺能力的AgentFrame |
+| Product surface暴露`task_write`但没有Write grant | surface construction/authorization test失败；不能把运行期`missing_task_grant`留给Agent |
+| `mounts_list`调用自身只有List准入 | 调用可执行，结果仍展示applied surface授予该mount的完整operation/path scope |
+| MCP server存在但动态catalog为空 | server instruction准确展示已配置server；不伪造callable tool |
 | frame construction port 在 VFS bootstrap 后仍未绑定 | AppState composition fail-fast；请求不可进入半装配状态 |
 | 一个Hook definition分配多个route | `ConflictingHookRoute` |
 | stale binding generation/tool-set revision | side effect与broker call前typed reject |
@@ -134,6 +146,10 @@ struct ToolCallCoordinates {
 
 **Good case:** MCP tool call按catalog坐标进入同一个Broker，BeforeTool改写参数后先持久化，policy/VFS/credential校验完成才以canonical Item ID调用executor。executor可触发Surface hot-replace；同一accepted Item仍按原binding generation完成AfterTool、Broker terminal和Runtime Item convergence。
 
+**Good case:** Project launch把lifecycle SkillAsset投影进final VFS，frame construction从该VFS发现
+skill/guideline并写回同一AgentFrame document；surface compiler从该frame生成skill/MCP instructions
+与native tools，授权器从同一applied resource surface生成Task/VFS grant。
+
 **Base case:** required approval创建durable Interaction并暂停；获批后由唯一claim owner使用同一Item和effective arguments继续。若进程在Running后消失，后续调用保留该不确定边界并返回typed in-progress，不猜测副作用是否发生。
 
 **Bad case:** 把Capability Pack拍成prompt、向driver传`DynAgentTool`、在permission/VFS之前解引用secret、把持久化Running直接当成executor重放许可，或让可选terminal registry静默产出孤儿`running` handle。这些行为会伪报能力、绕过执行点policy、重复不可逆副作用或切断terminal control，必须由类型、composition与顺序测试阻止。
@@ -141,6 +157,12 @@ struct ToolCallCoordinates {
 ## 6. Tests Required
 
 - Surface测试覆盖确定性编译、各contribution必填字段、所有identity冲突、required/optional/PromptOnly矩阵、Hook唯一route与profile strength。
+- frame discovery回归测试断言final VFS中的SKILL.md与AGENTS.md分别进入同一持久AgentFrame的
+  capability/context source；Product surface测试断言skills、MCP server与动态MCP tool均进入实际
+  Agent surface。
+- runtime authorization测试断言Project AgentRun允许run-scoped`task_write`，read-only fixture仍拒绝
+  write；`mounts_list`结果包含applied surface完整能力；final Product broker tracer覆盖Workspace Module
+  list/describe/operate/invoke/present的read/write/presentation边界。
 - embedded PostgreSQL Lifecycle launch 测试断言：product delivery 前 current AgentFrame 已包含 canonical workspace mount/backend/root/capability/context 与本次 Run execution profile；无 default workspace 的 Project 在 frame construction 边界失败。
 - Broker behavior覆盖Direct/MCP同状态机、rewrite/block/approval、permission/VFS/credential顺序、cancel/timeout/executor failure/result rewrite。
 - Broker lifecycle必须覆盖调用在accept后触发Surface/ToolSet hot-replace，断言progress与terminal成功、terminal唯一；另以旧revision发起新调用必须在accept前失败。
@@ -197,6 +219,15 @@ let provider = VfsRuntimeToolProvider::new(vfs, materialization);
 
 // Correct: production composition显式提供typed terminal routing owner。
 let provider = VfsRuntimeToolProvider::new(vfs, materialization, terminal_registry);
+```
+
+```rust
+// Wrong: 用mounts_list这一次调用的List权限描述整个mount。
+catalog.capabilities = invocation_grant.operations;
+
+// Correct: List只做当前调用准入，catalog从同一applied mount的全部grants合并得到。
+authorize_operation(&applied_mount, RuntimeVfsOperation::List)?;
+catalog.capabilities = union_applied_mount_operations(&applied_mount);
 ```
 
 ```rust

@@ -146,6 +146,8 @@ export interface VfsDeltaSection {
 export interface ToolSchemaDeltaSection {
   kind: "tool_schema_delta";
   added_tools: RuntimeToolSchemaEntry[];
+  removed_tools: string[];
+  changed_tools: RuntimeToolSchemaEntry[];
 }
 
 export interface RuntimeToolSchemaEntry {
@@ -537,9 +539,12 @@ function parseSection(value: unknown): ContextFrameSection | null {
   }
   if (kind === "tool_schema_delta") {
     const addedTools = Array.isArray(value.added_tools) ? value.added_tools : [];
+    const changedTools = Array.isArray(value.changed_tools) ? value.changed_tools : [];
     return {
       kind,
       added_tools: addedTools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
+      removed_tools: readStringArray(value.removed_tools),
+      changed_tools: changedTools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
     };
   }
   if (kind === "skill_delta") {

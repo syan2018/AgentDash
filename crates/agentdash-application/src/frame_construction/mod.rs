@@ -516,14 +516,15 @@ mod existing_surface_discovery_tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    use crate::agent_run::frame::AgentFrameSurfaceExt;
     use agentdash_application_agentrun::agent_run::runtime_capability_projection::{
         LaunchContextDiscoveryInput, derive_launch_context_discovery,
     };
     use agentdash_application_ports::launch::{LaunchCommand, LaunchPromptInput};
     use agentdash_application_vfs::{
         ListOptions, ListResult, MountError, MountOperationContext, MountProvider,
-        MountProviderRegistry, PROVIDER_INLINE_FS, ReadResult, SearchQuery, SearchResult,
-        VfsService,
+        MountProviderRegistry, PROVIDER_INLINE_FS, ReadResult, RuntimeFileEntry, SearchQuery,
+        SearchResult, VfsService,
     };
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
@@ -572,11 +573,28 @@ mod existing_surface_discovery_tests {
         async fn list(
             &self,
             _mount: &Mount,
-            _options: &ListOptions,
+            options: &ListOptions,
             _ctx: &MountOperationContext,
         ) -> Result<ListResult, MountError> {
+            let prefix = if options.path == "." {
+                String::new()
+            } else {
+                format!("{}/", options.path.trim_end_matches('/'))
+            };
+            let mut entries = std::collections::BTreeMap::new();
+            for path in self.files.keys() {
+                let Some(rest) = path.strip_prefix(&prefix) else {
+                    continue;
+                };
+                let entry = if let Some((child, _)) = rest.split_once('/') {
+                    RuntimeFileEntry::dir(format!("{prefix}{child}"))
+                } else {
+                    RuntimeFileEntry::file(path.clone())
+                };
+                entries.entry(entry.path.clone()).or_insert(entry);
+            }
             Ok(ListResult {
-                entries: Vec::new(),
+                entries: entries.into_values().collect(),
             })
         }
 
@@ -657,6 +675,101 @@ mod existing_surface_discovery_tests {
         assert_eq!(discovery.discovered_guidelines[0].file_name, "AGENTS.md");
         assert_eq!(discovery.discovered_guidelines[0].mount_id, "workspace");
         assert_eq!(discovery.discovered_guidelines[0].content, "使用中文交流");
+    }
+
+    #[tokio::test]
+    async fn product_frame_materialization_persists_discovered_skills_and_guidelines() {
+        let mut frame = persisted_frame_with_agents_md();
+        let mut vfs = frame.typed_vfs().expect("VFS");
+        vfs.mounts[0].metadata = serde_json::json!({
+            "skill_asset_project_id": Uuid::new_v4().to_string(),
+            "skill_asset_keys": ["review"],
+        });
+        let mut capability_state = frame.typed_capability_state().expect("capability state");
+        capability_state.vfs.active = Some(vfs.clone());
+        frame.vfs_surface_json = Some(serde_json::to_value(vfs).unwrap());
+        frame.effective_capability_json = Some(serde_json::to_value(capability_state).unwrap());
+        let mut surface = frame.surface_document();
+        surface.context_source_snapshot = Some(
+            serde_json::to_value(crate::agent_run::frame::AgentContextSourceSnapshot {
+                bundle_id: Uuid::new_v4(),
+                session_id: "product-frame".to_owned(),
+                phase_tag: "project_agent".to_owned(),
+                created_at_ms: 1,
+                fragments: Vec::new(),
+            })
+            .unwrap(),
+        );
+        frame.surface = Some(surface);
+        frame.apply_surface_projection();
+
+        let mut registry = MountProviderRegistry::new();
+        registry.register(Arc::new(StaticFileProvider {
+            files: HashMap::from([
+                ("AGENTS.md".to_owned(), "使用中文交流".to_owned()),
+                (
+                    "skills/review/SKILL.md".to_owned(),
+                    "---\nname: review\ndescription: Review changes carefully.\n---\n# Review"
+                        .to_owned(),
+                ),
+            ]),
+        }));
+        let vfs_service = VfsService::new(Arc::new(registry));
+
+        super::launch_anchor_materialization::materialize_frame_context_discovery(
+            &mut frame,
+            &vfs_service,
+            &[],
+            &[],
+            &[],
+        )
+        .await
+        .expect("materialize discovery into immutable Product frame");
+
+        let capability = frame.typed_capability_state().expect("capability state");
+        assert!(
+            capability
+                .skill
+                .skills
+                .iter()
+                .any(|skill| skill.name == "review" && skill.file_path.ends_with("SKILL.md"))
+        );
+        let context = frame.context_source_snapshot().expect("context source");
+        assert!(context.fragments.iter().any(|fragment| {
+            fragment.source == "vfs_guideline:workspace://AGENTS.md"
+                && fragment.content.contains("使用中文交流")
+        }));
+    }
+
+    #[tokio::test]
+    async fn product_frame_rejects_a_declared_skill_missing_from_final_vfs_discovery() {
+        let mut frame = persisted_frame_with_agents_md();
+        let mut vfs = frame.typed_vfs().expect("VFS");
+        vfs.mounts[0].metadata = serde_json::json!({
+            "skill_asset_project_id": Uuid::new_v4().to_string(),
+            "skill_asset_keys": ["canvas-system"],
+        });
+        let mut capability_state = frame.typed_capability_state().expect("capability state");
+        capability_state.vfs.active = Some(vfs.clone());
+        frame.vfs_surface_json = Some(serde_json::to_value(vfs).unwrap());
+        frame.effective_capability_json = Some(serde_json::to_value(capability_state).unwrap());
+
+        let mut registry = MountProviderRegistry::new();
+        registry.register(Arc::new(StaticFileProvider {
+            files: HashMap::new(),
+        }));
+        let vfs_service = VfsService::new(Arc::new(registry));
+
+        let error = super::launch_anchor_materialization::materialize_frame_context_discovery(
+            &mut frame,
+            &vfs_service,
+            &[],
+            &[],
+            &[],
+        )
+        .await
+        .expect_err("declared SkillAsset must be discovered from the final VFS");
+        assert!(error.to_string().contains("canvas-system"));
     }
 
     /// 若持久化 frame 缺少 VFS surface，ExistingSurface 无法闭包 launch surface，

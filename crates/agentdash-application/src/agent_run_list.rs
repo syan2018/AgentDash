@@ -596,8 +596,6 @@ mod tests {
             lifecycle: ManagedRuntimeLifecycleStatus::Active,
             thread_name: Some(thread_name),
             thread_name_source: None,
-            turns: Vec::new(),
-            items: Vec::new(),
             interactions: Vec::new(),
             conversation_history: Vec::new(),
             operations: Vec::new(),

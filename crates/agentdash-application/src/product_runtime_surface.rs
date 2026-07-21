@@ -270,7 +270,7 @@ async fn product_task_grants(
         scope: AppliedTaskScope::Project {
             project_id: facts.run.project_id,
         },
-        operations: BTreeSet::from([AppliedTaskOperation::Read]),
+        operations: BTreeSet::from([AppliedTaskOperation::Read, AppliedTaskOperation::Write]),
     }];
     for association in repos
         .lifecycle_subject_association_repo

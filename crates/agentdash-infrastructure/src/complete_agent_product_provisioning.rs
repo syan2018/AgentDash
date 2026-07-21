@@ -690,7 +690,7 @@ async fn compile_product_surface(
         .transpose()?;
     let dynamic = dynamic_tools
         .resolve(RuntimeMcpToolCatalogRequest {
-            servers: mcp_servers,
+            servers: mcp_servers.clone(),
             capability_state: capability_state.clone(),
             relay_context,
         })
@@ -721,6 +721,9 @@ async fn compile_product_surface(
         )?);
     }
     requirements.extend(instruction_requirements(context.as_ref())?);
+    requirements.extend(skill_instruction_requirements(&capability_state)?);
+    requirements.extend(memory_instruction_requirements(&capability_state)?);
+    requirements.extend(mcp_instruction_requirements(&mcp_servers)?);
     requirements.extend(workspace_requirements(vfs.as_ref())?);
     requirements.extend(tool_requirements(
         broker.definitions(),
@@ -751,6 +754,119 @@ async fn compile_product_surface(
             .map_err(|error| invalid(error.to_string()))?,
         requirements,
     })
+}
+
+fn skill_instruction_requirements(
+    capability_state: &CapabilityState,
+) -> Result<Vec<AgentSurfaceRequirement>, AgentRunProductRuntimeProvisioningError> {
+    let visible = capability_state
+        .skill
+        .skills
+        .iter()
+        .filter(|skill| skill.exposure.is_default_exposed() && !skill.disable_model_invocation)
+        .collect::<Vec<_>>();
+    if visible.is_empty() {
+        return Ok(Vec::new());
+    }
+    let text = format!(
+        "## Available Skills\nUse a matching skill by reading its `SKILL.md` from the declared VFS path before acting.\n{}",
+        visible
+            .iter()
+            .map(|skill| {
+                format!(
+                    "- `{}`: {} (path: `{}`)",
+                    skill.display_name.as_deref().unwrap_or(&skill.name),
+                    skill.description,
+                    skill.file_path
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    surface_requirement(
+        "instruction:capability:skills".to_owned(),
+        true,
+        SemanticFidelity::Exact,
+        BTreeSet::from([AgentSurfaceRoute::ImmutableDelivery]),
+        AgentSurfaceSemanticFacet::Instruction,
+        AgentSurfaceContributionPayload::Instruction {
+            channel: "skills".to_owned(),
+            text,
+        },
+    )
+    .map(|requirement| vec![requirement])
+}
+
+fn memory_instruction_requirements(
+    capability_state: &CapabilityState,
+) -> Result<Vec<AgentSurfaceRequirement>, AgentRunProductRuntimeProvisioningError> {
+    let clusters = &capability_state.memory.inventory.clusters;
+    if clusters.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut lines = vec![
+        "## Memory Sources".to_owned(),
+        "Use the declared VFS source/index URIs when memory context is relevant.".to_owned(),
+    ];
+    for cluster in clusters {
+        lines.push(format!("### {}", cluster.display_name));
+        if let Some(summary) = cluster.model_summary.as_deref() {
+            lines.push(summary.to_owned());
+        }
+        lines.extend(cluster.sources.iter().map(|source| {
+            format!(
+                "- `{}`: source `{}`, index `{}`{}",
+                source.display_name,
+                source.source_uri,
+                source.index_uri,
+                source
+                    .summary
+                    .as_deref()
+                    .map(|summary| format!(" — {summary}"))
+                    .unwrap_or_default()
+            )
+        }));
+    }
+    surface_requirement(
+        "instruction:capability:memory".to_owned(),
+        true,
+        SemanticFidelity::Exact,
+        BTreeSet::from([AgentSurfaceRoute::ImmutableDelivery]),
+        AgentSurfaceSemanticFacet::Instruction,
+        AgentSurfaceContributionPayload::Instruction {
+            channel: "memory".to_owned(),
+            text: lines.join("\n"),
+        },
+    )
+    .map(|requirement| vec![requirement])
+}
+
+fn mcp_instruction_requirements(
+    servers: &[RuntimeMcpServer],
+) -> Result<Vec<AgentSurfaceRequirement>, AgentRunProductRuntimeProvisioningError> {
+    if servers.is_empty() {
+        return Ok(Vec::new());
+    }
+    let text = format!(
+        "## MCP Servers\nThe following MCP servers are configured for this Agent surface. Callable tools, when discovered, are exposed separately through the tool surface.\n{}",
+        servers
+            .iter()
+            .map(|server| format!("- `{}`", server.name))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    surface_requirement(
+        "instruction:capability:mcp".to_owned(),
+        true,
+        SemanticFidelity::Exact,
+        BTreeSet::from([AgentSurfaceRoute::ImmutableDelivery]),
+        AgentSurfaceSemanticFacet::Instruction,
+        AgentSurfaceContributionPayload::Instruction {
+            channel: "mcp".to_owned(),
+            text,
+        },
+    )
+    .map(|requirement| vec![requirement])
 }
 
 fn instruction_requirements(
@@ -1229,6 +1345,72 @@ mod tests {
         };
 
         assert_eq!(hook_requirement(&requirement).unwrap(), None);
+    }
+
+    #[test]
+    fn discovered_skill_and_mcp_facts_compile_to_model_visible_instructions() {
+        let mut capability = CapabilityState::default();
+        capability
+            .skill
+            .skills
+            .push(agentdash_platform_spi::SkillEntry {
+                name: "canvas-system".to_owned(),
+                capability_key: "workspace/canvas-system".to_owned(),
+                provider_key: "workspace".to_owned(),
+                local_name: "canvas-system".to_owned(),
+                display_name: Some("Canvas".to_owned()),
+                description: "Create and edit Canvas modules.".to_owned(),
+                file_path: "lifecycle://skills/canvas-system/SKILL.md".to_owned(),
+                base_dir: Some("lifecycle://skills/canvas-system".to_owned()),
+                exposure: agentdash_platform_spi::SkillContextExposure::DefaultExposed,
+                disable_model_invocation: false,
+            });
+        let skill = skill_instruction_requirements(&capability).unwrap();
+        assert_eq!(skill.len(), 1);
+        assert!(matches!(
+            &skill[0].payload,
+            AgentSurfaceContributionPayload::Instruction { channel, text }
+                if channel == "skills"
+                    && text.contains("Canvas")
+                    && text.contains("lifecycle://skills/canvas-system/SKILL.md")
+        ));
+
+        let servers = vec![RuntimeMcpServer::new(
+            "agentdash-workflow-tools".to_owned(),
+            agentdash_platform_spi::McpTransportConfig::Http {
+                url: "http://localhost/mcp/workflow/test".to_owned(),
+                headers: Vec::new(),
+            },
+            false,
+        )];
+        let mcp = mcp_instruction_requirements(&servers).unwrap();
+        assert_eq!(mcp.len(), 1);
+        assert!(matches!(
+            &mcp[0].payload,
+            AgentSurfaceContributionPayload::Instruction { channel, text }
+                if channel == "mcp" && text.contains("agentdash-workflow-tools")
+        ));
+
+        let dynamic = tool_requirements(
+            vec![RuntimeToolDefinition {
+                name: agentdash_agent_service_api::AgentToolName::new(
+                    "mcp_agentdash_workflow_tools_get_lifecycle",
+                )
+                .unwrap(),
+                description: "Get lifecycle".to_owned(),
+                parameters_schema: serde_json::json!({"type": "object"}),
+                permission: agentdash_agent_runtime::RuntimeToolPermission::ProductRead,
+                effect: agentdash_agent_runtime::RuntimeToolEffect::ReadOnly,
+            }],
+            &CapabilityState::default(),
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            &dynamic[0].payload,
+            AgentSurfaceContributionPayload::Tool { name, .. }
+                if name.as_str() == "mcp_agentdash_workflow_tools_get_lifecycle"
+        ));
     }
 
     #[test]

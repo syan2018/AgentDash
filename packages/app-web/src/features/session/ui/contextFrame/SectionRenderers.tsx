@@ -148,8 +148,11 @@ function sectionHint(section: ContextFrameSection): string | null {
       return `+${added} −${removed}${mountChanged ? " ↻default" : ""}`;
     }
     case "tool_schema_delta": {
-      const count = section.added_tools.length;
-      return count > 0 ? `+${count}` : "no change";
+      const added = section.added_tools.length;
+      const removed = section.removed_tools.length;
+      const changed = section.changed_tools.length;
+      if (added + removed + changed === 0) return "no change";
+      return `+${added} −${removed}${changed > 0 ? ` ↻${changed}` : ""}`;
     }
     case "skill_delta": {
       const added = section.added_skills.length;
@@ -492,30 +495,38 @@ function DeltaListItem({
 }
 
 function ToolSchemaDeltaBody({ section }: { section: ToolSchemaDeltaSection }) {
-  if (section.added_tools.length === 0) {
-    return <p className={CB.meta}>无新增工具 schema</p>;
+  if (
+    section.added_tools.length
+      + section.removed_tools.length
+      + section.changed_tools.length
+    === 0
+  ) {
+    return <p className={CB.meta}>本次无工具变化</p>;
   }
+  const renderTools = (
+    tools: ToolSchemaDeltaSection["added_tools"],
+    symbol: string,
+  ) => tools.map((tool) => {
+    const fieldNames = schemaFieldNames(tool.parameters_schema);
+    const chips = [tool.capability_key, tool.source].filter(Boolean) as string[];
+    return (
+      <DeltaListItem
+        key={`${symbol}-${tool.name}`}
+        symbol={symbol}
+        name={tool.name}
+        chips={chips}
+        meta={fieldNames.length > 0 ? `${fieldNames.length} params` : undefined}
+        hoverDesc={tool.description || undefined}
+      />
+    );
+  });
   return (
     <div className={SCROLL_LIST}>
-      {section.added_tools.map((tool) => {
-        const fieldNames = schemaFieldNames(tool.parameters_schema);
-        const chips = [tool.capability_key, tool.source].filter(Boolean) as string[];
-        return (
-          <DeltaListItem
-            key={tool.name}
-            symbol="+"
-            name={tool.name}
-            chips={chips}
-            meta={fieldNames.length > 0 ? `${fieldNames.length} params` : undefined}
-            hoverDesc={tool.description || undefined}
-            expandContent={
-              tool.parameters_schema != null ? (
-                <JsonTree data={tool.parameters_schema} defaultDepth={3} />
-              ) : undefined
-            }
-          />
-        );
-      })}
+      {renderTools(section.added_tools, "+")}
+      {section.removed_tools.map((name) => (
+        <DeltaListItem key={`removed-${name}`} symbol="−" name={name} />
+      ))}
+      {renderTools(section.changed_tools, "↻")}
     </div>
   );
 }

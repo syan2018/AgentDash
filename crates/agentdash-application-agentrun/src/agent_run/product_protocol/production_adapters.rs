@@ -68,11 +68,9 @@ impl AgentRunRuntimeSnapshotPort for ProductAgentRunRuntimeSnapshotAdapter {
             .load_product_binding_by_runtime_thread(thread_id)
             .await?
             .ok_or_else(|| format!("Product binding for Runtime thread {thread_id} is missing"))?;
-        let service = self
-            .agents
-            .resolve(&binding.agent.service_instance_id)
-            .await?;
-        let snapshot = service
+        let resolved = self.agents.resolve(&binding).await?;
+        let snapshot = resolved
+            .service
             .read(AgentReadQuery {
                 source: binding.agent.source,
                 at_revision: None,
@@ -501,7 +499,6 @@ pub struct ProductAgentRunForkGraphAdapter {
     agents: Arc<dyn LifecycleAgentRepository>,
     frames: Arc<dyn AgentFrameRepository>,
     frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
-    product_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
 }
 
 impl ProductAgentRunForkGraphAdapter {
@@ -510,14 +507,12 @@ impl ProductAgentRunForkGraphAdapter {
         agents: Arc<dyn LifecycleAgentRepository>,
         frames: Arc<dyn AgentFrameRepository>,
         frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
-        product_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     ) -> Self {
         Self {
             runs,
             agents,
             frames,
             frame_construction,
-            product_bindings,
         }
     }
 
@@ -731,39 +726,9 @@ impl AgentRunForkProductGraphPort for ProductAgentRunForkGraphAdapter {
         saga: &AgentRunForkSaga,
     ) -> Result<AgentRunProductRuntimeProvisioningRequest, String> {
         let child = saga.child();
-        let Some(selection) = saga.child_product_selection() else {
-            let frame = self
-                .frames
-                .get(child.frame_id)
-                .await
-                .map_err(|error| error.to_string())?
-                .ok_or_else(|| "fork child inherited AgentFrame is not committed".to_owned())?;
-            let parent = self
-                .product_bindings
-                .load_product_binding(&AgentRunTarget {
-                    run_id: saga.parent().run_id,
-                    agent_id: saga.parent().agent_id,
-                })
-                .await?
-                .ok_or_else(|| "fork parent Product Agent association is missing".to_owned())?;
-            let revision = u64::try_from(frame.revision)
-                .map_err(|_| "fork child AgentFrame revision is invalid".to_owned())?;
-            return Ok(AgentRunProductRuntimeProvisioningRequest {
-                target: AgentRunTarget {
-                    run_id: child.run_id,
-                    agent_id: child.agent_id,
-                },
-                runtime_thread_id: child.runtime_thread_id.clone(),
-                idempotency_key: format!("product-fork-bind:v1:{}", saga.request_id().0),
-                frame: ProductAgentFrameRef {
-                    frame_id: frame.id,
-                    agent_id: frame.agent_id,
-                    revision,
-                },
-                execution_profile: parent.execution_profile,
-                surface_facts: ProductAgentSurfaceFacts::from_frame(&frame),
-            });
-        };
+        let selection = saga
+            .child_product_selection()
+            .ok_or_else(|| "fork child Product selection is missing".to_owned())?;
         let child_agent = self
             .agents
             .get(child.agent_id)

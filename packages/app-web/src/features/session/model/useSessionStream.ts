@@ -32,6 +32,7 @@ export interface UseSessionStreamResult {
   isReceiving: boolean;
   error: Error | null;
   tokenUsage: TokenUsageInfo | null;
+  refresh: () => Promise<void>;
   reconnect: () => void;
   close: () => void;
 }
@@ -151,6 +152,7 @@ export function useSessionStream({
     isReceiving: feed.snapshot?.active_turn_id != null,
     error: feed.error,
     tokenUsage: state.tokenUsage,
+    refresh: feed.refresh,
     reconnect: feed.reconnect,
     close: feed.close,
   };

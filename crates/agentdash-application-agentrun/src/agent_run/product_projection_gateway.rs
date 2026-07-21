@@ -3,8 +3,7 @@ use std::sync::Arc;
 use agentdash_agent_runtime::project_authoritative_agent_snapshot;
 use agentdash_agent_runtime_contract::{ManagedRuntimeSnapshot, RuntimeThreadId};
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentLiveEventStream, AgentReadQuery, AgentServiceInstanceId,
-    CompleteAgentService,
+    AgentBindingGeneration, AgentLiveEventStream, AgentReadQuery, CompleteAgentService,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_workspace_module::workspace_module::presentation_protocol::{
@@ -23,6 +22,11 @@ use super::terminal_projection_protocol::{
     AgentRunTerminalProjectionRepository, AgentRunTerminalSnapshot,
 };
 use super::{ProductAgentFrameRef, ProductExecutionProfileRef};
+
+pub struct AgentRunResolvedCompleteAgent {
+    pub service: Arc<dyn CompleteAgentService>,
+    pub binding_generation: AgentBindingGeneration,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRunProductRuntimeBinding {
@@ -127,13 +131,8 @@ pub struct AgentRunProductProjectionGateway {
 pub trait AgentRunCompleteAgentResolverPort: Send + Sync {
     async fn resolve(
         &self,
-        service_instance_id: &AgentServiceInstanceId,
-    ) -> Result<Arc<dyn CompleteAgentService>, String>;
-
-    async fn binding_generation(
-        &self,
         binding: &AgentRunProductRuntimeBinding,
-    ) -> Result<AgentBindingGeneration, String>;
+    ) -> Result<AgentRunResolvedCompleteAgent, String>;
 }
 
 impl AgentRunProductProjectionGateway {
@@ -176,12 +175,13 @@ impl AgentRunProductProjectionGateway {
         target: &AgentRunTarget,
     ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError> {
         let binding = self.binding(target).await?;
-        let service = self
+        let resolved = self
             .agents
-            .resolve(&binding.agent.service_instance_id)
+            .resolve(&binding)
             .await
             .map_err(AgentRunProductProjectionError::Runtime)?;
-        let snapshot = service
+        let snapshot = resolved
+            .service
             .read(AgentReadQuery {
                 source: binding.agent.source.clone(),
                 at_revision: None,
@@ -248,12 +248,13 @@ impl AgentRunProductProjectionGateway {
         target: &AgentRunTarget,
     ) -> Result<Box<dyn AgentLiveEventStream>, AgentRunProductProjectionError> {
         let binding = self.binding(target).await?;
-        let service = self
+        let resolved = self
             .agents
-            .resolve(&binding.agent.service_instance_id)
+            .resolve(&binding)
             .await
             .map_err(AgentRunProductProjectionError::Runtime)?;
-        service
+        resolved
+            .service
             .live_events(binding.agent.source)
             .await
             .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))

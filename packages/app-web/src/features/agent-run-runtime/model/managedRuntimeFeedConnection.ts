@@ -29,6 +29,7 @@ export interface ManagedRuntimeFeedConnectionDependencies {
 
 export interface ManagedRuntimeFeedConnection {
   ready: Promise<void>;
+  reload: () => Promise<void>;
   close: () => void;
 }
 
@@ -116,6 +117,7 @@ export function connectManagedRuntimeFeed(
 
   return {
     ready,
+    reload: reloadAuthoritativeSnapshot,
     close: () => {
       if (closed) return;
       closed = true;

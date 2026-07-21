@@ -280,6 +280,7 @@ export function SessionChatView({
     isConnected,
     isLoading,
     error: wsError,
+    refresh,
     reconnect,
     streamingEntryId,
     tokenUsage,
@@ -457,6 +458,7 @@ export function SessionChatView({
 
       execConfig.recordUsage();
       clearInput();
+      await refresh();
       onMessageSent?.();
     } catch (e) {
       if (isSilentCommandRefreshError(e)) {
@@ -476,6 +478,7 @@ export function SessionChatView({
     imageAttach.attachments,
     isSending,
     onMessageSent,
+    refresh,
   ]);
 
   const commandById = useCallback((commandId: string | undefined): SessionChatCommandModel | undefined => {

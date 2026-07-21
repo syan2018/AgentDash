@@ -564,7 +564,6 @@ impl AppState {
                 repos.lifecycle_agent_repo.clone(),
                 repos.agent_frame_repo.clone(),
                 frame_construction.clone(),
-                runtime_product_bindings.clone(),
             )),
             Arc::new(ProcessCompanionFreshSagaRepository::default()),
             Arc::new(ProductCompanionFreshRuntimeAdapter::with_product_launch(

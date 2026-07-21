@@ -97,16 +97,13 @@ impl AgentRunProductCommandFacade {
             return Err(AgentRunProductCommandError::TargetMismatch);
         }
 
-        let service = self
+        let resolved = self
             .agents
-            .resolve(&binding.agent.service_instance_id)
+            .resolve(&binding)
             .await
             .map_err(AgentRunProductCommandError::Unavailable)?;
-        let generation = self
-            .agents
-            .binding_generation(&binding)
-            .await
-            .map_err(AgentRunProductCommandError::Unavailable)?;
+        let service = resolved.service;
+        let generation = resolved.binding_generation;
         if matches!(request.command, AgentRunProductCommand::Rebind) {
             return Ok(operation_receipt(
                 stable_product_command_operation_id(&request.target, client_command_id)?,

@@ -42,6 +42,7 @@ export interface UseSessionFeedResult {
   isLoading: boolean;
   isReceiving: boolean;
   error: Error | null;
+  refresh: () => Promise<void>;
   reconnect: () => void;
   close: () => void;
   streamingEntryId: string | null;
@@ -553,6 +554,7 @@ export interface TurnSegment {
   startedAtMs?: number;
   durationMs?: number;
   activity?: TurnActivityStatus;
+  errorMessage?: string;
   items: SessionDisplayItem[];
   /** 最后一条 agent message（轮次折叠时只显示这个） */
   finalOutput: SessionDisplayItem | null;
@@ -592,6 +594,7 @@ interface TurnMeta {
   startedAtMs?: number;
   durationMs?: number;
   activity?: TurnActivityStatus;
+  errorMessage?: string;
 }
 
 function readStringField(record: Record<string, unknown>, key: string): string | undefined {
@@ -646,6 +649,7 @@ function updateTurnMeta(
   if (patch.startedAtMs !== undefined) meta.startedAtMs = patch.startedAtMs;
   if (patch.durationMs !== undefined) meta.durationMs = patch.durationMs;
   if (patch.activity !== undefined) meta.activity = patch.activity;
+  if (patch.errorMessage !== undefined) meta.errorMessage = patch.errorMessage;
 }
 
 function turnStartedAtMs(startedAtSeconds: number | null | undefined): number | undefined {
@@ -667,6 +671,7 @@ function extractTurnTerminalMeta(event: SessionEventEnvelope): {
   status: TurnStatus;
   startedAtMs?: number;
   durationMs?: number;
+  errorMessage?: string;
 } | null {
   const bbEvent = event.notification.event;
   if (bbEvent.type === "turn_completed") {
@@ -676,6 +681,7 @@ function extractTurnTerminalMeta(event: SessionEventEnvelope): {
       status: normalizeTurnStatus(turn.status),
       startedAtMs: turnStartedAtMs(turn.startedAt),
       durationMs: turn.durationMs ?? undefined,
+      errorMessage: turn.error?.message ?? undefined,
     };
   }
 
@@ -729,6 +735,7 @@ export function segmentByTurn(
         status: terminal.status,
         startedAtMs: terminal.startedAtMs,
         durationMs: terminal.durationMs,
+        errorMessage: terminal.errorMessage,
       });
     }
 
@@ -736,7 +743,7 @@ export function segmentByTurn(
 
   if (displayItems.length === 0) {
     return [...turnMeta.entries()]
-      .filter(([, meta]) => meta.activity)
+      .filter(([, meta]) => meta.activity || meta.status !== "active")
       .sort((a, b) => a[1].firstSeq - b[1].firstSeq)
       .map(([turnId, meta]) => ({
         turnId,
@@ -744,6 +751,7 @@ export function segmentByTurn(
         startedAtMs: meta.startedAtMs,
         durationMs: meta.durationMs,
         activity: meta.activity,
+        errorMessage: meta.errorMessage,
         items: [],
         finalOutput: null,
       }));
@@ -779,6 +787,7 @@ export function segmentByTurn(
       startedAtMs: meta?.startedAtMs,
       durationMs: meta?.durationMs,
       activity: meta?.activity,
+      errorMessage: meta?.errorMessage,
       items: currentItems,
       finalOutput,
     });
@@ -816,7 +825,7 @@ export function segmentByTurn(
 
   const missingStatusSegments = [...turnMeta.entries()]
     .filter(([turnId]) => !seenTurnIds.has(turnId))
-    .filter(([, meta]) => meta.activity)
+    .filter(([, meta]) => meta.activity || meta.status !== "active")
     .sort((a, b) => a[1].firstSeq - b[1].firstSeq)
     .map(([turnId, meta]): TurnSegment => ({
       turnId,
@@ -824,6 +833,7 @@ export function segmentByTurn(
       startedAtMs: meta.startedAtMs,
       durationMs: meta.durationMs,
       activity: meta.activity,
+      errorMessage: meta.errorMessage,
       items: [],
       finalOutput: null,
     }));
@@ -853,6 +863,7 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     isReceiving,
     error,
     tokenUsage,
+    refresh,
     reconnect,
     close,
   } = useSessionStream({
@@ -892,6 +903,7 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     isLoading,
     isReceiving,
     error,
+    refresh,
     reconnect,
     close,
     streamingEntryId,

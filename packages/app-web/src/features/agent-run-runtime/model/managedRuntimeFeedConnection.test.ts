@@ -113,6 +113,30 @@ describe("Managed Runtime feed connection", () => {
     expect(transports).toHaveLength(1);
   });
 
+  it("reloads the authoritative snapshot after a completed Product command", async () => {
+    const started = managedRuntimeTestFixtures.snapshots.started;
+    const completed = managedRuntimeTestFixtures.snapshots.completed;
+    const connectionObserver = observer();
+    const fetchSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce(started)
+      .mockResolvedValueOnce(completed);
+
+    const connection = connectManagedRuntimeFeed(
+      { runId: "run-1", agentId: "agent-1" },
+      connectionObserver,
+      {
+        fetchSnapshot,
+        createTransport: () => ({ close: vi.fn() }),
+      },
+    );
+    await connection.ready;
+    await connection.reload();
+
+    expect(fetchSnapshot).toHaveBeenCalledTimes(2);
+    expect(connectionObserver.onProjection).toHaveBeenLastCalledWith(completed);
+  });
+
   it("does not publish a late baseline after the connection is closed", async () => {
     const pendingSnapshot = deferred<ManagedRuntimeSnapshot>();
     const connectionObserver = observer();

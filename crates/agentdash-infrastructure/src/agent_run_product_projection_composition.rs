@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_host::SharedCompleteAgentLiveCatalog;
-use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentServiceInstanceId, CompleteAgentService,
-};
 use agentdash_application_agentrun::agent_run::{
     AgentRunCompleteAgentResolverPort, AgentRunProductCommandFacade,
     AgentRunProductProjectionGateway, AgentRunProductProjectionQueryPort,
+    AgentRunResolvedCompleteAgent,
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -35,25 +33,28 @@ struct LiveCompleteAgentResolver {
 impl AgentRunCompleteAgentResolverPort for LiveCompleteAgentResolver {
     async fn resolve(
         &self,
-        service_instance_id: &AgentServiceInstanceId,
-    ) -> Result<Arc<dyn CompleteAgentService>, String> {
-        self.catalog
-            .current(service_instance_id)
+        binding: &agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBinding,
+    ) -> Result<AgentRunResolvedCompleteAgent, String> {
+        let binding_generation = self
+            .provisioner
+            .ensure_product_binding_route(binding)
+            .await
+            .map_err(|error| error.to_string())?;
+        let service = self
+            .catalog
+            .current(&binding.agent.service_instance_id)
             .await
             .map(|selection| selection.service())
             .ok_or_else(|| {
-                format!("Complete Agent {service_instance_id} is unavailable in the current Host")
-            })
-    }
-
-    async fn binding_generation(
-        &self,
-        binding: &agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBinding,
-    ) -> Result<AgentBindingGeneration, String> {
-        self.provisioner
-            .ensure_product_binding_route(binding)
-            .await
-            .map_err(|error| error.to_string())
+                format!(
+                    "Complete Agent {} is unavailable after restoring its Product binding route",
+                    binding.agent.service_instance_id
+                )
+            })?;
+        Ok(AgentRunResolvedCompleteAgent {
+            service,
+            binding_generation,
+        })
     }
 }
 

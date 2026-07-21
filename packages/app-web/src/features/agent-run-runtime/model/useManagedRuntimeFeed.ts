@@ -21,6 +21,7 @@ export interface UseManagedRuntimeFeedResult {
   lifecycle: ManagedRuntimeFeedLifecycle;
   isLoading: boolean;
   error: Error | null;
+  refresh: () => Promise<void>;
   reconnect: () => void;
   close: () => void;
 }
@@ -81,12 +82,28 @@ export function useManagedRuntimeFeed({
     return close;
   }, [close, connect]);
 
+  const refresh = useCallback(async () => {
+    const connection = connectionRef.current;
+    if (!connection) return;
+    setError(null);
+    try {
+      await connection.reload();
+    } catch (refreshError) {
+      setError(
+        refreshError instanceof Error
+          ? refreshError
+          : new Error("Agent authoritative snapshot 刷新失败"),
+      );
+    }
+  }, []);
+
   return {
     snapshot,
     boundTargetKey,
     lifecycle,
     isLoading,
     error,
+    refresh,
     reconnect: connect,
     close,
   };

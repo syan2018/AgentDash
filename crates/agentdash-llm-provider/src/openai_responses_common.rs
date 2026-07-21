@@ -22,6 +22,7 @@ pub(super) struct ResponsesRequestOptions {
     pub include: Option<serde_json::Value>,
     pub tool_choice: Option<serde_json::Value>,
     pub parallel_tool_calls: Option<bool>,
+    pub minimal_reasoning_effort: &'static str,
 }
 
 impl ResponsesRequestOptions {
@@ -33,6 +34,7 @@ impl ResponsesRequestOptions {
             include: None,
             tool_choice: None,
             parallel_tool_calls: None,
+            minimal_reasoning_effort: "minimal",
         }
     }
 
@@ -46,6 +48,9 @@ impl ResponsesRequestOptions {
             include: Some(serde_json::json!(["reasoning.encrypted_content"])),
             tool_choice: Some(serde_json::json!("auto")),
             parallel_tool_calls: Some(true),
+            // Product `minimal` means the lowest non-zero effort. The Codex Responses
+            // endpoint currently names that supported tier `low`.
+            minimal_reasoning_effort: "low",
         }
     }
 }
@@ -55,6 +60,7 @@ pub(super) fn build_responses_request_body(
     request: &BridgeRequest,
     options: ResponsesRequestOptions,
 ) -> serde_json::Value {
+    let minimal_reasoning_effort = options.minimal_reasoning_effort;
     let mut body = serde_json::json!({
         "model": model_id,
         "store": false,
@@ -90,7 +96,8 @@ pub(super) fn build_responses_request_body(
     if let Some(parallel_tool_calls) = options.parallel_tool_calls {
         body["parallel_tool_calls"] = serde_json::json!(parallel_tool_calls);
     }
-    if let Some(effort) = openai_reasoning_effort(request.thinking_level) {
+    if let Some(effort) = openai_reasoning_effort(request.thinking_level, minimal_reasoning_effort)
+    {
         body["reasoning"] = serde_json::json!({ "effort": effort });
     }
 
@@ -117,11 +124,14 @@ pub(super) fn build_responses_request_body(
     body
 }
 
-fn openai_reasoning_effort(level: Option<agentdash_agent::ThinkingLevel>) -> Option<&'static str> {
+fn openai_reasoning_effort(
+    level: Option<agentdash_agent::ThinkingLevel>,
+    minimal_reasoning_effort: &'static str,
+) -> Option<&'static str> {
     match level {
         None => None,
         Some(agentdash_agent::ThinkingLevel::Off) => Some("none"),
-        Some(agentdash_agent::ThinkingLevel::Minimal) => Some("minimal"),
+        Some(agentdash_agent::ThinkingLevel::Minimal) => Some(minimal_reasoning_effort),
         Some(agentdash_agent::ThinkingLevel::Low) => Some("low"),
         Some(agentdash_agent::ThinkingLevel::Medium) => Some("medium"),
         Some(agentdash_agent::ThinkingLevel::High) => Some("high"),
@@ -590,6 +600,22 @@ mod tests {
         );
 
         assert_eq!(body["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn codex_body_maps_minimal_platform_effort_to_lowest_supported_effort() {
+        let body = build_responses_request_body(
+            "gpt-5.5",
+            &BridgeRequest {
+                system_prompt: None,
+                messages: vec![AgentMessage::user("hello")],
+                tools: vec![],
+                thinking_level: Some(agentdash_agent::ThinkingLevel::Minimal),
+            },
+            ResponsesRequestOptions::codex(),
+        );
+
+        assert_eq!(body["reasoning"]["effort"], "low");
     }
 
     #[test]

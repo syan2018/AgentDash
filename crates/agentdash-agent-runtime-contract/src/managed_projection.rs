@@ -171,6 +171,19 @@ pub enum ManagedRuntimeOperationStatus {
     Lost,
 }
 
+impl ManagedRuntimeOperationStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Interrupted => "interrupted",
+            Self::Lost => "lost",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ManagedRuntimeInitialContextAppliedFidelity {
@@ -554,5 +567,23 @@ mod tests {
         assert!(!schema.contains("AgentBindingGeneration"));
         assert!(!schema.contains("AgentSourceCoordinate"));
         assert!(!schema.contains("CompleteAgent"));
+    }
+
+    #[test]
+    fn operation_status_exposes_the_serialized_receipt_value() {
+        for (status, expected) in [
+            (ManagedRuntimeOperationStatus::Accepted, "accepted"),
+            (ManagedRuntimeOperationStatus::Running, "running"),
+            (ManagedRuntimeOperationStatus::Succeeded, "succeeded"),
+            (ManagedRuntimeOperationStatus::Failed, "failed"),
+            (ManagedRuntimeOperationStatus::Interrupted, "interrupted"),
+            (ManagedRuntimeOperationStatus::Lost, "lost"),
+        ] {
+            assert_eq!(status.as_str(), expected);
+            assert_eq!(
+                serde_json::to_value(status).expect("serialize operation status"),
+                expected
+            );
+        }
     }
 }

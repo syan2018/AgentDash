@@ -591,9 +591,14 @@ impl AgentRunForkSaga {
                 )
             }
             AgentRunForkSagaPhase::RuntimeProvisioned => AgentRunForkSagaStep::CommitProductGraph,
-            AgentRunForkSagaPhase::ProductGraphCommitted => {
+            AgentRunForkSagaPhase::ProductGraphCommitted
+                if self.child_product_selection.is_some() =>
+            {
                 AgentRunForkSagaStep::MaterializeChildProductSelection
             }
+            AgentRunForkSagaPhase::ProductGraphCommitted => AgentRunForkSagaStep::DispatchRuntime(
+                self.operation_identity(AgentRunForkRuntimeOperation::Activate),
+            ),
             AgentRunForkSagaPhase::ProductSelectionMaterialized => {
                 AgentRunForkSagaStep::DispatchRuntime(
                     self.operation_identity(AgentRunForkRuntimeOperation::Rebind),
@@ -904,13 +909,14 @@ impl AgentRunForkSaga {
         {
             return Err(AgentRunForkSagaError::ProductGraphIdentityMismatch);
         }
-        match self.child_product_selection.as_ref() {
-            Some(selection)
-                if provisioning.frame.frame_id == selection.materialized_frame_id
-                    && provisioning.execution_profile == selection.execution_profile
-                    && provisioning.idempotency_key == selection.idempotency_key => {}
-            None if provisioning.frame.frame_id == self.child.frame_id => {}
-            _ => return Err(AgentRunForkSagaError::ProductGraphIdentityMismatch),
+        let Some(selection) = self.child_product_selection.as_ref() else {
+            return Err(AgentRunForkSagaError::ProductGraphIdentityMismatch);
+        };
+        if provisioning.frame.frame_id != selection.materialized_frame_id
+            || provisioning.execution_profile != selection.execution_profile
+            || provisioning.idempotency_key != selection.idempotency_key
+        {
+            return Err(AgentRunForkSagaError::ProductGraphIdentityMismatch);
         }
         self.materialized_child_product_selection = Some(provisioning);
         self.phase = AgentRunForkSagaPhase::ProductSelectionMaterialized;

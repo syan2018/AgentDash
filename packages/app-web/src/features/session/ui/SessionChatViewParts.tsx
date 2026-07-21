@@ -430,6 +430,11 @@ function TurnSection({
         {segment.activity && (
           <TurnActivityStrip activity={segment.activity} />
         )}
+        {segment.errorMessage && (
+          <div className="rounded-[8px] border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {segment.errorMessage}
+          </div>
+        )}
         {headerLabel && (
           <button
             type="button"
@@ -483,6 +488,11 @@ function TurnSection({
           companionSubagents={companionSubagents}
           isStreaming={getItemKey(segment.finalOutput) === streamingEntryId}
         />
+      )}
+      {segment.errorMessage && (
+        <div className="rounded-[8px] border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {segment.errorMessage}
+        </div>
       )}
       <RoundActionToolbar
         actionModel={buildRoundActionModel(segment)}

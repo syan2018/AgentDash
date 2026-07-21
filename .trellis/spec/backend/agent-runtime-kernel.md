@@ -42,6 +42,28 @@ pub fn project_authoritative_agent_snapshot(
 ) -> Result<ManagedRuntimeSnapshot, ProjectionError>;
 ```
 
+```rust
+pub struct AgentRunResolvedCompleteAgent {
+    pub service: Arc<dyn CompleteAgentService>,
+    pub binding_generation: AgentBindingGeneration,
+}
+
+pub trait AgentRunCompleteAgentResolverPort {
+    async fn resolve(
+        &self,
+        binding: &AgentRunProductRuntimeBinding,
+    ) -> Result<AgentRunResolvedCompleteAgent, String>;
+}
+```
+
+```ts
+interface ManagedRuntimeFeedConnection {
+  readonly ready: Promise<void>;
+  reload(): Promise<void>;
+  close(): void;
+}
+```
+
 Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt 与 command DTO，原因是
 它们是 API/adapter contract；它们不因此成为数据库事实。
 
@@ -58,6 +80,14 @@ Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt
   换 identity 重派。
 - `read` 每次从 Product association 定位 concrete Agent source，调用 Agent authoritative
   read，再在内存中 normalize 为 Product/UI 所需 snapshot。
+- Product binding 是冷启动解析 Complete Agent 的最小完整输入。resolver 必须先用 binding 中的
+  immutable execution profile 与 AgentFrame 重建当前 Host route，再原子返回 service 与
+  binding generation；按裸 `service_instance_id` 直接查询进程内 catalog 无法恢复重启后的绑定。
+- 同步 Product command 响应透传 concrete Agent operation receipt 的真实状态。前端收到响应后
+  主动 `reload()` authoritative snapshot；live delta 继续负责执行中的低延迟展示，不承担终态
+  提交证明。
+- authoritative history 中没有 assistant item 的 terminal turn 仍是完整轮次。前端保留该
+  segment，并展示 `turn.error.message`；错误终态不因“没有可渲染文本”而被过滤。
 - `changes` 只有 concrete Agent 真正提供 ordered durable change tail 时才映射该 tail。
   Snapshot-only Agent 通过重复 `read` 恢复，不由 Runtime 伪造 durable cursor。
 - live event 是 connection/process-local partial presentation。Runtime 只 normalize 和
@@ -76,6 +106,7 @@ Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt
 | --- | --- |
 | target 没有 Product association | typed unavailable/not bound |
 | association 指向不可用 service/source | typed unavailable；Product shell 不受影响 |
+| Host 重启且 binding 指向尚未 materialize 的 Dash service | 从完整 binding 重建 route 后读取同一 source |
 | client command id 为空或 payload 无效 | side effect 前 invalid request |
 | 同 identity 不同 payload | concrete Agent typed idempotency conflict |
 | inspect = Applied/Accepted | 返回既有 receipt；不重复 side effect |
@@ -84,11 +115,15 @@ Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt
 | live subscriber lagged | 断流或 typed retryable unavailable；重新 read |
 | Agent snapshot 无法 normalize | typed protocol error；不保存“修复后”副本 |
 | availability 在请求间变化 | 下一请求重新 resolve；不使用 generic revision gate |
+| command receipt 为 failed/interrupted/lost | API 返回真实状态；UI 重读 authoritative snapshot 并展示 terminal/error |
+| terminal turn 没有 assistant item | 保留 terminal-only segment，不显示无限等待 |
 
 ## 5. Good / Base / Bad Cases
 
 - Good：Composer input 直接进入 Agent，返回 Agent receipt；同 client identity 重试命中同一
   effect。
+- Good：进程重启后首次 snapshot/live/command 都以持久 Product binding 恢复 Host route，读取
+  concrete Agent 已保存的同一 source history。
 - Base：live delta 中断，UI 丢弃 partial lane，重新 read 后得到 Agent 已提交的完整 history。
 - Bad：先把 command 写进 Runtime outbox，再由 worker dispatch；这把同步 handoff 扩张成第二
   workflow engine。
@@ -105,6 +140,10 @@ Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt
 - live tests 覆盖 callback → stream、source-local order、Lagged、disconnect 和 read recovery。
 - composition test 覆盖 Product input → Agent execute → live delta → Agent history →
   reconnect read。
+- cold-start composition test 先清空 Host/catalog 进程态，再以既有 Product binding 读取
+  snapshot，断言同一 service/source 被重新 materialize 且 generation 来自新 Host route。
+- frontend feed test 覆盖同步 command 后 authoritative reload；turn segmentation 与静态渲染测试
+  覆盖无 assistant item 的 failed terminal 及其错误文本。
 - 负向源码搜索断言 Runtime repository、journal/outbox persistence、change worker 与
   projection revision gate 不在 production composition。
 
@@ -132,4 +171,26 @@ let snapshot = complete_agent.read(AgentReadQuery {
     at_revision: None,
 }).await?;
 project_authoritative_agent_snapshot(binding.runtime_thread_id, snapshot)
+```
+
+```rust
+// Wrong: cold Host 中 catalog 必然为空，后续恢复逻辑永远没有机会运行。
+let service = live_catalog.current(&binding.agent.service_instance_id).await?;
+let generation = ensure_product_binding_route(&binding).await?;
+
+// Correct: 完整 binding 先恢复 route，再一起返回 service 与 generation。
+let resolved = complete_agent_resolver.resolve(&binding).await?;
+resolved.service.read(AgentReadQuery {
+    source: binding.agent.source,
+    at_revision: None,
+}).await?;
+```
+
+```ts
+// Wrong: command HTTP 完成后继续等待某个不保证存在的 terminal live event。
+await submitComposerInput(request);
+
+// Correct: live 展示 partial，command 完成后以 authoritative read 收束终态。
+await submitComposerInput(request);
+await runtimeFeed.reload();
 ```

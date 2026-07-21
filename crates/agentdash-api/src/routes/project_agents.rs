@@ -123,7 +123,7 @@ fn project_agent_run_start_contract(
     };
     let receipt = AgentRunCommandReceipt {
         client_command_id: outcome.client_command_id.clone(),
-        status: "accepted".to_owned(),
+        status: outcome.runtime_operation_status.as_str().to_owned(),
         duplicate: result.duplicate,
         message: None,
     };

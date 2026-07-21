@@ -350,3 +350,30 @@ Product 明确不承诺 Agent 离线时的异步可靠输入投递。API 只在 
 这个语义允许彻底删除 Product claim/pending/mailbox delivery、Runtime pending 与 Host effect
 三层中间账本。未来若产品重新提出离线队列，应作为新的 Product feature 和独立任务设计，不能在
 本任务中保留隐藏扩展点。
+
+## 14. Cold Host Resolution and UI Terminal Convergence
+
+`AgentRunProductRuntimeBinding` 是恢复当前进程路由的完整事实输入：它同时固定 Product target、
+concrete Agent source、service identity、immutable AgentFrame、execution profile 与 credential
+scope。Product read、live subscription、command 和 fork snapshot 统一把完整 binding 交给
+`AgentRunCompleteAgentResolverPort::resolve`；resolver 先 materialize 当前 Host route，再原子返回
+`CompleteAgentService + AgentBindingGeneration`。因此 Host attachment/catalog 始终是可丢弃进程态，
+冷启动不需要 durable Host registry。
+
+UI 使用两条单向 presentation lane：live event 只承载当前连接中的低延迟 partial；authoritative
+snapshot 承载 durable terminal。同步 command 完成后立即重读 snapshot，断连重连也执行相同读取。
+没有 assistant item 的 failed/interrupted turn 仍保留为 terminal-only segment，并直接展示
+concrete Agent history 中的错误信息。
+
+平台 `ThinkingLevel` 是稳定语义层级，不是 Provider wire literal。Provider adapter 负责确定性编码；
+Codex Responses 把平台最低非零档 `minimal` 编码为其原生最低档 `low`，profile 与 source identity
+保持不变。
+
+## 15. Fork Product Selection Boundary
+
+普通 Fork 由 concrete Agent 产生稳定 child source 与 association；Product graph 只提交子
+LifecycleRun/LifecycleAgent/AgentFrame/lineage，随后直接激活同一个 concrete Agent binding。显式
+选择新的 ProjectAgent 或 execution profile 时，Product 才物化 selected child frame，并要求
+Complete Agent 执行一次 Rebind 后再 Activate。这个分支以 `child_product_selection` 这一条 typed
+intent 判定，Saga 的 `next_step` 与 runtime operation acceptance 共享相同条件，因此重启恢复不会
+引入额外 binding lookup、伪物化或第二条执行路径。

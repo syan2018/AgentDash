@@ -193,7 +193,7 @@ async fn fork_submit_agent_run(
     Ok(Json(AgentRunMessageCommandResponse {
         command_receipt: AgentRunCommandReceipt {
             client_command_id: body.client_command_id,
-            status: "accepted".to_owned(),
+            status: delivery.operation_receipt.status.as_str().to_owned(),
             duplicate,
             message: None,
         },
@@ -363,7 +363,7 @@ async fn cancel_agent_run(
         .map_err(agent_run_product_command_error)?;
     Ok(Json(AgentRunCommandReceipt {
         client_command_id: body.client_command_id,
-        status: "accepted".to_owned(),
+        status: receipt.status.as_str().to_owned(),
         duplicate: receipt.duplicate,
         message: None,
     }))
@@ -399,7 +399,7 @@ async fn submit_agent_run_composer_input(
     Ok(Json(AgentRunMessageCommandResponse {
         command_receipt: AgentRunCommandReceipt {
             client_command_id: body.client_command_id,
-            status: "accepted".to_owned(),
+            status: delivery.operation_receipt.status.as_str().to_owned(),
             duplicate,
             message: None,
         },

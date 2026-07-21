@@ -31,6 +31,8 @@
 - [x] Companion、Routine、Workflow与human response统一调用Agent input handoff。
 - [x] Companion continuation、Workflow AgentCall与Product protocol saga重复账本已删除。
 - [x] channel/gate/routine只在owner-local document保存自身业务事实与下游handoff coordinate。
+- [x] 普通Fork继承concrete Agent binding并直接Activate；只有显式Product选型执行
+  Frame materialization与Rebind。
 
 ## Host / Callback
 
@@ -67,4 +69,17 @@
 - [x] production源码负向搜索。
 - [x] `git diff --check`。
 
-详细结果见 [`closeout.md`](./closeout.md)。
+## Final tracer bullet
+
+- [x] 既有 Product binding 在新 Host 进程中按 immutable profile + AgentFrame 恢复 Dash service、
+  source route 与 binding generation，首次 authoritative snapshot 读取成功。
+- [x] 真实 Composer input 使用 `openai-codex / gpt-5.5 / minimal` 执行成功；Codex adapter 将平台
+  最低非零推理级别编码为 Provider 原生 `low`。
+- [x] 同一 live 连接依次收到 `provider_round_started`、`text_delta("OK")` 与
+  `provider_round_completed`。
+- [x] API 返回 concrete Agent operation receipt `succeeded`；PostgreSQL 中
+  `dash_complete_effect` receipt 与 `dash_complete_source` command/history 同步收敛到 revision 9。
+- [x] authoritative snapshot 重读得到 completed turn 与 Agent message `OK`；终端-only失败轮次由
+  前端分段与渲染回归测试覆盖。
+- [x] 最终定向测试、contract generation/typecheck、migration guard、源码负向搜索与
+  `git diff --check` 全量复核完成后生成 closeout。

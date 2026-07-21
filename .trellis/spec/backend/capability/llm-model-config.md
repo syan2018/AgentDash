@@ -26,6 +26,77 @@ Agent 运转只需要三个业务参数：
 
 **关键约束**：`ModelInfo.reasoning == true` 的模型才在 UI 中显示 ThinkingLevel 选择器。
 
+### Scenario: Provider-native 推理级别编码
+
+#### 1. Scope / Trigger
+
+- Trigger：把平台 `ThinkingLevel` 编码到具体 Provider/wire API 的请求字段。
+
+#### 2. Signatures
+
+```rust
+pub struct ResponsesRequestOptions {
+    pub minimal_reasoning_effort: &'static str,
+    // 其余 Responses API 选项
+}
+
+fn build_responses_request_body(
+    model_id: &str,
+    request: &BridgeRequest,
+    options: ResponsesRequestOptions,
+) -> serde_json::Value;
+```
+
+#### 3. Contracts
+
+- `ThinkingLevel` 是平台稳定的有序语义：`off < minimal < low < medium < high < xhigh`；它不是
+  任一 Provider 的 wire literal 集合。
+- Provider adapter 负责把平台语义编码为当前协议支持的原生值。OpenAI Responses 的最低非零
+  档编码为 `minimal`；Codex Responses 的最低非零档编码为 `low`。
+- `ModelInfo.reasoning` 只声明模型是否接受 reasoning 配置，不意味着所有平台枚举字符串都能
+  原样发送。
+- Provider 无法精确表达所选语义时，在 provisioning/request validation 返回 typed
+  incompatible；不在失败后切换模型、Provider 或推理级别重试。
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `reasoning=false` 且选择非 `off` 级别 | provisioning 返回 typed incompatible |
+| OpenAI Responses + `minimal` | 请求发送 `reasoning.effort=minimal` |
+| Codex Responses + `minimal` | 请求发送 `reasoning.effort=low` |
+| Codex Responses + `low..xhigh` | 保持对应原生等级 |
+| Provider 没有该语义的确定映射 | side effect 前 typed incompatible |
+| Provider 返回终态 4xx | concrete Agent 保存失败 history/receipt；不 fallback |
+
+#### 5. Good / Base / Bad Cases
+
+- Good：Product profile 保存 `thinking_level=minimal`，Codex adapter 稳定编码为其最低非零原生
+  档 `low`，同一 immutable profile 在重启后仍得到相同请求语义。
+- Base：OpenAI API adapter 将同一平台语义编码为该协议原生的 `minimal`。
+- Bad：把 `ThinkingLevel` 的 serde 字符串直接塞进所有 Provider 请求；平台枚举与协议词汇只要
+  有一个不重合，合法配置就会在执行期变成 400。
+
+#### 6. Tests Required
+
+- Provider request-body unit tests 分别断言 OpenAI 与 Codex 对 `minimal` 的原生编码。
+- `off/low/medium/high/xhigh` 参数化测试断言其余稳定映射。
+- Production tracer bullet 使用 reasoning-capable Codex model 与 `minimal` profile，断言真实
+  receipt succeeded、live delta 到达且 authoritative history 完成。
+
+#### 7. Wrong vs Correct
+
+```rust
+// Wrong: 平台 serde 名称被误当成 Provider wire contract。
+body["reasoning"]["effort"] = json!(thinking_level.as_str());
+
+// Correct: adapter option 明确声明当前协议的最低非零原生值。
+let effort = openai_reasoning_effort(
+    request.thinking_level,
+    options.minimal_reasoning_effort,
+);
+```
+
 ---
 
 ## AgentConfig 关键字段

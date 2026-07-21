@@ -6,9 +6,8 @@ use agentdash_agent_protocol::CanonicalConversationRecord;
 
 use crate::{
     AgentInteractionId, AgentInteractionRequest, AgentInteractionResolution,
-    AgentInteractionStatus, AgentItemId, AgentItemPresentation, AgentItemTransition,
-    AgentSnapshotRevision, AgentSourceCoordinate, AgentSourceCursor, AgentSourceRevision,
-    AgentTurnId, SemanticFidelity,
+    AgentInteractionStatus, AgentItemId, AgentSnapshotRevision, AgentSourceCoordinate,
+    AgentSourceCursor, AgentSourceRevision, AgentTurnId, SemanticFidelity,
 };
 
 #[derive(
@@ -50,117 +49,6 @@ pub enum AgentLifecycleStatus {
     Suspended,
     Closed,
     Lost,
-}
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentEntityStatus {
-    Accepted,
-    Running,
-    Completed,
-    Failed,
-    Interrupted,
-    Lost,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentItemSnapshot {
-    pub id: AgentItemId,
-    pub status: AgentEntityStatus,
-    pub presentation: AgentItemPresentation,
-}
-
-impl AgentItemSnapshot {
-    pub fn validate(&self) -> Result<(), crate::AgentPresentationViolation> {
-        self.presentation.validate_for_status(self.status)
-    }
-
-    pub fn from_transition(
-        id: AgentItemId,
-        previous: Option<&Self>,
-        transition: AgentItemTransition,
-    ) -> Result<Self, AgentItemFoldError> {
-        let (status, presentation) = match transition {
-            AgentItemTransition::Started { presentation } => {
-                if previous.is_some() {
-                    return Err(AgentItemFoldError::AlreadyStarted);
-                }
-                (AgentEntityStatus::Running, presentation)
-            }
-            AgentItemTransition::Updated { presentation, .. } => {
-                let previous = previous.ok_or(AgentItemFoldError::NotStarted)?;
-                if is_terminal(previous.status) {
-                    return Err(AgentItemFoldError::AlreadyTerminal);
-                }
-                (AgentEntityStatus::Running, presentation)
-            }
-            AgentItemTransition::Terminal { presentation } => {
-                let previous = previous.ok_or(AgentItemFoldError::NotStarted)?;
-                if is_terminal(previous.status) {
-                    return Err(AgentItemFoldError::AlreadyTerminal);
-                }
-                let status = match presentation.terminal.as_ref().map(|value| value.outcome) {
-                    Some(crate::AgentTerminalStatus::Completed) => AgentEntityStatus::Completed,
-                    Some(crate::AgentTerminalStatus::Failed) => AgentEntityStatus::Failed,
-                    Some(crate::AgentTerminalStatus::Interrupted) => AgentEntityStatus::Interrupted,
-                    Some(crate::AgentTerminalStatus::Lost) => AgentEntityStatus::Lost,
-                    None => return Err(AgentItemFoldError::MissingTerminalEvidence),
-                };
-                (status, presentation)
-            }
-        };
-        let item = Self {
-            id,
-            status,
-            presentation,
-        };
-        item.validate().map_err(AgentItemFoldError::Presentation)?;
-        Ok(item)
-    }
-}
-
-fn is_terminal(status: AgentEntityStatus) -> bool {
-    matches!(
-        status,
-        AgentEntityStatus::Completed
-            | AgentEntityStatus::Failed
-            | AgentEntityStatus::Interrupted
-            | AgentEntityStatus::Lost
-    )
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum AgentItemFoldError {
-    #[error("item has already started")]
-    AlreadyStarted,
-    #[error("item has not started")]
-    NotStarted,
-    #[error("item is already terminal")]
-    AlreadyTerminal,
-    #[error("terminal transition has no terminal evidence")]
-    MissingTerminalEvidence,
-    #[error(transparent)]
-    Presentation(#[from] crate::AgentPresentationViolation),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentExecutionFailure {
-    pub code: String,
-    pub message: String,
-    pub retryable: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentTurnSnapshot {
-    pub id: AgentTurnId,
-    pub status: AgentEntityStatus,
-    pub items: Vec<AgentItemSnapshot>,
-    pub error: Option<AgentExecutionFailure>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -212,14 +100,24 @@ pub struct AgentSnapshot {
     pub source: AgentSourceCoordinate,
     pub revision: AgentSnapshotRevision,
     pub lifecycle: AgentLifecycleStatus,
-    pub active_turn_id: Option<AgentTurnId>,
-    pub turns: Vec<AgentTurnSnapshot>,
     pub interactions: Vec<AgentInteractionSnapshot>,
     pub thread_name: Option<AgentThreadNameSnapshot>,
     pub source_info: AgentSnapshotSource,
     pub applied_surface: Option<crate::AppliedAgentSurface>,
     pub initial_context: Option<crate::AppliedInitialContextEvidence>,
     pub conversation_history: Vec<CanonicalConversationRecord>,
+}
+
+impl AgentSnapshot {
+    pub fn conversation(&self) -> agentdash_agent_protocol::CanonicalConversationView<'_> {
+        agentdash_agent_protocol::CanonicalConversationView::new(&self.conversation_history)
+    }
+
+    pub fn active_turn_id(&self) -> Option<&str> {
+        self.conversation()
+            .active_turn()
+            .map(|turn| turn.id.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -244,7 +142,7 @@ pub enum AgentChangePayload {
     /// One source observation may update normalized service state and append zero or more
     /// immutable presentation records. Runtime must preserve both parts atomically.
     SourceObservation {
-        state: Box<AgentChangePayload>,
+        state: Option<Box<AgentChangePayload>>,
         presentation: Vec<CanonicalConversationRecord>,
     },
     ThreadNameChanged {
@@ -253,21 +151,6 @@ pub enum AgentChangePayload {
     },
     LifecycleChanged {
         status: AgentLifecycleStatus,
-    },
-    TurnChanged {
-        turn: AgentTurnSnapshot,
-    },
-    ActiveTurnChanged {
-        active_turn_id: Option<AgentTurnId>,
-    },
-    ItemChanged {
-        turn_id: AgentTurnId,
-        item: AgentItemSnapshot,
-    },
-    ItemTransitioned {
-        turn_id: AgentTurnId,
-        item_id: AgentItemId,
-        transition: AgentItemTransition,
     },
     InteractionChanged {
         interaction: AgentInteractionSnapshot,
@@ -304,96 +187,6 @@ pub struct AgentChangePage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        AgentContentBlock, AgentItemBody, AgentItemTerminalEvidence, AgentItemUpdate,
-        AgentPresentationError, AgentTerminalStatus,
-    };
-
-    fn running(text: &str) -> AgentItemPresentation {
-        AgentItemPresentation::new(
-            AgentItemBody::AgentMessage {
-                content: vec![AgentContentBlock::Text {
-                    text: text.to_owned(),
-                }],
-                phase: None,
-            },
-            Some(1),
-            Some(2),
-            None,
-        )
-        .expect("running presentation")
-    }
-
-    fn terminal(outcome: AgentTerminalStatus) -> AgentItemPresentation {
-        AgentItemPresentation::new(
-            AgentItemBody::AgentMessage {
-                content: vec![AgentContentBlock::Text {
-                    text: format!("{outcome:?}"),
-                }],
-                phase: None,
-            },
-            Some(1),
-            Some(3),
-            Some(AgentItemTerminalEvidence {
-                outcome,
-                completed_at_ms: None,
-                duration_ms: None,
-                process_exit: None,
-                error: (outcome != AgentTerminalStatus::Completed).then(|| {
-                    AgentPresentationError {
-                        code: "terminal".to_owned(),
-                        message: "terminal outcome".to_owned(),
-                        retryable: false,
-                    }
-                }),
-            }),
-        )
-        .expect("terminal presentation")
-    }
-
-    #[test]
-    fn typed_transition_fold_covers_every_terminal_outcome() {
-        for (outcome, expected) in [
-            (AgentTerminalStatus::Completed, AgentEntityStatus::Completed),
-            (AgentTerminalStatus::Failed, AgentEntityStatus::Failed),
-            (
-                AgentTerminalStatus::Interrupted,
-                AgentEntityStatus::Interrupted,
-            ),
-            (AgentTerminalStatus::Lost, AgentEntityStatus::Lost),
-        ] {
-            let item_id = AgentItemId::new(format!("item-{outcome:?}")).expect("item id");
-            let started = AgentItemSnapshot::from_transition(
-                item_id.clone(),
-                None,
-                AgentItemTransition::Started {
-                    presentation: running("started"),
-                },
-            )
-            .expect("started");
-            let updated = AgentItemSnapshot::from_transition(
-                item_id.clone(),
-                Some(&started),
-                AgentItemTransition::Updated {
-                    update: AgentItemUpdate::TextAppended {
-                        text: "updated".to_owned(),
-                    },
-                    presentation: running("started updated"),
-                },
-            )
-            .expect("updated");
-            let settled = AgentItemSnapshot::from_transition(
-                item_id,
-                Some(&updated),
-                AgentItemTransition::Terminal {
-                    presentation: terminal(outcome),
-                },
-            )
-            .expect("terminal");
-            assert_eq!(settled.status, expected);
-            settled.validate().expect("settled presentation");
-        }
-    }
 
     #[test]
     fn every_interaction_lifecycle_has_explicit_resolution_evidence() {

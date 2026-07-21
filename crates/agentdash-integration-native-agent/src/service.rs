@@ -4,42 +4,44 @@ use std::{
 };
 
 use agentdash_agent::dash::{
-    ActivityStatus, AgentHistory, AgentHistoryState, AgentItemId as DashItemId, AgentSessionId,
-    AgentTurnId as DashTurnId, BranchId, CommandId, CompactionId, CompactionMode, CompactionState,
-    ContextDeliveryFidelity, DashAgentChange, DashAgentChangePayload, DashAgentRepositoryState,
-    DashAgentRepositoryStore, DashAgentService, DashChangeCursor, DashCommandRequest,
-    DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
-    DashExecutionFailure, DashFinishReason, DashPublicCommand, DashReceiptState, DashServiceError,
-    DashSurface, DashTerminalOutcome, DashToolDefinition, ForkCutoff, HistoryPayload,
-    InitialContextContribution, InitialContextInstallation, InitialContextMode,
-    InteractionId as DashInteractionId, InteractionState, ItemDetails,
+    AgentHistory, AgentHistoryState, AgentItemId as DashItemId, AgentSessionId,
+    AgentTurnId as DashTurnId, BranchId, CommandId, CompactionMode, ContextDeliveryFidelity,
+    DashAgentChange, DashAgentChangePayload, DashAgentRepositoryState, DashAgentRepositoryStore,
+    DashAgentService, DashChangeCursor, DashCommandRequest, DashCoreEvent, DashExecutionCallbacks,
+    DashExecutionDependencies, DashExecutionEvent, DashPublicCommand, DashReceiptState,
+    DashServiceError, DashSurface, DashTerminalOutcome, DashToolDefinition, ForkCutoff,
+    HistoryPayload, InitialContextContribution, InitialContextInstallation, InitialContextMode,
+    InteractionId as DashInteractionId, InteractionState,
+};
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_protocol::{
+    BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
+    CanonicalConversationRecord, ItemCompletedNotification, ItemStartedNotification,
+    PresentationDurability, SourceInfo, TraceInfo,
 };
 use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentCapabilityProfile, AgentChange, AgentChangePage,
     AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandCapability,
     AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
-    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentEntityStatus,
-    AgentExecutionFailure, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint,
-    AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet,
-    AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbacks, AgentInput, AgentInputContent,
-    AgentInteractionRequest, AgentInteractionResolution, AgentInteractionSnapshot,
-    AgentInteractionStatus, AgentItemBody, AgentItemPresentation, AgentItemSnapshot,
-    AgentItemTerminalEvidence, AgentItemTransition, AgentItemUpdate, AgentLifecycleCapability,
-    AgentLifecycleStatus, AgentLiveEvent, AgentLiveEventPayload, AgentLiveEventStream,
-    AgentLiveFinishReason, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
-    AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
-    AgentServiceErrorCode, AgentServiceInstanceId, AgentServiceU64, AgentSnapshot,
-    AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel,
-    AgentSourceCoordinate, AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet,
-    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
-    AgentTerminalStatus, AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics,
-    AgentTurnSnapshot, AppliedAgentCommandReceipt, AppliedAgentSurface,
-    AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt, AppliedContributionStatus,
-    AppliedForkAgentReceipt, AppliedInitialContextEvidence, ApplyBoundAgentSurface,
-    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand,
-    ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
-    InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
-    ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkCapability,
+    AgentForkCutoffKind, AgentForkPoint, AgentHookBlockingSemantics, AgentHookMutationKind,
+    AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming, AgentHostCallbackBinding,
+    AgentHostCallbacks, AgentInput, AgentInputContent, AgentInteractionRequest,
+    AgentInteractionResolution, AgentInteractionSnapshot, AgentInteractionStatus,
+    AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveEvent, AgentLiveEventStream,
+    AgentPayloadDigest, AgentProfileDigest, AgentReadQuery, AgentReceiptState,
+    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
+    AgentServiceInstanceId, AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority,
+    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
+    AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile,
+    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery,
+    AgentToolSemanticFacet, AgentToolUpdateSemantics, AppliedAgentCommandReceipt,
+    AppliedAgentSurface, AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt,
+    AppliedContributionStatus, AppliedForkAgentReceipt, AppliedInitialContextEvidence,
+    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
+    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
+    InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
+    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, CompleteAgentPlacementRequirement, CompleteAgentRegistrationClaim,
@@ -744,28 +746,6 @@ impl CompleteAgentService for DashAgentCompleteService {
             } else {
                 AgentLifecycleStatus::Active
             },
-            active_turn_id: history_state
-                .active_turn
-                .as_ref()
-                .map(service_turn_id)
-                .transpose()?,
-            turns: history_state
-                .turns
-                .keys()
-                .map(|turn_id| {
-                    turn_snapshot(
-                        &history_state,
-                        turn_id,
-                        turn_failure(&read.history, turn_id),
-                    )
-                })
-                .chain(
-                    history_state
-                        .compactions
-                        .iter()
-                        .map(|(id, compaction)| compaction_snapshot(id, compaction)),
-                )
-                .collect::<Result<Vec<_>, _>>()?,
             interactions: history_state
                 .interactions
                 .iter()
@@ -826,7 +806,7 @@ impl CompleteAgentService for DashAgentCompleteService {
                     ),
                     occurred_at_ms: 0,
                     payload: AgentChangePayload::SourceObservation {
-                        state: Box::new(state_payload),
+                        state: state_payload.map(Box::new),
                         presentation,
                     },
                 })
@@ -1415,115 +1395,6 @@ fn service_item_id(
     agentdash_agent_service_api::AgentItemId::new(id.0.clone()).map_err(internal)
 }
 
-fn entity_status(status: ActivityStatus) -> AgentEntityStatus {
-    match status {
-        ActivityStatus::Active => AgentEntityStatus::Running,
-        ActivityStatus::Completed => AgentEntityStatus::Completed,
-        ActivityStatus::Failed => AgentEntityStatus::Failed,
-        ActivityStatus::Lost => AgentEntityStatus::Lost,
-        ActivityStatus::Interrupted => AgentEntityStatus::Interrupted,
-    }
-}
-
-fn turn_snapshot(
-    state: &AgentHistoryState,
-    turn_id: &DashTurnId,
-    failure: Option<&DashExecutionFailure>,
-) -> Result<AgentTurnSnapshot, AgentServiceError> {
-    let turn = state
-        .turns
-        .get(turn_id)
-        .ok_or_else(|| internal("history fold lost a turn"))?;
-    Ok(AgentTurnSnapshot {
-        id: service_turn_id(turn_id)?,
-        status: entity_status(turn.status),
-        items: state
-            .items
-            .iter()
-            .filter(|(_, item)| item.turn_id == *turn_id)
-            .map(|(id, item)| item_snapshot(id, item))
-            .collect::<Result<Vec<_>, _>>()?,
-        error: failure.map(|failure| AgentExecutionFailure {
-            code: failure.code.clone(),
-            message: failure.message.clone(),
-            retryable: Some(failure.retryable),
-        }),
-    })
-}
-
-fn turn_failure<'a>(
-    history: &'a AgentHistory,
-    turn_id: &DashTurnId,
-) -> Option<&'a DashExecutionFailure> {
-    history
-        .entries()
-        .iter()
-        .rev()
-        .find_map(|entry| match &entry.payload {
-            HistoryPayload::TurnFailed {
-                turn_id: failed_turn,
-                error,
-                ..
-            } if failed_turn == turn_id => Some(error),
-            _ => None,
-        })
-}
-
-fn item_snapshot(
-    item_id: &DashItemId,
-    item: &agentdash_agent::dash::ItemState,
-) -> Result<AgentItemSnapshot, AgentServiceError> {
-    let body = match &item.details {
-        ItemDetails::Pending => AgentItemBody::GenericToolActivity {
-            name: format!("{:?}", item.kind).to_ascii_lowercase(),
-            arguments: serde_json::json!({}),
-            result: None,
-            progress: Vec::new(),
-        },
-        ItemDetails::AssistantMessage { content } => AgentItemBody::AgentMessage {
-            content: vec![agentdash_agent_service_api::AgentContentBlock::Text {
-                text: content.clone(),
-            }],
-            phase: None,
-        },
-        ItemDetails::ToolCall { name, arguments } => AgentItemBody::GenericToolActivity {
-            name: name.clone(),
-            arguments: serde_json::from_str(arguments)
-                .unwrap_or_else(|_| serde_json::Value::String(arguments.clone())),
-            result: None,
-            progress: Vec::new(),
-        },
-        ItemDetails::ToolResult {
-            name,
-            content,
-            is_error,
-        } => AgentItemBody::GenericToolActivity {
-            name: name.clone().unwrap_or_else(|| "unknown".into()),
-            arguments: serde_json::json!({}),
-            result: Some(serde_json::json!({"content": content, "is_error": is_error})),
-            progress: Vec::new(),
-        },
-        ItemDetails::Interaction { prompt } => AgentItemBody::GenericToolActivity {
-            name: "user_input".into(),
-            arguments: serde_json::json!({"prompt": prompt}),
-            result: None,
-            progress: Vec::new(),
-        },
-        ItemDetails::ContextCompaction => AgentItemBody::ContextCompaction {
-            summary: None,
-            source_digest: None,
-        },
-    };
-    let status = entity_status(item.status);
-    let terminal = terminal_evidence(item.status);
-    let presentation = AgentItemPresentation::new(body, None, None, terminal).map_err(internal)?;
-    Ok(AgentItemSnapshot {
-        id: service_item_id(item_id)?,
-        status,
-        presentation,
-    })
-}
-
 fn interaction_snapshot(
     id: &DashInteractionId,
     interaction: &InteractionState,
@@ -1553,111 +1424,14 @@ fn interaction_snapshot(
     })
 }
 
-fn compaction_snapshot(
-    id: &CompactionId,
-    compaction: &CompactionState,
-) -> Result<AgentTurnSnapshot, AgentServiceError> {
-    let id = agentdash_agent_service_api::AgentTurnId::new(id.0.clone()).map_err(internal)?;
-    let item_id = agentdash_agent_service_api::AgentItemId::new(id.as_str()).map_err(internal)?;
-    let status = entity_status(compaction.status);
-    let body = AgentItemBody::ContextCompaction {
-        summary: compaction.summary.as_ref().map(|summary| {
-            vec![agentdash_agent_service_api::AgentContentBlock::Text {
-                text: summary.clone(),
-            }]
-        }),
-        source_digest: AgentPayloadDigest::new(format!("sha256:{}", compaction.source_digest)).ok(),
-    };
-    Ok(AgentTurnSnapshot {
-        id,
-        status,
-        items: vec![AgentItemSnapshot {
-            id: item_id,
-            status,
-            presentation: AgentItemPresentation::new(
-                body,
-                None,
-                None,
-                terminal_evidence(compaction.status),
-            )
-            .map_err(internal)?,
-        }],
-        error: None,
-    })
-}
-
-fn terminal_evidence(status: ActivityStatus) -> Option<AgentItemTerminalEvidence> {
-    let outcome = match status {
-        ActivityStatus::Active => return None,
-        ActivityStatus::Completed => AgentTerminalStatus::Completed,
-        ActivityStatus::Failed => AgentTerminalStatus::Failed,
-        ActivityStatus::Lost => AgentTerminalStatus::Lost,
-        ActivityStatus::Interrupted => AgentTerminalStatus::Interrupted,
-    };
-    Some(AgentItemTerminalEvidence {
-        outcome,
-        completed_at_ms: None,
-        duration_ms: None,
-        process_exit: None,
-        error: None,
-    })
-}
-
 fn change_payload(
     state: &AgentHistoryState,
     payload: &HistoryPayload,
-) -> Result<AgentChangePayload, AgentServiceError> {
+) -> Result<Option<AgentChangePayload>, AgentServiceError> {
     match payload {
-        HistoryPayload::TurnStarted { turn_id }
-        | HistoryPayload::TurnCompleted { turn_id }
-        | HistoryPayload::TurnInterrupted { turn_id } => Ok(AgentChangePayload::TurnChanged {
-            turn: turn_snapshot(state, turn_id, None)?,
-        }),
-        HistoryPayload::TurnFailed { turn_id, error, .. } => Ok(AgentChangePayload::TurnChanged {
-            turn: turn_snapshot(state, turn_id, Some(error))?,
-        }),
-        HistoryPayload::AgentOutput {
-            turn_id,
-            item_id: None,
-            ..
-        } => Ok(AgentChangePayload::TurnChanged {
-            turn: turn_snapshot(state, turn_id, None)?,
-        }),
-        HistoryPayload::ItemStarted {
-            turn_id, item_id, ..
-        } => item_transition_change(state, turn_id, item_id, |item| {
-            AgentItemTransition::Started {
-                presentation: item.presentation,
-            }
-        }),
-        HistoryPayload::AgentOutput {
-            turn_id,
-            item_id: Some(item_id),
-            ..
-        }
-        | HistoryPayload::ToolCall {
-            turn_id, item_id, ..
-        }
-        | HistoryPayload::ToolResult {
-            turn_id, item_id, ..
-        } => item_transition_change(state, turn_id, item_id, |item| {
-            AgentItemTransition::Updated {
-                update: AgentItemUpdate::BodyReplaced {
-                    body: item.presentation.body.clone(),
-                },
-                presentation: item.presentation,
-            }
-        }),
-        HistoryPayload::ItemCompleted {
-            turn_id, item_id, ..
-        } => item_transition_change(state, turn_id, item_id, |item| {
-            AgentItemTransition::Terminal {
-                presentation: item.presentation,
-            }
-        }),
         HistoryPayload::InteractionRequested { interaction_id, .. }
         | HistoryPayload::InteractionResolved { interaction_id, .. } => {
-            Ok(AgentChangePayload::InteractionChanged {
+            Ok(Some(AgentChangePayload::InteractionChanged {
                 interaction: interaction_snapshot(
                     interaction_id,
                     state
@@ -1665,90 +1439,18 @@ fn change_payload(
                         .get(interaction_id)
                         .ok_or_else(|| internal("history fold lost an interaction"))?,
                 )?,
-            })
+            }))
         }
-        HistoryPayload::CompactionStarted { compaction_id, .. } => {
-            Ok(AgentChangePayload::TurnChanged {
-                turn: compaction_snapshot(
-                    compaction_id,
-                    state
-                        .compactions
-                        .get(compaction_id)
-                        .ok_or_else(|| internal("history fold lost a compaction"))?,
-                )?,
-            })
-        }
-        HistoryPayload::CompactionApplied { compaction_id, .. } => {
-            let turn = compaction_snapshot(
-                compaction_id,
-                state
-                    .compactions
-                    .get(compaction_id)
-                    .ok_or_else(|| internal("history fold lost a compaction"))?,
-            )?;
-            let item = turn.items.into_iter().next().ok_or_else(|| {
-                internal("compaction snapshot did not contain its canonical item")
-            })?;
-            Ok(AgentChangePayload::ItemTransitioned {
-                turn_id: turn.id,
-                item_id: item.id,
-                transition: AgentItemTransition::Updated {
-                    update: AgentItemUpdate::BodyReplaced {
-                        body: item.presentation.body.clone(),
-                    },
-                    presentation: item.presentation,
-                },
-            })
-        }
-        HistoryPayload::CompactionCompleted { compaction_id }
-        | HistoryPayload::CompactionFailed { compaction_id, .. } => {
-            let turn = compaction_snapshot(
-                compaction_id,
-                state
-                    .compactions
-                    .get(compaction_id)
-                    .ok_or_else(|| internal("history fold lost a compaction"))?,
-            )?;
-            let item = turn.items.into_iter().next().ok_or_else(|| {
-                internal("compaction snapshot did not contain its canonical item")
-            })?;
-            Ok(AgentChangePayload::ItemTransitioned {
-                turn_id: turn.id,
-                item_id: item.id,
-                transition: AgentItemTransition::Terminal {
-                    presentation: item.presentation,
-                },
-            })
-        }
-        HistoryPayload::Closed => Ok(AgentChangePayload::LifecycleChanged {
+        HistoryPayload::Closed => Ok(Some(AgentChangePayload::LifecycleChanged {
             status: AgentLifecycleStatus::Closed,
-        }),
+        })),
         HistoryPayload::InitialContextInstalled { .. } | HistoryPayload::InputAccepted { .. } => {
-            Ok(AgentChangePayload::SnapshotInvalidated {
+            Ok(Some(AgentChangePayload::SnapshotInvalidated {
                 reason: "dash_history_context_changed".into(),
-            })
+            }))
         }
+        _ => Ok(None),
     }
-}
-
-fn item_transition_change(
-    state: &AgentHistoryState,
-    turn_id: &DashTurnId,
-    item_id: &DashItemId,
-    transition: impl FnOnce(AgentItemSnapshot) -> AgentItemTransition,
-) -> Result<AgentChangePayload, AgentServiceError> {
-    let item = item_snapshot(
-        item_id,
-        state
-            .items
-            .get(item_id)
-            .ok_or_else(|| internal("history fold lost an item"))?,
-    )?;
-    Ok(AgentChangePayload::ItemTransitioned {
-        turn_id: service_turn_id(turn_id)?,
-        item_id: item.id.clone(),
-        transition: transition(item),
-    })
 }
 
 fn surface_contribution_supported(
@@ -1858,16 +1560,14 @@ fn parse_cursor(cursor: &AgentSourceCursor) -> Result<DashChangeCursor, AgentSer
     ))
 }
 
-fn dash_change_payload(change: &DashAgentChange) -> Result<AgentChangePayload, AgentServiceError> {
+fn dash_change_payload(
+    change: &DashAgentChange,
+) -> Result<Option<AgentChangePayload>, AgentServiceError> {
     match &change.payload {
         DashAgentChangePayload::HistoryEntry { entry } => {
             change_payload(&change.state, &entry.payload)
         }
-        DashAgentChangePayload::ActiveTurnChanged { active_turn_id } => {
-            Ok(AgentChangePayload::ActiveTurnChanged {
-                active_turn_id: active_turn_id.as_ref().map(service_turn_id).transpose()?,
-            })
-        }
+        DashAgentChangePayload::ActiveTurnChanged { .. } => Ok(None),
     }
 }
 
@@ -1900,68 +1600,130 @@ impl DashExecutionCallbacks for DashCompleteLiveCallbacks {
         &self,
         event: DashExecutionEvent,
     ) -> Result<(), agentdash_agent::dash::DashCoreError> {
+        let Some(canonical_event) = canonical_live_event(&self.source, &event)? else {
+            return Ok(());
+        };
         let sequence = {
             let mut sequence = self.live_channel.sequence.lock().await;
             *sequence = sequence.saturating_add(1);
             *sequence
         };
-        let turn_id =
-            agentdash_agent_service_api::AgentTurnId::new(event.turn_id.0).map_err(|error| {
-                agentdash_agent::dash::DashCoreError::Callback {
-                    message: error.to_string(),
-                }
-            })?;
-        let item_id =
-            agentdash_agent_service_api::AgentItemId::new(event.item_id.0).map_err(|error| {
-                agentdash_agent::dash::DashCoreError::Callback {
-                    message: error.to_string(),
-                }
-            })?;
-        let payload = match event.event {
-            DashCoreEvent::ProviderRoundStarted { round } => {
-                AgentLiveEventPayload::ProviderRoundStarted { round }
-            }
-            DashCoreEvent::TextDelta { round, delta } => {
-                AgentLiveEventPayload::TextDelta { round, delta }
-            }
-            DashCoreEvent::ReasoningDelta { round, delta } => {
-                AgentLiveEventPayload::ReasoningDelta { round, delta }
-            }
-            DashCoreEvent::ToolCallRequested { round, call } => {
-                AgentLiveEventPayload::ToolCallRequested {
-                    round,
-                    call_id: call.call_id,
-                    name: call.name,
-                    arguments: call.arguments,
-                }
-            }
-            DashCoreEvent::ToolCallCompleted { round, result } => {
-                AgentLiveEventPayload::ToolCallCompleted {
-                    round,
-                    call_id: result.call_id,
-                    content: result.content,
-                    is_error: result.is_error,
-                }
-            }
-            DashCoreEvent::ProviderRoundCompleted {
-                round,
-                finish_reason,
-            } => AgentLiveEventPayload::ProviderRoundCompleted {
-                round,
-                finish_reason: match finish_reason {
-                    DashFinishReason::Stop => AgentLiveFinishReason::Stop,
-                    DashFinishReason::ToolCalls => AgentLiveFinishReason::ToolCalls,
-                },
+        let turn_id = event.turn_id.0;
+        let envelope = BackboneEnvelope::new(
+            canonical_event,
+            self.source.as_str(),
+            SourceInfo {
+                connector_id: "dash-agent".to_owned(),
+                connector_type: "native".to_owned(),
+                executor_id: None,
             },
-        };
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some(turn_id),
+            entry_index: None,
+        });
+        let record = CanonicalConversationRecord::new(
+            format!("live:{}:{sequence}", self.source.as_str()),
+            CanonicalConversationPresentation::new(PresentationDurability::Ephemeral, envelope),
+        );
         let _ = self.live_channel.sender.send(AgentLiveEvent {
             source: self.source.clone(),
-            turn_id,
-            item_id,
             sequence: AgentServiceU64(sequence),
-            payload,
+            record,
         });
         Ok(())
+    }
+}
+
+fn canonical_live_event(
+    source: &AgentSourceCoordinate,
+    execution: &DashExecutionEvent,
+) -> Result<Option<BackboneEvent>, agentdash_agent::dash::DashCoreError> {
+    let thread_id = source.as_str();
+    let turn_id = execution.turn_id.0.as_str();
+    let event = match &execution.event {
+        DashCoreEvent::ProviderRoundStarted { round: 1 } => BackboneEvent::TurnStarted(
+            serde_json::from_value(serde_json::json!({
+                "threadId": thread_id,
+                "turn": {
+                    "id": turn_id,
+                    "items": [],
+                    "status": "inProgress",
+                    "startedAt": null,
+                    "completedAt": null,
+                    "durationMs": null,
+                    "error": null,
+                },
+            }))
+            .map_err(live_callback_error)?,
+        ),
+        DashCoreEvent::ProviderRoundStarted { .. }
+        | DashCoreEvent::ProviderRoundCompleted { .. } => return Ok(None),
+        DashCoreEvent::TextDelta { delta, .. } => {
+            BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
+                thread_id: thread_id.to_owned(),
+                turn_id: turn_id.to_owned(),
+                item_id: execution.item_id.0.clone(),
+                delta: delta.clone(),
+            })
+        }
+        DashCoreEvent::ReasoningDelta { delta, .. } => BackboneEvent::ReasoningTextDelta(
+            serde_json::from_value(serde_json::json!({
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "itemId": format!("{}:reasoning", execution.item_id.0),
+                "contentIndex": 0,
+                "delta": delta,
+            }))
+            .map_err(live_callback_error)?,
+        ),
+        DashCoreEvent::ToolCallRequested { call, .. } => {
+            let item = live_tool_item(&execution.turn_id, call, None)?;
+            BackboneEvent::ItemStarted(ItemStartedNotification {
+                item,
+                thread_id: thread_id.to_owned(),
+                turn_id: turn_id.to_owned(),
+                started_at_ms: 0,
+            })
+        }
+        DashCoreEvent::ToolCallCompleted { call, result, .. } => {
+            let item = live_tool_item(&execution.turn_id, call, Some(result))?;
+            BackboneEvent::ItemCompleted(ItemCompletedNotification {
+                item,
+                thread_id: thread_id.to_owned(),
+                turn_id: turn_id.to_owned(),
+                completed_at_ms: 0,
+            })
+        }
+    };
+    Ok(Some(event))
+}
+
+fn live_tool_item(
+    turn_id: &DashTurnId,
+    call: &agentdash_agent::dash::DashToolCall,
+    result: Option<&agentdash_agent::dash::DashToolResult>,
+) -> Result<agentdash_agent_protocol::AgentDashThreadItem, agentdash_agent::dash::DashCoreError> {
+    let item_id = agentdash_agent::dash::execution_tool_item_id(turn_id, &call.call_id);
+    serde_json::from_value::<codex::ThreadItem>(serde_json::json!({
+        "type": "dynamicToolCall",
+        "id": item_id.0,
+        "tool": call.name,
+        "arguments": call.arguments,
+        "status": result.map_or("inProgress", |value| if value.is_error { "failed" } else { "completed" }),
+        "contentItems": result.map(|value| vec![serde_json::json!({
+            "type": "inputText",
+            "text": value.content,
+        })]),
+        "success": result.map(|value| !value.is_error),
+    }))
+    .map(Into::into)
+    .map_err(live_callback_error)
+}
+
+fn live_callback_error(error: impl std::fmt::Display) -> agentdash_agent::dash::DashCoreError {
+    agentdash_agent::dash::DashCoreError::Callback {
+        message: error.to_string(),
     }
 }
 
@@ -2032,98 +1794,4 @@ fn map_dash_error(error: DashServiceError) -> AgentServiceError {
         | DashServiceError::Core(_) => AgentServiceErrorCode::Internal,
     };
     AgentServiceError::new(code, error.to_string(), retryable)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use agentdash_agent::dash::{
-        AgentItemId, AgentTurnId, HistoryContribution, HistoryEntryId, InteractionId, ItemKind,
-    };
-
-    #[test]
-    fn detailed_snapshot_and_change_are_derived_from_the_same_history_fold() {
-        let turn_id = AgentTurnId::new("turn-1");
-        let item_id = AgentItemId::new("item-1");
-        let interaction_id = InteractionId::new("interaction-1");
-        let mut history =
-            AgentHistory::empty(AgentSessionId::new("session-1"), BranchId::new("branch-1"));
-        let payloads = [
-            HistoryPayload::TurnStarted {
-                turn_id: turn_id.clone(),
-            },
-            HistoryPayload::ItemStarted {
-                turn_id: turn_id.clone(),
-                item_id: item_id.clone(),
-                kind: ItemKind::AssistantMessage,
-            },
-            HistoryPayload::AgentOutput {
-                turn_id: turn_id.clone(),
-                item_id: Some(item_id.clone()),
-                content: "answer".into(),
-            },
-            HistoryPayload::ItemCompleted {
-                turn_id: turn_id.clone(),
-                item_id: item_id.clone(),
-            },
-            HistoryPayload::InteractionRequested {
-                turn_id: turn_id.clone(),
-                item_id: None,
-                interaction_id: interaction_id.clone(),
-                prompt: "continue?".into(),
-            },
-            HistoryPayload::InteractionResolved {
-                interaction_id: interaction_id.clone(),
-                response: "yes".into(),
-            },
-            HistoryPayload::TurnCompleted {
-                turn_id: turn_id.clone(),
-            },
-        ];
-        for (index, payload) in payloads.iter().cloned().enumerate() {
-            history
-                .append(HistoryContribution {
-                    entry_id: HistoryEntryId::new(format!("entry-{index}")),
-                    payload,
-                })
-                .unwrap();
-        }
-        let state = history.state().unwrap();
-        let snapshot = turn_snapshot(&state, &turn_id, None).unwrap();
-        assert_eq!(snapshot.status, AgentEntityStatus::Completed);
-        assert!(matches!(
-            snapshot.items[0].presentation.body,
-            AgentItemBody::AgentMessage { .. }
-        ));
-        assert_eq!(
-            interaction_snapshot(
-                &interaction_id,
-                state.interactions.get(&interaction_id).unwrap()
-            )
-            .unwrap()
-            .status,
-            AgentInteractionStatus::Resolved
-        );
-
-        let canonical_item_id = service_item_id(&item_id).unwrap();
-        let mut projected_item = None;
-        for sequence in 2..=4 {
-            let event_state = history.state_at(sequence).unwrap();
-            let payload = &history.entries()[(sequence - 1) as usize].payload;
-            let AgentChangePayload::ItemTransitioned {
-                item_id,
-                transition,
-                ..
-            } = change_payload(&event_state, payload).unwrap()
-            else {
-                panic!("item history must project as a typed item transition");
-            };
-            projected_item = Some(
-                AgentItemSnapshot::from_transition(item_id, projected_item.as_ref(), transition)
-                    .unwrap(),
-            );
-        }
-        assert_eq!(projected_item.as_ref(), Some(&snapshot.items[0]));
-        assert_eq!(projected_item.unwrap().id, canonical_item_id);
-    }
 }

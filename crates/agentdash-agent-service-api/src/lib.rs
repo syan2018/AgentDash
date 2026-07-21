@@ -133,7 +133,6 @@ mod tests {
             "AgentHostCallbackBinding",
             "AgentCreateEvidence",
             "AgentLiveEvent",
-            "AgentLiveEventPayload",
             "AgentSurfaceContributionKind",
         ] {
             assert!(typescript.contains(contract), "missing {contract}");

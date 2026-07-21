@@ -20,7 +20,11 @@
 - [x] command retry 使用相同 Agent effect + `inspect` 收敛，不依赖 Runtime operation repository。
 - [x] conversation snapshot 直接读取 Complete Agent source并在内存中 normalize。
 - [x] production Dash execution callback接入 source-scoped live event sink。
+- [x] Complete Agent snapshot、Managed Runtime wrapper与前端feed只保留
+  `conversation_history: CanonicalConversationRecord[]`；平行turn/item/active字段已删除。
 - [x] live delta只在当前进程broadcast；gap/断连通过authoritative snapshot恢复。
+- [x] live transport只接受`AgentLiveEvent { source, sequence, record }`，前端运行态只由canonical
+  `TurnStarted/TurnCompleted`推导。
 - [x] Agent terminal failure保留真实 code/message/retryability。
 
 ## Product / Workflow
@@ -75,11 +79,13 @@
   source route 与 binding generation，首次 authoritative snapshot 读取成功。
 - [x] 真实 Composer input 使用 `openai-codex / gpt-5.5 / minimal` 执行成功；Codex adapter 将平台
   最低非零推理级别编码为 Provider 原生 `low`。
-- [x] 同一 live 连接依次收到 `provider_round_started`、`text_delta("OK")` 与
-  `provider_round_completed`。
-- [x] API 返回 concrete Agent operation receipt `succeeded`；PostgreSQL 中
-  `dash_complete_effect` receipt 与 `dash_complete_source` command/history 同步收敛到 revision 9。
-- [x] authoritative snapshot 重读得到 completed turn 与 Agent message `OK`；终端-only失败轮次由
-  前端分段与渲染回归测试覆盖。
+- [x] AgentRun `814b65c6-633d-598a-a458-ec98f53a8641` 的真实输入依次渲染
+  `mounts_list`、`fs_glob` 两个`dynamicToolCall`与最终 Agent message
+  `STREAM_OK Cargo.lock`；页面无未知工具或悬空状态。
+- [x] authoritative snapshot 只返回14条ordered canonical records，结构为
+  user input → TurnStarted → tool items → agentMessage → TurnCompleted；不返回平行turn/item数组。
+- [x] 浏览器重载后从Dash source durable history恢复同一工具卡和最终消息；live partial与durable
+  read使用相同presentation identity。
+- [x] 首个输出后仍active、仅`TurnCompleted`结束receiving的前端回归测试通过。
 - [x] 最终定向测试、contract generation/typecheck、migration guard、源码负向搜索与
   `git diff --check` 全量复核完成后生成 closeout。

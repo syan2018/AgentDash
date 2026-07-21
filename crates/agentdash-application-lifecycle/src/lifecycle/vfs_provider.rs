@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeItem, ManagedRuntimeItemBody, ManagedRuntimePresentationContentBlock,
-};
+use agentdash_agent_protocol::{AgentDashThreadItem, CodexThreadItem, CompletedConversationItem};
 use agentdash_application_vfs::{
     ListOptions, ListResult, MountError, MountOperationContext, MountProvider,
     PROVIDER_LIFECYCLE_VFS, ReadResult, RuntimeFileEntry, SearchMatch, SearchQuery, SearchResult,
@@ -120,19 +118,19 @@ impl LifecycleMountProvider {
                 "projection_revision": projection.projection_revision,
                 "captured_at_ms": projection.captured_at_ms,
                 "lifecycle": projection.lifecycle,
-                "active_turn_id": projection.active_turn_id,
+                "active_turn_id": projection.active_turn_id(),
                 "thread_name": projection.thread_name,
                 "authority": projection.authority,
                 "fidelity": projection.fidelity,
             })),
             ["summary"] => pretty_json(&serde_json::json!({
-                "turns": projection.turns.len(),
-                "items": projection.items.len(),
+                "turns": projection.conversation().completed_turns().count(),
+                "items": projection.items().count(),
                 "messages": projection.message_items().count(),
                 "tools": projection.tool_items().count(),
                 "compactions": projection.compaction_items().count(),
                 "interactions": projection.interactions.len(),
-                "active_turn_id": projection.active_turn_id,
+                "active_turn_id": projection.active_turn_id(),
             })),
             ["conclusions"] => Ok(last_agent_message(projection).unwrap_or_default()),
             ["events.json"] => pretty_json(&serde_json::json!({
@@ -142,8 +140,8 @@ impl LifecycleMountProvider {
                 "records": projection.conversation_history,
             })),
             ["items", file] => {
-                let item = find_item_file(projection.items.iter(), file, "json")?;
-                pretty_json(item)
+                let item = find_item_file(projection.items(), file, "json")?;
+                pretty_json(&item)
             }
             ["messages", file] => {
                 let item = find_item_file(projection.message_items(), file, "md")?;
@@ -151,40 +149,35 @@ impl LifecycleMountProvider {
             }
             ["tools", file] => {
                 let item = find_item_file(projection.tool_items(), file, "json")?;
-                pretty_json(item)
+                pretty_json(&item)
             }
             ["writes", file] => {
                 let item = find_item_file(projection.write_items(), file, "json")?;
-                pretty_json(item)
+                pretty_json(&item)
             }
             ["summaries", file] => {
                 let item = find_item_file(projection.compaction_items(), file, "md")?;
                 Ok(render_compaction(item))
             }
-            ["terminal"] => pretty_json(
-                &projection
-                    .terminal_control_items()
-                    .collect::<Vec<&ManagedRuntimeItem>>(),
-            ),
+            ["terminal"] => pretty_json(&projection.terminal_control_items().collect::<Vec<_>>()),
             ["turns", turn_id, "events.json"] => {
                 let turn_id = projection
-                    .turns
-                    .iter()
-                    .find(|turn| safe_segment(turn.id.as_str()) == *turn_id)
-                    .map(|turn| &turn.id)
+                    .conversation()
+                    .completed_turns()
+                    .find(|turn| safe_segment(&turn.id) == *turn_id)
+                    .map(|turn| turn.id.as_str())
                     .ok_or_else(|| {
                         MountError::NotFound(format!("Runtime turn 不存在: {turn_id}"))
                     })?;
                 let turn = projection
-                    .turns
-                    .iter()
-                    .find(|turn| &turn.id == turn_id)
+                    .conversation()
+                    .completed_turn(Some(turn_id))
                     .expect("turn was resolved above");
                 let items = projection.items_for_turn(turn_id).collect::<Vec<_>>();
                 let interactions = projection
                     .interactions
                     .iter()
-                    .filter(|interaction| &interaction.turn_id == turn_id)
+                    .filter(|interaction| interaction.turn_id.as_str() == turn_id)
                     .collect::<Vec<_>>();
                 pretty_json(&serde_json::json!({
                     "turn": turn,
@@ -712,7 +705,7 @@ fn conversation_entries(
         RuntimeFileEntry::file(format!("{prefix}/terminal")).as_virtual(),
         RuntimeFileEntry::dir(format!("{prefix}/turns")).as_virtual(),
     ];
-    entries.extend(projection.items.iter().enumerate().map(|(index, item)| {
+    entries.extend(projection.items().enumerate().map(|(index, item)| {
         RuntimeFileEntry::file(format!(
             "{prefix}/items/{}",
             item_file_name(index, item, "json")
@@ -752,27 +745,23 @@ fn conversation_entries(
                 .as_virtual()
             }),
     );
-    for turn in &projection.turns {
-        let turn_path = format!("{prefix}/turns/{}", safe_segment(turn.id.as_str()));
+    for turn in projection.conversation().completed_turns() {
+        let turn_path = format!("{prefix}/turns/{}", safe_segment(&turn.id));
         entries.push(RuntimeFileEntry::dir(turn_path.clone()).as_virtual());
         entries.push(RuntimeFileEntry::file(format!("{turn_path}/events.json")).as_virtual());
     }
     entries
 }
 
-fn item_file_name(index: usize, item: &ManagedRuntimeItem, extension: &str) -> String {
-    format!(
-        "{index:06}-{}.{}",
-        safe_segment(item.id.as_str()),
-        extension
-    )
+fn item_file_name(index: usize, item: CompletedConversationItem<'_>, extension: &str) -> String {
+    format!("{index:06}-{}.{}", safe_segment(item.item.id()), extension)
 }
 
 fn find_item_file<'a>(
-    items: impl Iterator<Item = &'a ManagedRuntimeItem>,
+    items: impl Iterator<Item = CompletedConversationItem<'a>>,
     file: &str,
     extension: &str,
-) -> Result<&'a ManagedRuntimeItem, MountError> {
+) -> Result<CompletedConversationItem<'a>, MountError> {
     items
         .enumerate()
         .find_map(|(index, item)| (item_file_name(index, item, extension) == file).then_some(item))
@@ -792,77 +781,66 @@ fn safe_segment(value: &str) -> String {
         .collect()
 }
 
-fn render_message(item: &ManagedRuntimeItem) -> String {
-    match &item.presentation.body {
-        ManagedRuntimeItemBody::UserMessage { content }
-        | ManagedRuntimeItemBody::AgentMessage { content, .. } => render_blocks(content),
-        ManagedRuntimeItemBody::HookPrompt {
-            hook_point,
-            content,
-        } => format!("## Hook: {hook_point}\n\n{}", render_blocks(content)),
+fn render_message(completed: CompletedConversationItem<'_>) -> String {
+    match completed.item {
+        AgentDashThreadItem::Codex(CodexThreadItem::UserMessage { content, .. }) => {
+            render_user_input(content)
+        }
+        AgentDashThreadItem::Codex(CodexThreadItem::AgentMessage { text, .. }) => text.clone(),
+        AgentDashThreadItem::Codex(CodexThreadItem::HookPrompt { fragments, .. }) => fragments
+            .iter()
+            .map(|fragment| fragment.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
         _ => String::new(),
     }
 }
 
 fn last_agent_message(projection: &LifecycleHistoryProjection) -> Option<String> {
-    projection.items.iter().rev().find_map(|item| {
-        if matches!(
-            item.presentation.body,
-            ManagedRuntimeItemBody::AgentMessage { .. }
-        ) {
-            Some(render_message(item))
-        } else {
-            None
-        }
-    })
+    projection
+        .items()
+        .filter_map(|completed| match completed.item {
+            AgentDashThreadItem::Codex(CodexThreadItem::AgentMessage { text, .. }) => {
+                Some(text.clone())
+            }
+            _ => None,
+        })
+        .last()
 }
 
-fn render_compaction(item: &ManagedRuntimeItem) -> String {
-    match &item.presentation.body {
-        ManagedRuntimeItemBody::ContextCompaction {
-            summary: Some(summary),
-            ..
-        } => render_blocks(summary),
-        ManagedRuntimeItemBody::ContextCompaction {
-            summary: None,
-            source_digest,
-        } => source_digest
-            .as_ref()
-            .map(|digest| format!("Compaction source: `{digest}`"))
-            .unwrap_or_else(|| "Compaction summary is not available.".to_string()),
+fn render_compaction(completed: CompletedConversationItem<'_>) -> String {
+    match completed.item {
+        AgentDashThreadItem::Codex(CodexThreadItem::ContextCompaction { id }) => {
+            format!("Context compaction: `{id}`")
+        }
         _ => String::new(),
     }
 }
 
-fn render_blocks(blocks: &[ManagedRuntimePresentationContentBlock]) -> String {
+fn render_user_input(
+    blocks: &[agentdash_agent_protocol::codex_app_server_protocol::UserInput],
+) -> String {
     blocks
         .iter()
         .map(|block| match block {
-            ManagedRuntimePresentationContentBlock::Text { text } => text.clone(),
-            ManagedRuntimePresentationContentBlock::Image {
-                media_type, source, ..
-            } => format!("![{media_type}]({source})"),
-            ManagedRuntimePresentationContentBlock::LocalResource { path, .. } => {
-                format!("[Local resource]({path})")
-            }
-            ManagedRuntimePresentationContentBlock::ResourceLink { uri, title, .. } => {
-                format!("[{}]({uri})", title.as_deref().unwrap_or(uri))
-            }
-            ManagedRuntimePresentationContentBlock::SkillReference { name, path } => path
-                .as_ref()
-                .map(|path| format!("Skill `{name}`: `{path}`"))
-                .unwrap_or_else(|| format!("Skill `{name}`")),
-            ManagedRuntimePresentationContentBlock::Mention { label, reference } => {
-                format!("@{label} ({reference})")
-            }
-            ManagedRuntimePresentationContentBlock::Structured {
-                schema,
-                schema_version,
-                value,
-            } => format!(
-                "```json\n{}\n```\n\nSchema: `{schema}@{schema_version}`",
-                serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
-            ),
+            agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text {
+                text, ..
+            } => text.clone(),
+            agentdash_agent_protocol::codex_app_server_protocol::UserInput::Image {
+                url, ..
+            } => format!("![image]({url})"),
+            agentdash_agent_protocol::codex_app_server_protocol::UserInput::LocalImage {
+                path,
+                ..
+            } => format!("![local image]({path})"),
+            agentdash_agent_protocol::codex_app_server_protocol::UserInput::Skill {
+                name,
+                path,
+            } => format!("Skill `{name}`: `{path}`"),
+            agentdash_agent_protocol::codex_app_server_protocol::UserInput::Mention {
+                name,
+                path,
+            } => format!("@{name} ({path})"),
         })
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -1005,12 +983,9 @@ mod tests {
             projection_revision: RuntimeProjectionRevision(7),
             captured_at_ms: 17,
             lifecycle: ManagedRuntimeLifecycleStatus::Active,
-            active_turn_id: None,
             thread_name: None,
             authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
             fidelity: ManagedRuntimeProjectionFidelity::Exact,
-            turns: Vec::new(),
-            items: Vec::new(),
             interactions: Vec::new(),
             conversation_history: vec![record],
         };

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeCommandAvailability, ManagedRuntimeCommandKind, ManagedRuntimeEntityStatus,
-    ManagedRuntimeSnapshot, RuntimeThreadId,
+    ManagedRuntimeCommandAvailability, ManagedRuntimeCommandKind, ManagedRuntimeSnapshot,
+    RuntimeThreadId,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use chrono::Utc;
@@ -245,17 +245,9 @@ fn resolve_cutoff(
     ),
     AgentRunProductForkError,
 > {
-    let turn = match requested {
-        Some(requested) => snapshot.turns.iter().find(|turn| {
-            turn.source_turn_id == requested.turn_id
-                && turn.status == ManagedRuntimeEntityStatus::Completed
-        }),
-        None => snapshot
-            .turns
-            .iter()
-            .rev()
-            .find(|turn| turn.status == ManagedRuntimeEntityStatus::Completed),
-    };
+    let history =
+        agentdash_agent_protocol::CanonicalConversationView::new(&snapshot.conversation_history);
+    let turn = history.completed_turn(requested.map(|point| point.turn_id.as_str()));
     let turn = turn.ok_or_else(|| {
         if requested.is_some() {
             AgentRunProductForkError::ForkPointNotFound
@@ -264,8 +256,9 @@ fn resolve_cutoff(
         }
     })?;
     Ok((
+        agentdash_agent_runtime_contract::RuntimeTurnId::new(turn.id.clone())
+            .map_err(|_| AgentRunProductForkError::ForkPointNotFound)?,
         turn.id.clone(),
-        turn.source_turn_id.clone(),
         requested.map(|point| point.entry_index),
     ))
 }
@@ -387,24 +380,26 @@ fn map_facade_error(error: AgentRunForkFacadeError) -> AgentRunProductForkError 
 mod tests {
     use std::collections::BTreeMap;
 
+    use agentdash_agent_protocol::{
+        BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
+        CanonicalConversationRecord, PresentationDurability, SourceInfo,
+        codex_app_server_protocol as codex,
+    };
     use agentdash_agent_runtime_contract::{
         ManagedRuntimeAvailabilityEvidence, ManagedRuntimeLifecycleStatus,
-        ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity, ManagedRuntimeTurn,
-        RuntimeProjectionRevision, RuntimeTurnId,
+        ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
+        RuntimeProjectionRevision,
     };
 
     use super::*;
 
-    fn snapshot(turns: Vec<ManagedRuntimeTurn>) -> ManagedRuntimeSnapshot {
+    fn snapshot(conversation_history: Vec<CanonicalConversationRecord>) -> ManagedRuntimeSnapshot {
         let revision = RuntimeProjectionRevision(7);
         ManagedRuntimeSnapshot {
             thread_id: RuntimeThreadId::new("runtime-parent").expect("thread"),
             revision,
             captured_at_ms: 10,
             lifecycle: ManagedRuntimeLifecycleStatus::Active,
-            active_turn_id: None,
-            turns,
-            items: Vec::new(),
             interactions: Vec::new(),
             thread_name: None,
             thread_name_source: None,
@@ -416,39 +411,60 @@ mod tests {
                 ManagedRuntimeCommandKind::Fork,
                 ManagedRuntimeCommandAvailability::Available {
                     evidence: ManagedRuntimeAvailabilityEvidence {
-                        decided_at_revision: revision,
                         blocking_operation_id: None,
                         bound_surface_revision: None,
                         applied_surface_revision: None,
                     },
                 },
             )]),
-            conversation_history: Vec::new(),
+            conversation_history,
         }
     }
 
-    fn turn(runtime: &str, source: &str, status: ManagedRuntimeEntityStatus) -> ManagedRuntimeTurn {
-        ManagedRuntimeTurn {
-            id: RuntimeTurnId::new(runtime).expect("turn"),
-            source_turn_id: source.to_owned(),
-            status,
-            item_ids: Vec::new(),
-        }
+    fn turn(
+        source: &str,
+        status: codex::TurnStatus,
+        sequence: usize,
+    ) -> CanonicalConversationRecord {
+        let turn: codex::Turn = serde_json::from_value(serde_json::json!({
+            "id": source,
+            "items": [],
+            "status": status,
+        }))
+        .expect("turn fixture");
+        let event = if status == codex::TurnStatus::InProgress {
+            BackboneEvent::TurnStarted(codex::TurnStartedNotification {
+                thread_id: "runtime-parent".to_owned(),
+                turn,
+            })
+        } else {
+            BackboneEvent::TurnCompleted(codex::TurnCompletedNotification {
+                thread_id: "runtime-parent".to_owned(),
+                turn,
+            })
+        };
+        CanonicalConversationRecord::new(
+            format!("test:{sequence}"),
+            CanonicalConversationPresentation::new(
+                PresentationDurability::Durable,
+                BackboneEnvelope::new(
+                    event,
+                    "runtime-parent",
+                    SourceInfo {
+                        connector_id: "test".to_owned(),
+                        connector_type: "test".to_owned(),
+                        executor_id: None,
+                    },
+                ),
+            ),
+        )
     }
 
     #[test]
     fn explicit_source_reference_resolves_the_runtime_owned_completed_turn() {
         let snapshot = snapshot(vec![
-            turn(
-                "runtime-turn-1",
-                "source-turn-1",
-                ManagedRuntimeEntityStatus::Completed,
-            ),
-            turn(
-                "runtime-turn-2",
-                "source-turn-2",
-                ManagedRuntimeEntityStatus::Completed,
-            ),
+            turn("source-turn-1", codex::TurnStatus::Completed, 1),
+            turn("source-turn-2", codex::TurnStatus::Completed, 2),
         ]);
         let (runtime, source, entry) = resolve_cutoff(
             &snapshot,
@@ -458,7 +474,7 @@ mod tests {
             }),
         )
         .expect("cutoff");
-        assert_eq!(runtime.as_str(), "runtime-turn-1");
+        assert_eq!(runtime.as_str(), "source-turn-1");
         assert_eq!(source, "source-turn-1");
         assert_eq!(entry, Some(9));
     }
@@ -466,19 +482,11 @@ mod tests {
     #[test]
     fn head_fork_uses_the_latest_completed_turn_and_skips_active_work() {
         let snapshot = snapshot(vec![
-            turn(
-                "runtime-turn-1",
-                "source-turn-1",
-                ManagedRuntimeEntityStatus::Completed,
-            ),
-            turn(
-                "runtime-turn-2",
-                "source-turn-2",
-                ManagedRuntimeEntityStatus::Running,
-            ),
+            turn("source-turn-1", codex::TurnStatus::Completed, 1),
+            turn("source-turn-2", codex::TurnStatus::InProgress, 2),
         ]);
         let (runtime, source, entry) = resolve_cutoff(&snapshot, None).expect("cutoff");
-        assert_eq!(runtime.as_str(), "runtime-turn-1");
+        assert_eq!(runtime.as_str(), "source-turn-1");
         assert_eq!(source, "source-turn-1");
         assert_eq!(entry, None);
     }

@@ -1,12 +1,13 @@
 # Frontend Architecture
 
-Frontend以产品路由与generated contracts组织：Project/Story/Task/Lifecycle是产品read models；AgentRun workspace通过`run_id + agent_id`消费canonical Runtime snapshot/events/context。
+Frontend以产品路由与generated contracts组织：Project/Story/Task/Lifecycle是产品read models；AgentRun workspace通过`run_id + agent_id`消费Complete Agent canonical conversation/context的请求级视图。
 
 ## Invariants
 
 - API client只使用generated Rust contracts；不手写Runtime/vendor DTO。
 - AgentRun command availability只来自Runtime snapshot，不从产品status、Backbone或executor kind推导。
-- Runtime feed按snapshot transcript baseline + durable/live双cursor消费canonical events；Runtime adapter只输出feature-local `SessionPresentationEvent`，再进入`useSessionFeed -> SessionChatStream -> SessionEntry -> toolCardRegistry`。target切换隔离旧state。
+- Runtime feed按snapshot `conversation_history` baseline与process-local live canonical records消费同一协议；只以`presentation_id`合并，不建立第二份turn/item store。canonical record再进入`useSessionStream -> sessionStreamReducer -> SessionEntry -> toolCardRegistry`。target切换隔离旧state。
+- 会话运行态只由canonical `TurnStarted/TurnCompleted`推导。message delta、tool item或provider round结束不能单独停止receiving状态。
 - `AgentRuntimeFeed`等平行renderer不存在；AgentRun workspace只提供Runtime target、inspect、command availability与product projection，不拥有第二套会话UI。
 - Workspace Module/Canvas tab以concrete presentation URI为identity；layout按AgentRun product key持久化。
 - VFS/resource surface来自current AgentFrame/Business Surface；Runtime binding只提供typed execution coordinate。
@@ -18,6 +19,65 @@ Frontend以产品路由与generated contracts组织：Project/Story/Task/Lifecyc
   concrete presentation URI清理失效tab；异步布局恢复不得覆盖这次currentness校验。
 - UI intent必须对应真实API/facade command；无canonical endpoint的按钮、service与contract必须一起删除。
 - errors保持typed code/diagnostic；stale command触发inspect refresh，不静默retry不同语义命令。
+
+## Canonical Conversation Boundary
+
+### 1. Scope / Trigger
+
+修改live transport、Session reducer、消息/工具渲染或composer receiving状态时适用。
+
+### 2. Signatures
+
+```ts
+type AgentLiveEvent = {
+  source: AgentSourceCoordinate;
+  sequence: AgentServiceU64;
+  record: CanonicalConversationRecord;
+};
+
+function hasActiveCanonicalTurn(
+  records: readonly CanonicalConversationRecord[],
+): boolean;
+```
+
+### 3. Contracts
+
+- transport只接收generated `AgentLiveEvent`形态。
+- `ManagedRuntimeSnapshot.conversation_history`是渲染输入；live只向该数组覆盖/追加canonical record。
+- `AgentDashThreadItem.type`直接决定消息、reasoning或tool/resource card。
+- reload以Complete Agent durable history替换ephemeral overlay。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| live缺少canonical record | 拒绝并报告连接错误 |
+| presentation id重复 | 覆盖同一record |
+| item completed | 终结该item，不终结turn |
+| turn completed | receiving=false |
+
+### 5. Good / Base / Bad Cases
+
+- Good：工具start/update/complete与final assistant按一个ordered record流渲染。
+- Base：刷新页面后从durable history恢复同一内容。
+- Bad：把generic item一律送入tool renderer，导致agent message显示为未知工具。
+
+### 6. Tests Required
+
+- transport current/removed shape边界测试。
+- `presentation_id`合并测试。
+- first output与TurnCompleted运行态测试。
+- tool + final assistant真实浏览器tracer和reload恢复。
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong
+isReceiving = snapshot.active_turn_id != null;
+
+// Correct
+isReceiving = hasActiveCanonicalTurn(snapshot.conversation_history);
+```
 
 ## Data Flow
 

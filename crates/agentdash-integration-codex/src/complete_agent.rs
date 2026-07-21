@@ -8,24 +8,21 @@ use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentCapabilityProfile, AgentChange, AgentChangePage,
     AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandCapability,
     AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
-    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentEntityStatus,
-    AgentExecutionFailure, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint, AgentInput,
-    AgentInputContent, AgentInteractionId, AgentInteractionRequest, AgentInteractionSnapshot,
-    AgentInteractionStatus, AgentItemBody, AgentItemId, AgentItemPresentation, AgentItemSnapshot,
-    AgentItemTerminalEvidence, AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest,
-    AgentPresentationError, AgentProcessExitEvidence, AgentProfileDigest, AgentReadQuery,
-    AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
-    AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
-    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
-    AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload, AgentSurfaceProfile,
-    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentTerminalStatus,
-    AgentTurnId, AgentTurnSnapshot, AppliedAgentCommandReceipt, AppliedAgentSurface,
-    AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt, AppliedContributionStatus,
-    AppliedForkAgentReceipt, AppliedInitialContextEvidence, ApplyBoundAgentSurface,
-    CompleteAgentService, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
-    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContributionKind,
-    InitialContextDeliveryFidelity, InitialContextProfile, ResumeAgentCommand,
-    RevokeBoundAgentSurface, SemanticFidelity,
+    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkCapability,
+    AgentForkCutoffKind, AgentForkPoint, AgentInput, AgentInputContent, AgentInteractionId,
+    AgentInteractionRequest, AgentInteractionSnapshot, AgentInteractionStatus, AgentItemId,
+    AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest,
+    AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor,
+    AgentServiceError, AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority,
+    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
+    AgentSourceCursor, AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload,
+    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
+    AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
+    AppliedInitialContextEvidence, ApplyBoundAgentSurface, CompleteAgentService,
+    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
+    InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
+    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -1195,7 +1192,6 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 "thread/read returned a different source thread",
             ));
         }
-        let (turns, active_turn_id) = map_thread_turns(&result)?;
         let thread_name = response_thread_name(&result)?;
         let mut state = self.state.write().await;
         let source = state
@@ -1226,8 +1222,6 @@ impl CompleteAgentService for CodexCompleteAgentService {
             source: query.source,
             revision: AgentSnapshotRevision(source.revision),
             lifecycle: source.lifecycle,
-            active_turn_id,
-            turns,
             interactions,
             thread_name: Some(agentdash_agent_service_api::AgentThreadNameSnapshot {
                 thread_name,
@@ -1627,7 +1621,7 @@ impl CodexCompleteAgentService {
                 .collect();
                 let state = map_notification(source, *notification)?;
                 Ok(AgentChangePayload::SourceObservation {
-                    state: Box::new(state),
+                    state: state.map(Box::new),
                     presentation,
                 })
             }
@@ -1787,439 +1781,10 @@ fn canonical_json(value: &Value) -> Result<Vec<u8>, AgentServiceError> {
     serde_json::to_vec(&canonicalize(value)).map_err(internal_error)
 }
 
-fn map_thread_turns(
-    result: &Value,
-) -> Result<(Vec<AgentTurnSnapshot>, Option<AgentTurnId>), AgentServiceError> {
-    let turns = result
-        .pointer("/thread/turns")
-        .and_then(Value::as_array)
-        .ok_or_else(|| protocol_violation("thread/read response misses thread.turns"))?;
-    let mut mapped = Vec::with_capacity(turns.len());
-    let mut active = None;
-    for turn in turns {
-        let id = required_id::<AgentTurnId>(turn, "id", AgentTurnId::new)?;
-        let status = entity_status(turn.get("status"));
-        if matches!(
-            status,
-            AgentEntityStatus::Accepted | AgentEntityStatus::Running
-        ) {
-            active = Some(id.clone());
-        }
-        let items = turn
-            .get("items")
-            .and_then(Value::as_array)
-            .ok_or_else(|| protocol_violation("thread/read turn misses items"))?
-            .iter()
-            .map(|item| map_item(item, Some(status)))
-            .collect::<Result<Vec<_>, _>>()?;
-        let error = turn
-            .get("error")
-            .filter(|value| !value.is_null())
-            .map(|value| AgentExecutionFailure {
-                code: "codex_turn_failed".to_owned(),
-                message: value
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .or_else(|| value.as_str())
-                    .map(ToOwned::to_owned)
-                    .unwrap_or_else(|| value.to_string()),
-                retryable: None,
-            });
-        mapped.push(AgentTurnSnapshot {
-            id,
-            status,
-            items,
-            error,
-        });
-    }
-    Ok((mapped, active))
-}
-
-fn map_item(
-    item: &Value,
-    inherited_status: Option<AgentEntityStatus>,
-) -> Result<AgentItemSnapshot, AgentServiceError> {
-    use crate::vendor_generated::codex_v2::thread_item::ThreadItem;
-
-    let id = required_id::<AgentItemId>(item, "id", AgentItemId::new)?;
-    let explicit_status = entity_status(item.get("status"));
-    let status = if explicit_status == AgentEntityStatus::Accepted {
-        inherited_status.unwrap_or(explicit_status)
-    } else {
-        explicit_status
-    };
-    let vendor: ThreadItem = serde_json::from_value(item.clone()).map_err(|error| {
-        protocol_violation(format!(
-            "unknown or invalid Codex ThreadItem cannot enter canonical history: {error}"
-        ))
-    })?;
-    let body = match vendor {
-        ThreadItem::UserMessage { content, .. } => AgentItemBody::UserMessage {
-            content: content
-                .iter()
-                .map(map_vendor_user_input)
-                .collect::<Result<Vec<_>, _>>()?,
-        },
-        ThreadItem::HookPrompt { fragments, .. } => AgentItemBody::HookPrompt {
-            hook_point: "codex".to_owned(),
-            content: fragments
-                .into_iter()
-                .map(
-                    |fragment| agentdash_agent_service_api::AgentContentBlock::Text {
-                        text: fragment.text,
-                    },
-                )
-                .collect(),
-        },
-        ThreadItem::AgentMessage { text, phase, .. } => AgentItemBody::AgentMessage {
-            content: vec![text_block(text)],
-            phase: phase
-                .flatten()
-                .map(serde_json::to_value)
-                .transpose()
-                .map_err(internal_error)?
-                .and_then(|value| value.as_str().map(ToOwned::to_owned)),
-        },
-        ThreadItem::Plan { text, .. } => AgentItemBody::Plan {
-            explanation: Some(text),
-            steps: Vec::new(),
-        },
-        ThreadItem::Reasoning {
-            content, summary, ..
-        } => AgentItemBody::Reasoning {
-            summary: summary.into_iter().map(text_block).collect(),
-            content: content.into_iter().map(text_block).collect(),
-        },
-        ThreadItem::CommandExecution {
-            command,
-            cwd,
-            aggregated_output,
-            ..
-        } => AgentItemBody::CommandExecution {
-            command,
-            cwd: json_string(&cwd)?,
-            output: aggregated_output
-                .flatten()
-                .into_iter()
-                .map(|text| agentdash_agent_service_api::AgentCommandOutput {
-                    stream: agentdash_agent_service_api::AgentCommandOutputStream::Combined,
-                    text,
-                })
-                .collect(),
-        },
-        ThreadItem::FileChange { changes, .. } => AgentItemBody::FileChange {
-            changes: changes
-                .into_iter()
-                .map(|change| {
-                    let kind = serde_json::to_value(&change.kind).map_err(internal_error)?;
-                    let (change_kind, moved_to) = map_patch_kind(&kind)?;
-                    Ok(agentdash_agent_service_api::AgentFilePatch {
-                        path: change.path,
-                        change_kind,
-                        patch: change.diff,
-                        moved_to,
-                    })
-                })
-                .collect::<Result<Vec<_>, AgentServiceError>>()?,
-            output: Vec::new(),
-        },
-        ThreadItem::McpToolCall {
-            server,
-            tool,
-            arguments,
-            result,
-            error,
-            ..
-        } => AgentItemBody::McpToolCall {
-            server,
-            tool,
-            arguments,
-            result: result
-                .flatten()
-                .map(serde_json::to_value)
-                .transpose()
-                .map_err(internal_error)?
-                .or(error
-                    .flatten()
-                    .map(serde_json::to_value)
-                    .transpose()
-                    .map_err(internal_error)?),
-            progress: Vec::new(),
-        },
-        ThreadItem::DynamicToolCall {
-            namespace,
-            tool,
-            arguments,
-            content_items,
-            success,
-            ..
-        } => AgentItemBody::DynamicToolCall {
-            namespace: namespace.flatten(),
-            tool,
-            arguments,
-            result: success.flatten().map(|success| json!({"success": success})),
-            progress: content_items
-                .flatten()
-                .unwrap_or_default()
-                .into_iter()
-                .map(map_dynamic_output)
-                .collect(),
-        },
-        ThreadItem::CollabAgentToolCall {
-            tool,
-            receiver_thread_ids,
-            prompt,
-            agents_states,
-            ..
-        } => AgentItemBody::CollaborationToolCall {
-            action: tool.to_string(),
-            target: (!receiver_thread_ids.is_empty()).then(|| receiver_thread_ids.join(",")),
-            prompt: prompt.flatten(),
-            result: Some(serde_json::to_value(agents_states).map_err(internal_error)?),
-        },
-        ThreadItem::SubAgentActivity {
-            agent_thread_id,
-            agent_path,
-            kind,
-            ..
-        } => AgentItemBody::SubagentActivity {
-            agent_id: agent_thread_id,
-            task: agent_path,
-            status: kind.to_string(),
-            result: Vec::new(),
-        },
-        ThreadItem::WebSearch { query, action, .. } => {
-            let action_value = action
-                .flatten()
-                .map(serde_json::to_value)
-                .transpose()
-                .map_err(internal_error)?;
-            AgentItemBody::WebSearch {
-                action: action_value
-                    .as_ref()
-                    .and_then(|value| value.get("type"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("search")
-                    .to_owned(),
-                query: Some(query),
-                url: action_value
-                    .as_ref()
-                    .and_then(|value| value.get("url"))
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-                results: Vec::new(),
-            }
-        }
-        ThreadItem::ImageView { path, .. } => AgentItemBody::ImageView {
-            path: json_string_required(&path)?,
-            detail: None,
-        },
-        ThreadItem::Sleep { duration_ms, .. } => AgentItemBody::Sleep {
-            duration_ms: agentdash_agent_service_api::AgentServiceU64(duration_ms),
-        },
-        ThreadItem::ImageGeneration {
-            result,
-            revised_prompt,
-            saved_path,
-            ..
-        } => {
-            let mut outputs = vec![text_block(result)];
-            if let Some(path) = saved_path.flatten() {
-                outputs.push(
-                    agentdash_agent_service_api::AgentContentBlock::LocalResource {
-                        path: json_string_required(&path)?,
-                        media_type: None,
-                        digest: None,
-                    },
-                );
-            }
-            AgentItemBody::ImageGeneration {
-                prompt: String::new(),
-                revised_prompt: revised_prompt.flatten(),
-                outputs,
-            }
-        }
-        ThreadItem::EnteredReviewMode { review, .. } => AgentItemBody::Review {
-            findings: Vec::new(),
-            summary: Some(review),
-        },
-        ThreadItem::ExitedReviewMode { review, .. } => AgentItemBody::Review {
-            findings: Vec::new(),
-            summary: Some(review),
-        },
-        ThreadItem::ContextCompaction { .. } => AgentItemBody::ContextCompaction {
-            summary: None,
-            source_digest: None,
-        },
-    };
-    let presentation = AgentItemPresentation::new(
-        body,
-        item.get("startedAt").and_then(Value::as_u64),
-        item.get("updatedAt").and_then(Value::as_u64),
-        terminal_evidence(status, item)?,
-    )
-    .map_err(internal_error)?;
-    Ok(AgentItemSnapshot {
-        id,
-        status,
-        presentation,
-    })
-}
-
-fn text_block(text: String) -> agentdash_agent_service_api::AgentContentBlock {
-    agentdash_agent_service_api::AgentContentBlock::Text { text }
-}
-
-fn map_vendor_user_input(
-    input: &crate::vendor_generated::codex_v2::thread_item::UserInput,
-) -> Result<agentdash_agent_service_api::AgentContentBlock, AgentServiceError> {
-    use crate::vendor_generated::codex_v2::thread_item::UserInput;
-    Ok(match input {
-        UserInput::Text { text, .. } => text_block(text.clone()),
-        UserInput::Image { url, detail } => agentdash_agent_service_api::AgentContentBlock::Image {
-            media_type: "application/octet-stream".to_owned(),
-            source: url.clone(),
-            detail: detail
-                .as_ref()
-                .and_then(|value| value.as_ref())
-                .map(ToString::to_string),
-            digest: AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(url.as_bytes())))
-                .map_err(internal_error)?,
-        },
-        UserInput::LocalImage { path, detail: _ } => {
-            agentdash_agent_service_api::AgentContentBlock::LocalResource {
-                path: path.clone(),
-                media_type: Some("image/*".to_owned()),
-                digest: None,
-            }
-        }
-        UserInput::Skill { name, path } => {
-            agentdash_agent_service_api::AgentContentBlock::SkillReference {
-                name: name.clone(),
-                path: Some(path.clone()),
-            }
-        }
-        UserInput::Mention { name, path } => {
-            agentdash_agent_service_api::AgentContentBlock::Mention {
-                label: name.clone(),
-                reference: path.clone(),
-            }
-        }
-    })
-}
-
-fn map_dynamic_output(
-    output: crate::vendor_generated::codex_v2::thread_item::DynamicToolCallOutputContentItem,
-) -> agentdash_agent_service_api::AgentContentBlock {
-    use crate::vendor_generated::codex_v2::thread_item::DynamicToolCallOutputContentItem;
-    match output {
-        DynamicToolCallOutputContentItem::InputText { text } => text_block(text),
-        DynamicToolCallOutputContentItem::InputImage { image_url } => {
-            agentdash_agent_service_api::AgentContentBlock::ResourceLink {
-                uri: image_url,
-                title: None,
-                media_type: Some("image/*".to_owned()),
-                digest: None,
-            }
-        }
-    }
-}
-
-fn map_patch_kind(
-    value: &Value,
-) -> Result<
-    (
-        agentdash_agent_service_api::AgentFileChangeKind,
-        Option<String>,
-    ),
-    AgentServiceError,
-> {
-    let discriminant = value
-        .as_str()
-        .or_else(|| value.get("type").and_then(Value::as_str))
-        .ok_or_else(|| protocol_violation("Codex patch kind is not typed"))?;
-    let kind = match discriminant {
-        "add" => agentdash_agent_service_api::AgentFileChangeKind::Add,
-        "delete" => agentdash_agent_service_api::AgentFileChangeKind::Delete,
-        "update" => agentdash_agent_service_api::AgentFileChangeKind::Update,
-        "move" => agentdash_agent_service_api::AgentFileChangeKind::Move,
-        other => {
-            return Err(protocol_violation(format!(
-                "unknown Codex patch kind {other}"
-            )));
-        }
-    };
-    let moved_to = value
-        .get("move_path")
-        .or_else(|| value.get("movePath"))
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    Ok((kind, moved_to))
-}
-
-fn json_string<T: serde::Serialize>(value: &T) -> Result<Option<String>, AgentServiceError> {
-    let value = serde_json::to_value(value).map_err(internal_error)?;
-    Ok(value.as_str().map(ToOwned::to_owned))
-}
-
-fn json_string_required<T: serde::Serialize>(value: &T) -> Result<String, AgentServiceError> {
-    json_string(value)?.ok_or_else(|| protocol_violation("Codex path is not a string"))
-}
-
-fn terminal_evidence(
-    status: AgentEntityStatus,
-    item: &Value,
-) -> Result<Option<AgentItemTerminalEvidence>, AgentServiceError> {
-    let outcome = match status {
-        AgentEntityStatus::Accepted | AgentEntityStatus::Running => return Ok(None),
-        AgentEntityStatus::Completed => AgentTerminalStatus::Completed,
-        AgentEntityStatus::Failed => AgentTerminalStatus::Failed,
-        AgentEntityStatus::Interrupted => AgentTerminalStatus::Interrupted,
-        AgentEntityStatus::Lost => AgentTerminalStatus::Lost,
-    };
-    let exit_code = item
-        .get("exitCode")
-        .and_then(Value::as_i64)
-        .map(i32::try_from)
-        .transpose()
-        .map_err(|_| protocol_violation("Codex process exit code exceeds i32"))?;
-    let process_exit = (exit_code.is_some() || item.get("processId").is_some()).then(|| {
-        AgentProcessExitEvidence {
-            exit_code,
-            signal: None,
-            success: exit_code == Some(0),
-        }
-    });
-    let error = item
-        .get("error")
-        .filter(|value| !value.is_null())
-        .map(|value| AgentPresentationError {
-            code: "codex_item_failed".to_owned(),
-            message: value
-                .as_str()
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| value.to_string()),
-            retryable: false,
-        });
-    Ok(Some(AgentItemTerminalEvidence {
-        outcome,
-        completed_at_ms: item
-            .get("completedAt")
-            .and_then(Value::as_u64)
-            .map(agentdash_agent_service_api::AgentServiceU64),
-        duration_ms: item
-            .get("durationMs")
-            .and_then(Value::as_u64)
-            .map(agentdash_agent_service_api::AgentServiceU64),
-        process_exit,
-        error,
-    }))
-}
-
 fn map_notification(
     source: &AgentSourceCoordinate,
     notification: ServerNotification,
-) -> Result<AgentChangePayload, AgentServiceError> {
+) -> Result<Option<AgentChangePayload>, AgentServiceError> {
     use crate::vendor_generated::codex_v2::server_notification::ServerNotification as Source;
 
     match notification {
@@ -2240,7 +1805,7 @@ fn map_notification(
                     "thread/name/updated returned a blank thread name",
                 ));
             }
-            Ok(AgentChangePayload::ThreadNameChanged {
+            Ok(Some(AgentChangePayload::ThreadNameChanged {
                 thread_name: notification.thread_name,
                 source_info: AgentSnapshotSource {
                     authority: AgentSnapshotAuthority::AgentAuthoritative,
@@ -2248,59 +1813,29 @@ fn map_notification(
                     fidelity: SemanticFidelity::Exact,
                     observed_at_ms: now_ms(),
                 },
-            })
+            }))
         }
         Source::TurnStarted(notification) => {
             require_notification_source(source, &notification.thread_id, "turn/started")?;
-            Ok(AgentChangePayload::TurnChanged {
-                turn: map_notification_turn(notification.turn)?,
-            })
+            Ok(None)
         }
         Source::TurnCompleted(notification) => {
             require_notification_source(source, &notification.thread_id, "turn/completed")?;
-            Ok(AgentChangePayload::TurnChanged {
-                turn: map_notification_turn(notification.turn)?,
-            })
+            Ok(None)
         }
         Source::ItemStarted(notification) => {
             require_notification_source(source, &notification.thread_id, "item/started")?;
-            let turn_id = AgentTurnId::new(notification.turn_id).map_err(internal_error)?;
-            let item = map_notification_item(
-                notification.item,
-                AgentEntityStatus::Running,
-                Some(notification.started_at_ms),
-                None,
-            )?;
-            Ok(AgentChangePayload::ItemTransitioned {
-                turn_id,
-                item_id: item.id,
-                transition: agentdash_agent_service_api::AgentItemTransition::Started {
-                    presentation: item.presentation.clone(),
-                },
-            })
+            Ok(None)
         }
         Source::ItemCompleted(notification) => {
             require_notification_source(source, &notification.thread_id, "item/completed")?;
-            let turn_id = AgentTurnId::new(notification.turn_id).map_err(internal_error)?;
-            let item = map_notification_item(
-                notification.item,
-                AgentEntityStatus::Completed,
-                None,
-                Some(notification.completed_at_ms),
-            )?;
-            Ok(AgentChangePayload::ItemTransitioned {
-                turn_id,
-                item_id: item.id,
-                transition: agentdash_agent_service_api::AgentItemTransition::Terminal {
-                    presentation: item.presentation.clone(),
-                },
-            })
+            Ok(None)
         }
         Source::ThreadArchived(notification) => {
             require_notification_source(source, &notification.thread_id, "thread/archived")?;
-            Ok(AgentChangePayload::LifecycleChanged {
+            Ok(Some(AgentChangePayload::LifecycleChanged {
                 status: AgentLifecycleStatus::Closed,
-            })
+            }))
         }
         Source::ThreadCompacted(_)
         | Source::Error(_)
@@ -2363,9 +1898,9 @@ fn map_notification(
         | Source::ThreadRealtimeClosed(_)
         | Source::WindowsWorldWritableWarning(_)
         | Source::WindowsSandboxSetupCompleted(_)
-        | Source::AccountLoginCompleted(_) => Ok(AgentChangePayload::SnapshotInvalidated {
+        | Source::AccountLoginCompleted(_) => Ok(Some(AgentChangePayload::SnapshotInvalidated {
             reason: "typed Codex notification requires thread/read reconciliation".to_owned(),
-        }),
+        })),
     }
 }
 
@@ -2515,77 +2050,6 @@ fn require_notification_source(
     }
 }
 
-fn project_codex_turn_status(
-    status: crate::vendor_generated::codex_v2::server_notification::TurnStatus,
-) -> AgentEntityStatus {
-    use crate::vendor_generated::codex_v2::server_notification::TurnStatus;
-    match status {
-        TurnStatus::Completed => AgentEntityStatus::Completed,
-        TurnStatus::Interrupted => AgentEntityStatus::Interrupted,
-        TurnStatus::Failed => AgentEntityStatus::Failed,
-        TurnStatus::InProgress => AgentEntityStatus::Running,
-    }
-}
-
-fn map_notification_turn(
-    turn: crate::vendor_generated::codex_v2::server_notification::Turn,
-) -> Result<AgentTurnSnapshot, AgentServiceError> {
-    let status = project_codex_turn_status(turn.status);
-    let error = turn.error.flatten().map(|error| AgentExecutionFailure {
-        code: "codex_turn_failed".to_owned(),
-        message: error.message,
-        retryable: None,
-    });
-    let items = turn
-        .items
-        .into_iter()
-        .map(|item| {
-            let value = serde_json::to_value(item).map_err(internal_error)?;
-            map_item(&value, Some(status))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(AgentTurnSnapshot {
-        id: AgentTurnId::new(turn.id).map_err(internal_error)?,
-        status,
-        items,
-        error,
-    })
-}
-
-fn map_notification_item(
-    item: crate::vendor_generated::codex_v2::server_notification::ThreadItem,
-    inherited_status: AgentEntityStatus,
-    started_at_ms: Option<i64>,
-    completed_at_ms: Option<i64>,
-) -> Result<AgentItemSnapshot, AgentServiceError> {
-    let value = serde_json::to_value(item).map_err(internal_error)?;
-    let mut mapped = map_item(&value, Some(inherited_status))?;
-    let started_at_ms = started_at_ms
-        .map(u64::try_from)
-        .transpose()
-        .map_err(|_| protocol_violation("Codex item startedAtMs must be non-negative"))?
-        .or(mapped.presentation.started_at_ms.map(|value| value.0));
-    let mut terminal = mapped.presentation.terminal.clone();
-    if let (Some(completed_at_ms), Some(terminal)) = (completed_at_ms, terminal.as_mut()) {
-        terminal.completed_at_ms = Some(agentdash_agent_service_api::AgentServiceU64(
-            u64::try_from(completed_at_ms)
-                .map_err(|_| protocol_violation("Codex item completedAtMs must be non-negative"))?,
-        ));
-    }
-    mapped.presentation = AgentItemPresentation::new(
-        mapped.presentation.body,
-        started_at_ms,
-        completed_at_ms
-            .map(u64::try_from)
-            .transpose()
-            .map_err(|_| protocol_violation("Codex item completedAtMs must be non-negative"))?
-            .or(mapped.presentation.updated_at_ms.map(|value| value.0)),
-        terminal,
-    )
-    .map_err(internal_error)?;
-    Ok(mapped)
-}
-
 fn interaction_result(
     request: &AgentInteractionRequest,
     response: &agentdash_agent_service_api::AgentInteractionResponse,
@@ -2619,37 +2083,6 @@ fn interaction_result(
             false,
         )),
     }
-}
-
-fn entity_status(value: Option<&Value>) -> AgentEntityStatus {
-    let status = value.and_then(|value| {
-        value
-            .as_str()
-            .or_else(|| value.get("type").and_then(Value::as_str))
-    });
-    match status {
-        Some("accepted" | "pending") => AgentEntityStatus::Accepted,
-        Some("inProgress" | "running") => AgentEntityStatus::Running,
-        Some("completed" | "succeeded") => AgentEntityStatus::Completed,
-        Some("failed") => AgentEntityStatus::Failed,
-        Some("interrupted" | "cancelled") => AgentEntityStatus::Interrupted,
-        Some("lost") => AgentEntityStatus::Lost,
-        // App Server projections are observed rather than authoritative. Missing or future vendor
-        // statuses must stay nonterminal until a terminal status is explicitly observed.
-        None | Some(_) => AgentEntityStatus::Accepted,
-    }
-}
-
-fn required_id<T>(
-    value: &Value,
-    field: &str,
-    constructor: impl FnOnce(String) -> Result<T, agentdash_agent_service_api::InvalidAgentServiceId>,
-) -> Result<T, AgentServiceError> {
-    let value = value
-        .get(field)
-        .and_then(Value::as_str)
-        .ok_or_else(|| protocol_violation(format!("Codex payload misses {field}")))?;
-    constructor(value.to_owned()).map_err(internal_error)
 }
 
 fn source_cursor(sequence: u64) -> Result<AgentSourceCursor, AgentServiceError> {
@@ -2818,26 +2251,6 @@ mod tests {
         assert_eq!(
             codex_thread_history_digest(&first).expect("first digest"),
             codex_thread_history_digest(&repeated).expect("repeated digest")
-        );
-    }
-
-    #[test]
-    fn unknown_vendor_item_is_rejected_before_canonical_history() {
-        let error = map_item(
-            &json!({
-                "type": "futureVendorItem",
-                "id": "item-1",
-                "payload": {"vendor": true}
-            }),
-            None,
-        )
-        .expect_err("unknown vendor item must not become a generic canonical item");
-
-        assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
-        assert!(
-            error
-                .message
-                .contains("unknown or invalid Codex ThreadItem")
         );
     }
 
@@ -3035,68 +2448,11 @@ mod tests {
             let payload = map_notification(&source, *notification).expect("canonical change");
             assert!(matches!(
                 (index, payload),
-                (0, AgentChangePayload::ThreadNameChanged { .. })
-                    | (1..=2, AgentChangePayload::TurnChanged { .. })
-                    | (3..=4, AgentChangePayload::ItemTransitioned { .. })
-                    | (5, AgentChangePayload::LifecycleChanged { .. })
-                    | (6, AgentChangePayload::SnapshotInvalidated { .. })
+                (0, Some(AgentChangePayload::ThreadNameChanged { .. }))
+                    | (1..=4, None)
+                    | (5, Some(AgentChangePayload::LifecycleChanged { .. }))
+                    | (6, Some(AgentChangePayload::SnapshotInvalidated { .. }))
             ));
-        }
-    }
-
-    #[test]
-    fn compaction_failure_and_loss_remain_terminal_in_snapshot_projection() {
-        let source = AgentSourceCoordinate::new("thread-1").expect("source");
-        let observation = CodexAppServerObservation::notification(
-            1,
-            "turn/completed",
-            json!({
-                "threadId": "thread-1",
-                "turn": {
-                    "id": "turn-1",
-                    "status": "failed",
-                    "items": [{"type": "contextCompaction", "id": "compaction-1"}]
-                }
-            }),
-        )
-        .expect("typed failed turn");
-        let CodexTypedObservation::Notification(notification) = observation.kind else {
-            panic!("notification root");
-        };
-        let AgentChangePayload::TurnChanged { turn } =
-            map_notification(&source, *notification).expect("failed turn")
-        else {
-            panic!("turn change");
-        };
-        assert_eq!(turn.items[0].status, AgentEntityStatus::Failed);
-        assert_eq!(
-            turn.items[0]
-                .presentation
-                .terminal
-                .as_ref()
-                .expect("failed compaction evidence")
-                .outcome,
-            AgentTerminalStatus::Failed
-        );
-
-        for (status, expected) in [
-            (AgentEntityStatus::Failed, AgentTerminalStatus::Failed),
-            (AgentEntityStatus::Lost, AgentTerminalStatus::Lost),
-        ] {
-            let item = map_item(
-                &json!({"type": "contextCompaction", "id": "compaction-1"}),
-                Some(status),
-            )
-            .expect("typed compaction item");
-            assert_eq!(item.status, status);
-            assert_eq!(
-                item.presentation
-                    .terminal
-                    .as_ref()
-                    .expect("terminal evidence")
-                    .outcome,
-                expected
-            );
         }
     }
 }

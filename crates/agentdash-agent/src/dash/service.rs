@@ -9,9 +9,9 @@ use super::{
     CompactionId, CompactionMode, ContextRevision, DashAgentChange, DashAgentCommit,
     DashAgentStore, DashCancellation, DashCommand, DashCommandKind, DashCoreContext, DashCoreError,
     DashCoreTurn, DashExecutionCallbacks, DashExecutionInspection, DashMessage, DashMessageRole,
-    DashProvider, DashToolCallbacks, DashToolDefinition, EffectId, EffectOutcome, EffectSettlement,
-    ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload, InitialContextInstallation,
-    InteractionId, SessionStatus, StoreError,
+    DashProvider, DashToolCall, DashToolCallbacks, DashToolDefinition, EffectId, EffectOutcome,
+    EffectSettlement, ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload,
+    InitialContextInstallation, InteractionId, SessionStatus, StoreError,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1293,23 +1293,68 @@ impl DashAgentService {
             })
             .unwrap_or((None, 0));
         let mut history = Vec::new();
+        let mut pending_tool_calls = Vec::new();
+        let mut tool_call_ids = BTreeMap::new();
         for entry in &entries[history_start..] {
             match &entry.payload {
-                HistoryPayload::InputAccepted { content, .. } => history.push(DashMessage {
-                    role: DashMessageRole::User,
-                    content: content.clone(),
-                    tool_call_id: None,
-                }),
+                HistoryPayload::InputAccepted { content, .. } => {
+                    flush_provider_tool_calls(&mut history, &mut pending_tool_calls);
+                    history.push(DashMessage {
+                        role: DashMessageRole::User,
+                        content: content.clone(),
+                        tool_call_id: None,
+                        tool_calls: Vec::new(),
+                        is_error: false,
+                    });
+                }
                 HistoryPayload::AgentOutput {
                     turn_id, content, ..
-                } if turn_id != active_turn => history.push(DashMessage {
-                    role: DashMessageRole::Assistant,
-                    content: content.clone(),
-                    tool_call_id: None,
-                }),
+                } if turn_id != active_turn => {
+                    flush_provider_tool_calls(&mut history, &mut pending_tool_calls);
+                    history.push(DashMessage {
+                        role: DashMessageRole::Assistant,
+                        content: content.clone(),
+                        tool_call_id: None,
+                        tool_calls: Vec::new(),
+                        is_error: false,
+                    });
+                }
+                HistoryPayload::ToolCall {
+                    item_id,
+                    call_id,
+                    name,
+                    arguments,
+                    ..
+                } => {
+                    tool_call_ids.insert(item_id.clone(), call_id.clone());
+                    pending_tool_calls.push(DashToolCall {
+                        call_id: call_id.clone(),
+                        name: name.clone(),
+                        arguments: serde_json::from_str(arguments)
+                            .unwrap_or_else(|_| serde_json::Value::String(arguments.clone())),
+                    });
+                }
+                HistoryPayload::ToolResult {
+                    item_id,
+                    content,
+                    is_error,
+                    ..
+                } => {
+                    flush_provider_tool_calls(&mut history, &mut pending_tool_calls);
+                    if let Some(call_id) = tool_call_ids.get(item_id) {
+                        history.push(DashMessage {
+                            role: DashMessageRole::Tool,
+                            content: content.clone(),
+                            tool_call_id: Some(call_id.clone()),
+                            tool_calls: Vec::new(),
+                            is_error: *is_error,
+                        });
+                    }
+                }
                 _ => {}
             }
         }
+        flush_provider_tool_calls(&mut history, &mut pending_tool_calls);
         history.pop();
         let mut system_prompt = surface
             .as_ref()
@@ -1450,6 +1495,19 @@ impl DashAgentService {
             .await?;
         Ok((replacement, result))
     }
+}
+
+fn flush_provider_tool_calls(history: &mut Vec<DashMessage>, pending: &mut Vec<DashToolCall>) {
+    if pending.is_empty() {
+        return;
+    }
+    history.push(DashMessage {
+        role: DashMessageRole::Assistant,
+        content: String::new(),
+        tool_call_id: None,
+        tool_calls: std::mem::take(pending),
+        is_error: false,
+    });
 }
 
 fn terminalize_repository_effect(

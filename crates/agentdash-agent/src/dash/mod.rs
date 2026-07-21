@@ -9,7 +9,7 @@ pub use core_execution::{
     DashCoreOutput, DashCoreTurn, DashCoreTurnResult, DashExecutionCallbacks, DashExecutionEvent,
     DashExecutionFailure, DashFinishReason, DashMessage, DashMessageRole, DashProvider,
     DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashToolCall,
-    DashToolCallbacks, DashToolDefinition, DashToolResult,
+    DashToolCallbacks, DashToolDefinition, DashToolResult, execution_tool_item_id,
 };
 pub use history::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentItemId,
@@ -17,7 +17,7 @@ pub use history::{
     ContextDeliveryFidelity, ContextRevision, ForkCutoff, ForkLineage, HistoryContribution,
     HistoryEntryId, HistoryError, HistoryPayload, InitialContextContribution,
     InitialContextInstallation, InitialContextMode, InteractionId, InteractionState, ItemDetails,
-    ItemKind, ItemState, SessionStatus, TurnState, fold_history,
+    ItemKind, ItemState, SessionStatus, ToolActivityResult, TurnState, fold_history,
 };
 pub use lifecycle::{
     CommandDependency, CommandId, CommandOutcome, CommandStatus, DashCommand, DashCommandKind,

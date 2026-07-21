@@ -35,13 +35,31 @@ function deferred<T>(): {
 describe("Managed Runtime feed connection", () => {
   const textDelta: AgentLiveEvent = {
     source: "source-1",
-    turn_id: "turn-live",
-    item_id: "item-live",
     sequence: "1" as AgentLiveEvent["sequence"],
-    payload: {
-      kind: "text_delta",
-      round: 1,
-      delta: "hello",
+    record: {
+      presentation_id: "live:source-1:1",
+      presentation: {
+        durability: "ephemeral",
+        envelope: {
+          event: {
+            type: "agent_message_delta",
+            payload: {
+              threadId: "source-1",
+              turnId: "turn-live",
+              itemId: "item-live",
+              delta: "hello",
+            },
+          },
+          sessionId: "source-1",
+          source: {
+            connectorId: "dash-agent",
+            connectorType: "native",
+            executorId: null,
+          },
+          trace: { turnId: "turn-live", entryIndex: null },
+          observedAt: "2026-07-21T00:00:00Z",
+        },
+      },
     },
   };
 
@@ -67,10 +85,9 @@ describe("Managed Runtime feed connection", () => {
     expect(connectionObserver.onProjection).toHaveBeenCalledTimes(1);
     expect(connectionObserver.onProjection).toHaveBeenCalledWith(
       expect.objectContaining({
-        active_turn_id: "agent-turn:turn-live",
-        items: expect.arrayContaining([
+        conversation_history: expect.arrayContaining([
           expect.objectContaining({
-            id: "agent-item:item-live",
+            presentation_id: "live:source-1:1",
           }),
         ]),
       }),

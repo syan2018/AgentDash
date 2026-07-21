@@ -193,12 +193,11 @@ pub enum RuntimeWireAgentHostCallbackResponse {
 mod tests {
     use agentdash_agent_service_api::{
         AgentAppliedEffectOutcome, AgentCallbackRouteId, AgentCommandId, AgentCommandMeta,
-        AgentContentBlock, AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState,
-        AgentForkPoint, AgentHostCallbackMeta, AgentIdempotencyKey, AgentItemBody, AgentItemId,
-        AgentItemPresentation, AgentItemTerminalEvidence, AgentItemTransition, AgentPayloadDigest,
+        AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkPoint,
+        AgentHostCallbackMeta, AgentIdempotencyKey, AgentItemId, AgentPayloadDigest,
         AgentSnapshotRevision, AgentSurfaceDigest, AgentSurfaceRevision, AgentTerminalOutcome,
-        AgentTerminalStatus, AgentToolName, AgentTurnId, AppliedAgentCommandReceipt,
-        AppliedAgentSurface, AppliedAgentSurfaceReceipt, AppliedForkAgentReceipt,
+        AgentToolName, AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface,
+        AppliedAgentSurfaceReceipt, AppliedForkAgentReceipt,
     };
     use serde_json::json;
 
@@ -499,59 +498,33 @@ mod tests {
     }
 
     #[test]
-    fn canonical_item_transitions_round_trip_with_every_terminal_evidence() {
-        for outcome in [
-            AgentTerminalStatus::Completed,
-            AgentTerminalStatus::Failed,
-            AgentTerminalStatus::Interrupted,
-            AgentTerminalStatus::Lost,
-        ] {
-            let presentation = AgentItemPresentation::new(
-                AgentItemBody::AgentMessage {
-                    content: vec![AgentContentBlock::Text {
-                        text: format!("{outcome:?}"),
-                    }],
-                    phase: None,
+    fn canonical_source_observation_round_trips_lossless_change_time() {
+        let notification = RuntimeWireAgentChangeNotification {
+            target: target(12),
+            source: id("source-1", AgentSourceCoordinate::new),
+            change: AgentChange {
+                cursor: id(
+                    "cursor-1",
+                    agentdash_agent_service_api::AgentSourceCursor::new,
+                ),
+                source_revision: None,
+                occurred_at_ms: u64::MAX,
+                payload: agentdash_agent_service_api::AgentChangePayload::SourceObservation {
+                    state: None,
+                    presentation: Vec::new(),
                 },
-                Some(1),
-                Some(2),
-                Some(AgentItemTerminalEvidence {
-                    outcome,
-                    completed_at_ms: None,
-                    duration_ms: None,
-                    process_exit: None,
-                    error: None,
-                }),
-            )
-            .expect("presentation");
-            let notification = RuntimeWireAgentChangeNotification {
-                target: target(12),
-                source: id("source-1", AgentSourceCoordinate::new),
-                change: AgentChange {
-                    cursor: id(
-                        &format!("cursor-{outcome:?}"),
-                        agentdash_agent_service_api::AgentSourceCursor::new,
-                    ),
-                    source_revision: None,
-                    occurred_at_ms: u64::MAX,
-                    payload: agentdash_agent_service_api::AgentChangePayload::ItemTransitioned {
-                        turn_id: id("turn-1", AgentTurnId::new),
-                        item_id: id("item-1", AgentItemId::new),
-                        transition: AgentItemTransition::Terminal { presentation },
-                    },
-                },
-            };
-            let encoded = serde_json::to_vec(&notification).expect("serialize transition");
-            let decoded: RuntimeWireAgentChangeNotification =
-                serde_json::from_slice(&encoded).expect("deserialize transition");
-            assert_eq!(decoded, notification);
-            assert_eq!(
-                serde_json::to_value(decoded)
-                    .expect("json")
-                    .pointer("/change/occurred_at_ms")
-                    .and_then(serde_json::Value::as_str),
-                Some(u64::MAX.to_string().as_str())
-            );
-        }
+            },
+        };
+        let encoded = serde_json::to_vec(&notification).expect("serialize observation");
+        let decoded: RuntimeWireAgentChangeNotification =
+            serde_json::from_slice(&encoded).expect("deserialize observation");
+        assert_eq!(decoded, notification);
+        assert_eq!(
+            serde_json::to_value(decoded)
+                .expect("json")
+                .pointer("/change/occurred_at_ms")
+                .and_then(serde_json::Value::as_str),
+            Some(u64::MAX.to_string().as_str())
+        );
     }
 }

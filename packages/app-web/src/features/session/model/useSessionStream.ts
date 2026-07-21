@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 
 import type { CanonicalConversationRecord } from "../../../generated/backbone-protocol";
+import { hasActiveCanonicalTurn } from "../../agent-run-runtime/model/agentLiveProjection";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import { useManagedRuntimeFeed } from "../../agent-run-runtime/model/useManagedRuntimeFeed";
 import {
@@ -38,6 +39,7 @@ export interface UseSessionStreamResult {
 }
 
 const EMPTY_INITIAL_ENTRIES: SessionDisplayEntry[] = [];
+const EMPTY_CONVERSATION_HISTORY: readonly CanonicalConversationRecord[] = [];
 
 interface RuntimePresentationCoordinate {
   runtimeSequence: bigint | null;
@@ -51,7 +53,7 @@ function presentationCoordinates(
   for (const record of records) {
     coordinates.set(record.presentation_id, {
       runtimeSequence: null,
-      baseline: true,
+      baseline: record.presentation.durability === "durable",
     });
   }
   return coordinates;
@@ -103,7 +105,8 @@ export function useSessionStream({
     agentRunTarget,
     enabled,
   });
-  const records = feed.snapshot?.conversation_history ?? [];
+  const records =
+    feed.snapshot?.conversation_history ?? EMPTY_CONVERSATION_HISTORY;
   const coordinates = useMemo(
     () => presentationCoordinates(records),
     [records],
@@ -149,7 +152,9 @@ export function useSessionStream({
     boundTargetKey: feed.boundTargetKey,
     isConnected: feed.lifecycle === "connected",
     isLoading: feed.isLoading,
-    isReceiving: feed.snapshot?.active_turn_id != null,
+    isReceiving: hasActiveCanonicalTurn(
+      feed.snapshot?.conversation_history ?? [],
+    ),
     error: feed.error,
     tokenUsage: state.tokenUsage,
     refresh: feed.refresh,

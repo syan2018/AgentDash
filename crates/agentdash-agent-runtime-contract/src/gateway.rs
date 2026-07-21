@@ -6,8 +6,7 @@ use ts_rs::TS;
 use crate::{
     ManagedRuntimeContentBlock, ManagedRuntimeOperationStatus, ManagedRuntimeSnapshot,
     RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
-    RuntimeContextSourceRevision, RuntimeOperationId, RuntimePayloadDigest,
-    RuntimeProjectionRevision, RuntimeThreadId,
+    RuntimeContextSourceRevision, RuntimeOperationId, RuntimePayloadDigest, RuntimeThreadId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -135,7 +134,6 @@ pub enum ManagedRuntimeInteractionResponse {
 pub struct ManagedRuntimeOperationReceipt {
     pub operation_id: RuntimeOperationId,
     pub thread_id: RuntimeThreadId,
-    pub accepted_revision: RuntimeProjectionRevision,
     pub status: ManagedRuntimeOperationStatus,
     pub evidence: Option<crate::ManagedRuntimeOperationEvidence>,
     pub duplicate: bool,

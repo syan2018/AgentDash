@@ -2,7 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::BackboneEnvelope;
+use crate::codex_app_server_protocol as codex;
+use crate::{AgentDashThreadItem, BackboneEnvelope, BackboneEvent};
 
 /// Presentation durability is explicit producer evidence and is never inferred
 /// from a Runtime cursor or transport replay.
@@ -48,6 +49,92 @@ impl CanonicalConversationRecord {
             presentation_id: presentation_id.into(),
             presentation,
         }
+    }
+}
+
+/// A request-scoped interpretation of canonical conversation records.
+///
+/// This view owns no state and persists nothing. It centralizes the only valid fold from the
+/// source-ordered protocol history into current turn and completed-item observations.
+#[derive(Debug, Clone, Copy)]
+pub struct CanonicalConversationView<'a> {
+    records: &'a [CanonicalConversationRecord],
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct CompletedConversationItem<'a> {
+    pub thread_id: &'a str,
+    pub turn_id: &'a str,
+    pub item: &'a AgentDashThreadItem,
+}
+
+impl<'a> CanonicalConversationView<'a> {
+    pub const fn new(records: &'a [CanonicalConversationRecord]) -> Self {
+        Self { records }
+    }
+
+    pub const fn records(self) -> &'a [CanonicalConversationRecord] {
+        self.records
+    }
+
+    pub fn latest_turn(self) -> Option<&'a codex::Turn> {
+        self.records
+            .iter()
+            .rev()
+            .find_map(|record| match &record.presentation.envelope.event {
+                BackboneEvent::TurnCompleted(notification) => Some(&notification.turn),
+                BackboneEvent::TurnStarted(notification) => Some(&notification.turn),
+                _ => None,
+            })
+    }
+
+    pub fn active_turn(self) -> Option<&'a codex::Turn> {
+        self.latest_turn()
+            .filter(|turn| turn.status == codex::TurnStatus::InProgress)
+    }
+
+    pub fn completed_turn(self, turn_id: Option<&str>) -> Option<&'a codex::Turn> {
+        self.records
+            .iter()
+            .rev()
+            .find_map(|record| match &record.presentation.envelope.event {
+                BackboneEvent::TurnCompleted(notification)
+                    if turn_id.is_none_or(|turn_id| notification.turn.id == turn_id) =>
+                {
+                    Some(&notification.turn)
+                }
+                _ => None,
+            })
+    }
+
+    pub fn completed_turns(self) -> impl Iterator<Item = &'a codex::Turn> {
+        self.records
+            .iter()
+            .filter_map(|record| match &record.presentation.envelope.event {
+                BackboneEvent::TurnCompleted(notification) => Some(&notification.turn),
+                _ => None,
+            })
+    }
+
+    pub fn completed_items(self) -> impl Iterator<Item = CompletedConversationItem<'a>> {
+        self.records
+            .iter()
+            .filter_map(|record| match &record.presentation.envelope.event {
+                BackboneEvent::ItemCompleted(notification) => Some(CompletedConversationItem {
+                    thread_id: &notification.thread_id,
+                    turn_id: &notification.turn_id,
+                    item: &notification.item,
+                }),
+                _ => None,
+            })
+    }
+
+    pub fn completed_items_for_turn(
+        self,
+        turn_id: &'a str,
+    ) -> impl Iterator<Item = CompletedConversationItem<'a>> {
+        self.completed_items()
+            .filter(move |completed| completed.turn_id == turn_id)
     }
 }
 

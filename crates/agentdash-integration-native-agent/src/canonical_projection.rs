@@ -54,6 +54,16 @@ pub(crate) fn entry_records(
                 }),
             )?));
         }
+        HistoryPayload::ItemStarted {
+            turn_id, item_id, ..
+        } => {
+            events.push(BackboneEvent::ItemStarted(ItemStartedNotification {
+                item: item(state, item_id)?,
+                thread_id: session_id.to_owned(),
+                turn_id: turn_id.0.clone(),
+                started_at_ms: 0,
+            }));
+        }
         HistoryPayload::AgentOutput {
             turn_id,
             item_id: None,
@@ -142,7 +152,6 @@ pub(crate) fn entry_records(
             )?));
         }
         HistoryPayload::InitialContextInstalled { .. }
-        | HistoryPayload::ItemStarted { .. }
         | HistoryPayload::InteractionRequested { .. }
         | HistoryPayload::InteractionResolved { .. }
         | HistoryPayload::Closed => {}
@@ -186,26 +195,26 @@ fn item(
             "id": item_id.0,
             "text": content,
         }),
-        ItemDetails::ToolCall { name, arguments } => serde_json::json!({
+        ItemDetails::ToolActivity {
+            call_id: _,
+            name,
+            arguments,
+            result,
+        } => serde_json::json!({
             "type": "dynamicToolCall",
             "id": item_id.0,
             "tool": name,
             "arguments": serde_json::from_str::<serde_json::Value>(arguments)
                 .unwrap_or_else(|_| serde_json::Value::String(arguments.clone())),
-            "status": status(item.status),
-        }),
-        ItemDetails::ToolResult {
-            name,
-            content,
-            is_error,
-        } => serde_json::json!({
-            "type": "dynamicToolCall",
-            "id": item_id.0,
-            "tool": name.as_deref().unwrap_or("unknown"),
-            "arguments": {},
-            "status": if *is_error { "failed" } else { status(item.status) },
-            "contentItems": [{"type": "inputText", "text": content}],
-            "success": !is_error,
+            "status": result.as_ref().map_or_else(
+                || status(item.status),
+                |result| if result.is_error { "failed" } else { status(item.status) },
+            ),
+            "contentItems": result.as_ref().map(|result| vec![serde_json::json!({
+                "type": "inputText",
+                "text": result.content,
+            })]),
+            "success": result.as_ref().map(|result| !result.is_error),
         }),
         ItemDetails::Interaction { prompt } => serde_json::json!({
             "type": "dynamicToolCall",
@@ -218,13 +227,20 @@ fn item(
             "type": "contextCompaction",
             "id": item_id.0,
         }),
-        ItemDetails::Pending => serde_json::json!({
-            "type": "dynamicToolCall",
-            "id": item_id.0,
-            "tool": format!("{:?}", item.kind).to_ascii_lowercase(),
-            "arguments": {},
-            "status": status(item.status),
-        }),
+        ItemDetails::Pending => match item.kind {
+            agentdash_agent::dash::ItemKind::AssistantMessage => serde_json::json!({
+                "type": "agentMessage",
+                "id": item_id.0,
+                "text": "",
+            }),
+            _ => serde_json::json!({
+                "type": "dynamicToolCall",
+                "id": item_id.0,
+                "tool": format!("{:?}", item.kind).to_ascii_lowercase(),
+                "arguments": {},
+                "status": status(item.status),
+            }),
+        },
     };
     serde_json::from_value::<codex::ThreadItem>(value).map(Into::into)
 }

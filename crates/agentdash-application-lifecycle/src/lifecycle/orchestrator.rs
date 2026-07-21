@@ -11,9 +11,6 @@
 
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeEntityStatus, ManagedRuntimeSnapshot, RuntimeTurnId,
-};
 use agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository;
 use agentdash_application_workflow::orchestration::{
     OrchestrationRuntimeError, OrchestrationRuntimeEvent, apply_orchestration_event_to_run,
@@ -125,38 +122,6 @@ pub struct LifecycleOrchestratorDeps {
 impl LifecycleOrchestrator {
     pub fn new(deps: LifecycleOrchestratorDeps) -> Self {
         Self { deps }
-    }
-
-    pub async fn converge_runtime_turn_terminal(
-        &self,
-        binding: &agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBinding,
-        snapshot: &ManagedRuntimeSnapshot,
-        turn_id: &RuntimeTurnId,
-        terminal_status: ManagedRuntimeEntityStatus,
-    ) -> Result<bool, String> {
-        let association = ActivityRuntimeAssociationResolver::new(
-            self.deps.frame_repo.as_ref(),
-            self.deps.run_repo.as_ref(),
-        )
-        .with_binding_repo(self.deps.binding_repo.as_ref())
-        .resolve_by_runtime_turn(binding, snapshot, turn_id)
-        .await
-        .map_err(|error| error.to_string())?;
-        let Some(association) = association else {
-            return Ok(false);
-        };
-        let terminal_state = match terminal_status {
-            ManagedRuntimeEntityStatus::Completed => "completed",
-            ManagedRuntimeEntityStatus::Failed | ManagedRuntimeEntityStatus::Lost => "failed",
-            ManagedRuntimeEntityStatus::Interrupted => "interrupted",
-            ManagedRuntimeEntityStatus::Accepted | ManagedRuntimeEntityStatus::Running => {
-                return Ok(false);
-            }
-        };
-        Ok(self
-            .apply_runtime_turn_terminal(association, terminal_state)
-            .await?
-            .is_some())
     }
 
     /// Apply one Product-fenced terminal Runtime turn to its exact lifecycle node.

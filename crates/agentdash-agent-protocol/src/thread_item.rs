@@ -133,6 +133,52 @@ impl AgentDashThreadItem {
             AgentDashThreadItem::AgentDash(item) => Some(item.id()),
         }
     }
+
+    pub fn is_message(&self) -> bool {
+        matches!(
+            self,
+            AgentDashThreadItem::Codex(
+                codex::ThreadItem::UserMessage { .. }
+                    | codex::ThreadItem::HookPrompt { .. }
+                    | codex::ThreadItem::AgentMessage { .. }
+            )
+        )
+    }
+
+    pub fn is_tool_activity(&self) -> bool {
+        !matches!(
+            self,
+            AgentDashThreadItem::Codex(
+                codex::ThreadItem::UserMessage { .. }
+                    | codex::ThreadItem::HookPrompt { .. }
+                    | codex::ThreadItem::AgentMessage { .. }
+                    | codex::ThreadItem::Plan { .. }
+                    | codex::ThreadItem::Reasoning { .. }
+                    | codex::ThreadItem::ContextCompaction { .. }
+            )
+        )
+    }
+
+    pub fn is_file_change(&self) -> bool {
+        matches!(
+            self,
+            AgentDashThreadItem::Codex(codex::ThreadItem::FileChange { .. })
+        )
+    }
+
+    pub fn is_context_compaction(&self) -> bool {
+        matches!(
+            self,
+            AgentDashThreadItem::Codex(codex::ThreadItem::ContextCompaction { .. })
+        )
+    }
+
+    pub fn is_terminal_control(&self) -> bool {
+        matches!(
+            self,
+            AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::TerminalControl { .. })
+        )
+    }
 }
 
 fn codex_item_id(item: &codex::ThreadItem) -> &str {

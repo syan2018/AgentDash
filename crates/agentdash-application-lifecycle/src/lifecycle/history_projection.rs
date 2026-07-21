@@ -1,11 +1,12 @@
 use std::sync::{Arc, OnceLock};
 
-use agentdash_agent_protocol::CanonicalConversationRecord;
+use agentdash_agent_protocol::{
+    CanonicalConversationRecord, CanonicalConversationView, CompletedConversationItem,
+};
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeInteraction, ManagedRuntimeItem, ManagedRuntimeItemBody,
-    ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
-    ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot, ManagedRuntimeTurn,
-    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
+    ManagedRuntimeInteraction, ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
+    ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot, RuntimeProjectionRevision,
+    RuntimeThreadId,
 };
 use agentdash_application_agentrun::agent_run::AgentRunProductProjectionQueryPort;
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -24,12 +25,9 @@ pub struct LifecycleHistoryProjection {
     pub projection_revision: RuntimeProjectionRevision,
     pub captured_at_ms: u64,
     pub lifecycle: ManagedRuntimeLifecycleStatus,
-    pub active_turn_id: Option<RuntimeTurnId>,
     pub thread_name: Option<String>,
     pub authority: ManagedRuntimeProjectionAuthority,
     pub fidelity: ManagedRuntimeProjectionFidelity,
-    pub turns: Vec<ManagedRuntimeTurn>,
-    pub items: Vec<ManagedRuntimeItem>,
     pub interactions: Vec<ManagedRuntimeInteraction>,
     /// Exact source-ordered App Server-shaped history used by events.json and reconnect readers.
     pub conversation_history: Vec<CanonicalConversationRecord>,
@@ -43,85 +41,59 @@ impl LifecycleHistoryProjection {
             projection_revision: snapshot.revision,
             captured_at_ms: snapshot.captured_at_ms,
             lifecycle: snapshot.lifecycle,
-            active_turn_id: snapshot.active_turn_id,
             thread_name: snapshot.thread_name,
             authority: snapshot.authority,
             fidelity: snapshot.fidelity,
-            turns: snapshot.turns,
-            items: snapshot.items,
             interactions: snapshot.interactions,
             conversation_history: snapshot.conversation_history,
         }
     }
 
-    pub fn message_items(&self) -> impl Iterator<Item = &ManagedRuntimeItem> {
-        self.items.iter().filter(|item| {
-            matches!(
-                item.presentation.body,
-                ManagedRuntimeItemBody::UserMessage { .. }
-                    | ManagedRuntimeItemBody::HookPrompt { .. }
-                    | ManagedRuntimeItemBody::AgentMessage { .. }
-            )
-        })
+    pub fn conversation(&self) -> CanonicalConversationView<'_> {
+        CanonicalConversationView::new(&self.conversation_history)
     }
 
-    pub fn tool_items(&self) -> impl Iterator<Item = &ManagedRuntimeItem> {
-        self.items.iter().filter(|item| {
-            matches!(
-                item.presentation.body,
-                ManagedRuntimeItemBody::CommandExecution { .. }
-                    | ManagedRuntimeItemBody::FileChange { .. }
-                    | ManagedRuntimeItemBody::FileRead { .. }
-                    | ManagedRuntimeItemBody::FileSearch { .. }
-                    | ManagedRuntimeItemBody::McpToolCall { .. }
-                    | ManagedRuntimeItemBody::DynamicToolCall { .. }
-                    | ManagedRuntimeItemBody::CollaborationToolCall { .. }
-                    | ManagedRuntimeItemBody::SubagentActivity { .. }
-                    | ManagedRuntimeItemBody::WebSearch { .. }
-                    | ManagedRuntimeItemBody::ImageView { .. }
-                    | ManagedRuntimeItemBody::ImageGeneration { .. }
-                    | ManagedRuntimeItemBody::Sleep { .. }
-                    | ManagedRuntimeItemBody::Review { .. }
-                    | ManagedRuntimeItemBody::TerminalControl { .. }
-                    | ManagedRuntimeItemBody::GenericToolActivity { .. }
-            )
-        })
+    pub fn active_turn_id(&self) -> Option<&str> {
+        self.conversation()
+            .active_turn()
+            .map(|turn| turn.id.as_str())
     }
 
-    pub fn write_items(&self) -> impl Iterator<Item = &ManagedRuntimeItem> {
-        self.items.iter().filter(|item| {
-            matches!(
-                item.presentation.body,
-                ManagedRuntimeItemBody::FileChange { .. }
-            )
-        })
+    pub fn items(&self) -> impl Iterator<Item = CompletedConversationItem<'_>> {
+        self.conversation().completed_items()
     }
 
-    pub fn compaction_items(&self) -> impl Iterator<Item = &ManagedRuntimeItem> {
-        self.items.iter().filter(|item| {
-            matches!(
-                item.presentation.body,
-                ManagedRuntimeItemBody::ContextCompaction { .. }
-            )
-        })
+    pub fn message_items(&self) -> impl Iterator<Item = CompletedConversationItem<'_>> {
+        self.items().filter(|completed| completed.item.is_message())
     }
 
-    pub fn terminal_control_items(&self) -> impl Iterator<Item = &ManagedRuntimeItem> {
-        self.items.iter().filter(|item| {
-            matches!(
-                item.presentation.body,
-                ManagedRuntimeItemBody::TerminalControl { .. }
-            )
-        })
+    pub fn tool_items(&self) -> impl Iterator<Item = CompletedConversationItem<'_>> {
+        self.items()
+            .filter(|completed| completed.item.is_tool_activity())
+    }
+
+    pub fn write_items(&self) -> impl Iterator<Item = CompletedConversationItem<'_>> {
+        self.items()
+            .filter(|completed| completed.item.is_file_change())
+    }
+
+    pub fn compaction_items(&self) -> impl Iterator<Item = CompletedConversationItem<'_>> {
+        self.items()
+            .filter(|completed| completed.item.is_context_compaction())
+    }
+
+    pub fn terminal_control_items(&self) -> impl Iterator<Item = CompletedConversationItem<'_>> {
+        self.items()
+            .filter(|completed| completed.item.is_terminal_control())
     }
 
     pub fn items_for_turn(
         &self,
-        turn_id: &RuntimeTurnId,
-    ) -> impl Iterator<Item = &ManagedRuntimeItem> {
-        self.items
-            .iter()
-            .filter(move |item| &item.turn_id == turn_id)
+        turn_id: &str,
+    ) -> impl Iterator<Item = CompletedConversationItem<'_>> {
+        let turn_id = turn_id.to_owned();
+        self.items()
+            .filter(move |completed| completed.turn_id == turn_id)
     }
 }
 

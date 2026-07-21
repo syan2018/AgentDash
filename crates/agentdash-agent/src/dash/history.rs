@@ -115,6 +115,7 @@ pub enum HistoryPayload {
     ToolCall {
         turn_id: AgentTurnId,
         item_id: AgentItemId,
+        call_id: String,
         name: String,
         arguments: String,
     },
@@ -380,19 +381,22 @@ pub enum ItemDetails {
     AssistantMessage {
         content: String,
     },
-    ToolCall {
+    ToolActivity {
+        call_id: String,
         name: String,
         arguments: String,
-    },
-    ToolResult {
-        name: Option<String>,
-        content: String,
-        is_error: bool,
+        result: Option<ToolActivityResult>,
     },
     Interaction {
         prompt: String,
     },
     ContextCompaction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolActivityResult {
+    pub content: String,
+    pub is_error: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -573,6 +577,7 @@ fn apply_payload(
         HistoryPayload::ToolCall {
             turn_id,
             item_id,
+            call_id,
             name,
             arguments,
         } => {
@@ -584,9 +589,11 @@ fn apply_payload(
             if item.turn_id != *turn_id {
                 return Err(HistoryError::InvalidItemTransition(item_id.clone()));
             }
-            item.details = ItemDetails::ToolCall {
+            item.details = ItemDetails::ToolActivity {
+                call_id: call_id.clone(),
                 name: name.clone(),
                 arguments: arguments.clone(),
+                result: None,
             };
         }
         HistoryPayload::ToolResult {
@@ -603,15 +610,23 @@ fn apply_payload(
             if item.turn_id != *turn_id {
                 return Err(HistoryError::InvalidItemTransition(item_id.clone()));
             }
-            let name = match &item.details {
-                ItemDetails::ToolCall { name, .. } => Some(name.clone()),
-                ItemDetails::ToolResult { name, .. } => name.clone(),
-                _ => None,
-            };
-            item.details = ItemDetails::ToolResult {
+            let ItemDetails::ToolActivity {
+                call_id,
                 name,
-                content: content.clone(),
-                is_error: *is_error,
+                arguments,
+                ..
+            } = &item.details
+            else {
+                return Err(HistoryError::InvalidItemTransition(item_id.clone()));
+            };
+            item.details = ItemDetails::ToolActivity {
+                call_id: call_id.clone(),
+                name: name.clone(),
+                arguments: arguments.clone(),
+                result: Some(ToolActivityResult {
+                    content: content.clone(),
+                    is_error: *is_error,
+                }),
             };
         }
         HistoryPayload::InteractionRequested {

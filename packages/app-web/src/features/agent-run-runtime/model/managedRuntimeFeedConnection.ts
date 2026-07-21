@@ -96,15 +96,6 @@ export function connectManagedRuntimeFeed(
           currentSnapshot = projected;
           observer.onProjection(projected);
         }
-        if (event.payload.kind === "provider_round_completed") {
-          void reloadAuthoritativeSnapshot().catch((error: unknown) => {
-            if (!closed) {
-              observer.onError(
-                normalizeError(error, "Agent authoritative snapshot reload 失败"),
-              );
-            }
-          });
-        }
       },
     });
   };

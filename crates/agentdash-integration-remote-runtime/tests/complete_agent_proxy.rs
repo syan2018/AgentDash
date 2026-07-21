@@ -16,16 +16,15 @@ use agentdash_agent_runtime_wire::{
 use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId, AgentChange,
     AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandEnvelope, AgentCommandId,
-    AgentCommandMeta, AgentContentBlock, AgentEffectIdentity, AgentEffectInspection,
-    AgentEffectInspectionState, AgentHookAction, AgentHookDefinitionId, AgentHookInvocation,
-    AgentHookPoint, AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbackError,
-    AgentHostCallbackMeta, AgentHostCallbacks, AgentIdempotencyKey, AgentInput, AgentInputContent,
-    AgentItemBody, AgentItemId, AgentItemPresentation, AgentItemTransition, AgentLifecycleStatus,
-    AgentProfileDigest, AgentReadQuery, AgentReceiptState, AgentServiceError,
-    AgentServiceErrorCode, AgentServiceInstanceId, AgentSourceCoordinate, AgentSourceCursor,
-    AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute, AgentToolInvocation,
-    AgentToolName, AgentToolResult, AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface,
-    AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, BoundAgentSurface, CompleteAgentService,
+    AgentCommandMeta, AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState,
+    AgentHookAction, AgentHookDefinitionId, AgentHookInvocation, AgentHookPoint, AgentHookTiming,
+    AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbackMeta, AgentHostCallbacks,
+    AgentIdempotencyKey, AgentInput, AgentInputContent, AgentLifecycleStatus, AgentProfileDigest,
+    AgentReadQuery, AgentReceiptState, AgentServiceError, AgentServiceErrorCode,
+    AgentServiceInstanceId, AgentSourceCoordinate, AgentSourceCursor, AgentSurfaceDigest,
+    AgentSurfaceRevision, AgentSurfaceRoute, AgentToolInvocation, AgentToolName, AgentToolResult,
+    AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceReceipt,
+    ApplyBoundAgentSurface, BoundAgentSurface, CompleteAgentService,
 };
 use agentdash_integration_remote_runtime::{
     RemoteCompleteAgentRegistration, RemoteCompleteAgentService, RemoteRuntimeTransportError,
@@ -888,23 +887,9 @@ async fn real_endpoint_change_producer_deduplicates_cursor_and_surfaces_source_g
         cursor: AgentSourceCursor::new("cursor-1").expect("cursor"),
         source_revision: None,
         occurred_at_ms: 1,
-        payload: AgentChangePayload::ItemTransitioned {
-            turn_id: AgentTurnId::new("turn-1").expect("turn"),
-            item_id: AgentItemId::new("item-1").expect("item"),
-            transition: AgentItemTransition::Started {
-                presentation: AgentItemPresentation::new(
-                    AgentItemBody::AgentMessage {
-                        content: vec![AgentContentBlock::Text {
-                            text: "started".to_owned(),
-                        }],
-                        phase: None,
-                    },
-                    Some(1),
-                    Some(1),
-                    None,
-                )
-                .expect("presentation"),
-            },
+        payload: AgentChangePayload::SourceObservation {
+            state: None,
+            presentation: Vec::new(),
         },
     };
     endpoint
@@ -939,7 +924,7 @@ async fn real_endpoint_change_producer_deduplicates_cursor_and_surfaces_source_g
     assert_eq!(first_page.changes.len(), 1);
     assert!(matches!(
         first_page.changes[0].payload,
-        AgentChangePayload::ItemTransitioned { .. }
+        AgentChangePayload::SourceObservation { .. }
     ));
 
     endpoint

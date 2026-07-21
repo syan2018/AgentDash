@@ -59,10 +59,6 @@ fn required_runtime_type_names() -> BTreeSet<String> {
         "ManagedRuntimeContractSchema",
         "ManagedRuntimeProjectionSchema",
         "ManagedRuntimeSnapshot",
-        "ManagedRuntimePresentationContentBlock",
-        "ManagedRuntimeItemBody",
-        "ManagedRuntimeItemPresentation",
-        "ManagedRuntimeItemTerminalEvidence",
         "ManagedRuntimeInteractionRequest",
         "ManagedRuntimeInteractionStatus",
         "ManagedRuntimeInteractionResolution",
@@ -190,12 +186,12 @@ mod tests {
     }
 
     #[test]
-    fn required_closure_covers_complete_presentation_vocabulary() {
+    fn required_closure_covers_runtime_control_vocabulary() {
         let names = required_runtime_type_names();
         for required in [
-            "ManagedRuntimeItemBody",
-            "ManagedRuntimeItemPresentation",
             "ManagedRuntimeInteractionRequest",
+            "ManagedRuntimeInteractionStatus",
+            "ManagedRuntimeInteractionResolution",
         ] {
             assert!(names.contains(required), "missing {required}");
         }
@@ -203,10 +199,10 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "omitted declarations")]
-    fn missing_presentation_declaration_is_generation_failure() {
+    fn missing_runtime_declaration_is_generation_failure() {
         let declarations =
             vec!["export type ManagedRuntimeSnapshot = { revision: string };".to_owned()];
-        let required = ["ManagedRuntimeSnapshot", "ManagedRuntimeItemBody"]
+        let required = ["ManagedRuntimeSnapshot", "ManagedRuntimeInteractionRequest"]
             .into_iter()
             .map(str::to_owned)
             .collect();

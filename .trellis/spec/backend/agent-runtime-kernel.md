@@ -39,7 +39,15 @@ pub trait CompleteAgentService {
 pub fn project_authoritative_agent_snapshot(
     runtime_thread_id: RuntimeThreadId,
     snapshot: AgentSnapshot,
-) -> Result<ManagedRuntimeSnapshot, ProjectionError>;
+) -> Result<ManagedRuntimeSnapshot, AgentSnapshotProjectionError>;
+```
+
+```rust
+pub struct AgentLiveEvent {
+    pub source: AgentSourceCoordinate,
+    pub sequence: AgentServiceU64,
+    pub record: CanonicalConversationRecord,
+}
 ```
 
 ```rust
@@ -80,6 +88,10 @@ Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt
   换 identity 重派。
 - `read` 每次从 Product association 定位 concrete Agent source，调用 Agent authoritative
   read，再在内存中 normalize 为 Product/UI 所需 snapshot。
+- normalize 必须保留 concrete Agent 的 turn/item coordinate，并把
+  `conversation_history: Vec<CanonicalConversationRecord>` 原样交给 Product/UI。Runtime snapshot
+  不再维护 `turns/items/active_turn_id` 平行字段；需要 active/completed/item view 时使用
+  `CanonicalConversationView` 即时推导。
 - Product binding 是冷启动解析 Complete Agent 的最小完整输入。resolver 必须先用 binding 中的
   immutable execution profile 与 AgentFrame 重建当前 Host route，再原子返回 service 与
   binding generation；按裸 `service_instance_id` 直接查询进程内 catalog 无法恢复重启后的绑定。
@@ -90,8 +102,8 @@ Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt
   segment，并展示 `turn.error.message`；错误终态不因“没有可渲染文本”而被过滤。
 - `changes` 只有 concrete Agent 真正提供 ordered durable change tail 时才映射该 tail。
   Snapshot-only Agent 通过重复 `read` 恢复，不由 Runtime 伪造 durable cursor。
-- live event 是 connection/process-local partial presentation。Runtime 只 normalize 和
-  broadcast；gap、Lagged、断连后丢弃 partial lane并重新读取 Agent snapshot。
+- live event 是 connection/process-local `CanonicalConversationRecord`。Runtime 只按 source-local
+  sequence broadcast；gap、Lagged、断连后丢弃 partial lane并重新读取 Agent snapshot。
 - Runtime 不持久化 operation、projection、journal、change、outbox、source identity map、
   availability revision 或 surface snapshot。
 - Runtime 不比较 Product revision 与 derived Runtime projection revision。并发 gate 使用真实
@@ -113,6 +125,7 @@ Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt
 | inspect = NotApplied | 执行同一 effect identity |
 | inspect = Unknown | typed pending/unavailable；不重派 |
 | live subscriber lagged | 断流或 typed retryable unavailable；重新 read |
+| live consumer 收到旧 provider telemetry shape | typed stream parse failure；不静默丢弃或本地补造 item |
 | Agent snapshot 无法 normalize | typed protocol error；不保存“修复后”副本 |
 | availability 在请求间变化 | 下一请求重新 resolve；不使用 generic revision gate |
 | command receipt 为 failed/interrupted/lost | API 返回真实状态；UI 重读 authoritative snapshot 并展示 terminal/error |
@@ -138,6 +151,7 @@ Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt
 - read mapper tests 用 Agent snapshot 断言 history、terminal、interaction、compaction 与真实
   diagnostic 不丢失。
 - live tests 覆盖 callback → stream、source-local order、Lagged、disconnect 和 read recovery。
+- canonical view tests 覆盖 active/completed turn 与 completed item 均从唯一 history 推导。
 - composition test 覆盖 Product input → Agent execute → live delta → Agent history →
   reconnect read。
 - cold-start composition test 先清空 Host/catalog 进程态，再以既有 Product binding 读取

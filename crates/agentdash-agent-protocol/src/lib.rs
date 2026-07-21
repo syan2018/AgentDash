@@ -27,7 +27,8 @@ pub use backbone::user_input::{
     text_user_input_blocks, user_input_text,
 };
 pub use presentation::{
-    CanonicalConversationPresentation, CanonicalConversationRecord, PresentationDurability,
+    CanonicalConversationPresentation, CanonicalConversationRecord, CanonicalConversationView,
+    CompletedConversationItem, PresentationDurability,
 };
 
 /// AgentDash-owned Codex-shaped protocol facade.

@@ -18,31 +18,17 @@ export type ManagedRuntimeAppliedContextProvenance = { authority: ManagedRuntime
 
 export type ManagedRuntimeAppliedInitialContextEvidence = { package_id: RuntimeContextPackageId, package_digest: RuntimePayloadDigest, contributions: Array<ManagedRuntimeInitialContextContributionEvidence>, };
 
-export type ManagedRuntimeAvailabilityEvidence = { decided_at_revision: RuntimeProjectionRevision, blocking_operation_id: RuntimeOperationId | null, bound_surface_revision: SurfaceRevision | null, applied_surface_revision: SurfaceRevision | null, };
+export type ManagedRuntimeAvailabilityEvidence = { blocking_operation_id: RuntimeOperationId | null, bound_surface_revision: SurfaceRevision | null, applied_surface_revision: SurfaceRevision | null, };
 
 export type ManagedRuntimeCommandAvailability = { "status": "available", evidence: ManagedRuntimeAvailabilityEvidence, } | { "status": "unavailable", reason: ManagedRuntimeUnavailabilityReason, evidence: ManagedRuntimeAvailabilityEvidence, };
 
 export type ManagedRuntimeCommandKind = "create" | "resume" | "rebind" | "activate" | "submit_input" | "steer" | "interrupt" | "request_compaction" | "resolve_interaction" | "close" | "fork";
-
-export type ManagedRuntimeCommandOutput = { stream: ManagedRuntimeCommandOutputStream, text: string, };
-
-export type ManagedRuntimeCommandOutputStream = "stdout" | "stderr" | "combined";
 
 export type ManagedRuntimeContextAuthority = "agent_history" | "agent_snapshot" | "workflow" | "constraint";
 
 export type ManagedRuntimeContextProvenance = { authority: ManagedRuntimeContextAuthority, source: RuntimeContextSourceRef, revision: RuntimeContextSourceRevision, digest: RuntimePayloadDigest, };
 
 export type ManagedRuntimeContractSchema = { initial_context: ManagedRuntimeInitialContextPackage, interaction_response: ManagedRuntimeInteractionResponse, operation_receipt: ManagedRuntimeOperationReceipt, snapshot: ManagedRuntimeSnapshot, };
-
-export type ManagedRuntimeEntityStatus = "accepted" | "running" | "completed" | "failed" | "interrupted" | "lost";
-
-export type ManagedRuntimeFileChangeKind = "add" | "update" | "delete" | "move";
-
-export type ManagedRuntimeFilePatch = { path: string, change_kind: ManagedRuntimeFileChangeKind, patch: string, moved_to: string | null, };
-
-export type ManagedRuntimeFileSearchMatch = { path: string, line: number | null, column: number | null, preview: string | null, };
-
-export type ManagedRuntimeFileSearchMode = "grep" | "glob";
 
 export type ManagedRuntimeForkCutoff = { "kind": "head" } | { "kind": "completed_turn", turn_id: RuntimeTurnId, };
 
@@ -74,33 +60,15 @@ export type ManagedRuntimeInteractionResponse = { "kind": "approved" } | { "kind
 
 export type ManagedRuntimeInteractionStatus = "pending" | "resolved" | "cancelled" | "expired" | "lost";
 
-export type ManagedRuntimeItem = { id: RuntimeItemId, turn_id: RuntimeTurnId, status: ManagedRuntimeEntityStatus, presentation: ManagedRuntimeItemPresentation, };
-
-export type ManagedRuntimeItemBody = { "kind": "user_message", content: Array<ManagedRuntimePresentationContentBlock>, } | { "kind": "hook_prompt", hook_point: string, content: Array<ManagedRuntimePresentationContentBlock>, } | { "kind": "agent_message", content: Array<ManagedRuntimePresentationContentBlock>, phase: string | null, } | { "kind": "reasoning", summary: Array<ManagedRuntimePresentationContentBlock>, content: Array<ManagedRuntimePresentationContentBlock>, } | { "kind": "plan", explanation: string | null, steps: Array<ManagedRuntimePlanStep>, } | { "kind": "command_execution", command: string, cwd: string | null, output: Array<ManagedRuntimeCommandOutput>, } | { "kind": "file_change", changes: Array<ManagedRuntimeFilePatch>, output: Array<ManagedRuntimePresentationContentBlock>, } | { "kind": "file_read", path: string, line_start: number | null, line_end: number | null, content: Array<ManagedRuntimePresentationContentBlock>, } | { "kind": "file_search", mode: ManagedRuntimeFileSearchMode, query: string, path: string | null, matches: Array<ManagedRuntimeFileSearchMatch>, } | { "kind": "mcp_tool_call", server: string, tool: string, arguments: JsonValue, result: JsonValue | null, progress: Array<ManagedRuntimePresentationContentBlock>, } | { "kind": "dynamic_tool_call", namespace: string | null, tool: string, arguments: JsonValue, result: JsonValue | null, progress: Array<ManagedRuntimePresentationContentBlock>, } | { "kind": "collaboration_tool_call", action: string, target: string | null, prompt: string | null, result: JsonValue | null, } | { "kind": "subagent_activity", agent_id: string, task: string, status: string, result: Array<ManagedRuntimePresentationContentBlock>, } | { "kind": "web_search", action: string, query: string | null, url: string | null, results: Array<ManagedRuntimePresentationContentBlock>, } | { "kind": "image_view", path: string, detail: string | null, } | { "kind": "image_generation", prompt: string, revised_prompt: string | null, outputs: Array<ManagedRuntimePresentationContentBlock>, } | { "kind": "sleep", duration_ms: RuntimeU64, } | { "kind": "review", findings: Array<ManagedRuntimeReviewFinding>, summary: string | null, } | { "kind": "terminal_control", terminal_id: string, action: string, text: string | null, } | { "kind": "context_compaction", summary: Array<ManagedRuntimePresentationContentBlock> | null, source_digest: RuntimePayloadDigest | null, } | { "kind": "generic_tool_activity", name: string, arguments: JsonValue, result: JsonValue | null, progress: Array<ManagedRuntimePresentationContentBlock>, } | { "kind": "error", code: string, message: string, details: Array<ManagedRuntimePresentationContentBlock> | null, };
-
-export type ManagedRuntimeItemPresentation = { body: ManagedRuntimeItemBody, started_at_ms: RuntimeU64 | null, updated_at_ms: RuntimeU64 | null, terminal: ManagedRuntimeItemTerminalEvidence | null, body_digest: RuntimePayloadDigest, presentation_digest: RuntimePayloadDigest, };
-
-export type ManagedRuntimeItemTerminalEvidence = { outcome: ManagedRuntimeTerminalStatus, completed_at_ms: RuntimeU64 | null, duration_ms: RuntimeU64 | null, process_exit: ManagedRuntimeProcessExitEvidence | null, error: ManagedRuntimePresentationError | null, };
-
 export type ManagedRuntimeLifecycleStatus = "provisioning" | "active" | "suspended" | "closed" | "lost";
 
 export type ManagedRuntimeOperation = { id: RuntimeOperationId, turn_id: RuntimeTurnId | null, status: ManagedRuntimeOperationStatus, evidence: ManagedRuntimeOperationEvidence | null, };
 
 export type ManagedRuntimeOperationEvidence = { "kind": "create", binding: ManagedRuntimeSourceBindingEvidence, initial_context: ManagedRuntimeAppliedInitialContextEvidence | null, } | { "kind": "resume", binding: ManagedRuntimeSourceBindingEvidence, } | { "kind": "rebind", previous_binding: ManagedRuntimeSourceBindingEvidence, binding: ManagedRuntimeSourceBindingEvidence, } | { "kind": "fork", parent_binding: ManagedRuntimeSourceBindingEvidence, progress: ManagedRuntimeForkProgressEvidence, } | { "kind": "activate", binding: ManagedRuntimeSourceBindingEvidence, };
 
-export type ManagedRuntimeOperationReceipt = { operation_id: RuntimeOperationId, thread_id: RuntimeThreadId, accepted_revision: RuntimeProjectionRevision, status: ManagedRuntimeOperationStatus, evidence: ManagedRuntimeOperationEvidence | null, duplicate: boolean, };
+export type ManagedRuntimeOperationReceipt = { operation_id: RuntimeOperationId, thread_id: RuntimeThreadId, status: ManagedRuntimeOperationStatus, evidence: ManagedRuntimeOperationEvidence | null, duplicate: boolean, };
 
 export type ManagedRuntimeOperationStatus = "accepted" | "running" | "succeeded" | "failed" | "interrupted" | "lost";
-
-export type ManagedRuntimePlanStep = { id: string | null, text: string, status: ManagedRuntimePlanStepStatus, };
-
-export type ManagedRuntimePlanStepStatus = "pending" | "in_progress" | "completed" | "failed";
-
-export type ManagedRuntimePresentationContentBlock = { "kind": "text", text: string, } | { "kind": "image", media_type: string, source: string, detail: string | null, digest: RuntimePayloadDigest, } | { "kind": "local_resource", path: string, media_type: string | null, digest: RuntimePayloadDigest | null, } | { "kind": "resource_link", uri: string, title: string | null, media_type: string | null, digest: RuntimePayloadDigest | null, } | { "kind": "skill_reference", name: string, path: string | null, } | { "kind": "mention", label: string, reference: string, } | { "kind": "structured", schema: string, schema_version: number, value: JsonValue, };
-
-export type ManagedRuntimePresentationError = { code: string, message: string, retryable: boolean, };
-
-export type ManagedRuntimeProcessExitEvidence = { exit_code: number | null, signal: string | null, success: boolean, };
 
 export type ManagedRuntimeProjectionAuthority = "source_authoritative" | "source_observed" | "runtime_derived";
 
@@ -108,17 +76,11 @@ export type ManagedRuntimeProjectionFidelity = "unsupported" | "observed" | "app
 
 export type ManagedRuntimeProjectionSchema = { snapshot: ManagedRuntimeSnapshot, };
 
-export type ManagedRuntimeReviewFinding = { title: string, body: string, path: string | null, line: number | null, severity: string | null, };
-
-export type ManagedRuntimeSnapshot = { thread_id: RuntimeThreadId, revision: RuntimeProjectionRevision, captured_at_ms: RuntimeU64, lifecycle: ManagedRuntimeLifecycleStatus, active_turn_id: RuntimeTurnId | null, turns: Array<ManagedRuntimeTurn>, items: Array<ManagedRuntimeItem>, interactions: Array<ManagedRuntimeInteraction>, thread_name: string | null, thread_name_source: ManagedRuntimeThreadNameSource | null, operations: Array<ManagedRuntimeOperation>, source_binding: ManagedRuntimeSourceBindingEvidence | null, authority: ManagedRuntimeProjectionAuthority, fidelity: ManagedRuntimeProjectionFidelity, command_availability: { [key in ManagedRuntimeCommandKind]?: ManagedRuntimeCommandAvailability }, conversation_history: Array<CanonicalConversationRecord>, };
+export type ManagedRuntimeSnapshot = { thread_id: RuntimeThreadId, revision: RuntimeProjectionRevision, captured_at_ms: RuntimeU64, lifecycle: ManagedRuntimeLifecycleStatus, interactions: Array<ManagedRuntimeInteraction>, thread_name: string | null, thread_name_source: ManagedRuntimeThreadNameSource | null, operations: Array<ManagedRuntimeOperation>, source_binding: ManagedRuntimeSourceBindingEvidence | null, authority: ManagedRuntimeProjectionAuthority, fidelity: ManagedRuntimeProjectionFidelity, command_availability: { [key in ManagedRuntimeCommandKind]?: ManagedRuntimeCommandAvailability }, conversation_history: Array<CanonicalConversationRecord>, };
 
 export type ManagedRuntimeSourceBindingEvidence = { source_ref: RuntimeSourceRef, committed_at_revision: RuntimeProjectionRevision, applied_surface_revision: SurfaceRevision, activated_at_revision: RuntimeProjectionRevision | null, };
 
-export type ManagedRuntimeTerminalStatus = "completed" | "failed" | "interrupted" | "lost";
-
 export type ManagedRuntimeThreadNameSource = { authority: ManagedRuntimeProjectionAuthority, fidelity: ManagedRuntimeProjectionFidelity, source_identity_digest: RuntimePayloadDigest, source_revision_digest: RuntimePayloadDigest | null, observed_at_ms: RuntimeU64, };
-
-export type ManagedRuntimeTurn = { id: RuntimeTurnId, source_turn_id: string, status: ManagedRuntimeEntityStatus, item_ids: Array<RuntimeItemId>, };
 
 export type ManagedRuntimeUnavailabilityReason = "runtime_not_active" | "admission_denied" | "bound_surface_unavailable" | "applied_surface_mismatch" | "active_turn_required" | "no_active_turn_required" | "pending_interaction_required" | "operation_in_flight" | "source_unavailable";
 

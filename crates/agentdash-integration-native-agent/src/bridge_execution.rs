@@ -12,7 +12,7 @@ use agentdash_agent::{
     },
 };
 use async_trait::async_trait;
-use futures::StreamExt;
+use futures::{StreamExt, stream};
 use sha2::{Digest, Sha256};
 
 const DEFAULT_RETAINED_CONVERSATION_MESSAGES: usize = 8;
@@ -41,41 +41,58 @@ impl DashProvider for BridgeDashProvider {
     ) -> Result<DashProviderEventStream, DashCoreError> {
         let request = bridge_request(request, self.thinking_level)?;
         let stream = self.bridge.stream_complete(request).await;
-        Ok(Box::pin(stream.filter_map(|chunk| async move {
-            match chunk {
-                StreamChunk::TextDelta(delta) => Some(Ok(DashProviderEvent::TextDelta { delta })),
-                StreamChunk::ReasoningDelta { text, .. } => {
-                    Some(Ok(DashProviderEvent::ReasoningDelta { delta: text }))
+        Ok(Box::pin(stream.flat_map(|chunk| {
+            let events = match chunk {
+                StreamChunk::TextDelta(delta) => {
+                    vec![Ok(DashProviderEvent::TextDelta { delta })]
                 }
-                StreamChunk::ToolCall { info } => Some(Ok(DashProviderEvent::ToolCall {
-                    call: DashToolCall {
-                        call_id: info.call_id.unwrap_or(info.id),
-                        name: info.name,
-                        arguments: info.arguments,
-                    },
-                })),
+                StreamChunk::ReasoningDelta { text, .. } => {
+                    vec![Ok(DashProviderEvent::ReasoningDelta { delta: text })]
+                }
                 StreamChunk::Done(response) => {
-                    let finish_reason = match &response.message {
+                    let input_tokens = response.usage.context_input_tokens();
+                    let output_tokens = response.usage.output;
+                    let (tool_calls, stop_reason) = match response.message {
                         AgentMessage::Assistant {
                             tool_calls,
                             stop_reason,
                             ..
-                        } if !tool_calls.is_empty()
-                            || matches!(stop_reason, Some(StopReason::ToolUse)) =>
-                        {
-                            DashFinishReason::ToolCalls
-                        }
-                        _ => DashFinishReason::Stop,
+                        } => (tool_calls, stop_reason),
+                        _ => (Vec::new(), None),
                     };
-                    Some(Ok(DashProviderEvent::Completed {
+                    let finish_reason = if !tool_calls.is_empty()
+                        || matches!(stop_reason, Some(StopReason::ToolUse))
+                    {
+                        DashFinishReason::ToolCalls
+                    } else {
+                        DashFinishReason::Stop
+                    };
+                    let mut events = tool_calls
+                        .into_iter()
+                        .map(|info| {
+                            Ok(DashProviderEvent::ToolCall {
+                                call: DashToolCall {
+                                    call_id: info.call_id.unwrap_or(info.id),
+                                    name: info.name,
+                                    arguments: info.arguments,
+                                },
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    events.push(Ok(DashProviderEvent::Completed {
                         finish_reason,
-                        input_tokens: response.usage.context_input_tokens(),
-                        output_tokens: response.usage.output,
-                    }))
+                        input_tokens,
+                        output_tokens,
+                    }));
+                    events
                 }
-                StreamChunk::Error(error) => Some(Err(map_bridge_error(error))),
-                StreamChunk::ToolCallDelta { .. } => None,
-            }
+                StreamChunk::Error(error) => vec![Err(map_bridge_error(error))],
+                // The finalized BridgeResponse is the single complete provider-round fact.
+                // Incremental tool chunks are observation-only and must not become a second
+                // executable tool-call source.
+                StreamChunk::ToolCall { .. } | StreamChunk::ToolCallDelta { .. } => Vec::new(),
+            };
+            stream::iter(events)
         })))
     }
 }
@@ -304,7 +321,16 @@ fn bridge_request(
             }),
             DashMessageRole::Assistant => Ok(AgentMessage::Assistant {
                 content: vec![ContentPart::text(message.content)],
-                tool_calls: Vec::new(),
+                tool_calls: message
+                    .tool_calls
+                    .into_iter()
+                    .map(|call| agentdash_agent::ToolCallInfo {
+                        id: call.call_id.clone(),
+                        call_id: Some(call.call_id),
+                        name: call.name,
+                        arguments: call.arguments,
+                    })
+                    .collect(),
                 stop_reason: None,
                 error_message: None,
                 usage: None,
@@ -324,7 +350,7 @@ fn bridge_request(
                     tool_name: None,
                     content: vec![ContentPart::text(message.content)],
                     details: None,
-                    is_error: false,
+                    is_error: message.is_error,
                     timestamp: None,
                 })
             }
@@ -437,12 +463,13 @@ fn compaction_revision(
 mod tests {
     use super::*;
     use agentdash_agent::{
-        BridgeResponse, TokenUsage,
+        BridgeResponse, TokenUsage, ToolCallDeltaContent, ToolCallInfo,
         dash::{AgentHistory, AgentSessionId, BranchId, HistoryContribution},
     };
     use futures::stream;
 
     struct FixtureBridge;
+    struct DeltaOnlyToolBridge;
 
     #[async_trait]
     impl LlmBridge for FixtureBridge {
@@ -455,6 +482,42 @@ mod tests {
                 raw_content: vec![ContentPart::text("durable summary")],
                 usage: TokenUsage::default(),
             })]))
+        }
+    }
+
+    #[async_trait]
+    impl LlmBridge for DeltaOnlyToolBridge {
+        async fn stream_complete(
+            &self,
+            _request: BridgeRequest,
+        ) -> std::pin::Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>> {
+            Box::pin(stream::iter([
+                StreamChunk::ToolCallDelta {
+                    id: "call-1".to_owned(),
+                    content: ToolCallDeltaContent::Name("read".to_owned()),
+                },
+                StreamChunk::ToolCallDelta {
+                    id: "call-1".to_owned(),
+                    content: ToolCallDeltaContent::Arguments(r#"{"path":"Cargo.toml"}"#.to_owned()),
+                },
+                StreamChunk::Done(BridgeResponse {
+                    message: AgentMessage::Assistant {
+                        content: Vec::new(),
+                        tool_calls: vec![ToolCallInfo {
+                            id: "call-1".to_owned(),
+                            call_id: Some("call-1".to_owned()),
+                            name: "read".to_owned(),
+                            arguments: serde_json::json!({"path": "Cargo.toml"}),
+                        }],
+                        stop_reason: Some(StopReason::ToolUse),
+                        error_message: None,
+                        usage: None,
+                        timestamp: None,
+                    },
+                    raw_content: Vec::new(),
+                    usage: TokenUsage::default(),
+                }),
+            ]))
         }
     }
 
@@ -472,6 +535,40 @@ mod tests {
         .expect("Dash request should map to bridge request");
 
         assert_eq!(request.thinking_level, Some(ThinkingLevel::High));
+    }
+
+    #[tokio::test]
+    async fn finalized_bridge_response_is_the_complete_tool_call_fact() {
+        let provider = BridgeDashProvider::new(Arc::new(DeltaOnlyToolBridge), None);
+        let events = provider
+            .stream(DashProviderRequest {
+                system_prompt: String::new(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+                round: 1,
+            })
+            .await
+            .expect("provider stream")
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("provider events");
+
+        assert!(matches!(
+            &events[0],
+            DashProviderEvent::ToolCall { call }
+                if call.call_id == "call-1"
+                    && call.name == "read"
+                    && call.arguments == serde_json::json!({"path": "Cargo.toml"})
+        ));
+        assert!(matches!(
+            events[1],
+            DashProviderEvent::Completed {
+                finish_reason: DashFinishReason::ToolCalls,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]

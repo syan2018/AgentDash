@@ -101,33 +101,42 @@ pub async fn run_agent_loop(
                 });
             }
             FinishReason::ToolCalls if !tool_calls.is_empty() => {
-                messages.push(CoreMessage::assistant(assistant_text));
+                messages.push(CoreMessage::assistant_with_tool_calls(
+                    assistant_text,
+                    tool_calls.clone(),
+                ));
                 for call in tool_calls {
                     ensure_not_cancelled(&cancel)?;
                     let decision = tokio::select! {
                         _ = cancel.cancelled() => return Err(CoreError::Cancelled),
-                        decision = tools.before_tool(call) => decision?,
+                        decision = tools.before_tool(call.clone()) => decision?,
                     };
-                    let result = match decision {
+                    let (effective_call, result) = match decision {
                         CoreBeforeToolDecision::Invoke { call } => {
                             let result = tokio::select! {
                                 _ = cancel.cancelled() => return Err(CoreError::Cancelled),
                                 result = tools.invoke(call.clone()) => result?,
                             };
-                            tokio::select! {
+                            let result = tokio::select! {
                                 _ = cancel.cancelled() => return Err(CoreError::Cancelled),
                                 result = tools.after_tool(&call, result) => result?,
-                            }
+                            };
+                            (call, result)
                         }
-                        CoreBeforeToolDecision::Deny { result } => result,
+                        CoreBeforeToolDecision::Deny { result } => (call, result),
                     };
                     callbacks
                         .emit(CoreEvent::ToolCallCompleted {
                             round,
+                            call: effective_call,
                             result: result.clone(),
                         })
                         .await?;
-                    messages.push(CoreMessage::tool(result.call_id, result.content));
+                    messages.push(CoreMessage::tool(
+                        result.call_id,
+                        result.content,
+                        result.is_error,
+                    ));
                 }
             }
             _ => return Err(CoreError::InvalidProviderTerminal),

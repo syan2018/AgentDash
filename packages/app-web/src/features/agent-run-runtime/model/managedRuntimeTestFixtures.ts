@@ -1,25 +1,20 @@
-import type {
-  ManagedRuntimeEntityStatus,
-  ManagedRuntimeOperationStatus,
-} from "../../../generated/agent-runtime-contracts";
+import type { ManagedRuntimeOperationStatus } from "../../../generated/agent-runtime-contracts";
 import type {
   ManagedRuntimeCommandAvailability,
   ManagedRuntimeSnapshot,
 } from "../../../generated/agent-runtime-validators";
 
-function operationStatus(
-  status: ManagedRuntimeEntityStatus,
-): ManagedRuntimeOperationStatus {
+type FixtureStatus = "running" | "completed" | "failed" | "lost";
+
+function operationStatus(status: FixtureStatus): ManagedRuntimeOperationStatus {
   if (status === "completed") return "succeeded";
   return status;
 }
 
 function availability(
-  status: ManagedRuntimeEntityStatus,
-  revision: bigint,
+  status: FixtureStatus,
 ): ManagedRuntimeCommandAvailability {
   const evidence = {
-    decided_at_revision: revision,
     blocking_operation_id:
       status === "running" ? "operation-compaction" : null,
     bound_surface_revision: null,
@@ -43,56 +38,15 @@ function availability(
 }
 
 function runtimeSnapshot(
-  status: ManagedRuntimeEntityStatus,
+  status: FixtureStatus,
   revision: bigint,
 ): ManagedRuntimeSnapshot {
-  const terminal =
-    status === "completed"
-      || status === "failed"
-      || status === "interrupted"
-      || status === "lost"
-      ? {
-          outcome: status,
-          completed_at_ms: 1001n + revision,
-          duration_ms: 1n,
-          process_exit: null,
-          error: null,
-        }
-      : null;
   return {
     thread_id: "runtime-thread-child",
     revision,
     captured_at_ms: 1000n + revision,
     lifecycle: "active",
-    active_turn_id: status === "running" ? "turn-compaction" : null,
     conversation_history: [],
-    turns: [
-      {
-        id: "turn-compaction",
-        source_turn_id: "turn-compaction",
-        status,
-        item_ids: ["item-compaction"],
-      },
-    ],
-    items: [
-      {
-        id: "item-compaction",
-        turn_id: "turn-compaction",
-        status,
-        presentation: {
-          body: {
-            kind: "context_compaction",
-            summary: null,
-            source_digest: `sha256:compaction-${revision}`,
-          },
-          started_at_ms: 1000n + revision,
-          updated_at_ms: 1001n + revision,
-          terminal,
-          body_digest: `sha256:compaction-body-${revision}`,
-          presentation_digest: `sha256:compaction-presentation-${revision}`,
-        },
-      },
-    ],
     interactions: [],
     thread_name: null,
     thread_name_source: null,
@@ -108,9 +62,9 @@ function runtimeSnapshot(
     authority: "source_authoritative",
     fidelity: "exact",
     command_availability: {
-      submit_input: availability(status, revision),
-      request_compaction: availability(status, revision),
-      resolve_interaction: availability(status, revision),
+      submit_input: availability(status),
+      request_compaction: availability(status),
+      resolve_interaction: availability(status),
     },
   };
 }

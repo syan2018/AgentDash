@@ -20,6 +20,10 @@ pub struct CoreMessage {
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<CoreToolCall>,
+    #[serde(default)]
+    pub is_error: bool,
 }
 
 impl CoreMessage {
@@ -28,6 +32,8 @@ impl CoreMessage {
             role: CoreRole::User,
             content: content.into(),
             tool_call_id: None,
+            tool_calls: Vec::new(),
+            is_error: false,
         }
     }
 
@@ -36,14 +42,31 @@ impl CoreMessage {
             role: CoreRole::Assistant,
             content: content.into(),
             tool_call_id: None,
+            tool_calls: Vec::new(),
+            is_error: false,
         }
     }
 
-    pub fn tool(call_id: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn assistant_with_tool_calls(
+        content: impl Into<String>,
+        tool_calls: Vec<CoreToolCall>,
+    ) -> Self {
+        Self {
+            role: CoreRole::Assistant,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls,
+            is_error: false,
+        }
+    }
+
+    pub fn tool(call_id: impl Into<String>, content: impl Into<String>, is_error: bool) -> Self {
         Self {
             role: CoreRole::Tool,
             content: content.into(),
             tool_call_id: Some(call_id.into()),
+            tool_calls: Vec::new(),
+            is_error,
         }
     }
 }
@@ -158,6 +181,7 @@ pub enum CoreEvent {
     },
     ToolCallCompleted {
         round: u32,
+        call: CoreToolCall,
         result: CoreToolResult,
     },
     ProviderRoundCompleted {

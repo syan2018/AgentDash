@@ -23,18 +23,26 @@ export interface ManagedRuntimeFeedTransport {
   close: () => void;
 }
 
-function parseLiveEvent(payload: unknown): AgentLiveEvent | null {
+export function parseLiveEvent(payload: unknown): AgentLiveEvent | null {
   if (!payload || typeof payload !== "object") return null;
   const event = payload as Record<string, unknown>;
-  const body = event.payload;
+  const record = event.record;
+  if (!record || typeof record !== "object") return null;
+  const canonical = record as Record<string, unknown>;
+  const presentation = canonical.presentation;
+  if (!presentation || typeof presentation !== "object") return null;
+  const envelope = (presentation as Record<string, unknown>).envelope;
+  if (!envelope || typeof envelope !== "object") return null;
+  const backboneEvent = (envelope as Record<string, unknown>).event;
   if (
     typeof event.source !== "string" ||
-    typeof event.turn_id !== "string" ||
-    typeof event.item_id !== "string" ||
     typeof event.sequence !== "string" ||
-    !body ||
-    typeof body !== "object" ||
-    typeof (body as Record<string, unknown>).kind !== "string"
+    !/^(0|[1-9]\d*)$/.test(event.sequence) ||
+    typeof canonical.presentation_id !== "string" ||
+    canonical.presentation_id.length === 0 ||
+    !backboneEvent ||
+    typeof backboneEvent !== "object" ||
+    typeof (backboneEvent as Record<string, unknown>).type !== "string"
   ) {
     return null;
   }

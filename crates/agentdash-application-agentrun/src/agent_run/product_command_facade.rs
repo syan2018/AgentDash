@@ -3,7 +3,6 @@ use std::sync::Arc;
 use agentdash_agent_runtime_contract::{
     ManagedRuntimeContentBlock, ManagedRuntimeInteractionResponse, ManagedRuntimeOperationReceipt,
     ManagedRuntimeOperationStatus, RuntimeInteractionId, RuntimeOperationId,
-    RuntimeProjectionRevision,
 };
 use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentCommand, AgentCommandEnvelope, AgentCommandId,
@@ -108,7 +107,6 @@ impl AgentRunProductCommandFacade {
             return Ok(operation_receipt(
                 stable_product_command_operation_id(&request.target, client_command_id)?,
                 binding.runtime_thread_id,
-                0,
                 ManagedRuntimeOperationStatus::Succeeded,
                 false,
             ));
@@ -159,7 +157,6 @@ impl AgentRunProductCommandFacade {
                 Ok(operation_receipt(
                     operation_id,
                     binding.runtime_thread_id,
-                    snapshot.revision.0,
                     ManagedRuntimeOperationStatus::Accepted,
                     true,
                 ))
@@ -174,9 +171,6 @@ impl AgentRunProductCommandFacade {
                 Ok(operation_receipt(
                     operation_id,
                     binding.runtime_thread_id,
-                    receipt
-                        .snapshot_revision
-                        .map_or(snapshot.revision.0, |revision| revision.0),
                     receipt_status(&receipt),
                     true,
                 ))
@@ -192,11 +186,22 @@ impl AgentRunProductCommandFacade {
                             .await?
                     }
                     command => {
+                        let active_turn_id = snapshot
+                            .active_turn_id()
+                            .map(|turn_id| {
+                                agentdash_agent_service_api::AgentTurnId::new(turn_id.to_owned())
+                                    .map_err(|error| {
+                                        AgentRunProductCommandError::InvalidCommand(
+                                            error.to_string(),
+                                        )
+                                    })
+                            })
+                            .transpose()?;
                         service
                             .execute(AgentCommandEnvelope {
                                 meta,
                                 source: binding.agent.source.clone(),
-                                command: map_command(command, snapshot.active_turn_id.as_ref())?,
+                                command: map_command(command, active_turn_id.as_ref())?,
                             })
                             .await?
                     }
@@ -210,9 +215,6 @@ impl AgentRunProductCommandFacade {
                 Ok(operation_receipt(
                     operation_id,
                     binding.runtime_thread_id,
-                    receipt
-                        .snapshot_revision
-                        .map_or(snapshot.revision.0, |revision| revision.0),
                     receipt_status(&receipt),
                     duplicate,
                 ))
@@ -427,14 +429,12 @@ fn terminal_status(outcome: AgentTerminalOutcome) -> ManagedRuntimeOperationStat
 fn operation_receipt(
     operation_id: RuntimeOperationId,
     thread_id: agentdash_agent_runtime_contract::RuntimeThreadId,
-    revision: u64,
     status: ManagedRuntimeOperationStatus,
     duplicate: bool,
 ) -> ManagedRuntimeOperationReceipt {
     ManagedRuntimeOperationReceipt {
         operation_id,
         thread_id,
-        accepted_revision: RuntimeProjectionRevision(revision),
         status,
         evidence: None,
         duplicate,

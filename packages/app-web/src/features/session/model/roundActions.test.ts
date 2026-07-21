@@ -1,97 +1,60 @@
 import { describe, expect, it } from "vitest";
-import type {
-  AgentRunRuntimeItem,
-  AgentRunRuntimeTurnSegment,
-} from "../../agent-run-runtime";
-import {
-  buildRoundActionModel,
-  lastAgentReplyText,
-} from "./roundActions";
+import type { SessionDisplayEntry } from "./types";
+import type { TurnSegment } from "./useSessionFeed";
+import { buildRoundActionModel, lastAgentReplyText } from "./roundActions";
 
-function agentEntry(params: {
-  id: string;
-  text: string;
-  turnId: string;
-  entryIndex: number;
-}): AgentRunRuntimeItem {
+function agentEntry(text: string, entryIndex: number): SessionDisplayEntry {
   return {
-    id: params.id,
-    turn_id: params.turnId,
-    status: "completed",
-    presentation: {
-      body: {
-        kind: "agent_message",
-        content: [{ kind: "text", text: params.text }],
-        phase: null,
+    id: `assistant-${entryIndex}`,
+    sessionId: "thread-1",
+    timestamp: entryIndex,
+    eventSeq: entryIndex,
+    turnId: "turn-1",
+    entryIndex,
+    accumulatedText: text,
+    event: {
+      type: "agent_message_delta",
+      payload: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: `assistant-${entryIndex}`,
+        delta: text,
       },
-      started_at_ms: BigInt(params.entryIndex),
-      updated_at_ms: BigInt(params.entryIndex + 1),
-      terminal: {
-        outcome: "completed",
-        completed_at_ms: BigInt(params.entryIndex + 1),
-        duration_ms: 1n,
-        process_exit: null,
-        error: null,
-      },
-      body_digest: `sha256:${params.id}:body`,
-      presentation_digest: `sha256:${params.id}:presentation`,
     },
   };
 }
 
 function segment(
-  items: AgentRunRuntimeItem[],
-  status: AgentRunRuntimeTurnSegment["status"] = "completed",
-): AgentRunRuntimeTurnSegment {
+  entries: SessionDisplayEntry[],
+  status: TurnSegment["status"] = "completed",
+): TurnSegment {
   return {
     turnId: "turn-1",
     status,
-    items,
-    finalOutput: items[items.length - 1] ?? null,
+    items: entries,
+    finalOutput: entries.at(-1) ?? null,
   };
 }
 
 describe("round action model", () => {
-  it("copies only the current round last agent reply readable text", () => {
-    const first = agentEntry({
-      id: "assistant-1",
-      text: "intermediate answer",
-      turnId: "turn-1",
-      entryIndex: 1,
-    });
-    const last = agentEntry({
-      id: "assistant-2",
-      text: "final answer\nwith detail",
-      turnId: "turn-1",
-      entryIndex: 3,
-    });
-
-    expect(lastAgentReplyText(segment([first, last]))).toBe("final answer\nwith detail");
+  it("copies the canonical final agent reply", () => {
+    expect(lastAgentReplyText(segment([
+      agentEntry("intermediate", 1),
+      agentEntry("final answer\nwith detail", 3),
+    ]))).toBe("final answer\nwith detail");
   });
 
-  it("does not manufacture a MessageRef from Runtime item identity", () => {
-    const model = buildRoundActionModel(segment([
-      agentEntry({
-        id: "assistant-final",
-        text: "done",
-        turnId: "turn-42",
-        entryIndex: 7,
-      }),
-    ]));
+  it("uses the canonical turn and entry coordinates as the fork point", () => {
+    const model = buildRoundActionModel(segment([agentEntry("done", 7)]));
 
-    expect(model.forkFromHere.enabled).toBe(false);
-    expect(model.forkFromHere.forkPointRef).toBeUndefined();
+    expect(model.forkFromHere).toMatchObject({
+      enabled: true,
+      forkPointRef: { turn_id: "turn-1", entry_index: 7 },
+    });
   });
 
-  it("disables fork for active or incomplete boundaries with a reason", () => {
-    const model = buildRoundActionModel(segment([
-      agentEntry({
-        id: "assistant-streaming",
-        text: "still running",
-        turnId: "turn-1",
-        entryIndex: 2,
-      }),
-    ], "active"));
+  it("disables fork while the canonical turn is active", () => {
+    const model = buildRoundActionModel(segment([agentEntry("still running", 2)], "active"));
 
     expect(model.forkFromHere.enabled).toBe(false);
     expect(model.forkFromHere.disabledReason).toContain("仍在运行");

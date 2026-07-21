@@ -8,11 +8,10 @@ use ts_rs::TS;
 use agentdash_agent_protocol::CanonicalConversationRecord;
 
 use crate::{
-    ManagedRuntimeInteractionRequest, ManagedRuntimeInteractionResolution,
-    ManagedRuntimeInteractionStatus, ManagedRuntimeItemPresentation, RuntimeContextContributionId,
-    RuntimeContextPackageId, RuntimeContextSourceRef, RuntimeContextSourceRevision,
-    RuntimeInteractionId, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
-    RuntimeProjectionRevision, RuntimeSourceRef, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
+    RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
+    RuntimeContextSourceRevision, RuntimeInteractionId, RuntimeItemId, RuntimeOperationId,
+    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeSourceRef, RuntimeThreadId,
+    RuntimeTurnId, SurfaceRevision,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -57,15 +56,61 @@ pub enum ManagedRuntimeLifecycleStatus {
     Lost,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ManagedRuntimeInteractionRequest {
+    Approval {
+        prompt: String,
+        reason: Option<String>,
+        proposed_action: Option<Value>,
+    },
+    UserInput {
+        prompt: String,
+        questions: Vec<ManagedRuntimeInteractionQuestion>,
+    },
+    McpElicitation {
+        server: String,
+        prompt: String,
+        schema: Value,
+    },
+    DynamicTool {
+        namespace: Option<String>,
+        tool: String,
+        prompt: String,
+        arguments: Value,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ManagedRuntimeInteractionQuestion {
+    pub id: String,
+    pub prompt: String,
+    pub options: Vec<String>,
+    pub allows_free_form: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub enum ManagedRuntimeEntityStatus {
-    Accepted,
-    Running,
-    Completed,
-    Failed,
-    Interrupted,
+pub enum ManagedRuntimeInteractionStatus {
+    Pending,
+    Resolved,
+    Cancelled,
+    Expired,
     Lost,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ManagedRuntimeInteractionResolution {
+    Approved,
+    Denied { reason: Option<String> },
+    UserInput { answers: Value },
+    McpElicitation { response: Value },
+    DynamicToolResult { result: Value },
+    Cancelled { reason: Option<String> },
+    Expired,
+    Lost { reason: String },
 }
 
 /// Application command input blocks are intentionally narrower than presentation blocks.
@@ -89,26 +134,6 @@ pub enum ManagedRuntimeContentBlock {
         schema: String,
         value: Value,
     },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeTurn {
-    pub id: RuntimeTurnId,
-    // Opaque Complete-Agent turn identity retained as read-only evidence for
-    // presentation-to-Runtime cutoff resolution.
-    pub source_turn_id: String,
-    pub status: ManagedRuntimeEntityStatus,
-    pub item_ids: Vec<RuntimeItemId>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeItem {
-    pub id: RuntimeItemId,
-    pub turn_id: RuntimeTurnId,
-    pub status: ManagedRuntimeEntityStatus,
-    pub presentation: ManagedRuntimeItemPresentation,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -349,7 +374,6 @@ pub enum ManagedRuntimeUnavailabilityReason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ManagedRuntimeAvailabilityEvidence {
-    pub decided_at_revision: RuntimeProjectionRevision,
     pub blocking_operation_id: Option<RuntimeOperationId>,
     pub bound_surface_revision: Option<SurfaceRevision>,
     pub applied_surface_revision: Option<SurfaceRevision>,
@@ -373,12 +397,6 @@ impl ManagedRuntimeCommandAvailability {
             Self::Available { evidence } | Self::Unavailable { evidence, .. } => evidence,
         }
     }
-
-    pub fn evidence_mut(&mut self) -> &mut ManagedRuntimeAvailabilityEvidence {
-        match self {
-            Self::Available { evidence } | Self::Unavailable { evidence, .. } => evidence,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -391,9 +409,6 @@ pub struct ManagedRuntimeSnapshot {
     #[ts(type = "RuntimeU64")]
     pub captured_at_ms: u64,
     pub lifecycle: ManagedRuntimeLifecycleStatus,
-    pub active_turn_id: Option<RuntimeTurnId>,
-    pub turns: Vec<ManagedRuntimeTurn>,
-    pub items: Vec<ManagedRuntimeItem>,
     pub interactions: Vec<ManagedRuntimeInteraction>,
     pub thread_name: Option<String>,
     pub thread_name_source: Option<ManagedRuntimeThreadNameSource>,
@@ -405,6 +420,18 @@ pub struct ManagedRuntimeSnapshot {
         BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability>,
     #[ts(type = "Array<CanonicalConversationRecord>")]
     pub conversation_history: Vec<CanonicalConversationRecord>,
+}
+
+impl ManagedRuntimeSnapshot {
+    pub fn conversation(&self) -> agentdash_agent_protocol::CanonicalConversationView<'_> {
+        agentdash_agent_protocol::CanonicalConversationView::new(&self.conversation_history)
+    }
+
+    pub fn active_turn_id(&self) -> Option<&str> {
+        self.conversation()
+            .active_turn()
+            .map(|turn| turn.id.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -424,9 +451,8 @@ mod tests {
         constructor(value.to_owned()).expect("valid Runtime identity")
     }
 
-    fn evidence(revision: u64) -> ManagedRuntimeAvailabilityEvidence {
+    fn evidence() -> ManagedRuntimeAvailabilityEvidence {
         ManagedRuntimeAvailabilityEvidence {
-            decided_at_revision: RuntimeProjectionRevision(revision),
             blocking_operation_id: None,
             bound_surface_revision: Some(SurfaceRevision(3)),
             applied_surface_revision: Some(SurfaceRevision(3)),
@@ -436,14 +462,12 @@ mod tests {
     #[test]
     fn application_contract_round_trips_authoritative_snapshot() {
         let thread_id = id("runtime-thread-1", RuntimeThreadId::new);
-        let turn_id = id("runtime-turn-1", RuntimeTurnId::new);
-        let item_id = id("runtime-item-1", RuntimeItemId::new);
         let mut command_availability = BTreeMap::new();
         for command in ManagedRuntimeCommandKind::ALL {
             command_availability.insert(
                 command,
                 ManagedRuntimeCommandAvailability::Available {
-                    evidence: evidence(5),
+                    evidence: evidence(),
                 },
             );
         }
@@ -453,28 +477,6 @@ mod tests {
                 revision: RuntimeProjectionRevision(5),
                 captured_at_ms: 42,
                 lifecycle: ManagedRuntimeLifecycleStatus::Active,
-                active_turn_id: Some(turn_id.clone()),
-                turns: vec![ManagedRuntimeTurn {
-                    id: turn_id.clone(),
-                    source_turn_id: "source-turn-1".to_owned(),
-                    status: ManagedRuntimeEntityStatus::Running,
-                    item_ids: vec![item_id.clone()],
-                }],
-                items: vec![ManagedRuntimeItem {
-                    id: item_id,
-                    turn_id,
-                    status: ManagedRuntimeEntityStatus::Running,
-                    presentation: ManagedRuntimeItemPresentation::new(
-                        crate::ManagedRuntimeItemBody::ContextCompaction {
-                            summary: None,
-                            source_digest: None,
-                        },
-                        Some(40),
-                        Some(42),
-                        None,
-                    )
-                    .expect("valid compaction presentation"),
-                }],
                 interactions: Vec::new(),
                 conversation_history: Vec::new(),
                 thread_name: None,

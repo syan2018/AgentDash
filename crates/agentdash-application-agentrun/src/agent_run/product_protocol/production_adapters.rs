@@ -6,7 +6,7 @@ use agentdash_agent_runtime_contract::{
     ManagedRuntimeInitialContextContribution, ManagedRuntimeInitialContextContributionContent,
     ManagedRuntimeInitialContextMode, ManagedRuntimeInitialContextPackage, ManagedRuntimeSnapshot,
     RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
-    RuntimeContextSourceRevision, RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId,
+    RuntimeContextSourceRevision, RuntimePayloadDigest, RuntimeThreadId,
 };
 use agentdash_agent_service_api::{
     AgentEffectIdentity, AgentForkPoint, AgentReadQuery, AgentReceiptState, AgentTurnId,
@@ -98,7 +98,6 @@ impl ProductAgentRunForkRuntimeAdapter {
     fn accepted(identity: &AgentRunForkOperationIdentity) -> AcceptedRuntimeOperation {
         AcceptedRuntimeOperation {
             operation_id: identity.runtime_operation_id.clone(),
-            accepted_revision: RuntimeProjectionRevision(0),
         }
     }
 
@@ -225,13 +224,9 @@ impl ProductCompanionFreshRuntimeAdapter {
         }
     }
 
-    fn accepted(
-        identity: &CompanionFreshOperationIdentity,
-        revision: u64,
-    ) -> AcceptedRuntimeOperation {
+    fn accepted(identity: &CompanionFreshOperationIdentity) -> AcceptedRuntimeOperation {
         AcceptedRuntimeOperation {
             operation_id: identity.runtime_operation_id.clone(),
-            accepted_revision: RuntimeProjectionRevision(revision),
         }
     }
 
@@ -267,13 +262,7 @@ impl ProductCompanionFreshRuntimeAdapter {
                         child_runtime_thread_id: saga.runtime_thread_id().clone(),
                         child_binding: outcome.binding.agent,
                         context,
-                        receipt: Self::accepted(
-                            identity,
-                            outcome
-                                .create_receipt
-                                .snapshot_revision
-                                .map_or(0, |revision| revision.0),
-                        ),
+                        receipt: Self::accepted(identity),
                     },
                 ))
             }
@@ -286,7 +275,7 @@ impl ProductCompanionFreshRuntimeAdapter {
                     CompanionFreshEffectEvidence::Activated {
                         child_runtime_thread_id: saga.runtime_thread_id().clone(),
                         child_binding: association,
-                        receipt: Self::accepted(identity, 0),
+                        receipt: Self::accepted(identity),
                     },
                 ))
             }
@@ -304,7 +293,7 @@ impl ProductCompanionFreshRuntimeAdapter {
                 Ok(CompanionFreshEffectOutcome::Applied(
                     CompanionFreshEffectEvidence::FirstInputSubmitted {
                         child_runtime_thread_id: saga.runtime_thread_id().clone(),
-                        receipt: Self::accepted(identity, 0),
+                        receipt: Self::accepted(identity),
                     },
                 ))
             }

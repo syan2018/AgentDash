@@ -232,7 +232,7 @@ impl ProjectAgentRunListQuery {
         .value;
         let runtime = runtime_snapshot.map(|snapshot| AgentRunListRuntimeSummaryModel {
             thread_status: snapshot.lifecycle,
-            active_turn_id: snapshot.active_turn_id.map(|id| id.to_string()),
+            active_turn_id: snapshot.active_turn_id().map(str::to_owned),
             thread_name: snapshot.thread_name,
         });
         let subject = self
@@ -596,7 +596,6 @@ mod tests {
             lifecycle: ManagedRuntimeLifecycleStatus::Active,
             thread_name: Some(thread_name),
             thread_name_source: None,
-            active_turn_id: None,
             turns: Vec::new(),
             items: Vec::new(),
             interactions: Vec::new(),

@@ -1,6 +1,4 @@
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeSnapshot, RuntimeOperationId, RuntimeThreadId, RuntimeTurnId,
-};
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductRuntimeBinding, AgentRunProductRuntimeBindingRepository,
 };
@@ -211,40 +209,6 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
         }))
     }
 
-    pub async fn resolve_by_runtime_turn(
-        &self,
-        binding: &AgentRunProductRuntimeBinding,
-        snapshot: &ManagedRuntimeSnapshot,
-        turn_id: &RuntimeTurnId,
-    ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
-        if snapshot.thread_id != binding.runtime_thread_id
-            || snapshot.source_binding.as_ref().is_none_or(|source| {
-                source.activated_at_revision.is_none()
-                    || source.applied_surface_revision.0 != binding.launch_frame.revision
-            })
-        {
-            return Ok(None);
-        }
-        let run = self
-            .load_binding_run(binding.runtime_thread_id.as_str(), binding)
-            .await?;
-        let Some((orchestration_id, node_path, attempt)) = find_runtime_node_binding_for_turn(
-            &run,
-            &binding.target,
-            binding.runtime_thread_id.as_str(),
-            snapshot,
-            turn_id,
-        ) else {
-            return Ok(None);
-        };
-        Ok(Some(ActivityRuntimeAssociation {
-            run,
-            orchestration_id,
-            node_path,
-            attempt,
-        }))
-    }
-
     async fn load_binding_run(
         &self,
         runtime_thread_id: &str,
@@ -360,65 +324,5 @@ fn find_node_by_runtime_thread<'a>(
             return Some(node);
         }
         find_node_by_runtime_thread(&node.children, target, runtime_thread_id)
-    })
-}
-
-fn find_runtime_node_binding_for_turn(
-    run: &LifecycleRun,
-    target: &agentdash_domain::agent_run_target::AgentRunTarget,
-    runtime_thread_id: &str,
-    snapshot: &ManagedRuntimeSnapshot,
-    turn_id: &RuntimeTurnId,
-) -> Option<(Uuid, String, u32)> {
-    run.orchestrations.iter().find_map(|orchestration| {
-        find_node_by_runtime_turn(
-            &orchestration.node_tree,
-            target,
-            runtime_thread_id,
-            snapshot,
-            turn_id,
-        )
-        .map(|node| {
-            (
-                orchestration.orchestration_id,
-                node.node_path.clone(),
-                node.attempt.max(1),
-            )
-        })
-    })
-}
-
-fn find_node_by_runtime_turn<'a>(
-    nodes: &'a [RuntimeNodeState],
-    target: &agentdash_domain::agent_run_target::AgentRunTarget,
-    runtime_thread_id: &str,
-    snapshot: &ManagedRuntimeSnapshot,
-    turn_id: &RuntimeTurnId,
-) -> Option<&'a RuntimeNodeState> {
-    nodes.iter().find_map(|node| {
-        let owns_target = matches!(
-            node.executor_run_ref.as_ref(),
-            Some(ExecutorRunRef::AgentRun { run_id, agent_id })
-                if *run_id == target.run_id && *agent_id == target.agent_id
-        );
-        let owns_turn = node.agent_call.as_ref().is_some_and(|state| {
-            if state.target != *target
-                || state.runtime_thread_id.as_deref() != Some(runtime_thread_id)
-            {
-                return false;
-            }
-            let Ok(operation_id) =
-                RuntimeOperationId::new(format!("{}:submit-input", state.request_id))
-            else {
-                return false;
-            };
-            snapshot.operations.iter().any(|operation| {
-                operation.id == operation_id && operation.turn_id.as_ref() == Some(turn_id)
-            })
-        });
-        if owns_target && owns_turn {
-            return Some(node);
-        }
-        find_node_by_runtime_turn(&node.children, target, runtime_thread_id, snapshot, turn_id)
     })
 }

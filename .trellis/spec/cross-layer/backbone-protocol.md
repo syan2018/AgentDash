@@ -1,113 +1,142 @@
-# Backbone Product and Resource Event Protocol
+# Canonical Conversation and Backbone Protocol
 
 ## 1. Scope / Trigger
 
-Backbone 只承载 AgentDash 产品通知与资源状态投影，例如 AgentFrame surface 变化、Workspace Module presentation、PTY terminal 与平台诊断。新增跨端产品事件或资源事件时复核本规范。Agent Runtime Thread/Turn/Item/Interaction、operation terminal、context head 与 command availability 不进入 Backbone。
+本规范适用于 Complete Agent history/live、Agent Runtime read adapter、AgentRun 会话 API 与前端
+Session renderer。修改 turn/item/message/tool/compaction 的生产、传输、恢复或渲染时必须复核。
+
+`CanonicalConversationRecord` 是 Agent 会话 presentation 的唯一跨层表示。Backbone 产品通知仍可
+承载 AgentFrame、Workspace Module、PTY terminal 与平台诊断，但不能形成第二套会话 turn/item
+协议。
 
 ## 2. Signatures
 
 ```rust
-pub struct BackboneEnvelope {
-    pub event_id: String,
-    pub timestamp: DateTime<Utc>,
-    pub event: BackboneEvent,
-    pub metadata: EventMetadata,
+pub struct CanonicalConversationRecord {
+    pub presentation_id: String,
+    pub presentation: CanonicalConversationPresentation,
+}
+
+pub struct AgentSnapshot {
+    pub source: AgentSourceCoordinate,
+    pub revision: AgentSnapshotRevision,
+    pub conversation_history: Vec<CanonicalConversationRecord>,
+    // lifecycle / interaction / surface evidence omitted
+}
+
+pub struct AgentLiveEvent {
+    pub source: AgentSourceCoordinate,
+    pub sequence: AgentServiceU64,
+    pub record: CanonicalConversationRecord,
 }
 ```
 
-Canonical Agent Runtime stream 使用独立 owned contract：
-
-```text
-GET /agent-runs/{run_id}/agents/{agent_id}/runtime/events/stream/ndjson
-RuntimeEventEnvelope { cursor, operation_id, event }
-
-ThreadNameUpdatedNotification {
-  threadId: string,
-  threadName?: string | null,
-}
-```
-
-RuntimeWire 通过 `RuntimeWireEnvelope` 透明承载 Driver command/event/response 与 reverse HostPort frame，不转换为 `BackboneEnvelope` 或 `serde_json::Value` 中转。
-
-## 3. Contracts
-
-- Managed Runtime journal 是 Runtime lifecycle 的唯一 durable authority。Backbone 事件不能创建、完成或恢复 Runtime operation/turn/item/interaction。
-- UI 的 submit/steer/interrupt/compact/resolve 可用性只读取 canonical Runtime snapshot 的 `command_availability`，不从 Backbone、Lifecycle status、executor kind 或 transcript 推导。
-- PTY terminal、workspace module、AgentFrame/product notification 是独立资源事实；它们可以引用 Runtime coordinate 用于展示和关联，但不能改变 Runtime state。
-- Relay 对 RuntimeWire 保持 typed envelope、stream sequence、ack/replay 与 generation fencing；产品 Backbone relay 与 RuntimeWire 是两条不同协议 lane。
-- Vendor adapter 把 Codex/Native/enterprise 事件映射为 AgentDash-owned Runtime event。Vendor DTO 与 Backbone 都不能泄漏进 canonical Runtime contract。
-- Durable cursor 只属于 canonical Runtime journal；Backbone product stream 使用自己的产品事件顺序，不复用 Runtime cursor。
-- Runtime journal 内部使用 owned `PlatformEvent::ContextFrameChanged` 保存完整 ContextFrame。Session journal contract 在单一 protocol normalization boundary 将它投影为 `SessionMetaUpdate { key: "context_frame" }`，原因是现有 session reducer、feed grouping 与 UI 以该 wrapper 表达稳定展示协议；映射只替换 wrapper，frame payload、空值、section 顺序与相邻 frame 边界保持不变。
-- Session carrier/wrapper可以承载Runtime routing与cursor元数据；wrapper内owned `BackboneEvent`的discriminant、payload、顺序、optional/null语义与pinned Codex App Server协议及AgentDash扩展保持完全一致。frontend reducer只消费protected body，不感知Runtime internal fact。
-- Session durable `event_seq`沿用raw Runtime EventSequence（加fork继承prefix），允许internal-only facts形成空洞；GET、NDJSON live、断线replay与fork point共享该坐标，使cursor之后的第一条可见tool terminal/ContextFrame不会被跳过。
-- `thread_name_updated` 使用 pinned Codex-shaped owned notification 作为标准 session
-  presentation variant，set/replace/clear 都进入同一 generated union。Native 与 Codex
-  producer 只负责生成完整标准 payload，Runtime admission 负责 durable/source/name 约束，
-  因而前端与 AgentRun 不需要 executor-specific 标题事件。
-
-## 4. Validation & Error Matrix
-
-| Condition | Required behavior |
-| --- | --- |
-| Backbone 收到 Runtime lifecycle payload | 拒绝 contract drift；由 adapter/Managed Runtime 写 canonical journal |
-| UI 只有 Backbone terminal notification | 保持命令不可用性由 Runtime snapshot 决定 |
-| RuntimeWire sequence gap | typed protocol violation；stream 进入 Lost/reopen 流程 |
-| RuntimeWire duplicate frame | 按 stream sequence 幂等 ack，不重复 Driver/HostPort 副作用 |
-| PTY terminal exits | 更新 terminal resource projection，不 terminalize Agent Runtime |
-| stale Driver generation emits event | fence/quarantine；Backbone 不可用于复活状态 |
-| carrier metadata变化但protected body相同 | reducer输出与main一致；wrapper差异不进入item/card identity |
-| visible event前存在internal cursor gap | `after`从raw cursor继续并返回下一条可见event，不按过滤后序号跳过 |
-| `thread_name_updated`为string或显式null | generated Rust/TS union保留同一标准variant与optional/null语义 |
-| Native或Codex试图发送executor-specific标题事件 | contract/source gate失败；producer必须映射为标准variant |
-
-## 5. Good / Base / Bad Cases
-
-- Good：Driver event 经 adapter 进入 Managed Runtime journal；UI Runtime feed 读取 canonical cursor，同时 Workspace Module presentation 作为独立 Backbone 产品通知打开面板。
-- Good：`WorkspaceModulePresentationRequested` 使用独立 typed discriminant。journal replay恢复
-  审计事实，live observer消费命令式展示意图；`ControlPlaneProjectionChanged`只触发投影刷新。
-- Good：Native与Codex都提交`ThreadNameUpdatedNotification`，session、Runtime projection与产品
-  invalidation共享同一个event discriminant。
-- Base：本机 PTY 退出只更新终端卡片，Agent Runtime turn 继续由 Runtime snapshot/events 表达。
-- Bad：把 Codex `turn/completed` 转成 Backbone terminal，再由 Application 反推 AgentRun 已完成；这会制造第二事实源。
-- Bad：为Native新增`source_session_title_updated`并在AgentRun外层翻译；这会让executor决定消费契约。
-
-## 6. Tests Required
-
-- Contract/schema generation 覆盖 Backbone、Runtime Contract 与 RuntimeWire 三套互不冒充的类型。
-- Runtime facade tests 证明 Backbone 不参与 canonical operation/snapshot mutation。
-- Frontend tests 证明 command availability 只取 Runtime snapshot。
-- Relay tests 覆盖 RuntimeWire typed envelope、sequence gap、duplicate、ack/replay 与 reconnect fencing。
-- Resource tests 证明 PTY terminal 与 Runtime terminal 使用不同 discriminant 和 reducer。
-- main parity账本逐文件固定现有Session UI，并把protected body送入现有reducer，断言user、多工具单卡、业务错误后continuation与final assistant顺序。
-- Journal tests覆盖raw cursor gap、live→replay与fork cutoff，禁止对filtered presentation重新enumerate。
-- protocol generation与source gate断言标准union包含`thread_name_updated`，且仓库不存在第二个
-  source-title事件、payload或adapter名称。
-
-## 7. Wrong vs Correct
-
-```rust
-// Wrong: presentation event becomes Runtime authority.
-runtime.complete_turn(backbone_event.turn_id).await?;
-
-// Correct: only a validated Driver event enters the Managed Runtime journal.
-runtime.accept_driver_event(binding, generation, driver_event).await?;
+```http
+GET /agent-runs/{run_id}/agents/{agent_id}/runtime
+GET /agent-runs/{run_id}/agents/{agent_id}/runtime/live
 ```
 
 ```ts
-// Wrong
-const canInterrupt = lastBackboneEvent?.type === "turn_started";
+type AgentLiveEvent = {
+  source: AgentSourceCoordinate;
+  sequence: AgentServiceU64;
+  record: CanonicalConversationRecord;
+};
+```
 
-// Correct
-const canInterrupt = runtimeSnapshot.command_availability.interrupt?.available === true;
+## 3. Contracts
+
+- concrete Complete Agent 独占 native history，并在 `read` 中返回完整
+  `conversation_history`。Runtime/Product 不保存 normalized turn/item/message/tool 镜像。
+- durable history 与 process-local live 使用同一个 `CanonicalConversationRecord` schema；区别只由
+  `presentation.durability` 表达。live record 不冒充已提交 history。
+- `AgentLiveEvent` 只包含 source、source-local sequence 与 canonical record。transport 不接受
+  provider round、`payload.kind`、独立 `turn_id/item_id` 等平行 telemetry 形态。
+- `presentation_id` 是同一 presentation 在 baseline/live 合并时的稳定 identity；收到相同 id 时
+  替换记录，收到新 id 时追加。不得派生 `agent-turn:`、`agent-item:` 或 renderer-local tool id。
+- `TurnStarted`/`TurnCompleted` 是运行状态的唯一边界。第一个 message/tool/item 输出不结束 turn；
+  只有对应 `TurnCompleted` 才移除 active turn。
+- `ItemStarted`/`ItemUpdated`/`ItemCompleted` 的 `AgentDashThreadItem` discriminant 决定 UI 形态。
+  `agentMessage` 与 `reasoning` 进入消息卡，其余 item 进入对应工具/资源卡；未知 discriminant 是
+  协议错误，不降级为“TOOL 未知”。
+- provider/Core 事件只能在 concrete Agent 内部用于构造 canonical records；provider round 完成
+  不是 Agent turn terminal，也不能触发前端终态 reload。
+- 断线或进程重启后丢弃 ephemeral lane，并从 Complete Agent `read` 重新获取 durable history。
+  Snapshot-only Agent 不需要平台 durable change journal。
+- PTY terminal、Canvas、Workspace Module 与 AgentFrame 是独立资源事实；即使它们引用 Agent
+  coordinate，也不能完成、恢复或改写 Agent conversation。
+- RuntimeWire 透明承载 Driver command/response 与 reverse HostPort frame，不转换为 Product
+  Backbone event 或第二套 conversation DTO。
+
+## 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| live payload 缺少 `record.presentation.envelope.event.type` | transport 拒绝该 payload 并报告流解析错误 |
+| live payload 使用旧 `turn_id/item_id/payload.kind` | 拒绝；producer/consumer 必须升级到 canonical record |
+| 同一 `presentation_id` 再次出现 | 原位替换 presentation，不重复渲染 |
+| 首个 delta/item 到达但没有 `TurnCompleted` | 会话保持 receiving/active |
+| `TurnCompleted` 到达 | turn 进入唯一终态；消息、工具和错误按 canonical history 渲染 |
+| live 断开或 sequence gap | 丢弃 partial lane并重新 `read` authoritative snapshot |
+| terminal turn 没有 assistant item | 保留 terminal-only segment，并展示 `turn.error` |
+| PTY terminal 退出 | 只更新 terminal resource，不改变 Agent turn |
+| vendor 发送 executor-specific conversation DTO | adapter 边界拒绝或映射为 owned canonical record |
+
+## 5. Good / Base / Bad Cases
+
+- Good：Core 产生 tool call，Dash 写入 native history，同时 live callback 发出 canonical
+  `ItemStarted/Updated/Completed`；UI 使用相同 item id 渲染，重载后由 durable history恢复同一张卡。
+- Good：消息首个 delta 到达后 composer 保持运行态，工具继续执行，最终仅由
+  `TurnCompleted` 结束。
+- Base：live 中途断开，临时 delta 消失；重新 `read` 后完整 assistant/tool history 恢复。
+- Bad：transport 校验 `{turn_id,item_id,payload.kind}`，后端发送 `{record}`；所有合法输出会被
+  静默吞掉。
+- Bad：Managed Runtime 再维护 `turns[]/items[]/active_turn_id`，然后与 canonical history 比较
+  currentness；这会把纯视图变成第二事实源。
+
+## 6. Tests Required
+
+- Rust adapter test 覆盖 finalized provider response 中完整 tool calls，并断言生成 canonical tool
+  items。
+- Complete Agent integration test 覆盖 source-scoped live canonical records，且 live lane 不持久化
+  为第二份 tail。
+- transport test 断言当前 `{source,sequence,record}` 通过、旧 telemetry payload 被拒绝。
+- frontend projection test 断言相同 `presentation_id` 替换、新 id 追加。
+- liveness test 断言 `TurnStarted + first output` 仍 active，加入 `TurnCompleted` 后才 inactive。
+- production tracer 覆盖 Product input → tool live items → final assistant → reload durable history，
+  并断言页面没有未知工具卡或悬空会话。
+- schema generation 与 TypeScript typecheck 必须证明 Agent service/Runtime wrapper 只引用
+  `CanonicalConversationRecord`，不再导出平行 item presentation vocabulary。
+
+## 7. Wrong vs Correct
+
+```ts
+// Wrong: provider telemetry becomes a second frontend protocol.
+if (event.payload.kind === "tool_call_completed") {
+  snapshot.items.push(makeRuntimeToolItem(event));
+}
+
+// Correct: merge the one canonical record by its stable presentation identity.
+const index = snapshot.conversation_history.findIndex(
+  (record) => record.presentation_id === event.record.presentation_id,
+);
+index >= 0
+  ? snapshot.conversation_history.splice(index, 1, event.record)
+  : snapshot.conversation_history.push(event.record);
+```
+
+```ts
+// Wrong: any output implies the Agent stopped receiving.
+const isReceiving = lastEvent.type === "agent_message_delta";
+
+// Correct: only canonical turn boundaries define execution liveness.
+const isReceiving = hasActiveCanonicalTurn(snapshot.conversation_history);
 ```
 
 ```rust
-// Wrong: 每个executor发自己的业务标题事件。
-BackboneEvent::NativeConversationTitleUpdated { title }
+// Wrong: normalize source ids into another identity namespace.
+let runtime_item_id = format!("agent-item:{}", source_item_id);
 
-// Correct: 所有producer使用pinned Codex-shaped通用事件。
-BackboneEvent::ThreadNameUpdated(ThreadNameUpdatedNotification {
-    thread_id: source_thread_id,
-    thread_name: Some(title),
-})
+// Correct: preserve the concrete Agent coordinate in the request-scoped view.
+let runtime_item_id = RuntimeItemId::new(source_item_id.into_inner())?;
 ```

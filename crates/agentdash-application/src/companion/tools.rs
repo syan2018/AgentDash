@@ -69,7 +69,6 @@ use crate::channel::{
     ChannelService, LifecycleRunChannelOwnerStore, UnsupportedChannelBindingResolver,
 };
 use crate::wait_activity::{WaitActivityService, WaitToolContext};
-use agentdash_agent_runtime_contract::ManagedRuntimeEntityStatus;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductInputDeliveryPort, CompanionAdoptionMode as ProtocolCompanionAdoptionMode,
     CompanionContextMode, CompanionContextSourceDraft, CompanionContextSources,
@@ -3085,12 +3084,13 @@ async fn compile_durable_companion_plan(
                 "读取父 Agent Runtime canonical snapshot 失败: {error}"
             ))
         })?;
-    let through_turn_id = snapshot
-        .turns
-        .iter()
-        .rev()
-        .find(|turn| turn.status == ManagedRuntimeEntityStatus::Completed)
-        .map(|turn| turn.id.clone());
+    let through_turn_id =
+        agentdash_agent_protocol::CanonicalConversationView::new(&snapshot.conversation_history)
+            .completed_turn(None)
+            .map(|turn| {
+                agentdash_agent_runtime_contract::RuntimeTurnId::new(turn.id.clone())
+                    .expect("canonical turn ids are valid Runtime turn ids")
+            });
 
     let non_constraints = plan
         .slice

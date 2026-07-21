@@ -2,8 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use super::AgentRunForkGraph;
 use agentdash_agent_runtime_contract::{
-    RuntimeOperationId, RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId,
-    RuntimeTurnId,
+    RuntimeOperationId, RuntimePayloadDigest, RuntimeThreadId, RuntimeTurnId,
 };
 use agentdash_application_ports::agent_run_fork::{
     AgentRunForkGraph as PersistenceAgentRunForkGraph, AgentRunForkGraphStore,
@@ -171,7 +170,6 @@ pub struct RequiredInitialContextEvidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AcceptedRuntimeOperation {
     pub operation_id: RuntimeOperationId,
-    pub accepted_revision: RuntimeProjectionRevision,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1715,7 +1713,6 @@ mod tests {
     fn accepted(identity: &AgentRunForkOperationIdentity) -> AcceptedRuntimeOperation {
         AcceptedRuntimeOperation {
             operation_id: identity.runtime_operation_id.clone(),
-            accepted_revision: RuntimeProjectionRevision(1),
         }
     }
 

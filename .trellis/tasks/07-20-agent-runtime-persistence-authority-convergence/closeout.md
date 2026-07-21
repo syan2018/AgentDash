@@ -44,18 +44,20 @@ Product target + client identity
 
 Read / reconnect:
 Product shell + Complete Agent read(source)
-  -> in-memory conversation projection
+  -> in-memory canonical conversation view
   -> authoritative UI snapshot
 
 Live:
 Agent Core callback
-  -> source-scoped in-memory broadcast
+  -> source-scoped canonical record broadcast
   -> current UI connection
 ```
 
-同步 command 返回后，前端主动重读 authoritative snapshot；live event 只承担当前连接中的低延迟
-partial。即使 Provider 在输出 assistant item 前失败，Agent terminal history 也会形成 terminal-only
-turn segment，并在 UI 展示真实错误信息。
+Complete Agent snapshot、Runtime request-scoped wrapper与前端feed共享唯一
+`CanonicalConversationRecord`流；Runtime/UI不再维护平行turn/item表示。live event只承担当前连接中的
+低延迟partial，重连以authoritative snapshot替换；会话运行态只由`TurnStarted/TurnCompleted`界定。
+即使Provider在输出assistant item前失败，Agent terminal history也会形成terminal-only turn segment，
+并在UI展示真实错误信息。
 
 ## Cold Host 与 Provider 边界
 
@@ -79,12 +81,14 @@ operation acceptance 与重启 inspection 使用同一个 typed selection 条件
 
 - 使用既有 Product binding，在全新 Host 进程中恢复 Dash service、source route 与 binding
   generation；首次 authoritative snapshot 读取成功。
-- 向 AgentRun `d4b56d94-99ee-5e55-8b40-ba307a44f01e` 提交真实 Composer input
-  `Reply with exactly OK.`；执行配置为 `openai-codex / gpt-5.5 / minimal`。
+- 向 AgentRun `814b65c6-633d-598a-a458-ec98f53a8641` 提交真实 Composer input，要求使用
+  filesystem tools并返回`STREAM_OK`。
 - API 返回 concrete Agent operation receipt `succeeded`。
-- 同一 live 连接依次收到 `provider_round_started`、`text_delta("OK")`、
-  `provider_round_completed`。
-- authoritative snapshot 重读到 revision 9、completed turn 与 Agent message `OK`。
+- 同一页面依次渲染`mounts_list`、`fs_glob`两个工具项与Agent message
+  `STREAM_OK Cargo.lock`，没有未知工具卡或首包后中止。
+- authoritative snapshot重读到revision 14与14条ordered canonical records；contract只有
+  `conversation_history`，没有平行turn/item/active事实。
+- 浏览器重载后从Dash durable history恢复相同工具项和最终消息。
 - PostgreSQL 中 `dash_complete_effect` 收敛为 terminal succeeded；`dash_complete_source` 保存
   source command/history。LifecycleAgent 只保存稳定 Product binding/profile/source，没有 Runtime、
   Host 或 live projection durable facts。
@@ -94,9 +98,9 @@ operation acceptance 与重启 inspection 使用同一个 typed selection 条件
 - 相关 Application/Runtime contract/Infrastructure/API/LLM Provider crates `cargo check` 通过。
 - `agentdash-application-agentrun` 134 项测试通过，包含 Fork crash-window/inspection matrix 18 项。
 - `agentdash-llm-provider` 50 项测试通过。
-- frontend TypeScript typecheck 通过；authoritative reload、terminal-only failure 与错误渲染 7 项
-  定向测试通过。
-- contracts 六组 codegen/check 全部无漂移。
+- frontend TypeScript typecheck与99个文件、504项测试通过；live transport、presentation merge、
+  turn liveness、authoritative reload、terminal-only failure与错误渲染均在其中。
+- contracts 六组完整generate/check全部无漂移，RuntimeWire schema不再残留平行Agent item/turn词汇。
 - migration history guard 通过；本次最终修复不新增 schema 或 migration。
 - 退役 Runtime schema、repository/gate 与 Noop callback sink 的 production 源码负向搜索通过。
 - 本次新增与直接修改的独立前端模块 ESLint 通过；hook 文件仍保留仓库既有

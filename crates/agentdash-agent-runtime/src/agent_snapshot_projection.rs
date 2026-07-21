@@ -1,19 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use agentdash_agent_protocol::{BackboneEvent, CanonicalConversationView};
+
 use agentdash_agent_runtime_contract::{
     ManagedRuntimeAvailabilityEvidence, ManagedRuntimeCommandAvailability,
-    ManagedRuntimeCommandKind, ManagedRuntimeEntityStatus, ManagedRuntimeInteraction,
-    ManagedRuntimeInteractionRequest, ManagedRuntimeInteractionResolution,
-    ManagedRuntimeInteractionStatus, ManagedRuntimeItem, ManagedRuntimeItemPresentation,
+    ManagedRuntimeCommandKind, ManagedRuntimeInteraction, ManagedRuntimeInteractionRequest,
+    ManagedRuntimeInteractionResolution, ManagedRuntimeInteractionStatus,
     ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
     ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot, ManagedRuntimeThreadNameSource,
-    ManagedRuntimeTurn, ManagedRuntimeUnavailabilityReason, RuntimeInteractionId, RuntimeItemId,
-    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
-    SurfaceRevision,
+    ManagedRuntimeUnavailabilityReason, RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest,
+    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 use agentdash_agent_service_api::{
-    AgentEntityStatus, AgentInteractionStatus, AgentLifecycleStatus, AgentSnapshot,
-    AgentSnapshotAuthority, AgentSnapshotSource, SemanticFidelity,
+    AgentInteractionStatus, AgentLifecycleStatus, AgentSnapshot, AgentSnapshotAuthority,
+    AgentSnapshotSource, SemanticFidelity,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -46,55 +46,37 @@ pub fn project_authoritative_agent_snapshot(
 
     let mut known_turns = BTreeSet::new();
     let mut known_items = BTreeMap::new();
-    let mut turns = Vec::with_capacity(snapshot.turns.len());
-    let mut items = Vec::new();
-    for turn in &snapshot.turns {
-        if !known_turns.insert(turn.id.clone()) {
-            return invalid("snapshot contains a duplicate turn id");
-        }
-        let runtime_turn_id = runtime_turn_id(&turn.id)?;
-        let mut item_ids = Vec::with_capacity(turn.items.len());
-        for item in &turn.items {
-            item.validate()
-                .map_err(|error| AgentSnapshotProjectionError::InvalidSnapshot {
-                    reason: error.to_string(),
-                })?;
-            if known_items
-                .insert(item.id.clone(), turn.id.clone())
-                .is_some()
-            {
-                return invalid("snapshot contains a duplicate item id");
+    for record in &snapshot.conversation_history {
+        match &record.presentation.envelope.event {
+            BackboneEvent::TurnStarted(notification) => {
+                known_turns.insert(notification.turn.id.clone());
             }
-            let runtime_item_id = runtime_item_id(&item.id)?;
-            let status = project_entity_status(item.status);
-            let presentation: ManagedRuntimeItemPresentation = transcode(&item.presentation)?;
-            presentation.validate_for_status(status).map_err(|error| {
-                AgentSnapshotProjectionError::InvalidSnapshot {
-                    reason: error.to_string(),
-                }
-            })?;
-            item_ids.push(runtime_item_id.clone());
-            items.push(ManagedRuntimeItem {
-                id: runtime_item_id,
-                turn_id: runtime_turn_id.clone(),
-                status,
-                presentation,
-            });
+            BackboneEvent::TurnCompleted(notification) => {
+                known_turns.insert(notification.turn.id.clone());
+            }
+            BackboneEvent::ItemStarted(notification) => {
+                known_turns.insert(notification.turn_id.clone());
+                known_items.insert(
+                    notification.item.id().to_owned(),
+                    notification.turn_id.clone(),
+                );
+            }
+            BackboneEvent::ItemUpdated(notification) => {
+                known_turns.insert(notification.turn_id.clone());
+                known_items.insert(
+                    notification.item.id().to_owned(),
+                    notification.turn_id.clone(),
+                );
+            }
+            BackboneEvent::ItemCompleted(notification) => {
+                known_turns.insert(notification.turn_id.clone());
+                known_items.insert(
+                    notification.item.id().to_owned(),
+                    notification.turn_id.clone(),
+                );
+            }
+            _ => {}
         }
-        turns.push(ManagedRuntimeTurn {
-            id: runtime_turn_id,
-            source_turn_id: turn.id.to_string(),
-            status: project_entity_status(turn.status),
-            item_ids,
-        });
-    }
-
-    if snapshot
-        .active_turn_id
-        .as_ref()
-        .is_some_and(|turn_id| !known_turns.contains(turn_id))
-    {
-        return invalid("active turn does not exist in the snapshot");
     }
 
     let mut known_interactions = BTreeSet::new();
@@ -103,14 +85,13 @@ pub fn project_authoritative_agent_snapshot(
         if !known_interactions.insert(interaction.id.clone()) {
             return invalid("snapshot contains a duplicate interaction id");
         }
-        if !interaction.validate() || !known_turns.contains(&interaction.turn_id) {
+        if !interaction.validate() || !known_turns.contains(interaction.turn_id.as_str()) {
             return invalid("interaction status or turn coordinate is invalid");
         }
-        if interaction
-            .item_id
-            .as_ref()
-            .is_some_and(|item_id| known_items.get(item_id) != Some(&interaction.turn_id))
-        {
+        if interaction.item_id.as_ref().is_some_and(|item_id| {
+            known_items.get(item_id.as_str()).map(String::as_str)
+                != Some(interaction.turn_id.as_str())
+        }) {
             return invalid("interaction item does not belong to its turn");
         }
         let projected = ManagedRuntimeInteraction {
@@ -137,20 +118,17 @@ pub fn project_authoritative_agent_snapshot(
 
     let (thread_name, thread_name_source) =
         project_thread_name(snapshot.thread_name, &snapshot.source)?;
-    let active_turn_id = snapshot
-        .active_turn_id
-        .as_ref()
-        .map(runtime_turn_id)
-        .transpose()?;
+    let has_active_turn = CanonicalConversationView::new(&snapshot.conversation_history)
+        .active_turn()
+        .is_some();
     let command_availability = presentation_command_availability(
         snapshot.lifecycle,
-        snapshot.active_turn_id.is_some(),
+        has_active_turn,
         snapshot
             .interactions
             .iter()
             .any(|interaction| interaction.status == AgentInteractionStatus::Pending),
         applied_surface_revision,
-        revision,
     );
 
     Ok(ManagedRuntimeSnapshot {
@@ -158,9 +136,6 @@ pub fn project_authoritative_agent_snapshot(
         revision,
         captured_at_ms,
         lifecycle: project_lifecycle(snapshot.lifecycle),
-        active_turn_id,
-        turns,
-        items,
         interactions,
         thread_name,
         thread_name_source,
@@ -229,7 +204,6 @@ fn presentation_command_availability(
     has_active_turn: bool,
     has_pending_interaction: bool,
     applied_surface_revision: Option<SurfaceRevision>,
-    revision: RuntimeProjectionRevision,
 ) -> BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability> {
     let active = lifecycle == AgentLifecycleStatus::Active;
     ManagedRuntimeCommandKind::ALL
@@ -253,7 +227,6 @@ fn presentation_command_availability(
                 ),
             };
             let evidence = ManagedRuntimeAvailabilityEvidence {
-                decided_at_revision: revision,
                 blocking_operation_id: None,
                 bound_surface_revision: applied_surface_revision,
                 applied_surface_revision,
@@ -280,21 +253,19 @@ fn presentation_command_availability(
 fn runtime_turn_id(
     source: &agentdash_agent_service_api::AgentTurnId,
 ) -> Result<RuntimeTurnId, AgentSnapshotProjectionError> {
-    RuntimeTurnId::new(format!("agent-turn:{source}"))
-        .map_err(|error| presentation(error.to_string()))
+    RuntimeTurnId::new(source.as_str().to_owned()).map_err(|error| presentation(error.to_string()))
 }
 
 fn runtime_item_id(
     source: &agentdash_agent_service_api::AgentItemId,
 ) -> Result<RuntimeItemId, AgentSnapshotProjectionError> {
-    RuntimeItemId::new(format!("agent-item:{source}"))
-        .map_err(|error| presentation(error.to_string()))
+    RuntimeItemId::new(source.as_str().to_owned()).map_err(|error| presentation(error.to_string()))
 }
 
 fn runtime_interaction_id(
     source: &agentdash_agent_service_api::AgentInteractionId,
 ) -> Result<RuntimeInteractionId, AgentSnapshotProjectionError> {
-    RuntimeInteractionId::new(format!("agent-interaction:{source}"))
+    RuntimeInteractionId::new(source.as_str().to_owned())
         .map_err(|error| presentation(error.to_string()))
 }
 
@@ -318,17 +289,6 @@ fn project_lifecycle(status: AgentLifecycleStatus) -> ManagedRuntimeLifecycleSta
         AgentLifecycleStatus::Suspended => ManagedRuntimeLifecycleStatus::Suspended,
         AgentLifecycleStatus::Closed => ManagedRuntimeLifecycleStatus::Closed,
         AgentLifecycleStatus::Lost => ManagedRuntimeLifecycleStatus::Lost,
-    }
-}
-
-fn project_entity_status(status: AgentEntityStatus) -> ManagedRuntimeEntityStatus {
-    match status {
-        AgentEntityStatus::Accepted => ManagedRuntimeEntityStatus::Accepted,
-        AgentEntityStatus::Running => ManagedRuntimeEntityStatus::Running,
-        AgentEntityStatus::Completed => ManagedRuntimeEntityStatus::Completed,
-        AgentEntityStatus::Failed => ManagedRuntimeEntityStatus::Failed,
-        AgentEntityStatus::Interrupted => ManagedRuntimeEntityStatus::Interrupted,
-        AgentEntityStatus::Lost => ManagedRuntimeEntityStatus::Lost,
     }
 }
 
@@ -377,7 +337,6 @@ fn presentation(reason: impl Into<String>) -> AgentSnapshotProjectionError {
 mod tests {
     use agentdash_agent_service_api::{
         AgentSnapshot, AgentSnapshotRevision, AgentSnapshotSource, AgentSourceCoordinate,
-        AgentTurnId, AgentTurnSnapshot,
     };
 
     use super::*;
@@ -387,8 +346,6 @@ mod tests {
             source: AgentSourceCoordinate::new("source-1").expect("source"),
             revision: AgentSnapshotRevision(7),
             lifecycle: AgentLifecycleStatus::Active,
-            active_turn_id: None,
-            turns: Vec::new(),
             interactions: Vec::new(),
             thread_name: None,
             source_info: AgentSnapshotSource {
@@ -418,25 +375,5 @@ mod tests {
             projected.authority,
             ManagedRuntimeProjectionAuthority::SourceAuthoritative
         );
-    }
-
-    #[test]
-    fn duplicate_agent_coordinates_are_rejected() {
-        let mut snapshot = snapshot();
-        let turn = AgentTurnSnapshot {
-            id: AgentTurnId::new("turn-1").expect("turn"),
-            status: AgentEntityStatus::Completed,
-            items: Vec::new(),
-            error: None,
-        };
-        snapshot.turns = vec![turn.clone(), turn];
-
-        assert!(matches!(
-            project_authoritative_agent_snapshot(
-                RuntimeThreadId::new("thread-1").expect("thread"),
-                snapshot,
-            ),
-            Err(AgentSnapshotProjectionError::InvalidSnapshot { .. })
-        ));
     }
 }

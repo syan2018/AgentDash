@@ -1784,7 +1784,6 @@ mod tests {
     fn fresh_accepted(identity: &CompanionFreshOperationIdentity) -> AcceptedRuntimeOperation {
         AcceptedRuntimeOperation {
             operation_id: identity.runtime_operation_id.clone(),
-            accepted_revision: agentdash_agent_runtime_contract::RuntimeProjectionRevision(1),
         }
     }
 
@@ -2349,7 +2348,6 @@ mod tests {
         ) -> Result<RuntimeOperationOutcome, String> {
             let receipt = AcceptedRuntimeOperation {
                 operation_id: identity.runtime_operation_id.clone(),
-                accepted_revision: agentdash_agent_runtime_contract::RuntimeProjectionRevision(1),
             };
             let evidence = match identity.operation {
                 AgentRunForkRuntimeOperation::Fork => RuntimeForkPhaseEvidence::ForkProvisioned {

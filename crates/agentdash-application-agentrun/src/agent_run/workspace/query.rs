@@ -1,6 +1,4 @@
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeEntityStatus, ManagedRuntimeLifecycleStatus, ManagedRuntimeSnapshot,
-};
+use agentdash_agent_runtime_contract::{ManagedRuntimeLifecycleStatus, ManagedRuntimeSnapshot};
 use agentdash_application_vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, VfsSurfaceRuntimeProjection,
     build_surface_summary,
@@ -397,20 +395,22 @@ impl WorkspaceRuntimeObservation {
 }
 
 fn runtime_execution_state(snapshot: &ManagedRuntimeSnapshot) -> AgentRunExecutionState {
-    let active_turn_id = snapshot.active_turn_id.as_ref().map(ToString::to_string);
+    let active_turn_id = snapshot.active_turn_id().map(str::to_owned);
     if active_turn_id.is_some() {
         return AgentRunExecutionState::Running {
             turn_id: active_turn_id,
         };
     }
-    let last_turn = snapshot.turns.last();
-    let last_turn_id = last_turn.map(|turn| turn.id.to_string());
+    let last_turn =
+        agentdash_agent_protocol::CanonicalConversationView::new(&snapshot.conversation_history)
+            .latest_turn();
+    let last_turn_id = last_turn.map(|turn| turn.id.clone());
     match snapshot.lifecycle {
         ManagedRuntimeLifecycleStatus::Provisioning => {
             AgentRunExecutionState::Running { turn_id: None }
         }
         ManagedRuntimeLifecycleStatus::Active => match last_turn.map(|turn| turn.status) {
-            Some(ManagedRuntimeEntityStatus::Running | ManagedRuntimeEntityStatus::Accepted) => {
+            Some(agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::InProgress) => {
                 AgentRunExecutionState::Running {
                     turn_id: last_turn_id,
                 }
@@ -422,18 +422,18 @@ fn runtime_execution_state(snapshot: &ManagedRuntimeSnapshot) -> AgentRunExecuti
             message: Some("Complete Agent 已挂起".to_string()),
         },
         ManagedRuntimeLifecycleStatus::Closed => match last_turn.map(|turn| turn.status) {
-            Some(ManagedRuntimeEntityStatus::Failed) => AgentRunExecutionState::Failed {
-                turn_id: last_turn_id.unwrap_or_else(|| "closed".to_string()),
-                message: None,
-            },
-            Some(ManagedRuntimeEntityStatus::Interrupted) => AgentRunExecutionState::Interrupted {
-                turn_id: last_turn_id,
-                message: None,
-            },
-            Some(ManagedRuntimeEntityStatus::Lost) => AgentRunExecutionState::Lost {
-                turn_id: last_turn_id,
-                message: None,
-            },
+            Some(agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Failed) => {
+                AgentRunExecutionState::Failed {
+                    turn_id: last_turn_id.unwrap_or_else(|| "closed".to_string()),
+                    message: None,
+                }
+            }
+            Some(agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Interrupted) => {
+                AgentRunExecutionState::Interrupted {
+                    turn_id: last_turn_id,
+                    message: None,
+                }
+            }
             _ => AgentRunExecutionState::Completed {
                 turn_id: last_turn_id.unwrap_or_else(|| "closed".to_string()),
             },

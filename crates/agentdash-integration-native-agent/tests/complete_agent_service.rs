@@ -24,17 +24,16 @@ use agentdash_agent_service_api::{
     AgentHookAction, AgentHookBlockingSemantics, AgentHookDecision, AgentHookDefinitionId,
     AgentHookInvocation, AgentHookMutationKind, AgentHookPoint, AgentHookTiming,
     AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbacks, AgentIdempotencyKey,
-    AgentInput, AgentInputContent, AgentLiveEventPayload, AgentPayloadDigest, AgentProfileDigest,
-    AgentReadQuery, AgentReceiptState, AgentServiceError, AgentServiceErrorCode,
-    AgentServiceInstanceId, AgentSnapshotRevision, AgentSourceCoordinate,
-    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolInvocation,
-    AgentToolName, AgentToolResult, AgentToolSemanticFacet, AgentToolUpdateSemantics,
-    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
-    ContextAuthorityKind, ContextProvenance, CreateAgentCommand, ForkAgentCommand,
-    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContribution,
-    InitialContextDeliveryFidelity, InitialContextMode, ResumeAgentCommand,
-    RevokeBoundAgentSurface, SemanticFidelity,
+    AgentInput, AgentInputContent, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
+    AgentReceiptState, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
+    AgentSnapshotRevision, AgentSourceCoordinate, AgentSurfaceContributionPayload,
+    AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
+    AgentTerminalOutcome, AgentToolDelivery, AgentToolInvocation, AgentToolName, AgentToolResult,
+    AgentToolSemanticFacet, AgentToolUpdateSemantics, ApplyBoundAgentSurface, BoundAgentSurface,
+    BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind, ContextProvenance,
+    CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
+    InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
+    InitialContextMode, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_native_agent::{
     DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
@@ -889,30 +888,6 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
     assert_eq!(changes.changes.len(), 9);
     assert_eq!(changes.changes[0].cursor.as_str(), "1:0");
     assert_eq!(changes.changes[1].cursor.as_str(), "2:0");
-    assert!(changes.changes.iter().any(|change| matches!(
-        &change.payload,
-        agentdash_agent_service_api::AgentChangePayload::SourceObservation {
-            state,
-            ..
-        } if matches!(
-            state.as_ref(),
-            agentdash_agent_service_api::AgentChangePayload::ActiveTurnChanged {
-                active_turn_id: Some(_)
-            }
-        )
-    )));
-    assert!(changes.changes.iter().any(|change| matches!(
-        &change.payload,
-        agentdash_agent_service_api::AgentChangePayload::SourceObservation {
-            state,
-            ..
-        } if matches!(
-            state.as_ref(),
-            agentdash_agent_service_api::AgentChangePayload::ActiveTurnChanged {
-                active_turn_id: None
-            }
-        )
-    )));
     let parent_snapshot = service
         .read(AgentReadQuery {
             source: parent.clone(),
@@ -1007,8 +982,26 @@ async fn fork_profile_only_advertises_recoverable_exact_cutoffs() {
         })
         .await
         .unwrap();
-    let completed_turn = parent_snapshot.turns[0].id.clone();
-    let completed_item = parent_snapshot.turns[0].items[0].id.clone();
+    let completed_turn = agentdash_agent_service_api::AgentTurnId::new(
+        parent_snapshot
+            .conversation()
+            .completed_turn(None)
+            .expect("completed turn")
+            .id
+            .clone(),
+    )
+    .unwrap();
+    let completed_item = agentdash_agent_service_api::AgentItemId::new(
+        parent_snapshot
+            .conversation()
+            .completed_items()
+            .next()
+            .expect("completed item")
+            .item
+            .id()
+            .to_owned(),
+    )
+    .unwrap();
 
     let descriptor = service.describe().await.unwrap();
     assert_eq!(
@@ -1076,7 +1069,7 @@ async fn fork_profile_only_advertises_recoverable_exact_cutoffs() {
             .map(|revision| revision.as_str()),
         Some(expected_source_revision.as_str())
     );
-    assert!(child_snapshot.active_turn_id.is_none());
+    assert!(child_snapshot.active_turn_id().is_none());
     assert!(matches!(
         restarted
             .execute(submit_envelope(
@@ -1640,6 +1633,34 @@ async fn exact_hooks_run_once_rewrite_and_do_not_retrigger_on_effect_replay() {
             .iter()
             .any(|message| message.content == "rewritten-result")
     );
+    drop(requests);
+    let snapshot = service
+        .read(AgentReadQuery {
+            source: AgentSourceCoordinate::new("dash-hook-execution").unwrap(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert!(snapshot.conversation_history.iter().any(|record| matches!(
+        &record.presentation.envelope.event,
+        BackboneEvent::ItemCompleted(notification)
+            if matches!(
+                &notification.item,
+                agentdash_agent_protocol::AgentDashThreadItem::Codex(
+                    codex::ThreadItem::DynamicToolCall { tool, success, .. }
+                ) if tool == "read" && *success == Some(Some(true))
+            )
+    )));
+    assert!(snapshot.conversation_history.iter().any(|record| matches!(
+        &record.presentation.envelope.event,
+        BackboneEvent::ItemCompleted(notification)
+            if matches!(
+                &notification.item,
+                agentdash_agent_protocol::AgentDashThreadItem::Codex(
+                    codex::ThreadItem::AgentMessage { text, .. }
+                ) if text == "hooked answer"
+            )
+    )));
 }
 
 #[tokio::test]
@@ -2151,11 +2172,11 @@ async fn execute_reservation_survives_lost_response_and_reconciles_dash_once_aft
         })
         .await
         .unwrap();
-    assert_eq!(snapshot.turns.len(), 2);
+    assert_eq!(snapshot.conversation().completed_turns().count(), 2);
 }
 
 #[tokio::test]
-async fn manual_compaction_is_exposed_as_detailed_history_derived_turn_and_change() {
+async fn manual_compaction_is_exposed_once_in_canonical_history_and_changes() {
     let service = service();
     let source = AgentSourceCoordinate::new("dash-compaction").unwrap();
     service
@@ -2188,12 +2209,14 @@ async fn manual_compaction_is_exposed_as_detailed_history_derived_turn_and_chang
         })
         .await
         .unwrap();
-    assert_eq!(snapshot.turns.len(), 1);
-    assert_eq!(snapshot.turns[0].id.as_str(), "compact-1");
-    assert_eq!(snapshot.turns[0].items.len(), 1);
+    let completed = snapshot
+        .conversation()
+        .completed_items()
+        .find(|completed| completed.item.id() == "compact-1")
+        .expect("completed compaction item");
     assert!(matches!(
-        snapshot.turns[0].items[0].presentation.body,
-        agentdash_agent_service_api::AgentItemBody::ContextCompaction { .. }
+        completed.item.as_codex(),
+        Some(codex::ThreadItem::ContextCompaction { id }) if id == "compact-1"
     ));
 
     let changes = service
@@ -2205,29 +2228,26 @@ async fn manual_compaction_is_exposed_as_detailed_history_derived_turn_and_chang
         .await
         .unwrap();
     assert_eq!(changes.changes.len(), 3);
-    let (turn, presentation) = changes
+    let presentation = changes
         .changes
         .iter()
         .find_map(|change| match &change.payload {
             agentdash_agent_service_api::AgentChangePayload::SourceObservation {
                 state,
                 presentation,
-            } => match state.as_ref() {
-                agentdash_agent_service_api::AgentChangePayload::TurnChanged { turn }
-                    if turn.id.as_str() == "compact-1" =>
-                {
-                    Some((turn, presentation))
-                }
-                _ => None,
-            },
+            } if state.is_none()
+                && presentation.iter().any(|record| {
+                    matches!(
+                        &record.presentation.envelope.event,
+                        BackboneEvent::ItemStarted(started) if started.turn_id == "compact-1"
+                    )
+                }) =>
+            {
+                Some(presentation)
+            }
             _ => None,
         })
-        .expect("compaction start must be one atomic state and presentation observation");
-    assert_eq!(turn.items.len(), 1);
-    assert!(matches!(
-        turn.items[0].presentation.body,
-        agentdash_agent_service_api::AgentItemBody::ContextCompaction { .. }
-    ));
+        .expect("compaction start must be one canonical presentation observation");
     assert_eq!(presentation.len(), 1);
     assert!(matches!(
         &presentation[0].presentation.envelope.event,
@@ -2303,8 +2323,8 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
         assert_eq!(event.source, source);
         assert!(event.sequence.0 > previous_sequence);
         previous_sequence = event.sequence.0;
-        if let AgentLiveEventPayload::TextDelta { delta, .. } = event.payload {
-            break delta;
+        if let BackboneEvent::AgentMessageDelta(delta) = event.record.presentation.envelope.event {
+            break delta.delta;
         }
     };
     assert_eq!(text_delta, "fixture answer");
@@ -2376,12 +2396,22 @@ async fn provider_failed_and_lost_are_terminal_and_inspectable() {
             })
             .await
             .unwrap();
-        let failure = snapshot.turns[0]
+        let failure = snapshot
+            .conversation()
+            .completed_turn(None)
+            .expect("terminal turn")
             .error
             .as_ref()
+            .and_then(Option::as_ref)
             .expect("terminal Agent snapshot must retain the Dash failure");
-        assert_eq!(failure.code, expected_code);
-        assert_eq!(failure.retryable, Some(expected_retryable));
+        assert!(
+            failure
+                .additional_details
+                .as_ref()
+                .and_then(Option::as_ref)
+                .is_some_and(|details| details.contains(expected_code)
+                    && details.contains(&format!("retryable={expected_retryable}")))
+        );
         assert!(failure.message.contains(if name == "failed" {
             "retry later"
         } else {
@@ -2564,7 +2594,7 @@ async fn steer_and_interrupt_orchestrate_the_active_turn() {
             })
             .await
             .unwrap()
-            .active_turn_id
+            .active_turn_id()
             .is_none()
     );
 }
@@ -2613,7 +2643,7 @@ async fn resolve_interaction_completes_the_suspended_turn() {
         agentdash_agent_service_api::AgentInteractionStatus::Resolved
     );
     assert!(resolved.interactions[0].resolution.is_some());
-    assert!(resolved.active_turn_id.is_none());
+    assert!(resolved.active_turn_id().is_none());
 }
 
 #[tokio::test]
@@ -2645,15 +2675,15 @@ async fn automatic_overflow_runs_a_b_c_through_the_dash_worker() {
         .unwrap();
     assert!(
         snapshot
-            .turns
-            .iter()
-            .any(|turn| turn.id.as_str() == "input-auto:B")
+            .conversation()
+            .completed_items()
+            .any(|completed| completed.item.id() == "input-auto:B")
     );
     assert!(
         snapshot
-            .turns
-            .iter()
-            .any(|turn| turn.id.as_str() == "turn:input-auto:C")
+            .conversation()
+            .completed_turns()
+            .any(|turn| turn.id == "turn:input-auto:C")
     );
 }
 
@@ -2690,12 +2720,12 @@ async fn automatic_compaction_b_failure_and_lost_settle_original_and_block_c() {
             })
             .await
             .unwrap();
-        assert!(snapshot.active_turn_id.is_none());
+        assert!(snapshot.active_turn_id().is_none());
         assert!(
             !snapshot
-                .turns
-                .iter()
-                .any(|turn| turn.id.as_str().ends_with(":C"))
+                .conversation()
+                .completed_turns()
+                .any(|turn| turn.id.ends_with(":C"))
         );
         assert!(matches!(
             service
@@ -2753,16 +2783,13 @@ async fn automatic_continuation_c_failure_and_lost_settle_original_and_clear_act
             })
             .await
             .unwrap();
-        assert!(snapshot.active_turn_id.is_none());
-        assert!(snapshot.turns.iter().any(|turn| {
-            turn.id.as_str().ends_with(":C")
-                && turn.status
-                    == if expected == AgentTerminalOutcome::Lost {
-                        agentdash_agent_service_api::AgentEntityStatus::Lost
-                    } else {
-                        agentdash_agent_service_api::AgentEntityStatus::Failed
-                    }
-        }));
+        assert!(snapshot.active_turn_id().is_none());
+        assert!(
+            snapshot
+                .conversation()
+                .completed_turns()
+                .any(|turn| turn.id.ends_with(":C") && turn.status == codex::TurnStatus::Failed)
+        );
     }
 }
 

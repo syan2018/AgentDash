@@ -209,10 +209,6 @@ export function decodeManagedRuntimeOperationReceipt(
   const receipt = record(value, "$");
   return {
     ...receipt,
-    accepted_revision: runtimeU64(
-      receipt.accepted_revision,
-      "$.accepted_revision",
-    ),
     evidence: decodeOperationEvidence(receipt.evidence, "$.evidence"),
   } as ManagedRuntimeOperationReceipt;
 }
@@ -222,10 +218,6 @@ export function encodeManagedRuntimeOperationReceipt(
 ): ManagedRuntimeOperationReceiptWire {
   return {
     ...receipt,
-    accepted_revision: encodeRuntimeU64(
-      receipt.accepted_revision,
-      "$.accepted_revision",
-    ),
     evidence: encodeOperationEvidence(receipt.evidence),
   } as ManagedRuntimeOperationReceiptWire;
 }
@@ -237,10 +229,6 @@ function decodeAvailability(value: unknown, path: string): ManagedRuntimeCommand
     ...(availability as unknown as ManagedRuntimeCommandAvailabilityWire),
     evidence: {
       ...evidence,
-      decided_at_revision: runtimeU64(
-        evidence.decided_at_revision,
-        `${path}.evidence.decided_at_revision`,
-      ),
       bound_surface_revision: optionalRuntimeU64(
         evidence.bound_surface_revision,
         `${path}.evidence.bound_surface_revision`,
@@ -260,7 +248,6 @@ function encodeAvailability(
     ...availability,
     evidence: {
       ...availability.evidence,
-      decided_at_revision: encodeRuntimeU64(availability.evidence.decided_at_revision),
       bound_surface_revision:
         availability.evidence.bound_surface_revision === null
           ? null
@@ -294,343 +281,6 @@ function encodeAvailabilityMap(
   ) as ManagedRuntimeSnapshotWire["command_availability"];
 }
 
-function presentationContentBlock(value: unknown, path: string): unknown {
-  const block = record(value, path);
-  switch (block.kind) {
-    case "text":
-    case "image":
-    case "local_resource":
-    case "resource_link":
-    case "skill_reference":
-    case "mention":
-    case "structured":
-      return block;
-    default:
-      throw new ManagedRuntimeContractDecodeError(
-        `${path}.kind`,
-        "known presentation content block",
-      );
-  }
-}
-
-function presentationContent(
-  value: unknown,
-  path: string,
-): unknown[] {
-  return array(value, path).map((block, index) =>
-    presentationContentBlock(block, `${path}[${index}]`)
-  );
-}
-
-function planStep(value: unknown, path: string): unknown {
-  const step = record(value, path);
-  switch (step.status) {
-    case "pending":
-    case "in_progress":
-    case "completed":
-    case "failed":
-      return step;
-    default:
-      throw new ManagedRuntimeContractDecodeError(
-        `${path}.status`,
-        "known plan step status",
-      );
-  }
-}
-
-function planSteps(value: unknown, path: string): unknown[] {
-  return array(value, path).map((step, index) =>
-    planStep(step, `${path}[${index}]`)
-  );
-}
-
-function commandOutput(value: unknown, path: string): unknown {
-  const output = record(value, path);
-  switch (output.stream) {
-    case "stdout":
-    case "stderr":
-    case "combined":
-      return output;
-    default:
-      throw new ManagedRuntimeContractDecodeError(
-        `${path}.stream`,
-        "known command output stream",
-      );
-  }
-}
-
-function commandOutputs(value: unknown, path: string): unknown[] {
-  return array(value, path).map((output, index) =>
-    commandOutput(output, `${path}[${index}]`)
-  );
-}
-
-function filePatch(value: unknown, path: string): unknown {
-  const patch = record(value, path);
-  switch (patch.change_kind) {
-    case "add":
-    case "update":
-    case "delete":
-    case "move":
-      return patch;
-    default:
-      throw new ManagedRuntimeContractDecodeError(
-        `${path}.change_kind`,
-        "known file change kind",
-      );
-  }
-}
-
-function filePatches(value: unknown, path: string): unknown[] {
-  return array(value, path).map((patch, index) =>
-    filePatch(patch, `${path}[${index}]`)
-  );
-}
-
-function fileSearchMode(value: unknown, path: string): unknown {
-  switch (value) {
-    case "grep":
-    case "glob":
-      return value;
-    default:
-      throw new ManagedRuntimeContractDecodeError(path, "known file search mode");
-  }
-}
-
-function transformItemBody(
-  value: unknown,
-  path: string,
-  direction: "decode" | "encode",
-): unknown {
-  const body = record(value, path);
-  switch (body.kind) {
-    case "user_message":
-    case "hook_prompt":
-    case "agent_message":
-    case "file_read":
-      return {
-        ...body,
-        content: presentationContent(body.content, `${path}.content`),
-      };
-    case "reasoning":
-      return {
-        ...body,
-        summary: presentationContent(body.summary, `${path}.summary`),
-        content: presentationContent(body.content, `${path}.content`),
-      };
-    case "plan":
-      return {
-        ...body,
-        steps: planSteps(body.steps, `${path}.steps`),
-      };
-    case "command_execution":
-      return {
-        ...body,
-        output: commandOutputs(body.output, `${path}.output`),
-      };
-    case "file_change":
-      return {
-        ...body,
-        changes: filePatches(body.changes, `${path}.changes`),
-        output: presentationContent(body.output, `${path}.output`),
-      };
-    case "file_search":
-      return {
-        ...body,
-        mode: fileSearchMode(body.mode, `${path}.mode`),
-      };
-    case "mcp_tool_call":
-    case "dynamic_tool_call":
-    case "generic_tool_activity":
-      return {
-        ...body,
-        progress: presentationContent(body.progress, `${path}.progress`),
-      };
-    case "subagent_activity":
-      return {
-        ...body,
-        result: presentationContent(body.result, `${path}.result`),
-      };
-    case "web_search":
-      return {
-        ...body,
-        results: presentationContent(body.results, `${path}.results`),
-      };
-    case "image_generation":
-      return {
-        ...body,
-        outputs: presentationContent(body.outputs, `${path}.outputs`),
-      };
-    case "sleep":
-      return {
-        ...body,
-        duration_ms:
-          direction === "decode"
-            ? runtimeU64(body.duration_ms, `${path}.duration_ms`)
-            : encodeRuntimeU64(body.duration_ms as bigint, `${path}.duration_ms`),
-      };
-    case "context_compaction":
-      return {
-        ...body,
-        summary:
-          body.summary === null
-            ? null
-            : presentationContent(body.summary, `${path}.summary`),
-      };
-    case "error":
-      return {
-        ...body,
-        details:
-          body.details === null
-            ? null
-            : presentationContent(body.details, `${path}.details`),
-      };
-    case "collaboration_tool_call":
-    case "image_view":
-    case "review":
-    case "terminal_control":
-      return body;
-    default:
-      throw new ManagedRuntimeContractDecodeError(
-        `${path}.kind`,
-        "known item body",
-      );
-  }
-}
-
-function decodeItemBody(value: unknown, path: string): unknown {
-  return transformItemBody(value, path, "decode");
-}
-
-function encodeItemBody(value: unknown, path: string): unknown {
-  return transformItemBody(value, path, "encode");
-}
-
-function decodeItemPresentation(value: unknown, path: string): unknown {
-  const presentation = record(value, path);
-  const terminal =
-    presentation.terminal === null
-      ? null
-      : (() => {
-          const evidence = record(presentation.terminal, `${path}.terminal`);
-          switch (evidence.outcome) {
-            case "completed":
-            case "failed":
-            case "interrupted":
-            case "lost":
-              break;
-            default:
-              throw new ManagedRuntimeContractDecodeError(
-                `${path}.terminal.outcome`,
-                "known terminal outcome",
-              );
-          }
-          return {
-            ...evidence,
-            completed_at_ms: optionalRuntimeU64(
-              evidence.completed_at_ms,
-              `${path}.terminal.completed_at_ms`,
-            ),
-            duration_ms: optionalRuntimeU64(
-              evidence.duration_ms,
-              `${path}.terminal.duration_ms`,
-            ),
-          };
-        })();
-  return {
-    ...presentation,
-    body: decodeItemBody(presentation.body, `${path}.body`),
-    started_at_ms: optionalRuntimeU64(
-      presentation.started_at_ms,
-      `${path}.started_at_ms`,
-    ),
-    updated_at_ms: optionalRuntimeU64(
-      presentation.updated_at_ms,
-      `${path}.updated_at_ms`,
-    ),
-    terminal,
-  };
-}
-
-function encodeItemPresentation(value: unknown, path: string): unknown {
-  const presentation = record(value, path);
-  const terminal =
-    presentation.terminal === null
-      ? null
-      : (() => {
-          const evidence = record(presentation.terminal, `${path}.terminal`);
-          switch (evidence.outcome) {
-            case "completed":
-            case "failed":
-            case "interrupted":
-            case "lost":
-              break;
-            default:
-              throw new ManagedRuntimeContractDecodeError(
-                `${path}.terminal.outcome`,
-                "known terminal outcome",
-              );
-          }
-          return {
-            ...evidence,
-            completed_at_ms:
-              evidence.completed_at_ms === null
-                ? null
-                : encodeRuntimeU64(
-                    evidence.completed_at_ms as bigint,
-                    `${path}.terminal.completed_at_ms`,
-                  ),
-            duration_ms:
-              evidence.duration_ms === null
-                ? null
-                : encodeRuntimeU64(
-                    evidence.duration_ms as bigint,
-                    `${path}.terminal.duration_ms`,
-                  ),
-          };
-        })();
-  return {
-    ...presentation,
-    body: encodeItemBody(presentation.body, `${path}.body`),
-    started_at_ms:
-      presentation.started_at_ms === null
-        ? null
-        : encodeRuntimeU64(
-            presentation.started_at_ms as bigint,
-            `${path}.started_at_ms`,
-          ),
-    updated_at_ms:
-      presentation.updated_at_ms === null
-        ? null
-        : encodeRuntimeU64(
-            presentation.updated_at_ms as bigint,
-            `${path}.updated_at_ms`,
-          ),
-    terminal,
-  };
-}
-
-function decodeItem(value: unknown, path: string): unknown {
-  const item = record(value, path);
-  return {
-    ...item,
-    presentation: decodeItemPresentation(
-      item.presentation,
-      `${path}.presentation`,
-    ),
-  };
-}
-
-function encodeItem(value: unknown, path: string): unknown {
-  const item = record(value, path);
-  return {
-    ...item,
-    presentation: encodeItemPresentation(
-      item.presentation,
-      `${path}.presentation`,
-    ),
-  };
-}
 
 export function decodeManagedRuntimeSnapshot(value: unknown): ManagedRuntimeSnapshot {
   const snapshot = record(value, "$");
@@ -652,9 +302,6 @@ export function decodeManagedRuntimeSnapshot(value: unknown): ManagedRuntimeSnap
     revision: runtimeU64(snapshot.revision, "$.revision"),
     captured_at_ms: runtimeU64(snapshot.captured_at_ms, "$.captured_at_ms"),
     thread_name_source: threadNameSource,
-    items: array(snapshot.items, "$.items").map((item, index) =>
-      decodeItem(item, `$.items[${index}]`)
-    ),
     operations: array(snapshot.operations, "$.operations").map((operation, index) =>
       decodeOperation(operation, `$.operations[${index}]`)
     ),
@@ -683,9 +330,6 @@ export function encodeManagedRuntimeSnapshot(
             ...snapshot.thread_name_source,
             observed_at_ms: encodeRuntimeU64(snapshot.thread_name_source.observed_at_ms),
           },
-    items: snapshot.items.map((item, index) =>
-      encodeItem(item, `$.items[${index}]`)
-    ) as ManagedRuntimeSnapshotWire["items"],
     operations: snapshot.operations.map(encodeOperation),
     source_binding:
       snapshot.source_binding === null

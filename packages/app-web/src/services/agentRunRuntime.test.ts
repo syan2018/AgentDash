@@ -41,7 +41,6 @@ describe("AgentRun runtime service", () => {
     mocks.apiPostMock.mockResolvedValue({
       operation_id: "operation-compaction",
       thread_id: "runtime-thread-child",
-      accepted_revision: "7",
       status: "accepted",
       evidence: null,
       duplicate: false,
@@ -104,7 +103,6 @@ describe("AgentRun runtime service", () => {
     mocks.apiPostMock.mockResolvedValue({
       operation_id: "operation-1",
       thread_id: "thread-1",
-      accepted_revision: "18446744073709551615",
       status: "accepted",
       evidence: null,
       duplicate: false,
@@ -114,9 +112,7 @@ describe("AgentRun runtime service", () => {
       "interaction/1",
       { kind: "denied", reason: null },
       "command-interaction-1",
-    )).resolves.toMatchObject({
-      accepted_revision: 18_446_744_073_709_551_615n,
-    });
+    )).resolves.toMatchObject({ status: "accepted" });
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/runtime/commands",
       {

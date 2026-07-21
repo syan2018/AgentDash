@@ -666,7 +666,7 @@ async fn snapshot_is_observed_and_live_gap_requires_thread_read_reconciliation()
         agentdash_agent_service_api::AgentSnapshotAuthority::AgentObserved
     );
     assert_eq!(snapshot.source_info.source_revision, None);
-    assert_eq!(snapshot.turns.len(), 1);
+    assert_eq!(snapshot.conversation().completed_turns().count(), 1);
     assert_eq!(snapshot.conversation_history.len(), 2);
     assert!(snapshot.conversation_history.iter().all(|record| matches!(
         record.presentation.envelope.event,
@@ -851,11 +851,11 @@ async fn thread_read_and_name_notifications_map_source_authoritative_set_and_cle
             state,
             presentation,
         } if matches!(
-            state.as_ref(),
-            agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+            state.as_deref(),
+            Some(agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
                 thread_name: Some(value),
                 ..
-            } if value == "更新标题"
+            }) if value == "更新标题"
         ) && presentation.len() == 1
     ));
     assert!(matches!(
@@ -864,11 +864,11 @@ async fn thread_read_and_name_notifications_map_source_authoritative_set_and_cle
             state,
             presentation,
         } if matches!(
-            state.as_ref(),
-            agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+            state.as_deref(),
+            Some(agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
                 thread_name: None,
                 ..
-            }
+            })
         ) && presentation.len() == 1
     ));
 }
@@ -1454,7 +1454,7 @@ async fn unknown_interaction_response_outcome_enters_effect_ledger_and_is_not_re
 }
 
 #[tokio::test]
-async fn missing_and_unknown_vendor_statuses_never_project_as_terminal() {
+async fn missing_and_unknown_vendor_statuses_are_rejected_at_the_canonical_boundary() {
     let transport = Arc::new(RecordingTransport::default());
     let service = service(transport.clone()).await;
     let source = create_source(service.as_ref(), &transport).await;
@@ -1495,37 +1495,14 @@ async fn missing_and_unknown_vendor_statuses_never_project_as_terminal() {
         )
         .await;
 
-    let snapshot = service
+    let error = service
         .read(AgentReadQuery {
             source,
             at_revision: None,
         })
         .await
-        .expect("read");
-    assert_eq!(
-        snapshot.turns[0].status,
-        agentdash_agent_service_api::AgentEntityStatus::Accepted
-    );
-    assert_eq!(
-        snapshot.turns[0].items[0].status,
-        agentdash_agent_service_api::AgentEntityStatus::Accepted
-    );
-    assert_eq!(
-        snapshot.turns[1].status,
-        agentdash_agent_service_api::AgentEntityStatus::Accepted
-    );
-    assert_eq!(
-        snapshot.turns[1].items[0].status,
-        agentdash_agent_service_api::AgentEntityStatus::Accepted
-    );
-    assert_eq!(
-        snapshot.turns[2].status,
-        agentdash_agent_service_api::AgentEntityStatus::Completed
-    );
-    assert_eq!(
-        snapshot.turns[2].items[0].status,
-        agentdash_agent_service_api::AgentEntityStatus::Completed
-    );
+        .expect_err("unknown vendor status must not enter canonical history");
+    assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
 }
 
 #[allow(dead_code)]

@@ -813,7 +813,6 @@ mod tests {
         source_binding: ManagedRuntimeSourceBindingEvidence,
     ) -> ManagedRuntimeSnapshot {
         let evidence = ManagedRuntimeAvailabilityEvidence {
-            decided_at_revision: RuntimeProjectionRevision(7),
             blocking_operation_id: None,
             bound_surface_revision: Some(SurfaceRevision(3)),
             applied_surface_revision: Some(SurfaceRevision(3)),
@@ -825,9 +824,6 @@ mod tests {
             revision: RuntimeProjectionRevision(7),
             captured_at_ms: 10,
             lifecycle: ManagedRuntimeLifecycleStatus::Active,
-            active_turn_id: None,
-            turns: Vec::new(),
-            items: Vec::new(),
             interactions: Vec::new(),
             operations: Vec::new(),
             source_binding: Some(source_binding),

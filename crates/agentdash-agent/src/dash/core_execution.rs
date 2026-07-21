@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{collections::BTreeMap, pin::Pin};
 
 use agentdash_agent_core::{
     CoreBeforeToolDecision, CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput,
@@ -35,6 +35,8 @@ pub struct DashMessage {
     pub role: DashMessageRole,
     pub content: String,
     pub tool_call_id: Option<String>,
+    pub tool_calls: Vec<DashToolCall>,
+    pub is_error: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -130,6 +132,7 @@ pub enum DashCoreEvent {
     },
     ToolCallCompleted {
         round: u32,
+        call: DashToolCall,
         result: DashToolResult,
     },
     ProviderRoundCompleted {
@@ -336,7 +339,74 @@ impl DashCoreTurn {
         .await
         .map_err(dash_error)?;
         let output = dash_output(core_output);
-        let history = vec![
+        let mut history = Vec::new();
+        let mut tool_items = BTreeMap::new();
+        let transcript_len = output.transcript_delta.len();
+        for (index, message) in output.transcript_delta.iter().enumerate() {
+            let is_final_assistant = index + 1 == transcript_len
+                && message.role == DashMessageRole::Assistant
+                && message.tool_calls.is_empty();
+            if is_final_assistant {
+                continue;
+            }
+            if message.role == DashMessageRole::Assistant {
+                if !message.content.is_empty() {
+                    let item_id = AgentItemId::new(format!(
+                        "{}:provider-round:{index}:assistant",
+                        self.turn_id.0
+                    ));
+                    history.extend(assistant_history(
+                        &self.turn_id,
+                        item_id,
+                        &message.content,
+                        index,
+                    ));
+                }
+                for call in &message.tool_calls {
+                    let item_id = execution_tool_item_id(&self.turn_id, &call.call_id);
+                    tool_items.insert(call.call_id.clone(), item_id.clone());
+                    history.push(HistoryContribution {
+                        entry_id: transcript_entry_id(&self.turn_id, index, &call.call_id, "start"),
+                        payload: HistoryPayload::ItemStarted {
+                            turn_id: self.turn_id.clone(),
+                            item_id: item_id.clone(),
+                            kind: super::ItemKind::ToolCall,
+                        },
+                    });
+                    history.push(HistoryContribution {
+                        entry_id: transcript_entry_id(&self.turn_id, index, &call.call_id, "call"),
+                        payload: HistoryPayload::ToolCall {
+                            turn_id: self.turn_id.clone(),
+                            item_id,
+                            call_id: call.call_id.clone(),
+                            name: call.name.clone(),
+                            arguments: call.arguments.to_string(),
+                        },
+                    });
+                }
+            } else if message.role == DashMessageRole::Tool
+                && let Some(call_id) = message.tool_call_id.as_deref()
+                && let Some(item_id) = tool_items.get(call_id).cloned()
+            {
+                history.push(HistoryContribution {
+                    entry_id: transcript_entry_id(&self.turn_id, index, call_id, "result"),
+                    payload: HistoryPayload::ToolResult {
+                        turn_id: self.turn_id.clone(),
+                        item_id: item_id.clone(),
+                        content: message.content.clone(),
+                        is_error: message.is_error,
+                    },
+                });
+                history.push(HistoryContribution {
+                    entry_id: transcript_entry_id(&self.turn_id, index, call_id, "complete"),
+                    payload: HistoryPayload::ItemCompleted {
+                        turn_id: self.turn_id.clone(),
+                        item_id,
+                    },
+                });
+            }
+        }
+        history.extend([
             HistoryContribution {
                 entry_id: self.output_started_entry_id,
                 payload: HistoryPayload::ItemStarted {
@@ -366,12 +436,61 @@ impl DashCoreTurn {
                     turn_id: self.turn_id,
                 },
             },
-        ];
+        ]);
         Ok(DashCoreTurnResult {
             core_output: output,
             history,
         })
     }
+}
+
+pub fn execution_tool_item_id(turn_id: &AgentTurnId, call_id: &str) -> AgentItemId {
+    AgentItemId::new(format!("{}:tool:{call_id}", turn_id.0))
+}
+
+fn transcript_entry_id(
+    turn_id: &AgentTurnId,
+    index: usize,
+    coordinate: &str,
+    stage: &str,
+) -> HistoryEntryId {
+    HistoryEntryId::new(format!(
+        "{}:transcript:{index}:{coordinate}:{stage}",
+        turn_id.0
+    ))
+}
+
+fn assistant_history(
+    turn_id: &AgentTurnId,
+    item_id: AgentItemId,
+    content: &str,
+    index: usize,
+) -> [HistoryContribution; 3] {
+    [
+        HistoryContribution {
+            entry_id: transcript_entry_id(turn_id, index, &item_id.0, "start"),
+            payload: HistoryPayload::ItemStarted {
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+                kind: super::ItemKind::AssistantMessage,
+            },
+        },
+        HistoryContribution {
+            entry_id: transcript_entry_id(turn_id, index, &item_id.0, "output"),
+            payload: HistoryPayload::AgentOutput {
+                turn_id: turn_id.clone(),
+                item_id: Some(item_id.clone()),
+                content: content.to_owned(),
+            },
+        },
+        HistoryContribution {
+            entry_id: transcript_entry_id(turn_id, index, &item_id.0, "complete"),
+            payload: HistoryPayload::ItemCompleted {
+                turn_id: turn_id.clone(),
+                item_id,
+            },
+        },
+    ]
 }
 
 struct ProviderAdapter<'a>(&'a dyn DashProvider);
@@ -534,6 +653,16 @@ fn core_message(message: DashMessage) -> CoreMessage {
         },
         content: message.content,
         tool_call_id: message.tool_call_id,
+        tool_calls: message
+            .tool_calls
+            .into_iter()
+            .map(|call| CoreToolCall {
+                call_id: call.call_id,
+                name: call.name,
+                arguments: call.arguments,
+            })
+            .collect(),
+        is_error: message.is_error,
     }
 }
 
@@ -546,6 +675,16 @@ fn dash_message(message: CoreMessage) -> DashMessage {
         },
         content: message.content,
         tool_call_id: message.tool_call_id,
+        tool_calls: message
+            .tool_calls
+            .into_iter()
+            .map(|call| DashToolCall {
+                call_id: call.call_id,
+                name: call.name,
+                arguments: call.arguments,
+            })
+            .collect(),
+        is_error: message.is_error,
     }
 }
 
@@ -592,8 +731,17 @@ fn dash_event(event: CoreEvent) -> DashCoreEvent {
                 arguments: call.arguments,
             },
         },
-        CoreEvent::ToolCallCompleted { round, result } => DashCoreEvent::ToolCallCompleted {
+        CoreEvent::ToolCallCompleted {
             round,
+            call,
+            result,
+        } => DashCoreEvent::ToolCallCompleted {
+            round,
+            call: DashToolCall {
+                call_id: call.call_id,
+                name: call.name,
+                arguments: call.arguments,
+            },
             result: DashToolResult {
                 call_id: result.call_id,
                 content: result.content,

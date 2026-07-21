@@ -205,7 +205,6 @@ impl AgentRunProductInputDeliveryPort for RecordingInput {
                 ))
                 .expect("operation"),
                 thread_id,
-                accepted_revision: RuntimeProjectionRevision(3),
                 status: ManagedRuntimeOperationStatus::Succeeded,
                 evidence: None,
                 duplicate: false,

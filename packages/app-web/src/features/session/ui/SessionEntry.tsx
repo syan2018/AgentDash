@@ -4,7 +4,7 @@
  * 根据 BackboneEvent 类型渲染不同的 UI：
  * - agent_message_delta → SessionMessageCard (agent)
  * - reasoning_text_delta / reasoning_summary_delta → SessionMessageCard (thinking)
- * - item_started / item_updated / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
+ * - item_started / item_updated / item_completed → 按 AgentDashThreadItem discriminant 渲染
  * - turn_plan_updated → SessionPlanCard
  * - platform:
  *   - hook_trace / task_* / companion_* 等 → 系统事件卡片
@@ -152,6 +152,24 @@ export function SingleEntry({
     case "item_updated":
     case "item_completed": {
       const threadItem = event.payload.item;
+      if (threadItem.type === "agentMessage") {
+        return (
+          <SessionMessageCard
+            type="agent"
+            content={threadItem.text}
+            isStreaming={event.type !== "item_completed"}
+          />
+        );
+      }
+      if (threadItem.type === "reasoning") {
+        return (
+          <SessionMessageCard
+            type="thinking"
+            content={[...threadItem.summary, ...threadItem.content].join("")}
+            isStreaming={event.type !== "item_completed"}
+          />
+        );
+      }
       const card = renderToolCallCard(threadItem, {
         sessionId: entry.sessionId,
         outputText: accumulatedText,

@@ -1,9 +1,5 @@
 import type { SessionMessageRefDto } from "../../../generated/agent-run-interaction-contracts";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import type {
-  AgentRunRuntimeItem,
-  AgentRunRuntimeTurnSegment,
-} from "../../agent-run-runtime";
 import type { SessionDisplayEntry } from "./types";
 import type { TurnSegment } from "./useSessionFeed";
 
@@ -21,7 +17,7 @@ export interface RoundActionModel {
 
 type AgentMessageEvent = Extract<BackboneEvent, { type: "agent_message_delta" }>;
 type AgentMessageDisplayEntry = SessionDisplayEntry & { event: AgentMessageEvent };
-type RoundActionSegment = TurnSegment | AgentRunRuntimeTurnSegment;
+type RoundActionSegment = TurnSegment;
 
 function isAgentMessageEntry(value: unknown): value is AgentMessageDisplayEntry {
   return Boolean(
@@ -32,28 +28,12 @@ function isAgentMessageEntry(value: unknown): value is AgentMessageDisplayEntry 
   );
 }
 
-function isRuntimeItem(value: unknown): value is AgentRunRuntimeItem {
-  return Boolean(
-    value
-      && typeof value === "object"
-      && "presentation" in value
-      && (value as AgentRunRuntimeItem).presentation != null,
-  );
-}
-
 export function lastAgentReplyText(segment: RoundActionSegment): string {
   const output = segment.finalOutput;
   if (isAgentMessageEntry(output)) {
     return (output.accumulatedText ?? output.event.payload.delta ?? "").trim();
   }
-  if (!isRuntimeItem(output) || output.presentation.body.kind !== "agent_message") {
-    return "";
-  }
-  return output.presentation.body.content
-    .filter((content) => content.kind === "text")
-    .map((content) => content.text)
-    .join("")
-    .trim();
+  return "";
 }
 
 export function forkPointRefFromFinalAgentReply(

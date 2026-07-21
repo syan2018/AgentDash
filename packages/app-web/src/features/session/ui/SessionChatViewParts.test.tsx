@@ -2,9 +2,54 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { TurnSegment } from "../model/useSessionFeed";
+import type { SessionDisplayEntry } from "../model/types";
 import { SessionChatStream } from "./SessionChatViewParts";
+import { getTurnSectionKey } from "./turnSectionIdentity";
+
+function completedMessage(id: string): SessionDisplayEntry {
+  return {
+    id,
+    sessionId: "session-1",
+    timestamp: 1,
+    eventSeq: 1,
+    turnId: "turn-1",
+    event: {
+      type: "item_completed",
+      payload: {
+        threadId: "session-1",
+        turnId: "turn-1",
+        completedAtMs: 1,
+        item: {
+          type: "agentMessage",
+          id,
+          text: id,
+        },
+      },
+    },
+  };
+}
 
 describe("SessionChatStream turn headers", () => {
+  it("keeps split presentation sections of one canonical turn uniquely identified", () => {
+    const firstItem = completedMessage("item:first");
+    const secondItem = completedMessage("item:second");
+    const first: TurnSegment = {
+      turnId: "turn-1",
+      status: "active",
+      items: [firstItem],
+      finalOutput: firstItem,
+    };
+    const second: TurnSegment = {
+      turnId: "turn-1",
+      status: "active",
+      items: [secondItem],
+      finalOutput: secondItem,
+    };
+
+    expect(getTurnSectionKey(first)).toBe("turn-section:turn-1:item:first");
+    expect(getTurnSectionKey(second)).toBe("turn-section:turn-1:item:second");
+  });
+
   it("does not render a completed turn header for an unscoped trailing segment", () => {
     const turnSegments: TurnSegment[] = [
       {

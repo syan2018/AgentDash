@@ -281,6 +281,8 @@ function sampleContextFrameData(): WireContextFrame {
             tool_path: "workflow_management::upsert_workflow_tool",
           },
         ],
+        removed_tools: [],
+        changed_tools: [],
       },
     ],
   };

@@ -155,7 +155,6 @@ impl AgentRunAppliedResourceSurface {
         for mount in &self.vfs_mounts {
             if mount.mount_id.is_empty()
                 || mount.provider.is_empty()
-                || mount.backend_id.is_empty()
                 || mount.root_ref.is_empty()
                 || mount.capabilities.is_empty()
                 || !mount_ids.insert(mount.mount_id.as_str())
@@ -278,11 +277,51 @@ pub trait AgentRunAppliedResourceSurfaceQueryPort: Send + Sync {
         &self,
         target: &AgentRunTarget,
     ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>;
+
+    async fn applied_resource_surface_at(
+        &self,
+        target: &AgentRunTarget,
+        agent_surface_revision: u64,
+    ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn surface_with_mount(mount: AppliedVfsMount) -> AgentRunAppliedResourceSurface {
+        let target = AgentRunTarget {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+        };
+        let project_id = Uuid::new_v4();
+        let grant = AppliedVfsGrant {
+            mount_id: mount.mount_id.clone(),
+            operations: mount.capabilities.clone(),
+            path_scopes: vec![AppliedVfsPathScope::All],
+        };
+        AgentRunAppliedResourceSurface {
+            target,
+            project_id,
+            workspace_id: None,
+            vfs_mounts: vec![mount],
+            default_mount_id: None,
+            vfs_grants: vec![grant],
+            agent_surface_revision: 1,
+            agent_surface_digest: "agent-surface".to_string(),
+            vfs_digest: "vfs-surface".to_string(),
+            task_grants: Vec::new(),
+            task_surface_digest: "task-surface".to_string(),
+            product_binding_digest: "product-binding".to_string(),
+            provenance: AgentRunAppliedResourceSurfaceProvenance {
+                source_kind: "agent_frame".to_string(),
+                source_id: Uuid::new_v4().to_string(),
+                source_revision: 1,
+                projection_revision: 1,
+                captured_at_ms: 1,
+            },
+        }
+    }
 
     #[test]
     fn path_scope_requires_canonical_relative_paths() {
@@ -291,5 +330,21 @@ mod tests {
         assert!(AppliedVfsPathScope::Exact("src/main.rs".to_string()).allows("src/main.rs"));
         assert!(!AppliedVfsPathScope::All.allows("../secret"));
         assert!(!AppliedVfsPathScope::Prefix("src".to_string()).allows("src/../secret"));
+    }
+
+    #[test]
+    fn backendless_logical_mount_is_valid_surface_evidence() {
+        let surface = surface_with_mount(AppliedVfsMount {
+            mount_id: "canvas:verification".to_string(),
+            provider: "canvas_fs".to_string(),
+            backend_id: String::new(),
+            root_ref: "canvas://verification".to_string(),
+            capabilities: BTreeSet::from([AppliedVfsOperation::Read, AppliedVfsOperation::List]),
+            default_write: false,
+            display_name: "Verification".to_string(),
+            metadata: serde_json::json!({}),
+        });
+
+        assert_eq!(surface.validate_for(&surface.target), Ok(()));
     }
 }

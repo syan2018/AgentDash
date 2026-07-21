@@ -77,10 +77,24 @@ struct ToolCallCoordinates {
   与memory inventory；MCP server事实同时产生动态callable tools和模型可见server instruction；
   workspace/context requirement按Complete Agent声明的immutable delivery route投递。编译器不得绕过
   AgentFrame在launch时重新读取另一份Product capability表。
+- Product execution profile 是 Product intent 的完整引用；Complete Agent offer profile 是服务侧
+  guarantee。Surface rebind 必须携带原 Product profile 重新编译 desired surface，再由 Host 与当前
+  offer 求交。两个 digest 证明的事实集合不同，不具有可比较的相等语义。
+- AgentFrame `surface` document 是一条 revision 内 capability/context/VFS/MCP/hook 的 canonical
+  形态，拆分字段只是 repository read projection。Canvas create/attach/copy 先生成新的 owner-local
+  AgentFrame revision并修改该 document，再刷新拆分投影和 Complete Agent surface；因此授权、能力
+  发现与后续 materialization 都能从同一历史 revision 恢复。
 - tool可见性与调用授权必须来自同一applied Product resource surface。`task_write`可见时必须存在
   对应project/task Write grant。`mounts_list`自身只需要List准入，但返回的mount catalog必须描述
   该mount在applied surface中的完整Read/Write/List/Search/Exec集合与path scopes，不能把本次调用
   的List grant误当成mount全部能力。
+- Product binding 只证明 `runtime_thread -> AgentRun target` 的当前关联；一次 callback 携带的
+  applied surface revision 证明该回合实际接纳的 immutable authorization snapshot。授权器按该
+  revision 读取 owner-local AgentFrame history并重新编译 grant，新 binding 不会撤销已开始回合的
+  旧 grant，也不会把旧 grant 授给 rebind 后发起的新调用。
+- VFS mount 的通用事实是 provider、root、capabilities 与 path scopes。`backend_id`只属于需要转发到
+  concrete backend 的 provider；Canvas、inline、skill 等逻辑 provider 可以由自己的 root identity
+  完整路由，因此其空 backend 不影响 surface evidence 的完整性。
 - 每个进入最终Tool Catalog的`ToolContribution`必须由owner声明protocol projector与family；Surface compile缺projector即typed reject。Command、FileChange、FS、MCP、VFS、RuntimeAction、Workspace Module、Companion、Task、Wait、LifecycleComplete与explicit Dynamic使用各自typed family，禁止按tool name猜测或以Dynamic作为缺省。
 - 每个binding的effective presentation route必须把owner projector与`VendorStream|ToolBroker` emitter作为一个原子事实发布和替换。owner显式声明Dynamic时才允许Dynamic；route缺失是typed protocol violation，不能把原本的FS、Command、FileChange或MCP静默换型。
 - Tool item lifecycle必须exactly-one presentation producer：`VendorStream`由connector mapper发布、Broker只维护internal canonical state；`ToolBroker`由`ToolContribution + ManagedRuntimeToolJournal`发布、connector mapper抑制同一tool的vendor lifecycle。Native、Codex与Remote均消费binding effective route，不能由全局默认或工具名推断owner。
@@ -117,6 +131,8 @@ struct ToolCallCoordinates {
 | lifecycle VFS声明SkillAsset keys但final frame discovery未发现对应skill | frame construction typed reject；不持久化缺能力的AgentFrame |
 | Product surface暴露`task_write`但没有Write grant | surface construction/authorization test失败；不能把运行期`missing_task_grant`留给Agent |
 | `mounts_list`调用自身只有List准入 | 调用可执行，结果仍展示applied surface授予该mount的完整operation/path scope |
+| Canvas等逻辑mount没有backend id | 依据provider/root/capabilities形成有效surface，不伪造backend |
+| Surface rebind 时旧回合继续调用工具 | 按callback固定的AgentFrame revision授权；当前Product binding只校验target关联 |
 | MCP server存在但动态catalog为空 | server instruction准确展示已配置server；不伪造callable tool |
 | frame construction port 在 VFS bootstrap 后仍未绑定 | AppState composition fail-fast；请求不可进入半装配状态 |
 | 一个Hook definition分配多个route | `ConflictingHookRoute` |

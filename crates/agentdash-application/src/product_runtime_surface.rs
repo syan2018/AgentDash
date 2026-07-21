@@ -62,6 +62,7 @@ impl ProductAgentRunFactsResolver {
     async fn resolve(
         &self,
         target: &AgentRunTarget,
+        agent_surface_revision: Option<u64>,
     ) -> Result<ResolvedProductAgentRunFacts, AgentRunAppliedResourceSurfaceQueryError> {
         let binding = self
             .bindings
@@ -95,21 +96,32 @@ impl ProductAgentRunFactsResolver {
                 "Lifecycle AgentRun facts do not match Product target",
             ));
         }
-        let launch_frame = self
-            .repos
-            .agent_frame_repo
-            .get(binding.launch_frame.frame_id)
-            .await
-            .map_err(|error| repository(error.to_string()))?
-            .ok_or(AgentRunAppliedResourceSurfaceQueryError::MissingFacts)?;
-        if launch_frame.agent_id != agent.id
-            || u64::try_from(launch_frame.revision).ok() != Some(binding.launch_frame.revision)
+        let frame = match agent_surface_revision {
+            Some(revision) => self
+                .repos
+                .agent_frame_repo
+                .list_by_agent(agent.id)
+                .await
+                .map_err(|error| repository(error.to_string()))?
+                .into_iter()
+                .find(|frame| u64::try_from(frame.revision).ok() == Some(revision))
+                .ok_or(AgentRunAppliedResourceSurfaceQueryError::MissingFacts)?,
+            None => self
+                .repos
+                .agent_frame_repo
+                .get(binding.launch_frame.frame_id)
+                .await
+                .map_err(|error| repository(error.to_string()))?
+                .ok_or(AgentRunAppliedResourceSurfaceQueryError::MissingFacts)?,
+        };
+        if frame.agent_id != agent.id
+            || agent_surface_revision.is_none()
+                && u64::try_from(frame.revision).ok() != Some(binding.launch_frame.revision)
         {
             return Err(conflict(
                 "immutable launch AgentFrame does not match Product binding",
             ));
         }
-        let frame = launch_frame;
         let vfs = frame
             .surface_document()
             .vfs_surface
@@ -146,6 +158,15 @@ impl ProductAgentRunAppliedResourceSurfaceCompiler {
     pub fn new(facts: ProductAgentRunFactsResolver) -> Self {
         Self { facts }
     }
+
+    async fn compile(
+        &self,
+        target: &AgentRunTarget,
+        agent_surface_revision: Option<u64>,
+    ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError> {
+        let facts = self.facts.resolve(target, agent_surface_revision).await?;
+        compile_applied_resource_surface(&self.facts.repos, target, facts).await
+    }
 }
 
 #[async_trait]
@@ -154,77 +175,92 @@ impl AgentRunAppliedResourceSurfaceQueryPort for ProductAgentRunAppliedResourceS
         &self,
         target: &AgentRunTarget,
     ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError> {
-        let facts = self.facts.resolve(target).await?;
-        let candidate_default_mount_id = facts.vfs.default_mount_id.clone();
-        let mut mounts = Vec::new();
-        let mut grants = Vec::new();
-        for mount in facts.vfs.mounts.iter().cloned() {
-            let capabilities = mount
-                .capabilities
-                .iter()
-                .filter_map(applied_vfs_operation)
-                .collect::<BTreeSet<_>>();
-            if capabilities.is_empty() {
-                continue;
-            }
-            grants.push(AppliedVfsGrant {
-                mount_id: mount.id.clone(),
-                operations: capabilities.clone(),
-                path_scopes: vec![AppliedVfsPathScope::All],
-            });
-            mounts.push(AppliedVfsMount {
-                mount_id: mount.id,
-                provider: mount.provider,
-                backend_id: mount.backend_id,
-                root_ref: mount.root_ref,
-                capabilities,
-                default_write: mount.default_write,
-                display_name: mount.display_name,
-                metadata: mount.metadata,
-            });
-        }
-        let default_mount_id = candidate_default_mount_id
-            .filter(|id| mounts.iter().any(|mount| &mount.mount_id == id));
-        let task_grants = product_task_grants(&self.facts.repos, &facts).await?;
-        let surface_facts = ProductAgentSurfaceFacts::from_frame(&facts.frame);
-        let captured_at_ms =
-            u64::try_from(facts.frame.created_at.timestamp_millis()).unwrap_or_default();
-        let provenance = AgentRunAppliedResourceSurfaceProvenance {
-            source_kind: "agent_frame".to_string(),
-            source_id: facts.frame.id.to_string(),
-            source_revision: u64::try_from(facts.frame.revision).unwrap_or_default(),
-            projection_revision: surface_facts.surface_revision,
-            captured_at_ms,
-        };
-        let task_digest = digest(&("agentdash.product-task-grants/v1", &task_grants))?;
-        let vfs_digest = digest(&(
-            "agentdash.product-vfs-grants/v1",
-            &mounts,
-            &default_mount_id,
-            &grants,
-        ))?;
-        let surface = AgentRunAppliedResourceSurface {
-            target: target.clone(),
-            project_id: facts.run.project_id,
-            workspace_id: facts.workspace_id,
-            vfs_mounts: mounts,
-            default_mount_id,
-            vfs_grants: grants,
-            agent_surface_revision: surface_facts.surface_revision,
-            agent_surface_digest: surface_facts.surface_digest,
-            vfs_digest,
-            task_grants,
-            task_surface_digest: task_digest,
-            product_binding_digest: facts.binding_digest,
-            provenance,
-        };
-        surface.validate_for(target).map_err(|error| {
-            AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence {
-                message: error.to_string(),
-            }
-        })?;
-        Ok(surface)
+        self.compile(target, None).await
     }
+
+    async fn applied_resource_surface_at(
+        &self,
+        target: &AgentRunTarget,
+        agent_surface_revision: u64,
+    ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError> {
+        self.compile(target, Some(agent_surface_revision)).await
+    }
+}
+
+async fn compile_applied_resource_surface(
+    repos: &RepositorySet,
+    target: &AgentRunTarget,
+    facts: ResolvedProductAgentRunFacts,
+) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError> {
+    let candidate_default_mount_id = facts.vfs.default_mount_id.clone();
+    let mut mounts = Vec::new();
+    let mut grants = Vec::new();
+    for mount in facts.vfs.mounts.iter().cloned() {
+        let capabilities = mount
+            .capabilities
+            .iter()
+            .filter_map(applied_vfs_operation)
+            .collect::<BTreeSet<_>>();
+        if capabilities.is_empty() {
+            continue;
+        }
+        grants.push(AppliedVfsGrant {
+            mount_id: mount.id.clone(),
+            operations: capabilities.clone(),
+            path_scopes: vec![AppliedVfsPathScope::All],
+        });
+        mounts.push(AppliedVfsMount {
+            mount_id: mount.id,
+            provider: mount.provider,
+            backend_id: mount.backend_id,
+            root_ref: mount.root_ref,
+            capabilities,
+            default_write: mount.default_write,
+            display_name: mount.display_name,
+            metadata: mount.metadata,
+        });
+    }
+    let default_mount_id =
+        candidate_default_mount_id.filter(|id| mounts.iter().any(|mount| &mount.mount_id == id));
+    let task_grants = product_task_grants(repos, &facts).await?;
+    let surface_facts = ProductAgentSurfaceFacts::from_frame(&facts.frame);
+    let captured_at_ms =
+        u64::try_from(facts.frame.created_at.timestamp_millis()).unwrap_or_default();
+    let provenance = AgentRunAppliedResourceSurfaceProvenance {
+        source_kind: "agent_frame".to_string(),
+        source_id: facts.frame.id.to_string(),
+        source_revision: u64::try_from(facts.frame.revision).unwrap_or_default(),
+        projection_revision: surface_facts.surface_revision,
+        captured_at_ms,
+    };
+    let task_digest = digest(&("agentdash.product-task-grants/v1", &task_grants))?;
+    let vfs_digest = digest(&(
+        "agentdash.product-vfs-grants/v1",
+        &mounts,
+        &default_mount_id,
+        &grants,
+    ))?;
+    let surface = AgentRunAppliedResourceSurface {
+        target: target.clone(),
+        project_id: facts.run.project_id,
+        workspace_id: facts.workspace_id,
+        vfs_mounts: mounts,
+        default_mount_id,
+        vfs_grants: grants,
+        agent_surface_revision: surface_facts.surface_revision,
+        agent_surface_digest: surface_facts.surface_digest,
+        vfs_digest,
+        task_grants,
+        task_surface_digest: task_digest,
+        product_binding_digest: facts.binding_digest,
+        provenance,
+    };
+    surface.validate_for(target).map_err(|error| {
+        AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence {
+            message: error.to_string(),
+        }
+    })?;
+    Ok(surface)
 }
 
 #[async_trait]
@@ -233,33 +269,49 @@ impl AgentRunLifecycleMountFactsQueryPort for ProductAgentRunFactsResolver {
         &self,
         target: &AgentRunTarget,
     ) -> Result<AgentRunLifecycleMountFacts, AgentRunAppliedResourceSurfaceQueryError> {
-        let facts = self.resolve(target).await?;
-        let (orchestration_id, node_path, node_attempt, node_lifecycle_key, writable_port_keys) =
-            facts
-                .node
-                .map(|node| {
-                    (
-                        Some(node.orchestration_id),
-                        Some(node.node_path),
-                        Some(node.attempt),
-                        Some(node.lifecycle_key),
-                        node.writable_port_keys,
-                    )
-                })
-                .unwrap_or((None, None, None, None, Vec::new()));
-        Ok(AgentRunLifecycleMountFacts {
-            target: target.clone(),
-            runtime_thread_id: facts.binding.runtime_thread_id,
-            launch_frame_id: facts.frame.id,
-            product_binding_digest: facts.binding_digest,
-            orchestration_id,
-            node_path,
-            node_attempt,
-            node_lifecycle_key,
-            writable_port_keys,
-            skill_asset_keys: facts.skill_asset_keys,
-        })
+        lifecycle_mount_facts_from_resolved(target, self.resolve(target, None).await?)
     }
+
+    async fn lifecycle_mount_facts_at(
+        &self,
+        target: &AgentRunTarget,
+        agent_surface_revision: u64,
+    ) -> Result<AgentRunLifecycleMountFacts, AgentRunAppliedResourceSurfaceQueryError> {
+        lifecycle_mount_facts_from_resolved(
+            target,
+            self.resolve(target, Some(agent_surface_revision)).await?,
+        )
+    }
+}
+
+fn lifecycle_mount_facts_from_resolved(
+    target: &AgentRunTarget,
+    facts: ResolvedProductAgentRunFacts,
+) -> Result<AgentRunLifecycleMountFacts, AgentRunAppliedResourceSurfaceQueryError> {
+    let (orchestration_id, node_path, node_attempt, node_lifecycle_key, writable_port_keys) = facts
+        .node
+        .map(|node| {
+            (
+                Some(node.orchestration_id),
+                Some(node.node_path),
+                Some(node.attempt),
+                Some(node.lifecycle_key),
+                node.writable_port_keys,
+            )
+        })
+        .unwrap_or((None, None, None, None, Vec::new()));
+    Ok(AgentRunLifecycleMountFacts {
+        target: target.clone(),
+        runtime_thread_id: facts.binding.runtime_thread_id,
+        launch_frame_id: facts.frame.id,
+        product_binding_digest: facts.binding_digest,
+        orchestration_id,
+        node_path,
+        node_attempt,
+        node_lifecycle_key,
+        writable_port_keys,
+        skill_asset_keys: facts.skill_asset_keys,
+    })
 }
 
 async fn product_task_grants(

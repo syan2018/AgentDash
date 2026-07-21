@@ -77,10 +77,13 @@ impl RuntimeToolAuthorizationPort for ProductRuntimeToolAuthorizer {
                     "runtime thread has no committed Product target binding",
                 )
             })?;
-        ensure_current_surface(&binding.binding, &request)?;
+        ensure_current_binding(&binding.binding, &request)?;
         let surface = self
             .surfaces
-            .applied_resource_surface(&binding.binding.target)
+            .applied_resource_surface_at(
+                &binding.binding.target,
+                request.context.applied_surface_revision.0,
+            )
             .await
             .map_err(map_surface_query_error)?;
         if surface.product_binding_digest != binding.binding_digest {
@@ -683,7 +686,7 @@ fn map_surface_query_error(
     }
 }
 
-fn ensure_current_surface(
+fn ensure_current_binding(
     binding: &AgentRunProductRuntimeBinding,
     request: &RuntimeToolAuthorizationRequest,
 ) -> Result<(), RuntimeToolBrokerError> {
@@ -691,12 +694,6 @@ fn ensure_current_surface(
         return Err(denied(
             "stale_product_binding",
             "Product target binding belongs to a different Runtime thread",
-        ));
-    }
-    if binding.launch_frame.revision != request.context.applied_surface_revision.0 {
-        return Err(denied(
-            "stale_product_surface",
-            "Product target binding does not attest the callback applied surface revision",
         ));
     }
     Ok(())
@@ -752,6 +749,15 @@ mod tests {
         async fn applied_resource_surface(
             &self,
             _target: &AgentRunTarget,
+        ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>
+        {
+            self.value.clone()
+        }
+
+        async fn applied_resource_surface_at(
+            &self,
+            _target: &AgentRunTarget,
+            _agent_surface_revision: u64,
         ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>
         {
             self.value.clone()
@@ -874,6 +880,29 @@ mod tests {
             .authorize(request("mounts_list"))
             .await
             .expect("current Product authority is evaluated directly");
+    }
+
+    #[tokio::test]
+    async fn active_turn_remains_authorized_by_its_immutable_surface_after_rebind() {
+        let mut binding = binding();
+        binding.binding.launch_frame.revision = 2;
+        let snapshot = snapshot(
+            binding.binding.target.clone(),
+            binding.binding_digest.clone(),
+        );
+        let authorizer = ProductRuntimeToolAuthorizer::new(
+            Arc::new(BindingFixture {
+                value: Some(binding),
+            }),
+            Arc::new(SurfaceFixture {
+                value: Ok(snapshot),
+            }),
+        );
+
+        authorizer
+            .authorize(request("workspace_module_list"))
+            .await
+            .expect("the callback surface remains the grant authority for its active turn");
     }
 
     #[tokio::test]

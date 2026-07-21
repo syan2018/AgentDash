@@ -104,8 +104,7 @@ impl ProductAgentRunRuntimeSurfaceUpdateService {
                     runtime_thread_id: request.runtime_thread_id.clone(),
                     idempotency_key: format!("{operation_key}:agent"),
                     frame: frame_ref.clone(),
-                    execution_profile_digest: binding.execution_profile_digest.clone(),
-                    execution_configuration: binding.execution_profile.configuration.clone(),
+                    execution_profile: binding.execution_profile.clone(),
                     surface_facts: ProductAgentSurfaceFacts::from_frame(&frame),
                 })
                 .await
@@ -275,12 +274,16 @@ fn apply_canvas_change(
     if let Some(binding) = binding {
         upsert_canvas_runtime_data_binding(&mut vfs, canvas, binding).map_err(surface_rejected)?;
     }
-    candidate.vfs_surface_json = Some(serde_json::to_value(&vfs).map_err(surface_rejected)?);
-    if let Some(mut capability) = current.typed_capability_state() {
-        capability.vfs.active = Some(vfs);
-        candidate.effective_capability_json =
-            Some(serde_json::to_value(capability).map_err(surface_rejected)?);
-    }
+    let capability = if let Some(mut capability) = current.typed_capability_state() {
+        capability.vfs.active = Some(vfs.clone());
+        Some(serde_json::to_value(capability).map_err(surface_rejected)?)
+    } else {
+        None
+    };
+    candidate.attach_immutable_vfs_surface(
+        serde_json::to_value(&vfs).map_err(surface_rejected)?,
+        capability,
+    );
     Ok(())
 }
 
@@ -331,11 +334,12 @@ mod tests {
         let mut frame = AgentFrame::new_revision(agent_id, 3, "launch");
         frame.vfs_surface_json = Some(serde_json::to_value(vfs).unwrap());
         frame.effective_capability_json = Some(serde_json::to_value(capability).unwrap());
+        frame.apply_surface_projection();
         frame
     }
 
     #[test]
-    fn canvas_binding_updates_the_immutable_frame_surface_without_a_live_vfs_cache() {
+    fn canvas_binding_updates_the_canonical_frame_surface() {
         let project_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
         let current = current_frame(agent_id, project_id);

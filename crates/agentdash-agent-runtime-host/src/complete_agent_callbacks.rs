@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     CompleteAgentBinding, CompleteAgentBindingId, CompleteAgentBindingState, CompleteAgentHost,
-    CompleteAgentRuntimeTarget,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +90,7 @@ impl AgentCallbackClock for SystemAgentCallbackClock {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompleteAgentCallbackRoute {
     pub route_id: AgentCallbackRouteId,
+    pub runtime_thread_id: RuntimeThreadId,
     pub binding_id: CompleteAgentBindingId,
     pub generation: AgentBindingGeneration,
     pub source: AgentSourceCoordinate,
@@ -101,6 +101,7 @@ pub struct CompleteAgentCallbackRoute {
 
 impl CompleteAgentCallbackRoute {
     pub fn from_binding(
+        runtime_thread_id: RuntimeThreadId,
         binding_id: CompleteAgentBindingId,
         binding: AgentHostCallbackBinding,
         source: AgentSourceCoordinate,
@@ -117,6 +118,7 @@ impl CompleteAgentCallbackRoute {
         }
         Ok(Self {
             route_id: binding.route_id,
+            runtime_thread_id,
             binding_id,
             generation: binding.binding_generation,
             source,
@@ -176,8 +178,8 @@ impl CompleteAgentCallbackBroker {
         ),
         AgentHostCallbackError,
     > {
-        let (route, binding, target) = self.host.resolve_callback_route(meta).await?;
-        let context = resolve_callback_context(&route, &binding, &target)?;
+        let (route, binding) = self.host.resolve_callback_route(meta).await?;
+        let context = resolve_callback_context(&route, &binding)?;
         Ok((route, context))
     }
 
@@ -276,7 +278,6 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
 fn resolve_callback_context(
     route: &CompleteAgentCallbackRoute,
     binding: &CompleteAgentBinding,
-    target: &CompleteAgentRuntimeTarget,
 ) -> Result<ResolvedCompleteAgentCallbackContext, AgentHostCallbackError> {
     let applied_surface = binding.applied_surface.as_ref().ok_or_else(|| {
         callback_invariant_error("callback binding has no applied surface in this Host incarnation")
@@ -287,23 +288,18 @@ fn resolve_callback_context(
         || binding.source != route.source
         || binding.bound_surface != route.bound_surface
         || !binding.bound_surface.accepts_applied(applied_surface)
-        || target.callbacks.route_id != route.route_id
-        || target.callbacks.binding_generation != route.generation
-        || target.target != binding.target
-        || target.generation != binding.generation
-        || target.bound_surface != binding.bound_surface
     {
         return Err(callback_invariant_error(
-            "callback route, binding, target, and applied surface are inconsistent",
+            "callback route, binding, and applied surface are inconsistent",
         ));
     }
     Ok(ResolvedCompleteAgentCallbackContext {
-        runtime_thread_id: target.runtime_thread_id.clone(),
+        runtime_thread_id: route.runtime_thread_id.clone(),
         binding_id: binding.id.clone(),
         binding_generation: binding.generation,
         source: binding.source.clone(),
-        service_instance_id: target.target.logical_instance_id.clone(),
-        profile_digest: target.profile_digest.clone(),
+        service_instance_id: binding.target.logical_instance_id.clone(),
+        profile_digest: binding.profile_digest.clone(),
         bound_surface_revision: binding.bound_surface.revision,
         bound_surface_digest: binding.bound_surface.digest.clone(),
         bound_surface_offer_profile_digest: binding.bound_surface.offer_profile_digest.clone(),

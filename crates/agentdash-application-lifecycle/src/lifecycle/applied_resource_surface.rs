@@ -46,6 +46,12 @@ pub trait AgentRunLifecycleMountFactsQueryPort: Send + Sync {
         &self,
         target: &AgentRunTarget,
     ) -> Result<AgentRunLifecycleMountFacts, AgentRunAppliedResourceSurfaceQueryError>;
+
+    async fn lifecycle_mount_facts_at(
+        &self,
+        target: &AgentRunTarget,
+        agent_surface_revision: u64,
+    ) -> Result<AgentRunLifecycleMountFacts, AgentRunAppliedResourceSurfaceQueryError>;
 }
 
 /// Final Product surface compiler decorator.
@@ -76,6 +82,23 @@ impl AgentRunAppliedResourceSurfaceQueryPort for AgentRunLifecycleAppliedResourc
     ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError> {
         let mut surface = self.inner.applied_resource_surface(target).await?;
         let facts = self.facts.lifecycle_mount_facts(target).await?;
+        install_agent_run_lifecycle_applied_mount(&mut surface, &facts)?;
+        Ok(surface)
+    }
+
+    async fn applied_resource_surface_at(
+        &self,
+        target: &AgentRunTarget,
+        agent_surface_revision: u64,
+    ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError> {
+        let mut surface = self
+            .inner
+            .applied_resource_surface_at(target, agent_surface_revision)
+            .await?;
+        let facts = self
+            .facts
+            .lifecycle_mount_facts_at(target, agent_surface_revision)
+            .await?;
         install_agent_run_lifecycle_applied_mount(&mut surface, &facts)?;
         Ok(surface)
     }

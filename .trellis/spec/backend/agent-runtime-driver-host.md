@@ -61,8 +61,16 @@ pub trait CompleteAgentService {
 - Product execution profile 与 AgentFrame 是 desired intent；service descriptor 是 Agent
   guarantee；Host 在当前进程求交得到 bound surface，并由 concrete Agent
   `apply_surface/inspect` 证明 applied。
+- Product execution profile digest 标识 Product 的完整执行配置，Agent offer profile digest
+  标识 Complete Agent 对外声明的原生能力边界；两者属于不同命名空间。Host 使用前者选择并编译
+  desired surface，再用后者证明 admission，不能用字符串相等代替这次求交。
 - Host generation 只 fence 当前进程 route。Host 重启后重新从 1 建立 generation 是合法的，
   因为旧 callback route/attachment 已经不可解析。
+- 每个 Runtime thread 只有一个 current target，后续 Product command 与新回合只读取该 target。
+  Surface rebind 已经接纳的新 generation 不改变旧回合开始时固定的 callback route、binding 与
+  applied surface；旧 route 在其 deadline 内继续解析，使在途工具按当时的 immutable grant 完成。
+  attachment Lost 或 Host incarnation 结束时统一清除这些进程内代际，因为此时 concrete Agent
+  已不存在可继续回调的执行通道。
 - stable effect identity 在 Product/Agent 协议中派生；Host 不保存 create/fork/command/surface
   effect ledger。回包未知时由 concrete Agent `inspect(effect_id)` 收敛。
 - callback route、deadline 与 generation 在 Host 内存校验。真实 Tool/Hook handler 使用
@@ -85,6 +93,7 @@ pub trait CompleteAgentService {
 | 相同 live target + surface 重复 provision | 返回当前 target |
 | 当前 target 未 Lost 却请求不同 target/surface | provisioning conflict |
 | surface rebind expected generation 过期 | stale generation |
+| surface rebind 后旧回合在 deadline 内回调 | 解析旧 route/binding，并按旧 applied surface 授权 |
 | callback route 未注册或 generation/source 不匹配 | typed reject；handler 零调用 |
 | Host restart 后收到旧 callback | unknown route |
 | Agent effect 回包未知 | 使用同一 effect identity inspect；不写 Host ledger |
@@ -102,8 +111,8 @@ pub trait CompleteAgentService {
 ## 6. Tests Required
 
 - live catalog 测试覆盖 attach idempotency、verified facts conflict、retire 与跨 incarnation。
-- provision/rebind 测试覆盖 surface intersection、same-target replay、conflict、Lost 后新
-  generation 和 stale generation。
+- provision/rebind 测试覆盖 surface intersection、same-target replay、conflict、在途旧 generation
+  callback、Lost 后统一清理和 stale generation。
 - restart 测试构造全新 Host，证明无需数据库即可从 association + Agent service 重建。
 - callback 测试覆盖 current route、unknown route、stale generation、source mismatch、deadline
   与 handler idempotent replay。

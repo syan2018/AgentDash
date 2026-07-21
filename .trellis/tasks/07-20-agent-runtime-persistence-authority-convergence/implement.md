@@ -144,5 +144,15 @@
 - [x] 定向验证通过：Rust package check、Product frame discovery、skill/MCP surface、Task/VFS授权、
   Workspace Module final broker tracer、Native surface delta，以及前端22项ContextFrame测试和
   typecheck。
-- [ ] 重启`pnpm dev`后完成真实Draft tracer：确认Task Write、Canvas create、mount完整能力、
+- [x] 重启`pnpm dev`后完成真实Draft tracer：确认Task Write、Canvas create、mount完整能力、
   skills/MCP/memory ContextFrame、工具增量展示与会话流均来自同一authoritative Agent history。
+
+真实Draft tracer在AgentRun `711b0717-d772-5422-9f74-6d34a8078ac5`验证：约1068ms完成
+Draft到目标页导航且canonical用户消息立即可见；同一回合成功创建Canvas Module
+`canvas:cvs-unique-turn-section-verification`并再次list发现。最终authoritative history包含5个唯一
+tool item、完整Agent message与`TurnCompleted`，页面只渲染一个“调用 5 个”工具组、一个turn section，
+浏览器console零error/零warning。AgentFrame revision 2与Product resource surface均包含main、lifecycle
+和新Canvas三个mount；Canvas逻辑provider以`canvas_fs + canvas-root://...`路由，无需伪造backend。
+ContextFrame从同一Dash `SurfaceApplied` instruction/tool history投影出Identity、Environment、
+Guidelines、Assignment与Capability State增量。`TurnCompleted`后的authoritative reload替换live overlay，
+并保留请求在途期间到达的后续canonical record。

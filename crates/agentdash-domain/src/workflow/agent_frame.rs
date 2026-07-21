@@ -156,6 +156,22 @@ impl AgentFrame {
         self.surface = Some(surface);
         self.apply_surface_projection();
     }
+
+    /// Replaces the canonical VFS facts for this uncommitted revision and refreshes the split read
+    /// projections from that document.
+    pub fn attach_immutable_vfs_surface(
+        &mut self,
+        vfs_surface: Value,
+        capability_state: Option<Value>,
+    ) {
+        let mut surface = self.surface_document();
+        surface.vfs_surface = Some(vfs_surface);
+        if let Some(capability_state) = capability_state {
+            surface.capability_state = Some(capability_state);
+        }
+        self.surface = Some(surface);
+        self.apply_surface_projection();
+    }
 }
 
 #[cfg(test)]

@@ -31,6 +31,7 @@ import type { ImageAttachment } from "./composer/useImageAttachments";
 import { ImageAttachmentPreview } from "./composer/ImageAttachmentPreview";
 import { ComposerSendButton } from "./composer/ComposerSendButton";
 import { ComposerPlusMenu } from "./composer/ComposerPlusMenu";
+import { getTurnSectionKey } from "./turnSectionIdentity";
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
 type ExecutorConfigState = ReturnType<typeof useExecutorConfig>;
@@ -269,9 +270,9 @@ export function SessionChatStream({
         <div className="mx-auto w-full max-w-4xl space-y-1.5 px-5 py-6">
           {streamPrefixContent}
           {turnSegments && turnSegments.length > 0 ? (
-            turnSegments.map((segment, idx) => (
+            turnSegments.map((segment) => (
               <TurnSection
-                key={segment.turnId ?? `gap-${idx}`}
+                key={getTurnSectionKey(segment)}
                 segment={segment}
                 agentRunTarget={agentRunTarget}
                 companionSubagents={companionSubagents}

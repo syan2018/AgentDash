@@ -10,10 +10,10 @@ use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_agent_runtime_host::{
     AgentCallbackClock, CompleteAgentCallbackBroker, CompleteAgentHookHandler, CompleteAgentHost,
     CompleteAgentPlacement, CompleteAgentRuntimeTargetProvisioningRequest,
-    CompleteAgentServiceVerification, CompleteAgentToolHandler, CompleteAgentVerificationMethod,
-    CompleteAgentVerifiedBuildEvidence, CompleteAgentVerifiedServiceRegistration,
-    ProcessCompleteAgentLiveCatalog, ResolvedCompleteAgentHookCallback,
-    ResolvedCompleteAgentToolCallback,
+    CompleteAgentRuntimeTargetRecoveryRequest, CompleteAgentServiceVerification,
+    CompleteAgentToolHandler, CompleteAgentVerificationMethod, CompleteAgentVerifiedBuildEvidence,
+    CompleteAgentVerifiedServiceRegistration, ProcessCompleteAgentLiveCatalog,
+    ResolvedCompleteAgentHookCallback, ResolvedCompleteAgentToolCallback,
 };
 use agentdash_agent_service_api::*;
 use async_trait::async_trait;
@@ -91,6 +91,87 @@ async fn route_is_process_local_and_restart_fences_old_callback() {
         .await
         .expect_err("old route must not survive Host restart");
     assert_eq!(error.code, AgentHostCallbackErrorCode::UnknownRoute);
+}
+
+#[tokio::test]
+async fn surface_rebind_keeps_the_previous_generation_available_to_the_active_turn() {
+    let catalog = Arc::new(ProcessCompleteAgentLiveCatalog::new());
+    let host = Arc::new(CompleteAgentHost::new(catalog));
+    let source = AgentSourceCoordinate::new("source-rebind").unwrap();
+    let service = Arc::new(FixtureService::new());
+    let selection = host
+        .attach_verified_service(
+            verified_registration(
+                AgentServiceInstanceId::new("service-rebind").unwrap(),
+                &service.descriptor,
+                "host-rebind",
+            ),
+            service,
+        )
+        .await
+        .unwrap();
+    let thread = RuntimeThreadId::new("thread-rebind").unwrap();
+    let first = host
+        .provision_runtime_target(CompleteAgentRuntimeTargetProvisioningRequest {
+            idempotency_key: AgentIdempotencyKey::new("provision-rebind").unwrap(),
+            request_digest: AgentPayloadDigest::new("request-rebind").unwrap(),
+            runtime_thread_id: thread.clone(),
+            target: selection.target.clone(),
+            desired_surface: desired_surface(),
+            callback_deadline_ms: 5_000,
+        })
+        .await
+        .unwrap()
+        .target;
+    host.restore_runtime_source_route(
+        &thread,
+        source.clone(),
+        AgentEffectIdentity::new("restore-rebind").unwrap(),
+        "test".to_owned(),
+        5_000,
+    )
+    .await
+    .unwrap();
+
+    let old_call = tool_call(&first, source.clone());
+    let mut next_surface = desired_surface();
+    next_surface.revision = AgentSurfaceRevision(2);
+    next_surface.digest = AgentSurfaceDigest::new("surface-2").unwrap();
+    let recovered = host
+        .prepare_runtime_surface_rebind(CompleteAgentRuntimeTargetRecoveryRequest {
+            idempotency_key: AgentIdempotencyKey::new("prepare-rebind").unwrap(),
+            request_digest: AgentPayloadDigest::new("request-rebind-2").unwrap(),
+            runtime_thread_id: thread.clone(),
+            expected_generation: first.generation,
+            target: selection.target,
+            desired_surface: next_surface,
+            callback_deadline_ms: 5_000,
+        })
+        .await
+        .unwrap();
+    host.apply_prepared_runtime_surface(
+        &thread,
+        AgentEffectIdentity::new("apply-rebind").unwrap(),
+        "test".to_owned(),
+        5_000,
+    )
+    .await
+    .unwrap();
+
+    let handler = Arc::new(CountingToolHandler::default());
+    let callbacks = CompleteAgentCallbackBroker::with_clock(
+        handler.clone(),
+        Arc::new(AllowHookHandler),
+        host,
+        Arc::new(FixedClock(100)),
+    );
+    AgentHostCallbacks::invoke_tool(&callbacks, old_call)
+        .await
+        .expect("the active turn keeps using its previous route");
+    AgentHostCallbacks::invoke_tool(&callbacks, tool_call(&recovered.recovered_target, source))
+        .await
+        .expect("the next turn uses the new route");
+    assert_eq!(handler.calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

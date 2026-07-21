@@ -49,7 +49,9 @@ function hasActiveCanonicalTurn(
 - transport只接收generated `AgentLiveEvent`形态。
 - `ManagedRuntimeSnapshot.conversation_history`是渲染输入；live只向该数组覆盖/追加canonical record。
 - `AgentDashThreadItem.type`直接决定消息、reasoning或tool/resource card。
-- reload以Complete Agent durable history替换ephemeral overlay。
+- `TurnCompleted`触发reload，以Complete Agent durable history替换ephemeral overlay；reload期间到达的
+  后续canonical records继续fold到新baseline；期间再次出现`TurnCompleted`时排队下一次reload，
+  因此网络响应顺序和连续回合都不会创建第二套会话事实。
 
 ### 4. Validation & Error Matrix
 
@@ -59,6 +61,8 @@ function hasActiveCanonicalTurn(
 | presentation id重复 | 覆盖同一record |
 | item completed | 终结该item，不终结turn |
 | turn completed | receiving=false |
+| terminal snapshot请求期间收到后续live record | snapshot替换旧overlay后继续保留该record |
+| terminal snapshot请求期间下一回合也完成 | 当前收敛结束后再读取一次authoritative snapshot |
 
 ### 5. Good / Base / Bad Cases
 

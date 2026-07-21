@@ -63,6 +63,68 @@ describe("Managed Runtime feed connection", () => {
     },
   };
 
+  const turnCompleted: AgentLiveEvent = {
+    source: "source-1",
+    sequence: "2" as AgentLiveEvent["sequence"],
+    record: {
+      presentation_id: "live:source-1:turn-completed",
+      presentation: {
+        durability: "durable",
+        envelope: {
+          event: {
+            type: "turn_completed",
+            payload: {
+              threadId: "source-1",
+              turn: {
+                id: "turn-live",
+                items: [],
+                itemsView: "full",
+                status: "completed",
+                error: null,
+              },
+            },
+          },
+          sessionId: "source-1",
+          source: {
+            connectorId: "dash-agent",
+            connectorType: "native",
+            executorId: null,
+          },
+          trace: { turnId: "turn-live", entryIndex: null },
+          observedAt: "2026-07-21T00:00:01Z",
+        },
+      },
+    },
+  };
+
+  const threadNameUpdated: AgentLiveEvent = {
+    source: "source-1",
+    sequence: "3" as AgentLiveEvent["sequence"],
+    record: {
+      presentation_id: "live:source-1:thread-name",
+      presentation: {
+        durability: "durable",
+        envelope: {
+          event: {
+            type: "thread_name_updated",
+            payload: {
+              threadId: "source-1",
+              threadName: "Terminal convergence",
+            },
+          },
+          sessionId: "source-1",
+          source: {
+            connectorId: "dash-agent",
+            connectorType: "native",
+            executorId: null,
+          },
+          trace: { turnId: null, entryIndex: null },
+          observedAt: "2026-07-21T00:00:02Z",
+        },
+      },
+    },
+  };
+
   it("subscribes after the authoritative snapshot and folds live events as disposable presentation", async () => {
     const baseline = managedRuntimeTestFixtures.snapshots.started;
     const options: ManagedRuntimeFeedTransportOptions[] = [];
@@ -152,6 +214,143 @@ describe("Managed Runtime feed connection", () => {
 
     expect(fetchSnapshot).toHaveBeenCalledTimes(2);
     expect(connectionObserver.onProjection).toHaveBeenLastCalledWith(completed);
+  });
+
+  it("replaces the disposable live overlay with the authoritative terminal snapshot", async () => {
+    const started = managedRuntimeTestFixtures.snapshots.started;
+    const completed = managedRuntimeTestFixtures.snapshots.completed;
+    const transports: ManagedRuntimeFeedTransportOptions[] = [];
+    const connectionObserver = observer();
+    const fetchSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce(started)
+      .mockResolvedValueOnce(completed);
+
+    const connection = connectManagedRuntimeFeed(
+      { runId: "run-1", agentId: "agent-1" },
+      connectionObserver,
+      {
+        fetchSnapshot,
+        createTransport: (options) => {
+          transports.push(options);
+          return { close: vi.fn() };
+        },
+      },
+    );
+    await connection.ready;
+
+    transports[0]?.onEvent(textDelta);
+    transports[0]?.onEvent(turnCompleted);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fetchSnapshot).toHaveBeenCalledTimes(2);
+    expect(connectionObserver.onProjection).toHaveBeenLastCalledWith(completed);
+    expect(completed.conversation_history).not.toContainEqual(
+      expect.objectContaining({ presentation_id: textDelta.record.presentation_id }),
+    );
+  });
+
+  it("preserves canonical live records received while the terminal snapshot is loading", async () => {
+    const started = managedRuntimeTestFixtures.snapshots.started;
+    const completed = managedRuntimeTestFixtures.snapshots.completed;
+    const terminalSnapshot = deferred<ManagedRuntimeSnapshot>();
+    const transports: ManagedRuntimeFeedTransportOptions[] = [];
+    const connectionObserver = observer();
+    const fetchSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce(started)
+      .mockImplementationOnce(() => terminalSnapshot.promise);
+
+    const connection = connectManagedRuntimeFeed(
+      { runId: "run-1", agentId: "agent-1" },
+      connectionObserver,
+      {
+        fetchSnapshot,
+        createTransport: (options) => {
+          transports.push(options);
+          return { close: vi.fn() };
+        },
+      },
+    );
+    await connection.ready;
+
+    transports[0]?.onEvent(textDelta);
+    transports[0]?.onEvent(turnCompleted);
+    transports[0]?.onEvent(threadNameUpdated);
+    terminalSnapshot.resolve(completed);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(connectionObserver.onProjection).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        conversation_history: expect.arrayContaining([
+          expect.objectContaining({
+            presentation_id: threadNameUpdated.record.presentation_id,
+          }),
+        ]),
+      }),
+    );
+    const converged = vi.mocked(connectionObserver.onProjection).mock.calls.at(-1)?.[0];
+    expect(converged?.conversation_history).not.toContainEqual(
+      expect.objectContaining({ presentation_id: textDelta.record.presentation_id }),
+    );
+  });
+
+  it("queues another authoritative reload when a later turn completes during convergence", async () => {
+    const started = managedRuntimeTestFixtures.snapshots.started;
+    const completed = managedRuntimeTestFixtures.snapshots.completed;
+    const firstTerminalSnapshot = deferred<ManagedRuntimeSnapshot>();
+    const transports: ManagedRuntimeFeedTransportOptions[] = [];
+    const connectionObserver = observer();
+    const fetchSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce(started)
+      .mockImplementationOnce(() => firstTerminalSnapshot.promise)
+      .mockResolvedValueOnce(completed);
+    const laterDelta: AgentLiveEvent = {
+      ...textDelta,
+      sequence: "4" as AgentLiveEvent["sequence"],
+      record: {
+        ...textDelta.record,
+        presentation_id: "live:source-1:later-delta",
+      },
+    };
+    const laterCompleted: AgentLiveEvent = {
+      ...turnCompleted,
+      sequence: "5" as AgentLiveEvent["sequence"],
+      record: {
+        ...turnCompleted.record,
+        presentation_id: "live:source-1:later-completed",
+      },
+    };
+
+    const connection = connectManagedRuntimeFeed(
+      { runId: "run-1", agentId: "agent-1" },
+      connectionObserver,
+      {
+        fetchSnapshot,
+        createTransport: (options) => {
+          transports.push(options);
+          return { close: vi.fn() };
+        },
+      },
+    );
+    await connection.ready;
+
+    transports[0]?.onEvent(turnCompleted);
+    transports[0]?.onEvent(laterDelta);
+    transports[0]?.onEvent(laterCompleted);
+    firstTerminalSnapshot.resolve(completed);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fetchSnapshot).toHaveBeenCalledTimes(3);
+    expect(connectionObserver.onProjection).toHaveBeenLastCalledWith(completed);
+    expect(completed.conversation_history).not.toContainEqual(
+      expect.objectContaining({ presentation_id: laterDelta.record.presentation_id }),
+    );
   });
 
   it("does not publish a late baseline after the connection is closed", async () => {

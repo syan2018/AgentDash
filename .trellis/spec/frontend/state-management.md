@@ -26,6 +26,13 @@
 - reconnect先重新读取authoritative snapshot，再建立新的live lane；duplicate event不重复reduce，
   connection/source变化删除旧lane partial贡献。failed/cancelled/lost item按identity终结原entry，
   snapshot terminal覆盖过程delta，terminal后的stale delta不再修改展示。
+- canonical `TurnCompleted` 是 live overlay 的收敛边界：连接层立即读取 authoritative snapshot，
+  用 committed history替换该回合的ephemeral partial；请求在途期间继续到达的canonical live records
+  按 `presentation_id` 叠加到新baseline，避免标题等terminal后事实被较早的snapshot响应覆盖；若期间
+  又收到后续回合的`TurnCompleted`，连接层在当前请求后再读取一次，保证每个terminal都完成durable收敛。
+- UI允许thread-level ContextFrame在视觉上把同一turn切成多个presentation section。Section的React
+  identity由首个canonical display item identity派生，而不是只用turn id；authoritative收敛替换掉
+  live section时会得到新的identity，旧DOM不会与新section并存。
 - Backbone product/resource event只触发相应projection invalidate，不推进Runtime state。
 - live 标准 `thread_name_updated` 触发 AgentRun workspace state 与 list 的重新查询；初始
   hydration replay boundary 内的历史名称事件不重复执行该副作用。UI 不直接用事件 payload
@@ -39,6 +46,8 @@
 与“先打开 Tab、后执行 WorkspacePanel 首次初始化”的顺序。
 Runtime feed生命周期测试还必须覆盖StrictMode的`setup → cleanup → setup`：第一次load被取消、
 第二次同target load完成时boundary从`null`变为该次`lastAppliedSeq`；后续重连继续保留原boundary。
+Terminal convergence测试必须覆盖ephemeral overlay被committed snapshot替换，以及snapshot请求在途
+收到的后续durable record仍保留在最终projection；连续回合的terminal必须排队完成下一次收敛读取。
 
 ## Scenario: Runtime conversation name invalidation
 

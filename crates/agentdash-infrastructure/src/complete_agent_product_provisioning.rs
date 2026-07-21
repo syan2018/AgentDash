@@ -561,21 +561,9 @@ impl AgentRunProductRuntimeSurfaceRebindPort for CompleteAgentProductRuntimeProv
             .runtime_target(&request.runtime_thread_id)
             .await
             .map_err(map_host_error)?;
-        if current.profile_digest.as_str() != request.execution_profile_digest {
-            return Err(incompatible(
-                "surface rebind execution profile does not match the active Complete Agent",
-            ));
-        }
-        let profile = ProductExecutionProfileRef {
-            profile_key: "surface-rebind".to_owned(),
-            profile_revision: 1,
-            profile_digest: request.execution_profile_digest.clone(),
-            configuration: request.execution_configuration.clone(),
-            credential_scope: None,
-        };
         let desired_surface = compile_product_surface(
             &request.runtime_thread_id,
-            &profile,
+            &request.execution_profile,
             &request.surface_facts,
             self.broker.as_ref(),
             self.dynamic_tools.as_ref(),
@@ -586,7 +574,7 @@ impl AgentRunProductRuntimeSurfaceRebindPort for CompleteAgentProductRuntimeProv
             "target": request.target,
             "runtime_thread_id": request.runtime_thread_id,
             "frame": request.frame,
-            "execution_profile_digest": request.execution_profile_digest,
+            "execution_profile_digest": request.execution_profile.profile_digest,
             "surface_facts_digest": request.surface_facts.surface_digest,
             "desired_surface": desired_surface,
         }))?;

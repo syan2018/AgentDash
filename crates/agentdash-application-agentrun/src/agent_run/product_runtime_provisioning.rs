@@ -288,8 +288,7 @@ pub struct AgentRunProductRuntimeSurfaceRebindRequest {
     pub runtime_thread_id: RuntimeThreadId,
     pub idempotency_key: String,
     pub frame: ProductAgentFrameRef,
-    pub execution_profile_digest: String,
-    pub execution_configuration: serde_json::Value,
+    pub execution_profile: ProductExecutionProfileRef,
     pub surface_facts: ProductAgentSurfaceFacts,
 }
 
@@ -297,7 +296,7 @@ impl AgentRunProductRuntimeSurfaceRebindRequest {
     pub fn validate(&self) -> Result<(), AgentRunProductRuntimeProvisioningError> {
         if self.frame.agent_id != self.target.agent_id
             || self.frame.revision == 0
-            || self.execution_profile_digest.trim().is_empty()
+            || !self.execution_profile.validate()
             || self.idempotency_key.trim().is_empty()
             || self.surface_facts.surface_revision != self.frame.revision
             || !self.surface_facts.validate()

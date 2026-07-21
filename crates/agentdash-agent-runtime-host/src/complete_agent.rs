@@ -446,7 +446,6 @@ impl CompleteAgentHost {
             bound_surface,
             request.callback_deadline_ms,
         )?;
-        state.callback_routes.remove(&previous.callbacks.route_id);
         state
             .runtime_targets
             .insert(request.runtime_thread_id, recovered.clone());
@@ -476,14 +475,7 @@ impl CompleteAgentHost {
     pub async fn resolve_callback_route(
         &self,
         meta: &AgentHostCallbackMeta,
-    ) -> Result<
-        (
-            CompleteAgentCallbackRoute,
-            CompleteAgentBinding,
-            CompleteAgentRuntimeTarget,
-        ),
-        AgentHostCallbackError,
-    > {
+    ) -> Result<(CompleteAgentCallbackRoute, CompleteAgentBinding), AgentHostCallbackError> {
         let state = self.state.read().await;
         let route = state
             .callback_routes
@@ -521,23 +513,7 @@ impl CompleteAgentHost {
                     false,
                 )
             })?;
-        let target = state
-            .runtime_targets
-            .values()
-            .find(|target| {
-                target.callbacks.route_id == route.route_id
-                    && target.generation == route.generation
-                    && target.target == binding.target
-            })
-            .cloned()
-            .ok_or_else(|| {
-                AgentHostCallbackError::new(
-                    AgentHostCallbackErrorCode::Internal,
-                    "callback route has no active Runtime target",
-                    false,
-                )
-            })?;
-        Ok((route, binding, target))
+        Ok((route, binding))
     }
 
     pub async fn runtime_source_association(
@@ -696,6 +672,18 @@ impl CompleteAgentHost {
             }
             state.lost_runtime_threads.insert(thread);
         }
+        let lost_binding_ids = state
+            .bindings
+            .iter()
+            .filter(|(_, binding)| &binding.target == target)
+            .map(|(id, _)| id.clone())
+            .collect::<BTreeSet<_>>();
+        state
+            .callback_routes
+            .retain(|_, route| !lost_binding_ids.contains(&route.binding_id));
+        state
+            .bindings
+            .retain(|_, binding| &binding.target != target);
         Ok(())
     }
 
@@ -861,6 +849,7 @@ impl CompleteAgentHost {
             state: CompleteAgentBindingState::Available,
         };
         let route = CompleteAgentCallbackRoute::from_binding(
+            target.runtime_thread_id.clone(),
             binding_id.clone(),
             target.callbacks.clone(),
             source.clone(),
@@ -879,12 +868,6 @@ impl CompleteAgentHost {
                     .map_or(AgentBindingGeneration(0), |current| current.generation),
             });
         }
-        state
-            .bindings
-            .retain(|id, existing| existing.source != source || id == &binding_id);
-        state
-            .callback_routes
-            .retain(|_, existing| existing.source != source || existing.binding_id == binding_id);
         state.bindings.insert(binding_id, binding);
         state.callback_routes.insert(route.route_id.clone(), route);
         Ok(ManagedRuntimeAgentBinding {

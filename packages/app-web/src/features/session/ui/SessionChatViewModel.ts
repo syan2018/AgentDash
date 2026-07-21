@@ -5,7 +5,11 @@ import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { SessionEventEnvelope } from "../model/types";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
-import { extractPlatformEventType, isRecord } from "../model/platformEvent";
+import {
+  extractContextFrameValue,
+  extractPlatformEventType,
+  isRecord,
+} from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 
 /**
@@ -205,16 +209,7 @@ export function collectTurnLifecycleEvents(
 }
 
 function isCompactionSummaryFrame(event: BackboneEvent): boolean {
-  if (
-    event.type !== "platform" ||
-    event.payload.kind !== "session_meta_update" ||
-    event.payload.data.key !== "context_frame"
-  ) {
-    return false;
-  }
-  const value = event.payload.data.value;
-  return value !== null && typeof value === "object" && !Array.isArray(value) &&
-    value.kind === "compaction_summary";
+  return extractContextFrameValue(event)?.kind === "compaction_summary";
 }
 
 function isSessionRewindRefreshEvent(event: BackboneEvent): boolean {

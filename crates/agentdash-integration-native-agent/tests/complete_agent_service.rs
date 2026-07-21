@@ -13,9 +13,12 @@ use agentdash_agent::dash::{
     DashCompactionResult, DashCompactor, DashCoreError, DashExecutionCallbacks,
     DashExecutionDependencies, DashExecutionEvent, DashFinishReason, DashProvider,
     DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashServiceError,
-    DashToolCall, DashToolCallbacks, DashToolResult,
+    DashToolCall, DashToolCallbacks, DashToolResult, NoopDashHistoryCallbacks,
 };
-use agentdash_agent_protocol::{BackboneEvent, codex_app_server_protocol as codex};
+use agentdash_agent_protocol::{
+    BackboneEvent, ContextFrameKind, ContextFrameSection, PlatformEvent, PresentationDurability,
+    codex_app_server_protocol as codex,
+};
 use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId, AgentChangesQuery,
     AgentCommand, AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentContextPackageId,
@@ -522,6 +525,7 @@ fn service_with_store(store: Arc<dyn DashCompleteAgentStore>) -> DashAgentComple
             provider: Arc::new(FixtureProvider),
             tools: Arc::new(FixtureTools),
             callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(FixtureCompactor),
         },
         Arc::new(FixtureHostCallbacks),
@@ -537,6 +541,7 @@ async fn production_registration_packages_the_complete_dash_service_without_regi
             provider: Arc::new(FixtureProvider),
             tools: Arc::new(FixtureTools),
             callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(FixtureCompactor),
         },
         Arc::new(FixtureHostCallbacks),
@@ -574,6 +579,7 @@ fn service_with(
             provider,
             tools: Arc::new(FixtureTools),
             callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor,
         },
         Arc::new(FixtureHostCallbacks),
@@ -833,6 +839,24 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
     );
     assert!(evidence.satisfies(InitialContextAppliedEvidence::PackageDigest));
     assert_eq!(create.snapshot_revision, Some(AgentSnapshotRevision(1)));
+    let initial_snapshot = service
+        .read(AgentReadQuery {
+            source: parent.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        initial_snapshot
+            .conversation_history
+            .iter()
+            .any(|record| matches!(
+                &record.presentation.envelope.event,
+                BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
+                    if changed.frame.kind == ContextFrameKind::CompactionSummary
+                        && changed.frame.rendered_text == "parent summary"
+            ))
+    );
 
     let submit = service
         .execute(AgentCommandEnvelope {
@@ -1226,6 +1250,23 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
         receipt.applied.contributions[0].fidelity,
         SemanticFidelity::Exact
     );
+    let snapshot = service
+        .read(AgentReadQuery {
+            source: source.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert!(snapshot.conversation_history.iter().any(|record| matches!(
+        &record.presentation.envelope.event,
+        BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
+            if changed.frame.kind == ContextFrameKind::CapabilityStateDelta
+                && changed.frame.sections.iter().any(|section| matches!(
+                    section,
+                    ContextFrameSection::ToolSchemaDelta { added_tools }
+                        if added_tools.iter().any(|tool| tool.name == "read")
+                ))
+    )));
     let reopened = service_with_store(store.clone());
     let replayed = reopened
         .apply_surface(apply(
@@ -1308,6 +1349,7 @@ async fn lost_surface_receipts_reconcile_live_callbacks_on_the_same_service() {
             provider: provider.clone(),
             tools: Arc::new(FixtureTools),
             callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(FixtureCompactor),
         },
         host.clone(),
@@ -1390,6 +1432,7 @@ async fn lost_surface_receipts_reconcile_live_callbacks_on_the_same_service() {
             provider: provider.clone(),
             tools: Arc::new(FixtureTools),
             callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(FixtureCompactor),
         },
         host.clone(),
@@ -1584,6 +1627,7 @@ async fn exact_hooks_run_once_rewrite_and_do_not_retrigger_on_effect_replay() {
             provider: provider.clone(),
             tools: Arc::new(FixtureTools),
             callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(FixtureCompactor),
         },
         host.clone(),
@@ -2313,7 +2357,37 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
         }
     );
 
-    let mut previous_sequence = 0;
+    let accepted_input = tokio::time::timeout(Duration::from_secs(1), live_events.next())
+        .await
+        .expect("accepted user input should be published immediately")
+        .expect("live event stream should remain available")
+        .expect("live event stream should remain open");
+    assert_eq!(accepted_input.source, source);
+    assert_eq!(
+        accepted_input.record.presentation.durability,
+        PresentationDurability::Durable
+    );
+    assert!(matches!(
+        accepted_input.record.presentation.envelope.event,
+        BackboneEvent::UserInputSubmitted(_)
+    ));
+
+    let turn_started = tokio::time::timeout(Duration::from_secs(1), live_events.next())
+        .await
+        .expect("durable turn start should follow accepted input")
+        .expect("live event stream should remain available")
+        .expect("live event stream should remain open");
+    assert_eq!(turn_started.source, source);
+    assert_eq!(
+        turn_started.record.presentation.durability,
+        PresentationDurability::Durable
+    );
+    assert!(matches!(
+        turn_started.record.presentation.envelope.event,
+        BackboneEvent::TurnStarted(_)
+    ));
+
+    let mut previous_sequence = turn_started.sequence.0;
     let text_delta = loop {
         let event = tokio::time::timeout(Duration::from_secs(1), live_events.next())
             .await

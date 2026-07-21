@@ -1,5 +1,10 @@
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { extractPlatformEventData, extractPlatformEventType, isRecord } from "./platformEvent";
+import {
+  extractContextFrameValue,
+  extractPlatformEventData,
+  extractPlatformEventType,
+  isRecord,
+} from "./platformEvent";
 
 export type PlatformFeedBoundary = "hard" | "soft" | "neutral";
 export type NotificationVisibility = "renderable" | "all";
@@ -108,11 +113,7 @@ function isSignificantHookEvent(data: Record<string, unknown> | null): boolean {
 }
 
 function isContextFrameEvent(event: BackboneEvent): boolean {
-  return (
-    event.type === "platform" &&
-    event.payload.kind === "session_meta_update" &&
-    event.payload.data.key === "context_frame"
-  );
+  return extractContextFrameValue(event) != null;
 }
 
 export function getPlatformEventPolicy(

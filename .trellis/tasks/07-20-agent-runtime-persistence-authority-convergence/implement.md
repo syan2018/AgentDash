@@ -22,10 +22,14 @@
 - [x] production Dash execution callback接入 source-scoped live event sink。
 - [x] Complete Agent snapshot、Managed Runtime wrapper与前端feed只保留
   `conversation_history: CanonicalConversationRecord[]`；平行turn/item/active字段已删除。
-- [x] live delta只在当前进程broadcast；gap/断连通过authoritative snapshot恢复。
+- [x] committed native history与Core ephemeral delta只在当前进程broadcast；gap/断连通过
+  authoritative snapshot恢复。
 - [x] live transport只接受`AgentLiveEvent { source, sequence, record }`，前端运行态只由canonical
   `TurnStarted/TurnCompleted`推导。
 - [x] Agent terminal failure保留真实 code/message/retryability。
+- [x] 用户输入与`TurnStarted`在Agent native history提交后立即进入live，顺序先于首个Core输出。
+- [x] Agent实际接纳的surface/initial context写入native history并投影canonical ContextFrame；前端
+  直接消费`Platform(ContextFrameChanged)`。
 
 ## Product / Workflow
 
@@ -53,6 +57,7 @@
 - [x] 0098–0103删除Workflow/AgentRun/Companion重复saga、receipt与continuation ledger。
 - [x] 0104删除失效的conversation展示设置。
 - [x] 0105把Routine/Gate局部receipt字段收敛为input handoff语义。
+- [x] 0106把Dash surface从repository并行字段迁入native history，并清理旧字段。
 - [x] migration history guard覆盖forward-only迁移历史。
 - [x] retired schema readiness/负向搜索不允许旧Runtime/Host/Callback owner重新进入最终schema。
 
@@ -89,3 +94,14 @@
 - [x] 首个输出后仍active、仅`TurnCompleted`结束receiving的前端回归测试通过。
 - [x] 最终定向测试、contract generation/typecheck、migration guard、源码负向搜索与
   `git diff --check` 全量复核完成后生成 closeout。
+
+## ContextFrame 与输入时序补充验证
+
+- [x] Dash repository序列化结果只保留history中的`SurfaceApplied`，当前surface由history fold恢复。
+- [x] `InitialContextInstalled`与surface facts均生成typed `ContextFrameChanged`，authoritative
+  snapshot返回现有source的ContextFrame。
+- [x] source live订阅首先收到durable用户输入与`TurnStarted`，其后才收到ephemeral Agent delta。
+- [x] frontend直接解析canonical `ContextFrameChanged`，用户输入无需等待完整Agent响应才进入feed。
+- [x] 0106在空库与当前开发库迁移成功，开发库schema为106，新后端可读取迁移后的source。
+- [ ] 使用当前开发环境真实发送一条消息，确认ContextFrame展示、用户消息即时出现、流式输出与
+  `TurnCompleted`运行态均符合canonical顺序。

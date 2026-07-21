@@ -5,12 +5,14 @@ use std::sync::{
 
 use agentdash_agent::dash::{
     ActivityStatus, AgentHistory, AgentSessionId, AgentTurnId, BranchId, CommandId, CompactionId,
-    ContextRevision, DashAgentRepository, DashAgentRepositoryState, DashAgentService,
-    DashCommandRequest, DashCompactionRequest, DashCompactionResult, DashCompactor, DashCoreError,
-    DashExecutionCallbacks, DashExecutionConsistency, DashExecutionDependencies,
-    DashExecutionEvent, DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
-    DashProviderRequest, DashPublicCommand, DashReceiptState, DashServiceError, DashSurface,
-    DashTerminalOutcome, DashToolCall, DashToolCallbacks, DashToolResult, EffectId, HistoryPayload,
+    ContextDeliveryFidelity, ContextRevision, DashAgentRepository, DashAgentRepositoryState,
+    DashAgentService, DashCommandRequest, DashCompactionRequest, DashCompactionResult,
+    DashCompactor, DashCoreError, DashExecutionCallbacks, DashExecutionConsistency,
+    DashExecutionDependencies, DashExecutionEvent, DashFinishReason, DashProvider,
+    DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashPublicCommand,
+    DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome, DashToolCall,
+    DashToolCallbacks, DashToolResult, EffectId, HistoryPayload, InitialContextContribution,
+    InitialContextInstallation, InitialContextMode, NoopDashHistoryCallbacks,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -141,6 +143,7 @@ async fn retryable_provider_failure_is_terminal_and_inspectable_outside_session(
             provider: Arc::new(RetryableProvider),
             tools: Arc::new(NoTools),
             callbacks: Arc::new(NoCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(NoCompaction),
         },
     )
@@ -192,6 +195,31 @@ struct CountingProvider {
     calls: AtomicUsize,
 }
 
+#[derive(Default)]
+struct CapturingProvider {
+    requests: tokio::sync::Mutex<Vec<DashProviderRequest>>,
+}
+
+#[async_trait]
+impl DashProvider for CapturingProvider {
+    async fn stream(
+        &self,
+        request: DashProviderRequest,
+    ) -> Result<DashProviderEventStream, DashCoreError> {
+        self.requests.lock().await.push(request);
+        Ok(Box::pin(stream::iter([
+            Ok(DashProviderEvent::TextDelta {
+                delta: "answer".into(),
+            }),
+            Ok(DashProviderEvent::Completed {
+                finish_reason: DashFinishReason::Stop,
+                input_tokens: 1,
+                output_tokens: 1,
+            }),
+        ])))
+    }
+}
+
 #[async_trait]
 impl DashProvider for CountingProvider {
     async fn stream(
@@ -217,8 +245,58 @@ fn dependencies(provider: Arc<dyn DashProvider>) -> DashExecutionDependencies {
         provider,
         tools: Arc::new(NoTools),
         callbacks: Arc::new(NoCallbacks),
+        history_callbacks: Arc::new(NoopDashHistoryCallbacks),
         compactor: Arc::new(NoCompaction),
     }
+}
+
+#[tokio::test]
+async fn installed_initial_context_is_materialized_into_the_provider_prompt() {
+    let provider = Arc::new(CapturingProvider::default());
+    let installation = InitialContextInstallation {
+        package_id: "package-1".into(),
+        package_digest: "sha256:package-1".into(),
+        mode: InitialContextMode::Compact,
+        fidelity: ContextDeliveryFidelity::TypedNative,
+        contributions: vec![InitialContextContribution {
+            kind: "compact_summary".into(),
+            payload: "the durable parent summary".into(),
+            authority: "agent_history".into(),
+            source_revision: "revision-7".into(),
+            digest: "sha256:summary".into(),
+        }],
+    };
+    let service = DashAgentService::create_with_repository(
+        Arc::new(RecordingDashRepository::default()),
+        AgentHistory::empty(
+            AgentSessionId::new("initial-context-session"),
+            BranchId::new("initial-context-branch"),
+        ),
+        Some(installation),
+        dependencies(provider.clone()),
+    )
+    .await
+    .unwrap();
+
+    service
+        .execute(DashCommandRequest {
+            command_id: CommandId::new("initial-context-command"),
+            effect_id: EffectId::new("initial-context-effect"),
+            command: DashPublicCommand::SubmitInput {
+                content: "continue".into(),
+            },
+        })
+        .await
+        .unwrap();
+
+    let requests = provider.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert!(
+        requests[0]
+            .system_prompt
+            .contains("the durable parent summary"),
+        "accepted initial context must be part of the actual provider prompt"
+    );
 }
 
 #[tokio::test]
@@ -247,6 +325,21 @@ async fn repository_reopen_preserves_surface_inspect_and_idempotency_without_pro
         })
         .await
         .unwrap();
+    let persisted = repository.load().await.unwrap();
+    assert!(
+        persisted
+            .history()
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry.payload, HistoryPayload::SurfaceApplied { .. }))
+    );
+    assert!(
+        serde_json::to_value(&persisted)
+            .unwrap()
+            .get("surface")
+            .is_none(),
+        "current Dash surface must only be recoverable from native history"
+    );
     let request = DashCommandRequest {
         command_id: CommandId::new("reopen-command"),
         effect_id: EffectId::new("reopen-effect"),
@@ -341,6 +434,7 @@ async fn automatic_service(
             provider,
             tools: Arc::new(NoTools),
             callbacks: Arc::new(NoCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor,
         },
     )

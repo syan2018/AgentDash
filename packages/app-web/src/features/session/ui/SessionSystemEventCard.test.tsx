@@ -1,13 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import type { JsonValue } from "../../../generated/common-contracts";
-import { parseContextFrame, type ContextFrame } from "../model/contextFrame";
+import type { BackboneEvent, ContextFrame as WireContextFrame } from "../../../generated/backbone-protocol";
+import { parseContextFrame, type ContextFrame as UiContextFrame } from "../model/contextFrame";
 import { SessionSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
-
-type JsonObject = { [key: string]: JsonValue | undefined };
 
 describe("SessionSystemEventCard", () => {
   it("放行并渲染 session_branch_forked 事件", () => {
@@ -38,10 +35,9 @@ describe("SessionSystemEventCard", () => {
     const event: BackboneEvent = {
       type: "platform",
       payload: {
-        kind: "session_meta_update",
+        kind: "context_frame_changed",
         data: {
-          key: "context_frame",
-          value: frameData,
+          frame: frameData,
         },
       },
     };
@@ -60,10 +56,9 @@ describe("SessionSystemEventCard", () => {
     const event: BackboneEvent = {
       type: "platform",
       payload: {
-        kind: "session_meta_update",
+        kind: "context_frame_changed",
         data: {
-          key: "context_frame",
-          value: sampleContextFrameData(),
+          frame: sampleContextFrameData(),
         },
       },
     };
@@ -240,7 +235,7 @@ describe("SessionSystemEventCard", () => {
   });
 });
 
-function sampleContextFrameData(): JsonObject {
+function sampleContextFrameData(): WireContextFrame {
   return {
     id: "runtime-context-1",
     kind: "capability_state_delta",
@@ -251,7 +246,25 @@ function sampleContextFrameData(): JsonObject {
     delivery_channel: "turn_start",
     message_role: "user",
     rendered_text: "## Tool Schema Delta — Step Transition: apply",
-    created_at_ms: 1,
+    delivery_metadata: {
+      delivery_phase: "discovered_inventory",
+      delivery_order: 50,
+      cache_policy: "discovery_digest",
+      cache_key: null,
+      cache_revision: "surface-1",
+      model_channel: "context",
+      agent_consumption: {
+        target: "dash-agent",
+        mode: "connector_native",
+        reason: "dash_materialized_tool_registry",
+      },
+      frontend_label: "Capability State Delta",
+      connector_profile: {
+        profile_id: "dash-agent",
+        declared_consumption_modes: ["connector_native"],
+      },
+    },
+    created_at_ms: 1n,
     sections: [
       {
         kind: "tool_schema_delta",
@@ -273,7 +286,7 @@ function sampleContextFrameData(): JsonObject {
   };
 }
 
-function readFrame(value: Record<string, unknown>): ContextFrame {
+function readFrame(value: unknown): UiContextFrame {
   const frame = parseContextFrame(value);
   if (!frame) {
     throw new Error("invalid context frame test fixture");

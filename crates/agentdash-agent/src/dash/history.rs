@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::DashExecutionFailure;
+use super::{DashExecutionFailure, DashToolDefinition};
 use thiserror::Error;
 
 macro_rules! string_id {
@@ -59,6 +59,22 @@ pub struct InitialContextContribution {
     pub digest: String,
 }
 
+impl InitialContextContribution {
+    /// Renders the contribution exactly where Dash materializes its provider system prompt.
+    ///
+    /// The native history retains the typed kind and original payload so adapters can also
+    /// project the same accepted contribution into platform ContextFrame presentation.
+    pub fn render_for_prompt(&self) -> String {
+        let title = match self.kind.as_str() {
+            "compact_summary" => "Compaction Summary",
+            "workflow_context" => "Workflow Context",
+            "constraint_set" => "Constraint Set",
+            _ => self.kind.as_str(),
+        };
+        format!("## AgentDash Initial Context: {title}\n{}", self.payload)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InitialContextInstallation {
     pub package_id: String,
@@ -66,6 +82,28 @@ pub struct InitialContextInstallation {
     pub mode: InitialContextMode,
     pub fidelity: ContextDeliveryFidelity,
     pub contributions: Vec<InitialContextContribution>,
+}
+
+impl InitialContextInstallation {
+    pub fn render_for_prompt(&self) -> String {
+        self.contributions
+            .iter()
+            .map(InitialContextContribution::render_for_prompt)
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+}
+
+/// The exact prompt/tool surface materialized by the Dash agent.
+///
+/// This belongs to the concrete agent source: Product surface contributions are only input
+/// intent, while this value records what Dash actually accepted for provider execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DashSurface {
+    pub revision: u64,
+    pub digest: String,
+    pub system_prompt: String,
+    pub tools: Vec<DashToolDefinition>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +128,12 @@ pub enum CompactionMode {
 pub enum HistoryPayload {
     InitialContextInstalled {
         installation: InitialContextInstallation,
+    },
+    SurfaceApplied {
+        surface: DashSurface,
+    },
+    SurfaceRevoked {
+        surface: DashSurface,
     },
     InputAccepted {
         input_id: String,
@@ -425,6 +469,7 @@ pub struct AgentHistoryState {
     pub entry_count: u64,
     pub status: SessionStatus,
     pub initial_context: Option<InitialContextInstallation>,
+    pub surface: Option<DashSurface>,
     pub accepted_inputs: Vec<String>,
     pub active_turn: Option<AgentTurnId>,
     pub active_compaction: Option<CompactionId>,
@@ -442,6 +487,7 @@ pub fn fold_history(history: &AgentHistory) -> Result<AgentHistoryState, History
         entry_count: 0,
         status: SessionStatus::Open,
         initial_context: None,
+        surface: None,
         accepted_inputs: Vec::new(),
         active_turn: None,
         active_compaction: None,
@@ -496,6 +542,22 @@ fn apply_payload(
                 return Err(HistoryError::InitialContextNotFirst);
             }
             state.initial_context = Some(installation.clone());
+        }
+        HistoryPayload::SurfaceApplied { surface } => {
+            if state
+                .surface
+                .as_ref()
+                .is_some_and(|current| surface.revision < current.revision)
+            {
+                return Err(HistoryError::SurfaceRevisionMovedBackwards);
+            }
+            state.surface = Some(surface.clone());
+        }
+        HistoryPayload::SurfaceRevoked { surface } => {
+            if state.surface.as_ref() != Some(surface) {
+                return Err(HistoryError::SurfaceRevisionMismatch);
+            }
+            state.surface = None;
         }
         HistoryPayload::InputAccepted { input_id, .. } => {
             state.accepted_inputs.push(input_id.clone());
@@ -864,6 +926,10 @@ pub enum HistoryError {
     DuplicateEntry(HistoryEntryId),
     #[error("initial context must be the first and unique history contribution")]
     InitialContextNotFirst,
+    #[error("Dash Agent surface revision moved backwards")]
+    SurfaceRevisionMovedBackwards,
+    #[error("Dash Agent surface revision does not match")]
+    SurfaceRevisionMismatch,
     #[error("session is closed")]
     ClosedSessionMutation,
     #[error("another history activity is active")]

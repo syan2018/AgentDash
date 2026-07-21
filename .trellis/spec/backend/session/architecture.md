@@ -24,9 +24,9 @@ conversation read
   -> frontend snapshot baseline
 
 live
-  -> Complete Agent source callback
+  -> committed Agent history suffix + Core ephemeral callback
   -> process-local broadcast
-  -> frontend partial lane
+  -> frontend canonical lane
 ```
 
 ## 3. Contracts
@@ -39,7 +39,13 @@ live
   conversation contract。
 - LifecycleGate waiting items等Product事实可以与snapshot组合展示，但不写入Agent history，
   也不形成第二份conversation。
-- live event只承载当前连接的partial delta。断线、gap或lag后重新read snapshot。
+- live event承载刚提交的 durable Agent history record 与当前连接的 ephemeral delta。durable record
+  由 snapshot 使用的同一个 canonical projector产生；断线、gap或lag后丢弃partial lane并重新read
+  snapshot。
+- 输入接纳的可观察顺序固定为 durable `UserInputSubmitted` → durable `TurnStarted` → ephemeral
+  provider/Core output → durable terminal history。前端不等待execute返回才补入用户消息。
+- Product 提交 context/surface intent，concrete Agent 保存实际接纳结果；adapter只从Agent native
+  history反解ContextFrame，因此展示与真实执行输入一致。
 - context、compaction、fork与interaction最终由concrete Agent receipt/inspection证明。
   Product只保存自己的lineage、association和workflow evidence。
 - 命令并发使用Agent turn/interaction/fork cutoff/effect identity等typed coordinate，不使用
@@ -61,7 +67,8 @@ live
 
 ## 5. Good / Base / Bad Cases
 
-- Good：输入同步进入Agent；UI先观察live delta，终态后snapshot保存完整history。
+- Good：输入同步进入Agent；UI先收到已提交的用户输入与turn开始，再观察live delta，终态后
+  snapshot保存同一完整history。
 - Base：连接中断时partial文本丢失，重连snapshot仍恢复Agent已提交内容。
 - Bad：平台保存journal/projection再与Agent history比较；两份conversation没有独立业务意义。
 
@@ -70,7 +77,8 @@ live
 - input identity/replay/conflict/unavailable测试。
 - snapshot mapper覆盖所有message/item/terminal/interaction/compaction类型。
 - waiting items组合测试证明Product gate与Agent history分层。
-- live delta、gap、disconnect、snapshot recovery测试。
+- durable input/turn顺序、live delta、gap、disconnect、snapshot recovery测试。
+- surface/initial context写入Agent native history并投影ContextFrame的测试。
 - create/fork/compaction response-lost inspection测试。
 - list/workspace在Agent unavailable时仍返回Product shell。
 

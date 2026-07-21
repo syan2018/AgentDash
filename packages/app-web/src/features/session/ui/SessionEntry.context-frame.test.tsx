@@ -137,7 +137,10 @@ describe("SessionEntry 错误事件", () => {
   });
 });
 
-function contextFrameEntry(id: string, kind: string): AggregatedContextFrameGroup["entries"][number] {
+function contextFrameEntry(
+  id: string,
+  kind: "capability_state_delta" | "assignment_context",
+): AggregatedContextFrameGroup["entries"][number] {
   return {
     id,
     sessionId: "session-1",
@@ -146,10 +149,9 @@ function contextFrameEntry(id: string, kind: string): AggregatedContextFrameGrou
     event: {
       type: "platform",
       payload: {
-        kind: "session_meta_update",
+        kind: "context_frame_changed",
         data: {
-          key: "context_frame",
-          value: {
+          frame: {
             id,
             kind,
             source: "runtime_context_update",
@@ -158,8 +160,26 @@ function contextFrameEntry(id: string, kind: string): AggregatedContextFrameGrou
             delivery_status: "queued_for_transform_context",
             delivery_channel: "turn_start",
             message_role: "user",
+            delivery_metadata: {
+              delivery_phase: "discovered_inventory",
+              delivery_order: 50,
+              cache_policy: "discovery_digest",
+              cache_key: null,
+              cache_revision: "surface-1",
+              model_channel: "context",
+              agent_consumption: {
+                target: "dash-agent",
+                mode: "consume",
+                reason: "test",
+              },
+              frontend_label: "Capability State Delta",
+              connector_profile: {
+                profile_id: "dash-agent",
+                declared_consumption_modes: ["consume"],
+              },
+            },
             rendered_text: "## Capability Update",
-            created_at_ms: 1,
+            created_at_ms: 1n,
             sections: [
               {
                 kind: "capability_key_delta",

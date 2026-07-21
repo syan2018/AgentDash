@@ -3,7 +3,7 @@
   "name": "agent-runtime-persistence-authority-convergence",
   "title": "Agent Runtime 持久化职责与事实边界清理",
   "description": "删除 Product、Runtime、Host 对 Agent 执行事实的重复维护，使 Runtime/Host 回归纯内存协调层；Product 不提供离线输入队列，只保存业务定义与 Agent source 关联，concrete Complete Agent 独占执行历史与 effect authority。",
-  "status": "completed",
+  "status": "in_progress",
   "dev_type": "refactor",
   "scope": "cross-layer",
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "codex-agent",
   "assignee": "codex-agent",
   "createdAt": "2026-07-20",
-  "completedAt": "2026-07-21",
+  "completedAt": null,
   "branch": "codex/agent-runtime-final-convergence-plan",
   "base_branch": "codex/agent-runtime-final-convergence-plan",
   "worktree_path": null,
@@ -26,6 +26,6 @@
     ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/",
     ".trellis/tasks/07-20-database-persistence-boundary-cleanup/"
   ],
-  "notes": "已验证 Product 输入经 canonical live records 渲染工具与最终消息，并在浏览器重载后由 concrete Agent durable history恢复；完整契约生成、编译、测试与质量门通过，任务保留在活动目录等待人工归档。",
+  "notes": "继续收束 canonical 会话单一事实链路：当前仍需恢复 ContextFrame 展示，并保证用户输入在 Agent 输出之前进入同一实时 ThreadItem 流；完成真实运行验证前保持任务进行中。",
   "meta": {}
 }

@@ -39,7 +39,7 @@ pub struct DashMessage {
     pub is_error: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DashToolDefinition {
     pub name: String,
     pub description: String,

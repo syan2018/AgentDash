@@ -7,7 +7,7 @@ import type {
   TokenUsageInfo,
 } from "./types";
 import { extractTextFromUserInputs, extractTokenUsageFromEvent } from "./types";
-import { isRecord } from "./platformEvent";
+import { extractContextFrameValue, isRecord } from "./platformEvent";
 import { parseContextFrame } from "./contextFrame";
 
 export interface SessionStreamState {
@@ -273,13 +273,9 @@ export function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: BackboneE
     entryIndex: event.entry_index ?? undefined,
   };
 
-  if (
-    bbEvent.type === "platform" &&
-    bbEvent.payload.kind === "session_meta_update" &&
-    bbEvent.payload.data.key === "context_frame" &&
-    isRecord(bbEvent.payload.data.value)
-  ) {
-    const contextFrame = parseContextFrame(bbEvent.payload.data.value);
+  const contextFrameValue = extractContextFrameValue(bbEvent);
+  if (contextFrameValue) {
+    const contextFrame = parseContextFrame(contextFrameValue);
     if (contextFrame) {
       return { ...entry, contextFrame };
     }

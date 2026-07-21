@@ -322,7 +322,9 @@ export interface RuntimeHookInjectionEntry {
   context_usage_kind?: string;
 }
 
-export function parseContextFrame(value: Record<string, unknown>): ContextFrame | null {
+export function parseContextFrame(input: unknown): ContextFrame | null {
+  if (!isRecord(input)) return null;
+  const value = input;
   const id = readString(value.id);
   const kind = readString(value.kind);
   const source = readString(value.source);
@@ -873,7 +875,12 @@ function readRenderedText(value: unknown): string | null {
 }
 
 function readNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "bigint") {
+    const converted = Number(value);
+    return Number.isSafeInteger(converted) ? converted : null;
+  }
+  return null;
 }
 
 function readStringArray(value: unknown): string[] {

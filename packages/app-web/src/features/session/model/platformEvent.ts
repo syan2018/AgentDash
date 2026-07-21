@@ -19,7 +19,7 @@ export function extractPlatformEventType(event: BackboneEvent): string | null {
   if (platform.kind === "hook_trace") return "hook_event";
   if (platform.kind === "provider_attempt_status") return "provider_attempt_status";
   if (platform.kind === "session_rewound") return "session_rewound";
-  if (platform.kind === "context_frame_changed") return "context_frame_changed";
+  if (platform.kind === "context_frame_changed") return "context_frame";
   if (platform.kind === "session_meta_update") {
     return platform.data.key;
   }
@@ -54,6 +54,10 @@ export function extractPlatformEventData(event: BackboneEvent): Record<string, u
     return platform.data;
   }
 
+  if (platform.kind === "context_frame_changed" && isRecord(platform.data.frame)) {
+    return platform.data.frame;
+  }
+
   if (platform.kind === "session_meta_update") {
     const value = platform.data.value;
     if (isRecord(value)) return value;
@@ -81,6 +85,10 @@ export function extractPlatformEventMessage(event: BackboneEvent): string | null
     return platform.data.message ?? null;
   }
 
+  if (platform.kind === "context_frame_changed") {
+    return platform.data.frame.rendered_text;
+  }
+
   if (platform.kind === "session_meta_update") {
     const value = platform.data.value;
     if (isRecord(value) && typeof value.message === "string") {
@@ -90,6 +98,18 @@ export function extractPlatformEventMessage(event: BackboneEvent): string | null
   }
 
   return null;
+}
+
+/** 提取 canonical PlatformEvent::ContextFrameChanged 中的 Agent 实际接纳帧。 */
+export function extractContextFrameValue(event: BackboneEvent): Record<string, unknown> | null {
+  if (
+    event.type !== "platform" ||
+    event.payload.kind !== "context_frame_changed" ||
+    !isRecord(event.payload.data.frame)
+  ) {
+    return null;
+  }
+  return event.payload.data.frame;
 }
 
 /**

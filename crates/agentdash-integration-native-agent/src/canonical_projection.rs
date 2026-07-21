@@ -5,8 +5,12 @@ use agentdash_agent::dash::{
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
     AgentDashThreadItem, BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
-    CanonicalConversationRecord, ItemCompletedNotification, ItemStartedNotification,
-    ItemUpdatedNotification, PresentationDurability, SourceInfo, TraceInfo, UserInputSource,
+    CanonicalConversationRecord, ContextAgentConsumption, ContextAgentConsumptionMode,
+    ContextConnectorProfile, ContextDeliveryChannel, ContextDeliveryMetadata,
+    ContextDeliveryStatus, ContextFrame, ContextFrameChanged, ContextFrameKind,
+    ContextFrameSection, ContextFrameSource, ContextMessageRole, ItemCompletedNotification,
+    ItemStartedNotification, ItemUpdatedNotification, PlatformEvent, PresentationDurability,
+    RuntimeContextFragmentEntry, RuntimeToolSchemaEntry, SourceInfo, TraceInfo, UserInputSource,
     UserInputSubmissionKind, UserInputSubmittedNotification,
 };
 
@@ -30,6 +34,15 @@ pub(crate) fn entry_records(
 ) -> Result<Vec<CanonicalConversationRecord>, serde_json::Error> {
     let mut events = Vec::new();
     match &entry.payload {
+        HistoryPayload::InitialContextInstalled { installation } => {
+            events.extend(initial_context_events(installation));
+        }
+        HistoryPayload::SurfaceApplied { surface } => {
+            events.extend(surface_events(entry, surface));
+        }
+        HistoryPayload::SurfaceRevoked { surface } => {
+            events.push(surface_revoked_event(entry, surface));
+        }
         HistoryPayload::InputAccepted { input_id, content } => {
             let turn_id = state
                 .active_turn
@@ -151,8 +164,7 @@ pub(crate) fn entry_records(
                 }),
             )?));
         }
-        HistoryPayload::InitialContextInstalled { .. }
-        | HistoryPayload::InteractionRequested { .. }
+        HistoryPayload::InteractionRequested { .. }
         | HistoryPayload::InteractionResolved { .. }
         | HistoryPayload::Closed => {}
     }
@@ -182,6 +194,226 @@ pub(crate) fn entry_records(
             )
         })
         .collect())
+}
+
+fn initial_context_events(
+    installation: &agentdash_agent::dash::InitialContextInstallation,
+) -> Vec<BackboneEvent> {
+    installation
+        .contributions
+        .iter()
+        .enumerate()
+        .map(|(index, contribution)| {
+            let (kind, title, role) = match contribution.kind.as_str() {
+                "compact_summary" => (
+                    ContextFrameKind::CompactionSummary,
+                    "Compaction Summary",
+                    ContextMessageRole::Context,
+                ),
+                "constraint_set" => (
+                    ContextFrameKind::SystemGuidelines,
+                    "System Guidelines",
+                    ContextMessageRole::System,
+                ),
+                _ => (
+                    ContextFrameKind::AssignmentContext,
+                    "Workflow Context",
+                    ContextMessageRole::Context,
+                ),
+            };
+            let mut metadata = ContextDeliveryMetadata::for_frame(
+                kind,
+                ContextDeliveryChannel::ConnectorContext,
+                role,
+            );
+            metadata.cache_key = Some(installation.package_digest.clone());
+            metadata.cache_revision = Some(contribution.source_revision.clone());
+            metadata.agent_consumption = ContextAgentConsumption {
+                target: "dash-agent".to_owned(),
+                mode: ContextAgentConsumptionMode::Consume,
+                reason: "dash_initial_context_installed".to_owned(),
+            };
+            metadata.connector_profile = ContextConnectorProfile {
+                profile_id: "dash-agent".to_owned(),
+                declared_consumption_modes: vec![ContextAgentConsumptionMode::Consume],
+            };
+            BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(Box::new(
+                ContextFrameChanged {
+                    frame: ContextFrame {
+                        id: format!("initial-context:{}:{index}", installation.package_id),
+                        kind,
+                        source: ContextFrameSource::RuntimeContextUpdate,
+                        phase_node: None,
+                        apply_mode: Some("initial_context_install".to_owned()),
+                        delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
+                        delivery_channel: ContextDeliveryChannel::ConnectorContext,
+                        message_role: role,
+                        delivery_metadata: metadata,
+                        rendered_text: contribution.payload.clone(),
+                        sections: vec![ContextFrameSection::SystemNotice {
+                            title: title.to_owned(),
+                            summary: contribution.kind.clone(),
+                            body: Some(contribution.payload.clone()),
+                        }],
+                        created_at_ms: 0,
+                    },
+                },
+            )))
+        })
+        .collect()
+}
+
+fn surface_events(
+    entry: &AgentHistoryEntry,
+    surface: &agentdash_agent::dash::DashSurface,
+) -> Vec<BackboneEvent> {
+    let mut events = Vec::new();
+    if !surface.system_prompt.is_empty() {
+        let kind = ContextFrameKind::Identity;
+        let role = ContextMessageRole::System;
+        let mut metadata = ContextDeliveryMetadata::for_frame(
+            kind,
+            ContextDeliveryChannel::ConnectorContext,
+            role,
+        );
+        metadata.cache_key = Some(surface.digest.clone());
+        metadata.cache_revision = Some(surface.revision.to_string());
+        metadata.agent_consumption = ContextAgentConsumption {
+            target: "dash-agent".to_owned(),
+            mode: ContextAgentConsumptionMode::SystemAppend,
+            reason: "dash_materialized_system_prompt".to_owned(),
+        };
+        metadata.connector_profile = ContextConnectorProfile {
+            profile_id: "dash-agent".to_owned(),
+            declared_consumption_modes: vec![ContextAgentConsumptionMode::SystemAppend],
+        };
+        events.push(BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(
+            Box::new(ContextFrameChanged {
+                frame: ContextFrame {
+                    id: format!("{}:identity", entry.entry_id.0),
+                    kind,
+                    source: ContextFrameSource::RuntimeContextUpdate,
+                    phase_node: None,
+                    apply_mode: Some("surface_apply".to_owned()),
+                    delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
+                    delivery_channel: ContextDeliveryChannel::ConnectorContext,
+                    message_role: role,
+                    delivery_metadata: metadata,
+                    rendered_text: surface.system_prompt.clone(),
+                    sections: vec![ContextFrameSection::Identity {
+                        title: "Agent Identity".to_owned(),
+                        summary: "Dash materialized system prompt".to_owned(),
+                        fragments: vec![RuntimeContextFragmentEntry {
+                            slot: "system_prompt".to_owned(),
+                            label: "System Prompt".to_owned(),
+                            source: "dash-agent".to_owned(),
+                            content: surface.system_prompt.clone(),
+                            context_usage_kind: Some("agent_surface".to_owned()),
+                        }],
+                    }],
+                    created_at_ms: 0,
+                },
+            }),
+        )));
+    }
+    if !surface.tools.is_empty() {
+        let kind = ContextFrameKind::CapabilityStateDelta;
+        let role = ContextMessageRole::Context;
+        let mut metadata = ContextDeliveryMetadata::for_frame(
+            kind,
+            ContextDeliveryChannel::ConnectorContext,
+            role,
+        );
+        metadata.cache_key = Some(surface.digest.clone());
+        metadata.cache_revision = Some(surface.revision.to_string());
+        metadata.agent_consumption = ContextAgentConsumption {
+            target: "dash-agent".to_owned(),
+            mode: ContextAgentConsumptionMode::ConnectorNative,
+            reason: "dash_materialized_tool_registry".to_owned(),
+        };
+        metadata.connector_profile = ContextConnectorProfile {
+            profile_id: "dash-agent".to_owned(),
+            declared_consumption_modes: vec![ContextAgentConsumptionMode::ConnectorNative],
+        };
+        let added_tools = surface
+            .tools
+            .iter()
+            .map(|tool| RuntimeToolSchemaEntry {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                parameters_schema: tool.input_schema.clone(),
+                capability_key: None,
+                source: Some("dash-agent".to_owned()),
+                tool_path: None,
+                context_usage_kind: Some("agent_surface".to_owned()),
+            })
+            .collect();
+        events.push(BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(
+            Box::new(ContextFrameChanged {
+                frame: ContextFrame {
+                    id: format!("{}:tools", entry.entry_id.0),
+                    kind,
+                    source: ContextFrameSource::RuntimeContextUpdate,
+                    phase_node: None,
+                    apply_mode: Some("surface_apply".to_owned()),
+                    delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
+                    delivery_channel: ContextDeliveryChannel::ConnectorContext,
+                    message_role: role,
+                    delivery_metadata: metadata,
+                    rendered_text: format!(
+                        "Dash materialized {} callable tools",
+                        surface.tools.len()
+                    ),
+                    sections: vec![ContextFrameSection::ToolSchemaDelta { added_tools }],
+                    created_at_ms: 0,
+                },
+            }),
+        )));
+    }
+    events
+}
+
+fn surface_revoked_event(
+    entry: &AgentHistoryEntry,
+    surface: &agentdash_agent::dash::DashSurface,
+) -> BackboneEvent {
+    let kind = ContextFrameKind::SystemNotice;
+    let role = ContextMessageRole::System;
+    let mut metadata =
+        ContextDeliveryMetadata::for_frame(kind, ContextDeliveryChannel::ConnectorContext, role);
+    metadata.cache_key = Some(surface.digest.clone());
+    metadata.cache_revision = Some(surface.revision.to_string());
+    metadata.agent_consumption = ContextAgentConsumption {
+        target: "dash-agent".to_owned(),
+        mode: ContextAgentConsumptionMode::Ignore,
+        reason: "dash_materialized_surface_revoked".to_owned(),
+    };
+    metadata.connector_profile = ContextConnectorProfile {
+        profile_id: "dash-agent".to_owned(),
+        declared_consumption_modes: vec![ContextAgentConsumptionMode::Ignore],
+    };
+    BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(Box::new(
+        ContextFrameChanged {
+            frame: ContextFrame {
+                id: format!("{}:revoked", entry.entry_id.0),
+                kind,
+                source: ContextFrameSource::RuntimeContextUpdate,
+                phase_node: None,
+                apply_mode: Some("surface_revoke".to_owned()),
+                delivery_status: ContextDeliveryStatus::Accepted,
+                delivery_channel: ContextDeliveryChannel::ConnectorContext,
+                message_role: role,
+                delivery_metadata: metadata,
+                rendered_text: "Dash Agent surface revoked".to_owned(),
+                sections: vec![ContextFrameSection::SystemNotice {
+                    title: "Agent Surface Revoked".to_owned(),
+                    summary: format!("Removed materialized surface revision {}", surface.revision),
+                    body: None,
+                }],
+                created_at_ms: 0,
+            },
+        },
+    )))
 }
 
 fn item(
@@ -311,6 +543,8 @@ fn turn_id(payload: &HistoryPayload) -> Option<&str> {
         | HistoryPayload::CompactionCompleted { compaction_id }
         | HistoryPayload::CompactionFailed { compaction_id, .. } => Some(&compaction_id.0),
         HistoryPayload::InitialContextInstalled { .. }
+        | HistoryPayload::SurfaceApplied { .. }
+        | HistoryPayload::SurfaceRevoked { .. }
         | HistoryPayload::InputAccepted { .. }
         | HistoryPayload::InteractionResolved { .. }
         | HistoryPayload::Closed => None,

@@ -5,22 +5,14 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::{
-    AgentHistory, AgentHistoryState, AgentItemId, AgentTurnId, CommandId, CommandOutcome,
-    CompactionId, CompactionMode, ContextRevision, DashAgentChange, DashAgentCommit,
-    DashAgentStore, DashCancellation, DashCommand, DashCommandKind, DashCoreContext, DashCoreError,
-    DashCoreTurn, DashExecutionCallbacks, DashExecutionInspection, DashMessage, DashMessageRole,
-    DashProvider, DashToolCall, DashToolCallbacks, DashToolDefinition, EffectId, EffectOutcome,
-    EffectSettlement, ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload,
-    InitialContextInstallation, InteractionId, SessionStatus, StoreError,
+    AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentItemId, AgentTurnId, CommandId,
+    CommandOutcome, CompactionId, CompactionMode, ContextRevision, DashAgentChange,
+    DashAgentCommit, DashAgentStore, DashCancellation, DashCommand, DashCommandKind,
+    DashCoreContext, DashCoreError, DashCoreTurn, DashExecutionCallbacks, DashExecutionInspection,
+    DashMessage, DashMessageRole, DashProvider, DashSurface, DashToolCall, DashToolCallbacks,
+    EffectId, EffectOutcome, EffectSettlement, ForkCutoff, HistoryContribution, HistoryEntryId,
+    HistoryPayload, InitialContextInstallation, InteractionId, SessionStatus, StoreError,
 };
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DashSurface {
-    pub revision: u64,
-    pub digest: String,
-    pub system_prompt: String,
-    pub tools: Vec<DashToolDefinition>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DashTerminalOutcome {
@@ -101,7 +93,6 @@ struct DashActiveExecutionState {
 pub struct DashAgentRepositoryState {
     store: DashAgentStore,
     effects: BTreeMap<EffectId, DashEffectRecord>,
-    surface: Option<DashSurface>,
     active: Option<DashActiveExecutionState>,
 }
 
@@ -114,7 +105,6 @@ impl DashAgentRepositoryState {
         Self {
             store,
             effects: BTreeMap::new(),
-            surface: None,
             active: None,
         }
     }
@@ -157,7 +147,29 @@ pub struct DashExecutionDependencies {
     pub provider: Arc<dyn DashProvider>,
     pub tools: Arc<dyn DashToolCallbacks>,
     pub callbacks: Arc<dyn DashExecutionCallbacks>,
+    pub history_callbacks: Arc<dyn DashHistoryCallbacks>,
     pub compactor: Arc<dyn DashCompactor>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DashHistoryCommit {
+    pub history: AgentHistory,
+    pub entries: Vec<AgentHistoryEntry>,
+}
+
+#[async_trait]
+pub trait DashHistoryCallbacks: Send + Sync {
+    async fn committed(&self, commit: DashHistoryCommit) -> Result<(), DashCoreError>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoopDashHistoryCallbacks;
+
+#[async_trait]
+impl DashHistoryCallbacks for NoopDashHistoryCallbacks {
+    async fn committed(&self, _commit: DashHistoryCommit) -> Result<(), DashCoreError> {
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -302,18 +314,17 @@ impl DashAgentService {
             .store
             .history()
             .fork(child_session_id, child_branch_id, cutoff)?;
-        let mut state = DashAgentRepositoryState::new(DashAgentStore::new(child)?);
-        state.surface = current.surface;
-        Ok(state)
+        Ok(DashAgentRepositoryState::new(DashAgentStore::new(child)?))
     }
 
     pub async fn read(&self) -> Result<DashAgentRead, DashServiceError> {
         let state = self.repository.load().await?;
+        let history_state = state.store.history().state()?;
         Ok(DashAgentRead {
-            state: state.store.history().state()?,
+            surface: history_state.surface.clone(),
+            state: history_state,
             history: state.store.history().clone(),
             history_digest: state.store.history().digest(),
-            surface: state.surface,
         })
     }
 
@@ -354,16 +365,26 @@ impl DashAgentService {
 
     pub async fn apply_surface(&self, surface: DashSurface) -> Result<(), DashServiceError> {
         let (expected, replacement) = self.stage_surface_apply(surface).await?;
+        let previous_entry_count = expected.store.history().entries().len();
+        let committed_history = replacement.store.history().clone();
         self.repository
             .compare_and_swap(expected, replacement)
-            .await
+            .await?;
+        self.publish_committed_history_since(previous_entry_count, &committed_history)
+            .await;
+        Ok(())
     }
 
     pub async fn revoke_surface(&self, expected_revision: u64) -> Result<(), DashServiceError> {
         let (expected, replacement) = self.stage_surface_revoke(expected_revision).await?;
+        let previous_entry_count = expected.store.history().entries().len();
+        let committed_history = replacement.store.history().clone();
         self.repository
             .compare_and_swap(expected, replacement)
-            .await
+            .await?;
+        self.publish_committed_history_since(previous_entry_count, &committed_history)
+            .await;
+        Ok(())
     }
 
     pub async fn stage_surface_apply(
@@ -372,8 +393,8 @@ impl DashAgentService {
     ) -> Result<(DashAgentRepositoryState, DashAgentRepositoryState), DashServiceError> {
         let expected = self.repository.load().await?;
         let mut replacement = expected.clone();
-        if replacement
-            .surface
+        let current_surface = replacement.store.history().state()?.surface;
+        if current_surface
             .as_ref()
             .is_some_and(|existing| surface.revision < existing.revision)
         {
@@ -381,7 +402,23 @@ impl DashAgentService {
                 message: "Dash Agent surface revision moved backwards".into(),
             });
         }
-        replacement.surface = Some(surface);
+        if current_surface.as_ref() != Some(&surface) {
+            replacement.store.commit(DashAgentCommit {
+                expected_head: replacement.store.history().head().cloned(),
+                command_settlement: None,
+                effect_settlements: vec![],
+                history: vec![HistoryContribution {
+                    entry_id: HistoryEntryId::new(format!(
+                        "surface-applied:{}:{}",
+                        surface.revision, surface.digest
+                    )),
+                    payload: HistoryPayload::SurfaceApplied {
+                        surface: surface.clone(),
+                    },
+                }],
+                enqueue_commands: vec![],
+            })?;
+        }
         Ok((expected, replacement))
     }
 
@@ -391,8 +428,8 @@ impl DashAgentService {
     ) -> Result<(DashAgentRepositoryState, DashAgentRepositoryState), DashServiceError> {
         let expected = self.repository.load().await?;
         let mut replacement = expected.clone();
-        if replacement
-            .surface
+        let current_surface = replacement.store.history().state()?.surface;
+        if current_surface
             .as_ref()
             .is_some_and(|surface| surface.revision != expected_revision)
         {
@@ -400,7 +437,18 @@ impl DashAgentService {
                 message: "Dash Agent surface revision does not match".into(),
             });
         }
-        replacement.surface = None;
+        if let Some(surface) = current_surface {
+            replacement.store.commit(DashAgentCommit {
+                expected_head: replacement.store.history().head().cloned(),
+                command_settlement: None,
+                effect_settlements: vec![],
+                history: vec![HistoryContribution {
+                    entry_id: HistoryEntryId::new(format!("surface-revoked:{expected_revision}")),
+                    payload: HistoryPayload::SurfaceRevoked { surface },
+                }],
+                enqueue_commands: vec![],
+            })?;
+        }
         Ok((expected, replacement))
     }
 
@@ -1256,7 +1304,9 @@ impl DashAgentService {
         active_turn: &AgentTurnId,
     ) -> Result<DashCoreContext, DashServiceError> {
         let repository = self.repository.load().await?;
-        let surface = repository.surface.clone();
+        let history_state = repository.store.history().state()?;
+        let surface = history_state.surface;
+        let initial_context = history_state.initial_context;
         let entries = repository.store.history().entries();
         let mut applied_compactions = BTreeMap::new();
         let mut latest_compaction = None;
@@ -1360,6 +1410,15 @@ impl DashAgentService {
             .as_ref()
             .map(|surface| surface.system_prompt.clone())
             .unwrap_or_default();
+        if let Some(initial_context) = initial_context {
+            let rendered = initial_context.render_for_prompt();
+            if !rendered.is_empty() {
+                if !system_prompt.is_empty() {
+                    system_prompt.push_str("\n\n");
+                }
+                system_prompt.push_str(&rendered);
+            }
+        }
         if let Some(summary) = compaction_summary {
             if !system_prompt.is_empty() {
                 system_prompt.push_str("\n\n");
@@ -1475,11 +1534,15 @@ impl DashAgentService {
         mutate: impl FnOnce(&mut DashAgentStore) -> Result<T, DashServiceError>,
     ) -> Result<(DashAgentStore, T), DashServiceError> {
         let expected = self.repository.load().await?;
+        let previous_entry_count = expected.store.history().entries().len();
         let mut replacement = expected.clone();
         let result = mutate(&mut replacement.store)?;
+        let committed_history = replacement.store.history().clone();
         self.repository
             .compare_and_swap(expected, replacement.clone())
             .await?;
+        self.publish_committed_history_since(previous_entry_count, &committed_history)
+            .await;
         Ok((replacement.store, result))
     }
 
@@ -1488,12 +1551,43 @@ impl DashAgentService {
         mutate: impl FnOnce(&mut DashAgentRepositoryState) -> Result<T, DashServiceError>,
     ) -> Result<(DashAgentRepositoryState, T), DashServiceError> {
         let expected = self.repository.load().await?;
+        let previous_entry_count = expected.store.history().entries().len();
         let mut replacement = expected.clone();
         let result = mutate(&mut replacement)?;
+        let committed_history = replacement.store.history().clone();
         self.repository
             .compare_and_swap(expected, replacement.clone())
             .await?;
+        self.publish_committed_history_since(previous_entry_count, &committed_history)
+            .await;
         Ok((replacement, result))
+    }
+
+    /// Publishes the canonical live view of an already committed native history suffix.
+    ///
+    /// The Complete Agent adapter calls this after an outer transaction atomically commits the
+    /// Dash repository together with source metadata. Publication is process-local and never
+    /// participates in the durable commit result.
+    pub async fn publish_committed_history_since(
+        &self,
+        previous_entry_count: usize,
+        history: &AgentHistory,
+    ) {
+        let Some(entries) = history.entries().get(previous_entry_count..) else {
+            return;
+        };
+        if entries.is_empty() {
+            return;
+        }
+        let _ = self
+            .execution_dependencies()
+            .await
+            .history_callbacks
+            .committed(DashHistoryCommit {
+                history: history.clone(),
+                entries: entries.to_vec(),
+            })
+            .await;
     }
 }
 

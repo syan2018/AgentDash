@@ -49,7 +49,11 @@ type AgentLiveEvent = {
 - concrete Complete Agent 独占 native history，并在 `read` 中返回完整
   `conversation_history`。Runtime/Product 不保存 normalized turn/item/message/tool 镜像。
 - durable history 与 process-local live 使用同一个 `CanonicalConversationRecord` schema；区别只由
-  `presentation.durability` 表达。live record 不冒充已提交 history。
+  `presentation.durability` 表达。durable live record必须来自已成功提交的native history，ephemeral
+  live record只表达尚未提交的Core partial。
+- input live顺序是 durable `UserInputSubmitted` → durable `TurnStarted` → ephemeral output →
+  durable terminal。snapshot与durable live必须调用同一个canonical projector，不能在execute
+  返回后由Product或前端补造用户消息。
 - `AgentLiveEvent` 只包含 source、source-local sequence 与 canonical record。transport 不接受
   provider round、`payload.kind`、独立 `turn_id/item_id` 等平行 telemetry 形态。
 - `presentation_id` 是同一 presentation 在 baseline/live 合并时的稳定 identity；收到相同 id 时
@@ -61,6 +65,9 @@ type AgentLiveEvent = {
   协议错误，不降级为“TOOL 未知”。
 - provider/Core 事件只能在 concrete Agent 内部用于构造 canonical records；provider round 完成
   不是 Agent turn terminal，也不能触发前端终态 reload。
+- Agent实际保存的surface/context history通过
+  `Platform(ContextFrameChanged { frame, message })` 进入canonical stream。前端直接消费该variant；
+  `SessionMetaUpdate` 只处理自身metadata语义，不承担ContextFrame旁路编码。
 - 断线或进程重启后丢弃 ephemeral lane，并从 Complete Agent `read` 重新获取 durable history。
   Snapshot-only Agent 不需要平台 durable change journal。
 - PTY terminal、Canvas、Workspace Module 与 AgentFrame 是独立资源事实；即使它们引用 Agent
@@ -75,6 +82,7 @@ type AgentLiveEvent = {
 | live payload 缺少 `record.presentation.envelope.event.type` | transport 拒绝该 payload 并报告流解析错误 |
 | live payload 使用旧 `turn_id/item_id/payload.kind` | 拒绝；producer/consumer 必须升级到 canonical record |
 | 同一 `presentation_id` 再次出现 | 原位替换 presentation，不重复渲染 |
+| ephemeral output早于输入/TurnStarted | producer顺序错误；不得靠前端延迟插入修正 |
 | 首个 delta/item 到达但没有 `TurnCompleted` | 会话保持 receiving/active |
 | `TurnCompleted` 到达 | turn 进入唯一终态；消息、工具和错误按 canonical history 渲染 |
 | live 断开或 sequence gap | 丢弃 partial lane并重新 `read` authoritative snapshot |
@@ -84,8 +92,9 @@ type AgentLiveEvent = {
 
 ## 5. Good / Base / Bad Cases
 
-- Good：Core 产生 tool call，Dash 写入 native history，同时 live callback 发出 canonical
-  `ItemStarted/Updated/Completed`；UI 使用相同 item id 渲染，重载后由 durable history恢复同一张卡。
+- Good：Dash先提交并live发布用户输入与`TurnStarted`，Core随后产生tool partial，Dash将完成的tool
+  写入native history并live发布canonical `ItemStarted/Updated/Completed`；UI使用相同item id渲染，
+  重载后由durable history恢复同一张卡。
 - Good：消息首个 delta 到达后 composer 保持运行态，工具继续执行，最终仅由
   `TurnCompleted` 结束。
 - Base：live 中途断开，临时 delta 消失；重新 `read` 后完整 assistant/tool history 恢复。
@@ -103,6 +112,8 @@ type AgentLiveEvent = {
 - transport test 断言当前 `{source,sequence,record}` 通过、旧 telemetry payload 被拒绝。
 - frontend projection test 断言相同 `presentation_id` 替换、新 id 追加。
 - liveness test 断言 `TurnStarted + first output` 仍 active，加入 `TurnCompleted` 后才 inactive。
+- ordering test断言用户输入与`TurnStarted`先于第一个ephemeral output；ContextFrame test断言直接
+  消费`Platform(ContextFrameChanged)`并保留typed frame。
 - production tracer 覆盖 Product input → tool live items → final assistant → reload durable history，
   并断言页面没有未知工具卡或悬空会话。
 - schema generation 与 TypeScript typecheck 必须证明 Agent service/Runtime wrapper 只引用

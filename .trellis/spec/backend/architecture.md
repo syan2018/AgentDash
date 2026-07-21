@@ -27,8 +27,8 @@
 | `agentdash-application-shared-library` | Shared Library seed、external marketplace import/refresh、Project install/publish/source-status use cases |
 | `agentdash-domain` | 实体、值对象、Repository trait、领域错误 |
 | `agentdash-infrastructure` | PostgreSQL / SQLite 持久化实现 |
-| `agentdash-agent-runtime-contract` | Application ↔ Agent Runtime 的平台中立 command、snapshot 与 presentation contract |
-| `agentdash-agent-runtime` | 进程内 command 协调、Agent snapshot normalize、live broadcast 与 Tool Broker |
+| `agentdash-agent-runtime-contract` | Product ↔ Complete Agent facade 的平台中立 command、snapshot 与 presentation contract |
+| `agentdash-agent-runtime` | 进程内 command handoff、Agent snapshot normalize、live broadcast 与 Tool Broker |
 | `agentdash-agent-runtime-host` | 当前进程的 Complete Agent service、offer、binding、generation 与 callback route |
 | `agentdash-agent-runtime-wire` | Cloud/Local 与 Remote Complete Agent 的 typed bidirectional transport |
 | `agentdash-integration-native-agent` | Dash Agent 的 Complete Agent service adapter |
@@ -48,11 +48,11 @@ Agent runtime module baseline：
 
 | Module | 当前职责 |
 | --- | --- |
-| `agentdash-application-agentrun::runtime_facade` | 产品 coordinate/command 到 canonical Runtime 的唯一 facade |
-| `agentdash-infrastructure::agent_runtime_composition` | PostgreSQL Managed Runtime、Business Surface、Integration Host、driver callbacks 与 durable workers 的生产装配 |
-| `agentdash-agent-runtime-host` | definition -> instance -> verified offer -> durable binding -> Complete Agent effect/inspect/reconcile |
-| `agentdash-agent-runtime` | canonical operation、snapshot/change cursor、projection、outbox 与 broker call exactly-once |
-| `agentdash-agent` | Dash Agent history-maintained AgentSession 与 lifecycle ledger |
+| `agentdash-application-agentrun::runtime_facade` | Product coordinate/command 到 Complete Agent service/source 的唯一 facade |
+| `agentdash-infrastructure::agent_runtime_composition` | Product association、Complete Agent service、进程内 Host route 与driver callbacks的生产装配 |
+| `agentdash-agent-runtime-host` | 当前进程的definition、instance、verified offer、binding generation与callback route |
+| `agentdash-agent-runtime` | 同步command handoff、snapshot normalize、process-local live与broker call协调 |
+| `agentdash-agent` | Dash Agent native history、surface/context、fork、compaction与effect authority |
 | `agentdash-agent-core` | Dash Agent 内部使用的纯 Agent loop，不拥有 Runtime/Product/Agent persistence |
 
 ## AppState Bootstrap
@@ -63,7 +63,10 @@ Repository bootstrap 负责 PostgreSQL repository 实例化、composition-root `
 
 Relay bootstrap 负责创建 backend registry、backend runtime event channel、shell output registry 与 terminal cache。VFS bootstrap 基于 repository ports、session persistence、relay registry 和插件 mount providers 构建 mount provider registry、VFS service、mutation dispatcher、runtime tool provider 与 materializing MCP relay。这样 session runtime 装配只消费 VFS/relay 的明确输出。
 
-Agent Runtime bootstrap 负责收集受信 Integration contributions 与 trust manifests，构造 PostgreSQL Host/Managed Runtime/Business Surface/Tool Broker/Hook callback，并启动 outbox、context、hook effect 与 recovery workers。Native、Codex 和企业远端服务都经过 definition、instance、offer、binding 生命周期；Relay 只提供 remote placement transport。
+Agent Runtime bootstrap 负责收集受信 Integration contributions 与 trust manifests，根据 Product
+association组合Complete Agent services、当前进程Host route、Tool Broker与Hook callback。Native、
+Codex和企业远端服务都经过definition、instance、offer、binding生命周期；association与Agent
+`read/inspect`提供重建依据，Relay只提供remote placement transport。
 
 Auth、runtime gateway 与 background worker bootstrap 分别负责认证模式校验、runtime action provider 组合、以及 AppState 构建完成后的 terminal effect replay、stall detector、routine scheduler 和 auth session cleanup。后台 worker 只在 AppState 已完成延迟绑定检查后启动。
 

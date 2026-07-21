@@ -8,10 +8,11 @@ use agentdash_agent::dash::{
     AgentTurnId as DashTurnId, BranchId, CommandId, CompactionMode, ContextDeliveryFidelity,
     DashAgentChange, DashAgentChangePayload, DashAgentRepositoryState, DashAgentRepositoryStore,
     DashAgentService, DashChangeCursor, DashCommandRequest, DashCoreEvent, DashExecutionCallbacks,
-    DashExecutionDependencies, DashExecutionEvent, DashPublicCommand, DashReceiptState,
-    DashServiceError, DashSurface, DashTerminalOutcome, DashToolDefinition, ForkCutoff,
-    HistoryPayload, InitialContextContribution, InitialContextInstallation, InitialContextMode,
-    InteractionId as DashInteractionId, InteractionState,
+    DashExecutionDependencies, DashExecutionEvent, DashHistoryCallbacks, DashHistoryCommit,
+    DashPublicCommand, DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome,
+    DashToolDefinition, ForkCutoff, HistoryPayload, InitialContextContribution,
+    InitialContextInstallation, InitialContextMode, InteractionId as DashInteractionId,
+    InteractionState,
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
@@ -342,10 +343,12 @@ impl DashAgentCompleteService {
         live_channel: DashCompleteLiveChannel,
     ) -> DashExecutionDependencies {
         let mut execution = self.execution.clone();
-        execution.callbacks = Arc::new(DashCompleteLiveCallbacks {
+        let callbacks = Arc::new(DashCompleteLiveCallbacks {
             source: source.clone(),
             live_channel,
         });
+        execution.callbacks = callbacks.clone();
+        execution.history_callbacks = callbacks;
         execution
     }
 
@@ -944,8 +947,9 @@ impl CompleteAgentService for DashAgentCompleteService {
             },
             receipt: DashCompleteRecordedReceipt::ApplySurface(receipt.clone()),
         };
-        let commit_result = self
-            .store
+        let previous_entry_count = expected_repository.history().entries().len();
+        let committed_history = replacement_repository.history().clone();
+        self.store
             .commit(DashCompleteAtomicCommit {
                 effect_id: command.effect_id.clone(),
                 expected_effect: None,
@@ -958,10 +962,12 @@ impl CompleteAgentService for DashAgentCompleteService {
                     replacement_metadata: Box::new(replacement),
                 }],
             })
+            .await?;
+        service
+            .publish_committed_history_since(previous_entry_count, &committed_history)
             .await;
         self.reconcile_live_surface_from_durable_metadata(&command.source, &service)
             .await?;
-        commit_result?;
         Ok(receipt)
     }
 
@@ -1023,8 +1029,9 @@ impl CompleteAgentService for DashAgentCompleteService {
             receipt.clone(),
             Some(AgentTerminalOutcome::Succeeded),
         );
-        let commit_result = self
-            .store
+        let previous_entry_count = expected_repository.history().entries().len();
+        let committed_history = replacement_repository.history().clone();
+        self.store
             .commit(DashCompleteAtomicCommit {
                 effect_id: command.effect_id.clone(),
                 expected_effect: None,
@@ -1042,10 +1049,12 @@ impl CompleteAgentService for DashAgentCompleteService {
                     }),
                 }],
             })
+            .await?;
+        service
+            .publish_committed_history_since(previous_entry_count, &committed_history)
             .await;
         self.reconcile_live_surface_from_durable_metadata(&command.source, &service)
             .await?;
-        commit_result?;
         Ok(receipt)
     }
 }
@@ -1444,7 +1453,10 @@ fn change_payload(
         HistoryPayload::Closed => Ok(Some(AgentChangePayload::LifecycleChanged {
             status: AgentLifecycleStatus::Closed,
         })),
-        HistoryPayload::InitialContextInstalled { .. } | HistoryPayload::InputAccepted { .. } => {
+        HistoryPayload::InitialContextInstalled { .. }
+        | HistoryPayload::SurfaceApplied { .. }
+        | HistoryPayload::SurfaceRevoked { .. }
+        | HistoryPayload::InputAccepted { .. } => {
             Ok(Some(AgentChangePayload::SnapshotInvalidated {
                 reason: "dash_history_context_changed".into(),
             }))
@@ -1587,6 +1599,25 @@ impl DashCompleteLiveChannel {
             sequence: Arc::new(tokio::sync::Mutex::new(0)),
         }
     }
+
+    async fn publish(
+        &self,
+        source: &AgentSourceCoordinate,
+        records: impl IntoIterator<Item = CanonicalConversationRecord>,
+    ) {
+        for record in records {
+            let sequence = {
+                let mut sequence = self.sequence.lock().await;
+                *sequence = sequence.saturating_add(1);
+                *sequence
+            };
+            let _ = self.sender.send(AgentLiveEvent {
+                source: source.clone(),
+                sequence: AgentServiceU64(sequence),
+                record,
+            });
+        }
+    }
 }
 
 struct DashCompleteLiveCallbacks {
@@ -1635,6 +1666,28 @@ impl DashExecutionCallbacks for DashCompleteLiveCallbacks {
     }
 }
 
+#[async_trait]
+impl DashHistoryCallbacks for DashCompleteLiveCallbacks {
+    async fn committed(
+        &self,
+        commit: DashHistoryCommit,
+    ) -> Result<(), agentdash_agent::dash::DashCoreError> {
+        let mut records = Vec::new();
+        for entry in commit.entries {
+            let state = commit
+                .history
+                .state_at(entry.sequence)
+                .map_err(live_callback_error)?;
+            records.extend(
+                crate::canonical_projection::entry_records(self.source.as_str(), &entry, &state)
+                    .map_err(live_callback_error)?,
+            );
+        }
+        self.live_channel.publish(&self.source, records).await;
+        Ok(())
+    }
+}
+
 fn canonical_live_event(
     source: &AgentSourceCoordinate,
     execution: &DashExecutionEvent,
@@ -1642,21 +1695,6 @@ fn canonical_live_event(
     let thread_id = source.as_str();
     let turn_id = execution.turn_id.0.as_str();
     let event = match &execution.event {
-        DashCoreEvent::ProviderRoundStarted { round: 1 } => BackboneEvent::TurnStarted(
-            serde_json::from_value(serde_json::json!({
-                "threadId": thread_id,
-                "turn": {
-                    "id": turn_id,
-                    "items": [],
-                    "status": "inProgress",
-                    "startedAt": null,
-                    "completedAt": null,
-                    "durationMs": null,
-                    "error": null,
-                },
-            }))
-            .map_err(live_callback_error)?,
-        ),
         DashCoreEvent::ProviderRoundStarted { .. }
         | DashCoreEvent::ProviderRoundCompleted { .. } => return Ok(None),
         DashCoreEvent::TextDelta { delta, .. } => {

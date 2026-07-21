@@ -12,7 +12,7 @@ import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { parseBoundedOutputText } from "./boundedOutput";
 import { getPlatformEventPolicy } from "./systemEventPolicy";
-import { isRecord } from "./platformEvent";
+import { extractContextFrameValue, isRecord } from "./platformEvent";
 import { isToolBurstEligible } from "./threadItemKind";
 import type {
   AggregatedContextFrameGroup,
@@ -102,11 +102,7 @@ function hasBoundedOutputEntry(entry: SessionDisplayEntry): boolean {
 }
 
 function isContextFrameEvent(event: BackboneEvent): boolean {
-  return (
-    event.type === "platform" &&
-    event.payload.kind === "session_meta_update" &&
-    event.payload.data.key === "context_frame"
-  );
+  return extractContextFrameValue(event) != null;
 }
 
 function isWillRetryErrorEvent(event: BackboneEvent): boolean {

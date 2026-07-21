@@ -34,6 +34,22 @@ describe("parseContextFrame", () => {
     expect(frame?.sections).toHaveLength(1);
   });
 
+  it("接受 generated ContextFrame 的 bigint 时间坐标", () => {
+    const frame = parseContextFrame({
+      id: "ctx-bigint",
+      kind: "identity",
+      source: "runtime_context_update",
+      delivery_status: "applied_before_prompt",
+      delivery_channel: "connector_context",
+      message_role: "system",
+      rendered_text: "system prompt",
+      created_at_ms: 0n,
+      sections: [],
+    });
+
+    expect(frame?.created_at_ms).toBe(0);
+  });
+
   it("解析后端新增的 guidelines 与 companion section", () => {
     const frame = parseContextFrame({
       id: "ctx-2",

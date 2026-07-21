@@ -63,6 +63,7 @@ NDJSON envelope属于cross-layer contract，类型与validator由Rust Runtime co
 | `UserInputSubmitted` | 按 `turn_id + item_id` upsert 为用户输入 entry | 是 |
 | `TurnPlanUpdated` / `PlanDelta` | 直接添加/更新 | 是 |
 | `Platform(HookTrace)` | 直接添加 | 选择性可见（Guard 决定） |
+| `Platform(ContextFrameChanged)` | 提取 typed `frame`，投影为 `context_frame` entry | 是 |
 | `Platform(SessionMetaUpdate)` | 按 key 分发 | 选择性可见 |
 | `TokenUsageUpdated` | 更新 `tokenUsage` state | 否（header 圆环） |
 
@@ -75,6 +76,9 @@ NDJSON envelope属于cross-layer contract，类型与validator由Rust Runtime co
 ### Platform 事件可见性
 
 `Platform(HookTrace)` 和 `Platform(SessionMetaUpdate)` 不一律静默，交由 `SessionTaskEventGuard` 和 `SessionSystemEventGuard` 判定。
+`Platform(ContextFrameChanged)` 是ContextFrame的canonical入口。`platformEvent`负责从typed variant
+提取`frame + message`，reducer、feed与renderer共享同一个解析函数；`SessionMetaUpdate`不承载
+ContextFrame编码。
 `Platform(WorkspaceModulePresentationRequested)` 是可渲染的展示请求审计事件。它使用独立
 discriminant，原因是 presentation intent 与 projection invalidation 具有不同的消费时机；
 `ControlPlaneProjectionChanged` 只表达 read model 需要刷新。

@@ -9,6 +9,7 @@ use agentdash_agent::{
         DashFinishReason, DashMessageRole, DashProvider, DashProviderEvent,
         DashProviderEventStream, DashProviderRequest, DashServiceError, DashToolCall,
         DashToolCallbacks, DashToolResult, HistoryEntryId, HistoryPayload,
+        NoopDashHistoryCallbacks,
     },
 };
 use async_trait::async_trait;
@@ -198,6 +199,7 @@ pub fn bridge_dash_execution_dependencies(
         provider: Arc::new(BridgeDashProvider::new(bridge.clone(), thinking_level)),
         tools: Arc::new(UnboundDashToolCallbacks),
         callbacks: Arc::new(UnboundDashExecutionCallbacks),
+        history_callbacks: Arc::new(NoopDashHistoryCallbacks),
         compactor: Arc::new(BridgeDashCompactor::new(bridge, thinking_level)),
     }
 }

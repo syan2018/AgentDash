@@ -14,8 +14,8 @@ pub use core_execution::{
 pub use history::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentItemId,
     AgentSessionId, AgentTurnId, BranchId, CompactionId, CompactionMode, CompactionState,
-    ContextDeliveryFidelity, ContextRevision, ForkCutoff, ForkLineage, HistoryContribution,
-    HistoryEntryId, HistoryError, HistoryPayload, InitialContextContribution,
+    ContextDeliveryFidelity, ContextRevision, DashSurface, ForkCutoff, ForkLineage,
+    HistoryContribution, HistoryEntryId, HistoryError, HistoryPayload, InitialContextContribution,
     InitialContextInstallation, InitialContextMode, InteractionId, InteractionState, ItemDetails,
     ItemKind, ItemState, SessionStatus, ToolActivityResult, TurnState, fold_history,
 };
@@ -27,7 +27,8 @@ pub use service::{
     DashAgentRead, DashAgentRepository, DashAgentRepositoryState, DashAgentRepositoryStore,
     DashAgentService, DashCommandReceipt, DashCommandRequest, DashCompactionRequest,
     DashCompactionResult, DashCompactor, DashEffectInspection, DashExecutionDependencies,
-    DashPublicCommand, DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome,
+    DashHistoryCallbacks, DashHistoryCommit, DashPublicCommand, DashReceiptState, DashServiceError,
+    DashTerminalOutcome, NoopDashHistoryCallbacks,
 };
 pub use store::{
     CommandSettlement, DashAgentChange, DashAgentChangePayload, DashAgentCommit, DashAgentStore,

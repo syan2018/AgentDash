@@ -685,6 +685,9 @@ async fn get_agent_run_live_events(
         .await
         .map_err(agent_run_product_projection_error)?;
     let stream = async_stream::stream! {
+        // Flush the transport immediately so browser/dev proxies expose the connected state
+        // before the first Agent event. Empty NDJSON lines carry no domain fact.
+        yield Ok::<Bytes, std::convert::Infallible>(Bytes::from_static(b"\n"));
         loop {
             match live.next().await {
                 Ok(Some(event)) => match serde_json::to_vec(&event) {

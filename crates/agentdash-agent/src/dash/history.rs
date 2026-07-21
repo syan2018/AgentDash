@@ -135,6 +135,9 @@ pub enum HistoryPayload {
     SurfaceRevoked {
         surface: DashSurface,
     },
+    ThreadNameChanged {
+        thread_name: String,
+    },
     InputAccepted {
         input_id: String,
         content: String,
@@ -470,6 +473,7 @@ pub struct AgentHistoryState {
     pub status: SessionStatus,
     pub initial_context: Option<InitialContextInstallation>,
     pub surface: Option<DashSurface>,
+    pub thread_name: Option<String>,
     pub accepted_inputs: Vec<String>,
     pub active_turn: Option<AgentTurnId>,
     pub active_compaction: Option<CompactionId>,
@@ -488,6 +492,7 @@ pub fn fold_history(history: &AgentHistory) -> Result<AgentHistoryState, History
         status: SessionStatus::Open,
         initial_context: None,
         surface: None,
+        thread_name: None,
         accepted_inputs: Vec::new(),
         active_turn: None,
         active_compaction: None,
@@ -558,6 +563,13 @@ fn apply_payload(
                 return Err(HistoryError::SurfaceRevisionMismatch);
             }
             state.surface = None;
+        }
+        HistoryPayload::ThreadNameChanged { thread_name } => {
+            let thread_name = thread_name.trim();
+            if thread_name.is_empty() {
+                return Err(HistoryError::InvalidThreadName);
+            }
+            state.thread_name = Some(thread_name.to_owned());
         }
         HistoryPayload::InputAccepted { input_id, .. } => {
             state.accepted_inputs.push(input_id.clone());
@@ -930,6 +942,8 @@ pub enum HistoryError {
     SurfaceRevisionMovedBackwards,
     #[error("Dash Agent surface revision does not match")]
     SurfaceRevisionMismatch,
+    #[error("Dash Agent thread name must not be blank")]
+    InvalidThreadName,
     #[error("session is closed")]
     ClosedSessionMutation,
     #[error("another history activity is active")]

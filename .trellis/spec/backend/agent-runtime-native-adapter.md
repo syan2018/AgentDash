@@ -53,6 +53,20 @@ pub trait DashHistoryCallbacks {
 }
 ```
 
+```rust
+pub trait DashConversationNamer {
+    async fn generate(
+        &self,
+        request: DashConversationNamingRequest,
+    ) -> Result<String, DashServiceError>;
+}
+
+pub enum HistoryPayload {
+    ThreadNameChanged { thread_name: String },
+    // other native history facts
+}
+```
+
 ## 3. Contracts
 
 - 一个 Dash source 使用一个 canonical repository document 保存 history、context、branch、
@@ -83,6 +97,13 @@ pub trait DashHistoryCallbacks {
 - `InitialContextInstalled`、`SurfaceApplied` 与 `SurfaceRevoked` 必须从 Agent 实际保存的 native
   history 投影 `Platform(ContextFrameChanged)`；Product intent 或 repository metadata 不能直接
   冒充 Agent 已接纳 context。
+- 会话标题是 Dash Agent 从已接纳 user input 与已完成 Agent output 生成的原生展示事实。
+  首个成功回合后，Dash 通过 `DashConversationNamer` 生成非空标题，并以
+  `ThreadNameChanged` 提交到同一 source history；`read`、`changes` 与 durable live event
+  从该 entry 分别投影 `AgentThreadNameSnapshot`、`AgentChangePayload::ThreadNameChanged` 与
+  canonical `ThreadNameUpdated`。Product 只消费 Agent snapshot 中的标题，不另存或推导标题。
+- 标题生成不是回合 terminal 的组成部分：生成失败不能把已经成功提交的 Agent 回合改写成失败；
+  未命名 source 可在后续成功回合再次尝试。history 一旦已有标题，自动命名不再重复调用。
 - Core 只拥有 provider-neutral inference/stream/tool loop，不依赖 Product workflow、
   Lifecycle、PostgreSQL repository、Codex DTO 或 Runtime persistence。
 - Tool/Hook 通过 Host callback route调用真实 handler。Dash 在 callback identity 上重试；
@@ -106,6 +127,10 @@ pub trait DashHistoryCallbacks {
 | 没有 live subscriber | execution/history commit 正常完成 |
 | live subscriber lagged | retryable unavailable；重新 read |
 | history commit成功但live通知失败 | commit保持成功；subscriber重新read authoritative history |
+| 命名输入缺少非空user input或Agent output | 不生成标题，不提交history entry |
+| namer返回空标题 | 拒绝标题提交；已成功回合保持成功 |
+| namer/provider失败 | 不提交标题；已成功回合保持成功，后续成功回合可重试 |
+| history已有标题 | 不调用namer，不重复提交自动标题 |
 | fork cutoff/context digest不匹配 | typed reject；source document不变 |
 | transport在provider terminal前EOF | retryable `stream_disconnected` |
 | provider terminal后transport继续开放 | 逻辑 response立即完成且只完成一次 |
@@ -114,9 +139,14 @@ pub trait DashHistoryCallbacks {
 
 - Good：Dash command 原子更新 source document，成功后把同一 committed suffix 发布为 durable
   live record；Core callback只在其间发布partial delta，重连从同一document read得到完整终态。
+- Good：首个成功回合提交 terminal 后，Dash 根据该 source 的原生对话生成标题并追加
+  `ThreadNameChanged`；列表标题、snapshot与live notification均来自这一个 entry。
 - Base：live subscriber掉线，Core继续执行并提交 history；新 subscriber先 read再订阅。
+- Base：标题生成暂时失败，回合仍保持成功且source保持未命名；下一成功回合可以再次生成。
 - Bad：Dash 同时写 repository JSONB 与 history/effect镜像，再逐次校验相等。镜像没有独立
   owner，只会制造 drift。
+- Bad：Product 从首条用户消息截断标题并写入另一张表。该标题无法证明是 Agent 接纳的事实，
+  并会与 Agent snapshot 形成双写。
 - Bad：生产 composition 注入 Noop execution callback。输入可能执行成功，但用户永远看不到
   live delta。
 
@@ -132,6 +162,8 @@ pub trait DashHistoryCallbacks {
   ephemeral text/reasoning/tool delta 与 durable terminal；执行后从 read断言同 turn 已终态。
 - surface/context tests断言 native history保存实际 surface/context，snapshot与live均投影
   `ContextFrameChanged`，repository root不存在平行surface字段。
+- naming test断言成功回合把 accepted user input与最终Agent output交给namer，只提交一次非空
+  `ThreadNameChanged`，且 `read/changes/live` 均投影同一标题；命名失败不改变回合terminal。
 - lag/no-subscriber tests区分临时没有观察者与 callback未装配。
 - source scan/migration test断言 Dash关系镜像表和 production Noop callback缺席。
 - Core dependency test断言不依赖 Application/Domain workflow/vendor DTO/repository。
@@ -145,6 +177,14 @@ replace_history_rows(&state.store.history).await?;
 
 // Correct: Dash owner document是唯一原子事实。
 repository.compare_and_swap(expected, replacement).await?;
+```
+
+```rust
+// Wrong: Product根据输入另建标题事实。
+product_thread_names.upsert(run_id, infer_title(prompt)).await?;
+
+// Correct: Dash保存原生标题，平台只投影Agent证据。
+store.commit(HistoryPayload::ThreadNameChanged { thread_name })?;
 ```
 
 ```rust

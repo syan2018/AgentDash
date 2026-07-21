@@ -103,5 +103,9 @@
 - [x] source live订阅首先收到durable用户输入与`TurnStarted`，其后才收到ephemeral Agent delta。
 - [x] frontend直接解析canonical `ContextFrameChanged`，用户输入无需等待完整Agent响应才进入feed。
 - [x] 0106在空库与当前开发库迁移成功，开发库schema为106，新后端可读取迁移后的source。
-- [ ] 使用当前开发环境真实发送一条消息，确认ContextFrame展示、用户消息即时出现、流式输出与
-  `TurnCompleted`运行态均符合canonical顺序。
+- [x] 当前开发环境真实消息验证：Composer在提交时立即清空，canonical用户消息先于Agent输出
+  出现；执行中正文持续增长，只有`TurnCompleted`结束运行态，终态Agent message保持展开，
+  ContextFrame仍从同一conversation history展示。
+- [x] 首个成功Dash回合从accepted user input与最终Agent output生成原生标题，提交
+  `ThreadNameChanged`后由snapshot/changes/live投影；实测标题在terminal后更新为
+  “编号英文单词列表生成”，主标题与AgentRun列表同步，Product未新增标题表或写路径。

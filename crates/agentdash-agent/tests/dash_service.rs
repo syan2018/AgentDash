@@ -12,7 +12,8 @@ use agentdash_agent::dash::{
     DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashPublicCommand,
     DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome, DashToolCall,
     DashToolCallbacks, DashToolResult, EffectId, HistoryPayload, InitialContextContribution,
-    InitialContextInstallation, InitialContextMode, NoopDashHistoryCallbacks,
+    InitialContextInstallation, InitialContextMode, NoopDashConversationNamer,
+    NoopDashHistoryCallbacks,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -145,6 +146,7 @@ async fn retryable_provider_failure_is_terminal_and_inspectable_outside_session(
             callbacks: Arc::new(NoCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(NoCompaction),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
         },
     )
     .await;
@@ -247,6 +249,7 @@ fn dependencies(provider: Arc<dyn DashProvider>) -> DashExecutionDependencies {
         callbacks: Arc::new(NoCallbacks),
         history_callbacks: Arc::new(NoopDashHistoryCallbacks),
         compactor: Arc::new(NoCompaction),
+        conversation_namer: Arc::new(NoopDashConversationNamer),
     }
 }
 
@@ -436,6 +439,7 @@ async fn automatic_service(
             callbacks: Arc::new(NoCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor,
+            conversation_namer: Arc::new(NoopDashConversationNamer),
         },
     )
     .await

@@ -446,6 +446,8 @@ export function SessionChatView({
 
     setSendError(null);
     setIsSending(true);
+    richInputRef.current?.setValue("");
+    setInputValue("");
 
     try {
       await commandActionRef.current({
@@ -465,6 +467,8 @@ export function SessionChatView({
         setSendError(null);
         return;
       }
+      richInputRef.current?.setValue(promptText);
+      setInputValue(promptText);
       setSendError(e instanceof Error ? e.message : "发送失败，请重试。");
     } finally {
       setIsSending(false);

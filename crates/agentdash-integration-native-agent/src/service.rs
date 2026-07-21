@@ -35,14 +35,15 @@ use agentdash_agent_service_api::{
     AgentServiceInstanceId, AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority,
     AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
     AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile,
-    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, AppliedAgentCommandReceipt,
-    AppliedAgentSurface, AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt,
-    AppliedContributionStatus, AppliedForkAgentReceipt, AppliedInitialContextEvidence,
-    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
-    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
-    InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
-    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot,
+    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
+    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
+    BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
+    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
+    InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
+    ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, CompleteAgentPlacementRequirement, CompleteAgentRegistrationClaim,
@@ -741,6 +742,15 @@ impl CompleteAgentService for DashAgentCompleteService {
                 "requested Dash Agent snapshot revision is not current",
             ));
         }
+        let source_info = AgentSnapshotSource {
+            authority: AgentSnapshotAuthority::AgentAuthoritative,
+            source_revision: Some(
+                AgentSourceRevision::new(format!("history:{}", read.history_digest))
+                    .map_err(internal)?,
+            ),
+            fidelity: SemanticFidelity::Exact,
+            observed_at_ms: 0,
+        };
         Ok(AgentSnapshot {
             source: query.source,
             revision,
@@ -754,18 +764,13 @@ impl CompleteAgentService for DashAgentCompleteService {
                 .iter()
                 .map(|(id, interaction)| interaction_snapshot(id, interaction))
                 .collect::<Result<Vec<_>, _>>()?,
-            // Dash Agent history currently has no naming entry/fold rule, so the Complete Agent
-            // seam must report the capability as absent instead of deriving a title from prompts.
-            thread_name: None,
-            source_info: AgentSnapshotSource {
-                authority: AgentSnapshotAuthority::AgentAuthoritative,
-                source_revision: Some(
-                    AgentSourceRevision::new(format!("history:{}", read.history_digest))
-                        .map_err(internal)?,
-                ),
-                fidelity: SemanticFidelity::Exact,
-                observed_at_ms: 0,
-            },
+            thread_name: history_state
+                .thread_name
+                .map(|thread_name| AgentThreadNameSnapshot {
+                    thread_name: Some(thread_name),
+                    source_info: source_info.clone(),
+                }),
+            source_info,
             applied_surface: source.applied_surface,
             initial_context: source.initial_context,
             conversation_history,
@@ -1436,6 +1441,7 @@ fn interaction_snapshot(
 fn change_payload(
     state: &AgentHistoryState,
     payload: &HistoryPayload,
+    source_digest: &str,
 ) -> Result<Option<AgentChangePayload>, AgentServiceError> {
     match payload {
         HistoryPayload::InteractionRequested { interaction_id, .. }
@@ -1453,6 +1459,20 @@ fn change_payload(
         HistoryPayload::Closed => Ok(Some(AgentChangePayload::LifecycleChanged {
             status: AgentLifecycleStatus::Closed,
         })),
+        HistoryPayload::ThreadNameChanged { thread_name } => {
+            Ok(Some(AgentChangePayload::ThreadNameChanged {
+                thread_name: Some(thread_name.clone()),
+                source_info: AgentSnapshotSource {
+                    authority: AgentSnapshotAuthority::AgentAuthoritative,
+                    source_revision: Some(
+                        AgentSourceRevision::new(format!("history:{source_digest}"))
+                            .map_err(internal)?,
+                    ),
+                    fidelity: SemanticFidelity::Exact,
+                    observed_at_ms: 0,
+                },
+            }))
+        }
         HistoryPayload::InitialContextInstalled { .. }
         | HistoryPayload::SurfaceApplied { .. }
         | HistoryPayload::SurfaceRevoked { .. }
@@ -1577,7 +1597,7 @@ fn dash_change_payload(
 ) -> Result<Option<AgentChangePayload>, AgentServiceError> {
     match &change.payload {
         DashAgentChangePayload::HistoryEntry { entry } => {
-            change_payload(&change.state, &entry.payload)
+            change_payload(&change.state, &entry.payload, &change.source_digest)
         }
         DashAgentChangePayload::ActiveTurnChanged { .. } => Ok(None),
     }

@@ -409,20 +409,11 @@ function TurnSection({
   streamingEntryId: string | null;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
 }) {
-  const isTerminal = segment.status !== "active";
   const terminalLabel = segment.turnId ? terminalTurnLabel(segment.status) : null;
   const headerLabel = terminalLabel ?? (segment.turnId ? "执行中" : null);
   const activeElapsedMs = useActiveTurnElapsedMs(segment.startedAtMs, segment.status === "active");
   const displayDurationMs = segment.durationMs ?? activeElapsedMs;
   const [collapsed, setCollapsed] = useState(false);
-  const [prevStatus, setPrevStatus] = useState(segment.status);
-
-  if (segment.status !== prevStatus) {
-    setPrevStatus(segment.status);
-    if (isTerminal && prevStatus === "active") {
-      setCollapsed(true);
-    }
-  }
 
   if (!collapsed) {
     return (

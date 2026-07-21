@@ -1,15 +1,16 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use agentdash_agent::{
-    AgentMessage, BridgeError, BridgeRequest, ContentPart, LlmBridge, ProviderErrorKind,
-    StopReason, StreamChunk, ThinkingLevel, ToolDefinition,
+    AgentMessage, BridgeError, BridgeRequest, ContentPart, ConversationNamer,
+    ConversationNamingInput, LlmBridge, ProviderErrorKind, StopReason, StreamChunk, ThinkingLevel,
+    ToolDefinition,
     dash::{
         CompactionId, ContextRevision, DashCompactionRequest, DashCompactionResult, DashCompactor,
-        DashCoreError, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
-        DashFinishReason, DashMessageRole, DashProvider, DashProviderEvent,
-        DashProviderEventStream, DashProviderRequest, DashServiceError, DashToolCall,
-        DashToolCallbacks, DashToolResult, HistoryEntryId, HistoryPayload,
-        NoopDashHistoryCallbacks,
+        DashConversationNamer, DashConversationNamingRequest, DashCoreError,
+        DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent, DashFinishReason,
+        DashMessageRole, DashProvider, DashProviderEvent, DashProviderEventStream,
+        DashProviderRequest, DashServiceError, DashToolCall, DashToolCallbacks, DashToolResult,
+        HistoryEntryId, HistoryPayload, NoopDashHistoryCallbacks,
     },
 };
 use async_trait::async_trait;
@@ -23,6 +24,44 @@ const DEFAULT_RETAINED_CONVERSATION_MESSAGES: usize = 8;
 pub struct BridgeDashProvider {
     bridge: Arc<dyn LlmBridge>,
     thinking_level: Option<ThinkingLevel>,
+}
+
+pub struct BridgeDashConversationNamer {
+    namer: ConversationNamer,
+}
+
+impl BridgeDashConversationNamer {
+    pub fn new(bridge: Arc<dyn LlmBridge>) -> Self {
+        Self {
+            namer: ConversationNamer::new(bridge),
+        }
+    }
+}
+
+#[async_trait]
+impl DashConversationNamer for BridgeDashConversationNamer {
+    async fn generate(
+        &self,
+        request: DashConversationNamingRequest,
+    ) -> Result<String, DashServiceError> {
+        let messages = request
+            .messages
+            .into_iter()
+            .filter_map(|message| match message.role {
+                DashMessageRole::User => Some(AgentMessage::user(message.content)),
+                DashMessageRole::Assistant => Some(AgentMessage::assistant(message.content)),
+                DashMessageRole::Tool => None,
+            })
+            .collect();
+        self.namer
+            .generate(ConversationNamingInput { messages })
+            .await
+            .map(|name| name.into_string())
+            .map_err(|error| DashServiceError::Unavailable {
+                message: error.to_string(),
+                retryable: false,
+            })
+    }
 }
 
 impl BridgeDashProvider {
@@ -200,7 +239,8 @@ pub fn bridge_dash_execution_dependencies(
         tools: Arc::new(UnboundDashToolCallbacks),
         callbacks: Arc::new(UnboundDashExecutionCallbacks),
         history_callbacks: Arc::new(NoopDashHistoryCallbacks),
-        compactor: Arc::new(BridgeDashCompactor::new(bridge, thinking_level)),
+        compactor: Arc::new(BridgeDashCompactor::new(bridge.clone(), thinking_level)),
+        conversation_namer: Arc::new(BridgeDashConversationNamer::new(bridge)),
     }
 }
 

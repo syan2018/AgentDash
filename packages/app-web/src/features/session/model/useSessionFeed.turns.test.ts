@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { SessionEventEnvelope } from "./types";
+import type { SessionDisplayEntry, SessionEventEnvelope } from "./types";
 import { segmentByTurn } from "./useSessionFeed";
 
 function failedTurnEvent(): SessionEventEnvelope {
@@ -57,5 +57,34 @@ describe("session turn segmentation", () => {
         items: [],
       }),
     ]);
+  });
+
+  it("keeps a durable completed agent message as the collapsed turn output", () => {
+    const agentMessage: SessionDisplayEntry = {
+      id: "item:assistant-1",
+      sessionId: "session-1",
+      timestamp: 2,
+      eventSeq: 2,
+      turnId: "turn-1",
+      itemFreshness: "completed",
+      isStreaming: false,
+      event: {
+        type: "item_completed",
+        payload: {
+          threadId: "session-1",
+          turnId: "turn-1",
+          completedAtMs: 2,
+          item: {
+            type: "agentMessage",
+            id: "assistant-1",
+            text: "最终回答",
+          },
+        },
+      },
+    };
+
+    const [segment] = segmentByTurn([agentMessage], [], null);
+
+    expect(segment?.finalOutput).toBe(agentMessage);
   });
 });

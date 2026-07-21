@@ -10,33 +10,35 @@ use std::{
 use agentdash_agent::dash::{
     AgentSessionId, AgentTurnId as DashTurnId, ContextRevision, DashAgentRepository,
     DashAgentRepositoryState, DashAgentRepositoryStore, DashCompactionRequest,
-    DashCompactionResult, DashCompactor, DashCoreError, DashExecutionCallbacks,
-    DashExecutionDependencies, DashExecutionEvent, DashFinishReason, DashProvider,
-    DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashServiceError,
-    DashToolCall, DashToolCallbacks, DashToolResult, NoopDashHistoryCallbacks,
+    DashCompactionResult, DashCompactor, DashConversationNamer, DashConversationNamingRequest,
+    DashCoreError, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
+    DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
+    DashProviderRequest, DashServiceError, DashToolCall, DashToolCallbacks, DashToolResult,
+    NoopDashConversationNamer, NoopDashHistoryCallbacks,
 };
 use agentdash_agent_protocol::{
     BackboneEvent, ContextFrameKind, ContextFrameSection, PlatformEvent, PresentationDurability,
     codex_app_server_protocol as codex,
 };
 use agentdash_agent_service_api::{
-    AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId, AgentChangesQuery,
-    AgentCommand, AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentContextPackageId,
-    AgentContextSchemaVersion, AgentContextSourceCoordinate, AgentContextSourceRevision,
-    AgentEffectIdentity, AgentEffectInspectionState, AgentForkCutoffKind, AgentForkPoint,
-    AgentHookAction, AgentHookBlockingSemantics, AgentHookDecision, AgentHookDefinitionId,
-    AgentHookInvocation, AgentHookMutationKind, AgentHookPoint, AgentHookTiming,
-    AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbacks, AgentIdempotencyKey,
-    AgentInput, AgentInputContent, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
-    AgentReceiptState, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
-    AgentSnapshotRevision, AgentSourceCoordinate, AgentSurfaceContributionPayload,
-    AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
-    AgentTerminalOutcome, AgentToolDelivery, AgentToolInvocation, AgentToolName, AgentToolResult,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, ApplyBoundAgentSurface, BoundAgentSurface,
-    BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind, ContextProvenance,
-    CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
-    InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
-    InitialContextMode, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId, AgentChangePayload,
+    AgentChangesQuery, AgentCommand, AgentCommandEnvelope, AgentCommandId, AgentCommandMeta,
+    AgentContextPackageId, AgentContextSchemaVersion, AgentContextSourceCoordinate,
+    AgentContextSourceRevision, AgentEffectIdentity, AgentEffectInspectionState,
+    AgentForkCutoffKind, AgentForkPoint, AgentHookAction, AgentHookBlockingSemantics,
+    AgentHookDecision, AgentHookDefinitionId, AgentHookInvocation, AgentHookMutationKind,
+    AgentHookPoint, AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbackError,
+    AgentHostCallbacks, AgentIdempotencyKey, AgentInput, AgentInputContent, AgentPayloadDigest,
+    AgentProfileDigest, AgentReadQuery, AgentReceiptState, AgentServiceError,
+    AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshotRevision, AgentSourceCoordinate,
+    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
+    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolInvocation,
+    AgentToolName, AgentToolResult, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
+    ContextAuthorityKind, ContextProvenance, CreateAgentCommand, ForkAgentCommand,
+    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContribution,
+    InitialContextDeliveryFidelity, InitialContextMode, ResumeAgentCommand,
+    RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_native_agent::{
     DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
@@ -271,6 +273,21 @@ fn test_conflict(message: &str) -> AgentServiceError {
 }
 
 struct FixtureProvider;
+
+struct FixtureConversationNamer;
+
+#[async_trait]
+impl DashConversationNamer for FixtureConversationNamer {
+    async fn generate(
+        &self,
+        request: DashConversationNamingRequest,
+    ) -> Result<String, DashServiceError> {
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[0].content, "修复消息流");
+        assert_eq!(request.messages[1].content, "fixture answer");
+        Ok("消息流收束".to_owned())
+    }
+}
 
 #[async_trait]
 impl DashProvider for FixtureProvider {
@@ -527,6 +544,7 @@ fn service_with_store(store: Arc<dyn DashCompleteAgentStore>) -> DashAgentComple
             callbacks: Arc::new(FixtureCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(FixtureCompactor),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
         },
         Arc::new(FixtureHostCallbacks),
         store,
@@ -543,6 +561,7 @@ async fn production_registration_packages_the_complete_dash_service_without_regi
             callbacks: Arc::new(FixtureCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(FixtureCompactor),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
         },
         Arc::new(FixtureHostCallbacks),
         Arc::new(RecordingCompleteStore::default()),
@@ -566,6 +585,86 @@ async fn production_registration_packages_the_complete_dash_service_without_regi
     );
 }
 
+#[tokio::test]
+async fn successful_turn_commits_agent_owned_thread_name_and_projects_one_canonical_change() {
+    let service = DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider: Arc::new(FixtureProvider),
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: Arc::new(FixtureCompactor),
+            conversation_namer: Arc::new(FixtureConversationNamer),
+        },
+        Arc::new(FixtureHostCallbacks),
+        Arc::new(RecordingCompleteStore::default()),
+    );
+    let source = AgentSourceCoordinate::new("dash-thread-name").unwrap();
+    service
+        .create(CreateAgentCommand {
+            meta: meta("create-thread-name", "effect-create-thread-name"),
+            requested_source: Some(source.clone()),
+            initial_context: None,
+        })
+        .await
+        .unwrap();
+    service
+        .execute(AgentCommandEnvelope {
+            meta: meta("name-input", "effect-name-input"),
+            source: source.clone(),
+            command: AgentCommand::SubmitInput {
+                input: AgentInput {
+                    content: vec![AgentInputContent::Text {
+                        text: "修复消息流".to_owned(),
+                    }],
+                },
+            },
+        })
+        .await
+        .unwrap();
+
+    let snapshot = service
+        .read(AgentReadQuery {
+            source: source.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot
+            .thread_name
+            .as_ref()
+            .and_then(|name| name.thread_name.as_deref()),
+        Some("消息流收束")
+    );
+    assert!(snapshot.conversation_history.iter().any(|record| matches!(
+        &record.presentation.envelope.event,
+        BackboneEvent::ThreadNameUpdated(notification)
+            if notification.thread_name.as_deref() == Some("消息流收束")
+    )));
+
+    let changes = service
+        .changes(AgentChangesQuery {
+            source,
+            after: None,
+            limit: 100,
+        })
+        .await
+        .unwrap();
+    assert!(changes.changes.iter().any(|change| matches!(
+        &change.payload,
+        AgentChangePayload::SourceObservation { state: Some(state), presentation }
+            if matches!(state.as_ref(), AgentChangePayload::ThreadNameChanged {
+                thread_name: Some(thread_name), ..
+            } if thread_name == "消息流收束")
+                && presentation.iter().any(|record| matches!(
+                    &record.presentation.envelope.event,
+                    BackboneEvent::ThreadNameUpdated(notification)
+                        if notification.thread_name.as_deref() == Some("消息流收束")
+                ))
+    )));
+}
+
 fn service_with_provider(provider: Arc<dyn DashProvider>) -> DashAgentCompleteService {
     service_with(provider, Arc::new(FixtureCompactor))
 }
@@ -581,6 +680,7 @@ fn service_with(
             callbacks: Arc::new(FixtureCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor,
+            conversation_namer: Arc::new(NoopDashConversationNamer),
         },
         Arc::new(FixtureHostCallbacks),
         Arc::new(RecordingCompleteStore::default()),
@@ -1351,6 +1451,7 @@ async fn lost_surface_receipts_reconcile_live_callbacks_on_the_same_service() {
             callbacks: Arc::new(FixtureCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(FixtureCompactor),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
         },
         host.clone(),
         store.clone(),
@@ -1434,6 +1535,7 @@ async fn lost_surface_receipts_reconcile_live_callbacks_on_the_same_service() {
             callbacks: Arc::new(FixtureCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(FixtureCompactor),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
         },
         host.clone(),
         store.clone(),
@@ -1629,6 +1731,7 @@ async fn exact_hooks_run_once_rewrite_and_do_not_retrigger_on_effect_replay() {
             callbacks: Arc::new(FixtureCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),
             compactor: Arc::new(FixtureCompactor),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
         },
         host.clone(),
         store,

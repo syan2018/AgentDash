@@ -571,7 +571,9 @@ function extractTurnId(item: SessionDisplayItem): string | undefined {
 
 function isAgentMessageItem(item: SessionDisplayItem): boolean {
   if (!("event" in item)) return false;
-  return (item as SessionDisplayEntry).event.type === "agent_message_delta";
+  const event = (item as SessionDisplayEntry).event;
+  if (event.type === "agent_message_delta") return true;
+  return extractThreadItem(event)?.type === "agentMessage";
 }
 
 function isProjectedTranscriptItem(item: SessionDisplayItem): boolean {

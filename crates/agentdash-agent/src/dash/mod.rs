@@ -26,9 +26,10 @@ pub use lifecycle::{
 pub use service::{
     DashAgentRead, DashAgentRepository, DashAgentRepositoryState, DashAgentRepositoryStore,
     DashAgentService, DashCommandReceipt, DashCommandRequest, DashCompactionRequest,
-    DashCompactionResult, DashCompactor, DashEffectInspection, DashExecutionDependencies,
-    DashHistoryCallbacks, DashHistoryCommit, DashPublicCommand, DashReceiptState, DashServiceError,
-    DashTerminalOutcome, NoopDashHistoryCallbacks,
+    DashCompactionResult, DashCompactor, DashConversationNamer, DashConversationNamingRequest,
+    DashEffectInspection, DashExecutionDependencies, DashHistoryCallbacks, DashHistoryCommit,
+    DashPublicCommand, DashReceiptState, DashServiceError, DashTerminalOutcome,
+    NoopDashConversationNamer, NoopDashHistoryCallbacks,
 };
 pub use store::{
     CommandSettlement, DashAgentChange, DashAgentChangePayload, DashAgentCommit, DashAgentStore,

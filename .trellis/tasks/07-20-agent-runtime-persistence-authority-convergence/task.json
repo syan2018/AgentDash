@@ -26,6 +26,6 @@
     ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/",
     ".trellis/tasks/07-20-database-persistence-boundary-cleanup/"
   ],
-  "notes": "继续收束 canonical 会话单一事实链路：当前仍需恢复 ContextFrame 展示，并保证用户输入在 Agent 输出之前进入同一实时 ThreadItem 流；完成真实运行验证前保持任务进行中。",
+  "notes": "canonical 会话单一事实链路已完成真实运行验证：ContextFrame、用户输入、流式Agent输出、TurnCompleted与Agent原生标题均由同一source history/read/live链路收敛。按协作约定保持任务进行中，待开发者复核后再决定归档。",
   "meta": {}
 }

@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
+use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -142,6 +143,35 @@ pub trait DashCompactor: Send + Sync {
     ) -> Result<DashCompactionResult, DashServiceError>;
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct DashConversationNamingRequest {
+    pub messages: Vec<DashMessage>,
+}
+
+#[async_trait]
+pub trait DashConversationNamer: Send + Sync {
+    async fn generate(
+        &self,
+        request: DashConversationNamingRequest,
+    ) -> Result<String, DashServiceError>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoopDashConversationNamer;
+
+#[async_trait]
+impl DashConversationNamer for NoopDashConversationNamer {
+    async fn generate(
+        &self,
+        _request: DashConversationNamingRequest,
+    ) -> Result<String, DashServiceError> {
+        Err(DashServiceError::Unavailable {
+            message: "Dash conversation naming is not configured".to_owned(),
+            retryable: false,
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct DashExecutionDependencies {
     pub provider: Arc<dyn DashProvider>,
@@ -149,6 +179,7 @@ pub struct DashExecutionDependencies {
     pub callbacks: Arc<dyn DashExecutionCallbacks>,
     pub history_callbacks: Arc<dyn DashHistoryCallbacks>,
     pub compactor: Arc<dyn DashCompactor>,
+    pub conversation_namer: Arc<dyn DashConversationNamer>,
 }
 
 #[derive(Debug, Clone)]
@@ -697,7 +728,70 @@ impl DashAgentService {
             }
         };
         self.clear_active(&turn_id).await;
+        if matches!(
+            receipt.state,
+            DashReceiptState::Terminal(DashTerminalOutcome::Succeeded)
+        ) {
+            if let Err(error) = self
+                .try_assign_thread_name(
+                    &turn_id,
+                    HistoryEntryId::new(format!("{effect_prefix}:thread-name")),
+                )
+                .await
+            {
+                diag!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    error = %error,
+                    turn_id = ?turn_id,
+                    "Dash conversation naming failed after a successful turn"
+                );
+            }
+        }
         Ok(receipt)
+    }
+
+    async fn try_assign_thread_name(
+        &self,
+        turn_id: &AgentTurnId,
+        entry_id: HistoryEntryId,
+    ) -> Result<(), DashServiceError> {
+        let history = self.repository.load().await?.store.history().clone();
+        if history.state()?.thread_name.is_some() {
+            return Ok(());
+        }
+        let Some(request) = conversation_naming_request(&history, turn_id) else {
+            return Ok(());
+        };
+        let thread_name = self
+            .execution_dependencies()
+            .await
+            .conversation_namer
+            .generate(request)
+            .await?;
+        if thread_name.trim().is_empty() {
+            return Err(DashServiceError::InvalidState {
+                message: "Dash conversation namer returned a blank title".to_owned(),
+            });
+        }
+        self.update_store(|store| {
+            if store.history().state()?.thread_name.is_some() {
+                return Ok(());
+            }
+            store.commit(DashAgentCommit {
+                expected_head: store.history().head().cloned(),
+                command_settlement: None,
+                effect_settlements: vec![],
+                history: vec![HistoryContribution {
+                    entry_id,
+                    payload: HistoryPayload::ThreadNameChanged { thread_name },
+                }],
+                enqueue_commands: vec![],
+            })?;
+            Ok(())
+        })
+        .await?;
+        Ok(())
     }
 
     async fn recover_automatic_overflow(
@@ -1589,6 +1683,57 @@ impl DashAgentService {
             })
             .await;
     }
+}
+
+fn conversation_naming_request(
+    history: &AgentHistory,
+    turn_id: &AgentTurnId,
+) -> Option<DashConversationNamingRequest> {
+    let turn_start = history.entries().iter().position(|entry| {
+        matches!(
+            &entry.payload,
+            HistoryPayload::TurnStarted {
+                turn_id: candidate
+            } if candidate == turn_id
+        )
+    })?;
+    let user = history.entries()[..turn_start]
+        .iter()
+        .rev()
+        .find_map(|entry| match &entry.payload {
+            HistoryPayload::InputAccepted { content, .. } if !content.trim().is_empty() => {
+                Some(DashMessage {
+                    role: DashMessageRole::User,
+                    content: content.clone(),
+                    tool_call_id: None,
+                    tool_calls: Vec::new(),
+                    is_error: false,
+                })
+            }
+            _ => None,
+        })?;
+    let assistant = history
+        .entries()
+        .get(turn_start + 1..)?
+        .iter()
+        .rev()
+        .find_map(|entry| match &entry.payload {
+            HistoryPayload::AgentOutput {
+                turn_id: candidate,
+                content,
+                ..
+            } if candidate == turn_id && !content.trim().is_empty() => Some(DashMessage {
+                role: DashMessageRole::Assistant,
+                content: content.clone(),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+                is_error: false,
+            }),
+            _ => None,
+        })?;
+    Some(DashConversationNamingRequest {
+        messages: vec![user, assistant],
+    })
 }
 
 fn flush_provider_tool_calls(history: &mut Vec<DashMessage>, pending: &mut Vec<DashToolCall>) {

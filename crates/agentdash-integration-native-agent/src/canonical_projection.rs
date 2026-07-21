@@ -43,6 +43,14 @@ pub(crate) fn entry_records(
         HistoryPayload::SurfaceRevoked { surface } => {
             events.push(surface_revoked_event(entry, surface));
         }
+        HistoryPayload::ThreadNameChanged { thread_name } => {
+            events.push(BackboneEvent::ThreadNameUpdated(
+                codex::ThreadNameUpdatedNotification {
+                    thread_id: session_id.to_owned(),
+                    thread_name: Some(thread_name.clone()),
+                },
+            ));
+        }
         HistoryPayload::InputAccepted { input_id, content } => {
             let turn_id = state
                 .active_turn
@@ -545,6 +553,7 @@ fn turn_id(payload: &HistoryPayload) -> Option<&str> {
         HistoryPayload::InitialContextInstalled { .. }
         | HistoryPayload::SurfaceApplied { .. }
         | HistoryPayload::SurfaceRevoked { .. }
+        | HistoryPayload::ThreadNameChanged { .. }
         | HistoryPayload::InputAccepted { .. }
         | HistoryPayload::InteractionResolved { .. }
         | HistoryPayload::Closed => None,

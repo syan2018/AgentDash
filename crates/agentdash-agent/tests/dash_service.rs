@@ -10,10 +10,10 @@ use agentdash_agent::dash::{
     DashCompactor, DashCoreError, DashExecutionCallbacks, DashExecutionConsistency,
     DashExecutionDependencies, DashExecutionEvent, DashFinishReason, DashProvider,
     DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashPublicCommand,
-    DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome, DashToolCall,
-    DashToolCallbacks, DashToolResult, EffectId, HistoryPayload, InitialContextContribution,
-    InitialContextInstallation, InitialContextMode, NoopDashConversationNamer,
-    NoopDashHistoryCallbacks,
+    DashReceiptState, DashServiceError, DashSurface, DashSurfaceInstruction, DashTerminalOutcome,
+    DashToolCall, DashToolCallbacks, DashToolResult, EffectId, HistoryPayload,
+    InitialContextContribution, InitialContextInstallation, InitialContextMode,
+    NoopDashConversationNamer, NoopDashHistoryCallbacks,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -323,7 +323,11 @@ async fn repository_reopen_preserves_surface_inspect_and_idempotency_without_pro
         .apply_surface(DashSurface {
             revision: 7,
             digest: "surface-r7".into(),
-            system_prompt: "persisted instructions".into(),
+            instructions: vec![DashSurfaceInstruction {
+                key: "instruction:test:persisted".into(),
+                channel: "system".into(),
+                text: "persisted instructions".into(),
+            }],
             tools: vec![],
         })
         .await

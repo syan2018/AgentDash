@@ -4,10 +4,7 @@ use agentdash_application::project_agent_run_start::{
     ProjectAgentRunStartCommand, ProjectAgentRunStartResult as ApplicationStartResult,
 };
 use agentdash_contracts::{
-    agent_run_interaction::{
-        AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandOutcome,
-        AgentRunMessageCommandResponse,
-    },
+    agent_run_interaction::{AgentRunAcceptedRefs, AgentRunCommandReceipt},
     common_response::DeletedFlagResponse,
     project_agent::{
         CreateProjectAgentRequest, CreateProjectAgentRunRequest,
@@ -94,7 +91,6 @@ pub async fn create_project_agent_run(
         .start(ProjectAgentRunStartCommand {
             project_id,
             project_agent_id,
-            input: request.input,
             client_command_id: request.client_command_id,
             executor_config,
             backend_selection,
@@ -123,7 +119,7 @@ fn project_agent_run_start_contract(
     };
     let receipt = AgentRunCommandReceipt {
         client_command_id: outcome.client_command_id.clone(),
-        status: outcome.runtime_operation_status.as_str().to_owned(),
+        status: "succeeded".to_owned(),
         duplicate: result.duplicate,
         message: None,
     };
@@ -155,12 +151,6 @@ fn project_agent_run_start_contract(
             agent_ref: agent_ref.clone(),
             frame_ref: Some(frame_ref.clone()),
             turn_id: None,
-        },
-        initial_message: AgentRunMessageCommandResponse {
-            command_receipt: receipt,
-            outcome: AgentRunMessageCommandOutcome::Launched,
-            accepted_refs: None,
-            fork: None,
         },
         effective_executor_config: Some(effective_executor_config.clone()),
         agent: ProjectAgentSummary {

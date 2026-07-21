@@ -11,6 +11,11 @@ import {
   isRecord,
 } from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
+import type {
+  SessionChatCommandModel,
+  SessionChatInitialSubmit,
+  SessionChatSubmitIntent,
+} from "./SessionChatViewTypes";
 
 /**
  * Snapshot hydration is not eligible for live Product side effects.
@@ -23,6 +28,32 @@ export function liveSideEffectCursor(
   historyReplayBoundarySeq: number,
 ): number {
   return Math.max(previous ?? historyReplayBoundarySeq, historyReplayBoundarySeq);
+}
+
+export function resolveSessionInitialSubmit(input: {
+  initialSubmit?: SessionChatInitialSubmit;
+  isConnected: boolean;
+  historyReplayBoundarySeq: number | null;
+  isSending: boolean;
+  commands: SessionChatCommandModel[];
+  primaryCommandId?: string;
+}): SessionChatSubmitIntent | null {
+  if (
+    !input.initialSubmit
+    || !input.isConnected
+    || input.historyReplayBoundarySeq == null
+    || input.isSending
+  ) {
+    return null;
+  }
+  const command = input.commands.find(
+    (candidate) => candidate.command_id === input.primaryCommandId,
+  );
+  if (!command?.enabled) return null;
+  return {
+    ...input.initialSubmit.intent,
+    command_id: command.command_id,
+  };
 }
 
 export type SessionTurnLifecycleEventType =

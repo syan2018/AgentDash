@@ -6,16 +6,14 @@ vi.mock("../api/client", () => ({ api: { post: apiPostMock } }));
 import { createProjectAgentRun } from "./project";
 
 describe("Project Agent canonical Runtime creation", () => {
-  it("creates the Product AgentRun and submits its initial Agent input", async () => {
+  it("creates the Product AgentRun target without embedding composer input", async () => {
     await createProjectAgentRun("project-1", "agent/default", {
-      input: [{ kind: "text", text: "start" }],
       client_command_id: "create-run-1",
     });
 
     expect(apiPostMock).toHaveBeenCalledWith(
       "/projects/project-1/agents/agent%2Fdefault/agent-runs",
       {
-        input: [{ kind: "text", text: "start" }],
         client_command_id: "create-run-1",
       },
     );

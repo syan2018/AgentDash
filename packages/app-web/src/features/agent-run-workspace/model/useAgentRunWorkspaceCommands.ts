@@ -31,6 +31,7 @@ import {
   type InFlightAgentRunCommand,
 } from "./workspaceCommandState";
 import type {
+  AgentRunChatSubmitIntent,
   AgentRunConversationCommand,
   AgentRunConversationCommandState,
 } from "./conversationCommandState";
@@ -67,7 +68,10 @@ export interface UseAgentRunWorkspaceCommandsOptions {
   onAgentRunRedirect: (target: { runId: string; agentId: string }) => void;
   resolveExecutorConfig: ResolveExecutorConfig;
   isCompleteExecutorConfig: IsCompleteExecutorConfig;
-  onDraftStarted: (response: ProjectAgentRunStartResult) => void;
+  onDraftStarted: (
+    response: ProjectAgentRunStartResult,
+    initialSubmit: Omit<AgentRunChatSubmitIntent, "command_id">,
+  ) => void;
 }
 
 export interface UseAgentRunWorkspaceCommandsResult {
@@ -223,21 +227,6 @@ export function useAgentRunWorkspaceCommands(
       throw new Error(command.unavailable_reason ?? "当前 AgentRun 不可执行该命令。");
     }
 
-    const inputBlocks: AgentInputContent[] = [];
-    if (trimmed) {
-      inputBlocks.push({ kind: "text", text: trimmed });
-    }
-    if (imageAttachments) {
-      for (const img of imageAttachments) {
-        inputBlocks.push({
-          kind: "image",
-          media_type: img.file.type,
-          source: img.dataUrl,
-          digest: await sha256OfBlob(img.file),
-        });
-      }
-    }
-
     const commandExecutorConfig = resolveExecutorConfig({
       command,
       modelConfig: chatCommandState.modelConfig,
@@ -257,7 +246,15 @@ export function useAgentRunWorkspaceCommands(
       command_id: command.command_id,
       kind: command.kind,
       stale_guard: isLocalDraftStartAction(command) ? null : command.stale_guard,
-      input: inputBlocks,
+      input: {
+        prompt: trimmed,
+        images: imageAttachments?.map((image) => ({
+          name: image.file.name,
+          size: image.file.size,
+          media_type: image.file.type,
+          last_modified: image.file.lastModified,
+        })) ?? [],
+      },
       executor_config: commandExecutorConfig ?? null,
       backend_selection: backendSelection ?? null,
     });
@@ -274,18 +271,38 @@ export function useAgentRunWorkspaceCommands(
           throw new Error(command.unavailable_reason ?? "当前 Draft 尚未就绪。");
         }
         const response = await createProjectAgentRun(draftProjectId, draftProjectAgentKey, {
-          input: inputBlocks,
           client_command_id: resolvedCommand.clientCommandId,
           executor_config: executorConfigToJsonValue(commandExecutorConfig),
           backend_selection: backendSelection,
         });
         void fetchAndIngestLifecycleRun(response.run_ref.run_id);
-        onDraftStarted(response);
+        onDraftStarted(response, {
+          prompt: trimmed,
+          executorConfig: commandExecutorConfig,
+          backendSelection,
+          imageAttachments,
+          deliveryIntent,
+        });
         return;
       }
 
       if (!currentRunId || !currentAgentId) {
         throw new Error("当前 AgentRun 尚未就绪，无法执行控制动作。");
+      }
+
+      const inputBlocks: AgentInputContent[] = [];
+      if (trimmed) {
+        inputBlocks.push({ kind: "text", text: trimmed });
+      }
+      if (imageAttachments) {
+        for (const img of imageAttachments) {
+          inputBlocks.push({
+            kind: "image",
+            media_type: img.file.type,
+            source: img.dataUrl,
+            digest: await sha256OfBlob(img.file),
+          });
+        }
       }
 
       const response = await submitAgentRunComposerInput(currentRunId, currentAgentId, {

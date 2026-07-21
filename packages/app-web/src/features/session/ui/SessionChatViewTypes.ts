@@ -82,6 +82,11 @@ export interface SessionChatSubmitIntent {
   deliveryIntent?: string;
 }
 
+export interface SessionChatInitialSubmit {
+  transitionId: string;
+  intent: Omit<SessionChatSubmitIntent, "command_id">;
+}
+
 export interface SessionChatViewIntents {
   submitComposer: (intent: SessionChatSubmitIntent) => Promise<void>;
   cancelAction?: () => Promise<void>;
@@ -134,6 +139,12 @@ export interface SessionChatViewProps {
 
   /** 初始输入值（仅首次挂载时填充） */
   initialInputValue?: string;
+
+  /** Draft 建立真实 AgentRun target 后，由该 target 的标准 composer 消费一次的首条输入。 */
+  initialSubmit?: SessionChatInitialSubmit;
+
+  /** 首条输入已提交或已恢复到 composer 后，清除路由携带的 transition。 */
+  onInitialSubmitConsumed?: (transitionId: string) => void;
 
   /** 页面级工作区面板打开能力；缺省时卡片不得直接写全局 tab store。 */
   openWorkspacePanel?: OpenSessionWorkspacePanel;

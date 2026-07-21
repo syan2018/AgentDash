@@ -1,11 +1,9 @@
-use agentdash_agent_service_api::AgentInputContent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
 use crate::agent_run_interaction::{
-    AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse,
-    BackendSelectionRequestDto,
+    AgentRunAcceptedRefs, AgentRunCommandReceipt, BackendSelectionRequestDto,
 };
 use crate::workflow::{
     AgentFrameRefDto, AgentRunRefDto, ConversationEffectiveExecutorConfigView, LifecycleRunRefDto,
@@ -152,8 +150,6 @@ pub struct AgentRunModelSelectionRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct CreateProjectAgentRunRequest {
-    /// canonical 用户输入，与 steer / lifecycle message 同形。
-    pub input: Vec<AgentInputContent>,
     pub client_command_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -171,7 +167,6 @@ pub struct CreateProjectAgentRunRequest {
 pub struct ProjectAgentRunStartResult {
     pub command_receipt: AgentRunCommandReceipt,
     pub accepted_refs: AgentRunAcceptedRefs,
-    pub initial_message: AgentRunMessageCommandResponse,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub effective_executor_config: Option<ConversationEffectiveExecutorConfigView>,

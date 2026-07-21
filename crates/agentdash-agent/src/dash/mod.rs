@@ -14,10 +14,11 @@ pub use core_execution::{
 pub use history::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentItemId,
     AgentSessionId, AgentTurnId, BranchId, CompactionId, CompactionMode, CompactionState,
-    ContextDeliveryFidelity, ContextRevision, DashSurface, ForkCutoff, ForkLineage,
-    HistoryContribution, HistoryEntryId, HistoryError, HistoryPayload, InitialContextContribution,
-    InitialContextInstallation, InitialContextMode, InteractionId, InteractionState, ItemDetails,
-    ItemKind, ItemState, SessionStatus, ToolActivityResult, TurnState, fold_history,
+    ContextDeliveryFidelity, ContextRevision, DashSurface, DashSurfaceInstruction, ForkCutoff,
+    ForkLineage, HistoryContribution, HistoryEntryId, HistoryError, HistoryPayload,
+    InitialContextContribution, InitialContextInstallation, InitialContextMode, InteractionId,
+    InteractionState, ItemDetails, ItemKind, ItemState, SessionStatus, ToolActivityResult,
+    TurnState, fold_history,
 };
 pub use lifecycle::{
     CommandDependency, CommandId, CommandOutcome, CommandStatus, DashCommand, DashCommandKind,

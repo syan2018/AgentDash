@@ -3,20 +3,12 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeOperationReceipt, ManagedRuntimeOperationStatus, RuntimeOperationId,
-    RuntimeProjectionRevision,
-};
-use agentdash_agent_service_api::AgentInputContent;
 use agentdash_application::project_agent_run_start::{
     ProjectAgentRunStartCommand, ProjectAgentRunStartDeps, ProjectAgentRunStartService,
 };
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductInputDelivery, AgentRunProductInputDeliveryError,
-    AgentRunProductInputDeliveryPort, AgentRunProductInputPreparation, AgentRunProductLaunchError,
-    AgentRunProductLaunchOutcome, AgentRunProductLaunchPort, AgentRunProductLaunchRequest,
-    AgentRunProductRuntimeBinding, DeliverAgentRunProductInput,
-    PreparedAgentRunProductInputDelivery,
+    AgentRunProductLaunchError, AgentRunProductLaunchOutcome, AgentRunProductLaunchPort,
+    AgentRunProductLaunchRequest, AgentRunProductRuntimeBinding,
 };
 use agentdash_application_ports::agent_frame_materialization::{
     AgentFrameWriteRole, AgentRunFrameConstructionPort, AgentRunFrameSurfaceCommandOutcome,
@@ -37,7 +29,6 @@ use agentdash_test_support::workflow::{
     MemoryWorkflowGraphRepository,
 };
 use async_trait::async_trait;
-use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -149,90 +140,18 @@ impl AgentRunProductLaunchPort for RecordingLaunch {
     }
 }
 
-struct RecordingInput {
-    fail_first: AtomicBool,
-    commands: Mutex<Vec<DeliverAgentRunProductInput>>,
-}
-
-#[async_trait]
-impl AgentRunProductInputDeliveryPort for RecordingInput {
-    async fn prepare_delivery(
-        &self,
-        _command: DeliverAgentRunProductInput,
-    ) -> Result<AgentRunProductInputPreparation, AgentRunProductInputDeliveryError> {
-        unreachable!("fixture overrides deliver")
-    }
-
-    async fn dispatch_prepared(
-        &self,
-        _prepared: PreparedAgentRunProductInputDelivery,
-    ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError> {
-        unreachable!("fixture overrides deliver")
-    }
-
-    async fn deliver(
-        &self,
-        command: DeliverAgentRunProductInput,
-    ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError> {
-        let mut commands = self.commands.lock().await;
-        if commands.iter().any(|existing| {
-            existing.target == command.target
-                && existing.client_command_id == command.client_command_id
-                && existing.content != command.content
-        }) {
-            return Err(AgentRunProductInputDeliveryError::Command(
-                "concrete Agent rejected a reused effect identity with different input".to_owned(),
-            ));
-        }
-        commands.push(command.clone());
-        drop(commands);
-        if self.fail_first.swap(false, Ordering::SeqCst) {
-            return Err(AgentRunProductInputDeliveryError::Command(
-                "injected lost input receipt".to_owned(),
-            ));
-        }
-        let thread_id = agentdash_agent_runtime_contract::RuntimeThreadId::new(format!(
-            "thread:{}:{}",
-            command.target.run_id, command.target.agent_id
-        ))
-        .expect("thread");
-        Ok(AgentRunProductInputDelivery {
-            handoff_id: stable_test_uuid(command.target.run_id, &command.client_command_id),
-            operation_receipt: ManagedRuntimeOperationReceipt {
-                operation_id: RuntimeOperationId::new(format!(
-                    "input:{}:{}",
-                    command.target.agent_id, command.client_command_id
-                ))
-                .expect("operation"),
-                thread_id,
-                status: ManagedRuntimeOperationStatus::Succeeded,
-                evidence: None,
-                duplicate: false,
-            },
-        })
-    }
-
-    async fn record_dispatched(
-        &self,
-        _command: DeliverAgentRunProductInput,
-    ) -> Result<Uuid, AgentRunProductInputDeliveryError> {
-        unreachable!("fixture does not record pre-dispatched input")
-    }
-}
-
 struct Fixture {
     service: ProjectAgentRunStartService,
     runs: Arc<MemoryLifecycleRunRepository>,
     agents: Arc<MemoryLifecycleAgentRepository>,
     frames: Arc<MemoryAgentFrameRepository>,
     launch: Arc<RecordingLaunch>,
-    input: Arc<RecordingInput>,
     project_id: Uuid,
     project_agent_id: Uuid,
 }
 
 impl Fixture {
-    async fn new(fail_launch_once: bool, fail_input_once: bool) -> Self {
+    async fn new(fail_launch_once: bool) -> Self {
         let project_id = Uuid::new_v4();
         let mut project_agent = ProjectAgent::new(project_id, "reviewer", "PI_AGENT");
         project_agent.config = serde_json::json!({
@@ -256,10 +175,6 @@ impl Fixture {
             fail_first: AtomicBool::new(fail_launch_once),
             requests: Mutex::new(Vec::new()),
         });
-        let input = Arc::new(RecordingInput {
-            fail_first: AtomicBool::new(fail_input_once),
-            commands: Mutex::new(Vec::new()),
-        });
         let service = ProjectAgentRunStartService::new(ProjectAgentRunStartDeps {
             project_agents,
             lifecycle_runs: runs.clone(),
@@ -271,7 +186,6 @@ impl Fixture {
             agent_lineage: Arc::new(MemoryAgentLineageRepository::default()),
             frame_construction,
             product_launch: launch.clone(),
-            product_input: input.clone(),
         });
         Self {
             service,
@@ -279,22 +193,18 @@ impl Fixture {
             agents,
             frames,
             launch,
-            input,
             project_id,
             project_agent_id,
         }
     }
 
-    fn command(&self, client_command_id: &str, text: &str) -> ProjectAgentRunStartCommand {
+    fn command(&self, client_command_id: &str) -> ProjectAgentRunStartCommand {
         let mut executor_config = AgentConfig::new("PI_AGENT");
         executor_config.provider_id = Some("test-provider".to_owned());
         executor_config.model_id = Some("test-model".to_owned());
         ProjectAgentRunStartCommand {
             project_id: self.project_id,
             project_agent_id: self.project_agent_id,
-            input: vec![AgentInputContent::Text {
-                text: text.to_owned(),
-            }],
             client_command_id: client_command_id.to_owned(),
             executor_config: Some(executor_config),
             backend_selection: None,
@@ -306,8 +216,8 @@ impl Fixture {
 
 #[tokio::test]
 async fn launch_unknown_outcome_retries_same_product_graph_and_agent_effects() {
-    let fixture = Fixture::new(true, false).await;
-    let command = fixture.command("client-1", "review this");
+    let fixture = Fixture::new(true).await;
+    let command = fixture.command("client-1");
     fixture
         .service
         .start(command.clone())
@@ -363,49 +273,29 @@ async fn launch_unknown_outcome_retries_same_product_graph_and_agent_effects() {
     assert!(replay.duplicate);
     assert_eq!(replay.outcome, recovered.outcome);
     assert_eq!(fixture.launch.requests.lock().await.len(), 3);
-    assert_eq!(fixture.input.commands.lock().await.len(), 2);
 }
 
 #[tokio::test]
-async fn lost_initial_input_receipt_retries_same_input_after_active_runtime_launch() {
-    let fixture = Fixture::new(false, true).await;
-    let command = fixture.command("client-2", "continue safely");
-    fixture
+async fn start_only_provisions_the_target_and_never_embeds_initial_input() {
+    let fixture = Fixture::new(false).await;
+    let result = fixture
         .service
-        .start(command.clone())
+        .start(fixture.command("client-2"))
         .await
-        .expect_err("first input receipt is lost");
+        .expect("target provisioning");
 
-    let recovered = fixture
-        .service
-        .start(command)
-        .await
-        .expect("retry reconciles the same input identity");
-    assert!(recovered.duplicate);
-    let commands = fixture.input.commands.lock().await;
-    assert_eq!(commands.len(), 2);
-    assert_eq!(commands[0].target, commands[1].target);
-    assert_eq!(commands[0].client_command_id, commands[1].client_command_id);
-    assert_eq!(commands[0].content, commands[1].content);
-    assert_eq!(fixture.launch.requests.lock().await.len(), 2);
-}
-
-#[tokio::test]
-async fn client_command_id_reuse_with_another_input_is_rejected_by_the_agent_effect_owner() {
-    let fixture = Fixture::new(false, false).await;
-    fixture
-        .service
-        .start(fixture.command("client-3", "first"))
-        .await
-        .expect("first request");
-    let error = fixture
-        .service
-        .start(fixture.command("client-3", "different"))
-        .await
-        .expect_err("Agent effect identity conflict");
-    assert!(error.to_string().contains("reused effect identity"));
-    assert_eq!(fixture.launch.requests.lock().await.len(), 2);
-    assert_eq!(fixture.input.commands.lock().await.len(), 1);
+    let requests = fixture.launch.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].initial_input.is_empty());
+    assert!(requests[0].initial_context.is_none());
+    assert_eq!(
+        requests[0].provisioning.target.run_id,
+        result.outcome.run_id
+    );
+    assert_eq!(
+        requests[0].provisioning.target.agent_id,
+        result.outcome.agent_id
+    );
 }
 
 fn identity() -> AuthIdentity {
@@ -421,11 +311,4 @@ fn identity() -> AuthIdentity {
         provider: None,
         extra: serde_json::Value::Null,
     }
-}
-
-fn stable_test_uuid(run_id: Uuid, key: &str) -> Uuid {
-    let digest = Sha256::digest([run_id.as_bytes().as_slice(), key.as_bytes()].concat());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
-    Uuid::from_bytes(bytes)
 }

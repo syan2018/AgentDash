@@ -34,6 +34,7 @@ import {
   isAgentRunWorkspaceActionRunning,
   liveSideEffectCursor,
   rawEventsBelongToRuntimeStreamTarget,
+  resolveSessionInitialSubmit,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
@@ -73,6 +74,8 @@ export function SessionChatView({
   showStatusBar = true,
   promptTemplates,
   initialInputValue,
+  initialSubmit,
+  onInitialSubmitConsumed,
   openWorkspacePanel,
 }: SessionChatViewProps) {
   const {
@@ -107,6 +110,7 @@ export function SessionChatView({
   const shouldScrollRef = useRef(true);
   const initialValueAppliedRef = useRef(false);
   const cancelInFlightRef = useRef(false);
+  const initialSubmitConsumedRef = useRef<string | null>(null);
 
   const fileRef = useFileReference(workspaceId);
   const imageAttach = useImageAttachments();
@@ -481,6 +485,51 @@ export function SessionChatView({
     executorConfig,
     imageAttach.attachments,
     isSending,
+    onMessageSent,
+    refresh,
+  ]);
+
+  useEffect(() => {
+    if (!initialSubmit || initialSubmitConsumedRef.current === initialSubmit.transitionId) return;
+    const submitIntent = resolveSessionInitialSubmit({
+      initialSubmit,
+      isConnected,
+      historyReplayBoundarySeq,
+      isSending,
+      commands: commandState.commands,
+      primaryCommandId: commandState.primaryCommandId,
+    });
+    if (!submitIntent) return;
+
+    initialSubmitConsumedRef.current = initialSubmit.transitionId;
+    deferStateUpdate(() => {
+      setSendError(null);
+      setIsSending(true);
+    });
+    void commandActionRef.current(submitIntent).then(async () => {
+      execConfig.recordUsage();
+      clearInput();
+      await refresh();
+      onMessageSent?.();
+    }).catch((error) => {
+      const prompt = initialSubmit.intent.prompt;
+      richInputRef.current?.setValue(prompt);
+      setInputValue(prompt);
+      setSendError(error instanceof Error ? error.message : "发送失败，请重试。");
+    }).finally(() => {
+      setIsSending(false);
+      onInitialSubmitConsumed?.(initialSubmit.transitionId);
+    });
+  }, [
+    clearInput,
+    commandState.commands,
+    commandState.primaryCommandId,
+    execConfig,
+    historyReplayBoundarySeq,
+    initialSubmit,
+    isConnected,
+    isSending,
+    onInitialSubmitConsumed,
     onMessageSent,
     refresh,
   ]);

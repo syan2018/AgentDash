@@ -99,11 +99,30 @@ impl InitialContextInstallation {
 /// This belongs to the concrete agent source: Product surface contributions are only input
 /// intent, while this value records what Dash actually accepted for provider execution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DashSurfaceInstruction {
+    pub key: String,
+    pub channel: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DashSurface {
     pub revision: u64,
     pub digest: String,
-    pub system_prompt: String,
+    pub instructions: Vec<DashSurfaceInstruction>,
     pub tools: Vec<DashToolDefinition>,
+}
+
+impl DashSurface {
+    #[must_use]
+    pub fn render_system_prompt(&self) -> String {
+        self.instructions
+            .iter()
+            .map(|instruction| instruction.text.as_str())
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

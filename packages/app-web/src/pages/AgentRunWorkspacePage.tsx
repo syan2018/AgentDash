@@ -11,7 +11,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resizable-panels";
-import { SessionChatView } from "../features/session";
+import {
+  SessionChatView,
+  type SessionChatInitialSubmit,
+} from "../features/session";
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { InlineBackendSelector, type InlineBackendOption } from "../features/session/ui/composer";
 import { selectVfsBackendTarget } from "../features/vfs/vfs-browser-panel-policy";
@@ -57,6 +60,10 @@ interface AgentRunWorkspacePageProps {
   draftProjectId?: string;
   draftProjectAgentId?: string;
 }
+
+type AgentRunWorkspaceNavigationState = SessionNavigationState & {
+  initial_submit?: SessionChatInitialSubmit;
+};
 
 function machineLabelFromDevice(device: BackendConfig["device"]): string | null {
   if (device == null || typeof device !== "object" || Array.isArray(device)) return null;
@@ -121,7 +128,7 @@ export function AgentRunWorkspacePage({
   }, []);
 
   const routeState = useMemo(
-    () => (location.state as SessionNavigationState | null) ?? null,
+    () => (location.state as AgentRunWorkspaceNavigationState | null) ?? null,
     [location.state],
   );
   const traceAgentContext = (routeState?.trace_agent ?? null) as RuntimeTraceAgentContext | null;
@@ -394,11 +401,18 @@ export function AgentRunWorkspacePage({
     };
   }, [backendLabelById, chatWorkspaceId, ownerProjectId, workspacesByProjectId]);
 
-  const handleDraftAgentRunStarted = useCallback((response: ProjectAgentRunStartResult) => {
+  const handleDraftAgentRunStarted = useCallback((
+    response: ProjectAgentRunStartResult,
+    initialSubmit: SessionChatInitialSubmit["intent"],
+  ) => {
     refreshAgentRunListState(draftProjectIdValue, "draft_started");
     navigate(`/agent-runs/${encodeURIComponent(response.run_ref.run_id)}/${encodeURIComponent(response.agent_ref.agent_id)}`, {
       replace: true,
       state: {
+        initial_submit: {
+          transitionId: response.command_receipt.client_command_id,
+          intent: initialSubmit,
+        },
         trace_agent: {
           display_name: response.agent.display_name,
           executor_hint: response.agent.executor.executor,
@@ -406,6 +420,15 @@ export function AgentRunWorkspacePage({
       },
     });
   }, [draftProjectIdValue, navigate]);
+
+  const handleInitialSubmitConsumed = useCallback((transitionId: string) => {
+    if (routeState?.initial_submit?.transitionId !== transitionId) return;
+    const { initial_submit: _consumed, ...nextState } = routeState;
+    navigate(`${location.pathname}${location.search}`, {
+      replace: true,
+      state: nextState,
+    });
+  }, [location.pathname, location.search, navigate, routeState]);
 
   const handleAgentRunRedirect = useCallback((target: { runId: string; agentId: string }) => {
     refreshAgentRunListState(ownerProjectId ?? draftProjectIdValue, "agent_run_redirect");
@@ -457,7 +480,7 @@ export function AgentRunWorkspacePage({
     submitComposer: (intent: Parameters<typeof controlPlaneChatIntents.submitComposer>[0]) =>
       controlPlaneChatIntents.submitComposer({
         ...intent,
-        backendSelection: selectedBackendSelection,
+        backendSelection: intent.backendSelection ?? selectedBackendSelection,
       }),
   }), [controlPlaneChatIntents, selectedBackendSelection]);
 
@@ -692,6 +715,8 @@ export function AgentRunWorkspacePage({
               <SessionChatView
                 model={chatModel}
                 intents={chatIntents}
+                initialSubmit={routeState?.initial_submit}
+                onInitialSubmitConsumed={handleInitialSubmitConsumed}
                 onMessageSent={handleMessageSent}
                 inputPrefix={chatInputPrefix}
                 inputToolbarSlot={backendSelectionBar}

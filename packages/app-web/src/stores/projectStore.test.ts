@@ -202,7 +202,6 @@ describe("projectStore AgentRun commands", () => {
     vi.mocked(projectService.createProjectAgentRun).mockRejectedValue(error);
 
     await expect(useProjectStore.getState().createProjectAgentRun("project-1", "agent-1", {
-      input: [],
       client_command_id: "cmd-1",
     })).rejects.toThrow("缺少模型选择");
     expect(useProjectStore.getState().error).toBe("缺少模型选择");

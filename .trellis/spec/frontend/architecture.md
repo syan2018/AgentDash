@@ -19,6 +19,10 @@ Frontend以产品路由与generated contracts组织：Project/Story/Task/Lifecyc
   concrete presentation URI清理失效tab；异步布局恢复不得覆盖这次currentness校验。
 - UI intent必须对应真实API/facade command；无canonical endpoint的按钮、service与contract必须一起删除。
 - errors保持typed code/diagnostic；stale command触发inspect refresh，不静默retry不同语义命令。
+- ProjectAgent Draft提交先调用target creation API，收到`run_id + agent_id`后立即导航；原始
+  composer intent通过navigation transition交给目标页。目标页只在canonical history baseline与
+  live lane就绪后消费一次transition，并调用与follow-up相同的composer command。创建API不执行
+  首条输入，Draft页不预测Agent source identity。
 
 ## Canonical Conversation Boundary
 
@@ -90,12 +94,25 @@ React intent
   -> view model
 ```
 
+Draft首条输入：
+
+```text
+Draft composer
+  -> create AgentRun target
+  -> navigate(run_id, agent_id, pending composer intent)
+  -> target history/live baseline ready
+  -> canonical composer input handoff
+  -> UserInputSubmitted / TurnStarted / partial output
+```
+
 ## Tests Required
 
 - generated contract check与TypeScript typecheck。
 - command-state availability、target isolation与stream cursor tests。
 - session presentation parity覆盖message/reasoning/plan/tool/context/Companion/usage/error/interaction、item terminal与transient generation切换。
 - service URL/encoding、Draft create/composer/cancel/context/approval tests。
+- Draft tracer必须断言导航早于首个Agent output与turn terminal，首条用户消息由canonical Agent
+  history/live产生且只提交一次。
 - Workspace presentation、Canvas/VFS surface与Runtime Lost UI tests。
 - Canvas 资源测试必须覆盖 Runtime Lost 但 current `workspace_modules` 仍含 Canvas 时用户入口
   和既有 tab 保持可打开，以及 Project 资产删除后历史 presentation 不重新打开该 Canvas。

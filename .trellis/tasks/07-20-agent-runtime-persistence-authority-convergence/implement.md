@@ -109,3 +109,19 @@
 - [x] 首个成功Dash回合从accepted user input与最终Agent output生成原生标题，提交
   `ThreadNameChanged`后由snapshot/changes/live投影；实测标题在terminal后更新为
   “编号英文单词列表生成”，主标题与AgentRun列表同步，Product未新增标题表或写路径。
+
+## Draft 首条输入与 materialized context 收口
+
+- [x] ProjectAgent Draft 创建只建立 Product/Agent target，不在创建请求内同步执行首条输入。
+- [x] 前端拿到 target 后立即进入 AgentRun 页面，等待 authoritative history/live lane 就绪，再用
+  标准 composer command 投递原始首条输入。
+- [x] Dash native `SurfaceApplied` 保存带稳定 key/channel 的 materialized instruction 列表；provider
+  system prompt 与 ContextFrame 均从该列表派生，不保存或反猜第二份 prompt 事实。
+- [x] 0107迁移既有 Dash surface document 到 instruction-list 形态，当前开发库可直接启动读取。
+- [x] 定向 Rust/前端测试、contract generation、migration guard、浏览器 Draft timing 与 ContextFrame
+  tracer 全部通过。
+
+真实Draft tracer在AgentRun `01652dcc-7884-579d-bf93-332ef33f8f0f`验证：创建提交后175ms进入
+目标页面，468ms看到canonical用户消息，首个Agent输出约3.38s、`TurnCompleted`约6.50s；snapshot
+前六条为五个materialized instruction ContextFrame与一个tool capability frame，随后才是
+`UserInputSubmitted -> TurnStarted -> Agent output`。

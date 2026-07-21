@@ -61,7 +61,10 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
     agentKey: string,
     payload: CreateProjectAgentRunRequest,
   ) => Promise<ProjectAgentRunStartResult>;
-  onDraftStarted: (response: ProjectAgentRunStartResult) => void;
+  onDraftStarted: (
+    response: ProjectAgentRunStartResult,
+    initialSubmit: Omit<AgentRunChatSubmitIntent, "command_id">,
+  ) => void;
   onAgentRunRedirect: (target: { runId: string; agentId: string }) => void;
   refreshAgentRunList: (reason: string) => void;
   openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;

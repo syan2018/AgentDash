@@ -550,7 +550,6 @@ impl AppState {
                 agent_lineage: repos.agent_lineage_repo.clone(),
                 frame_construction: frame_construction.clone(),
                 product_launch: product_launch.clone(),
-                product_input: product_input_delivery.clone(),
             }));
         let agent_run_product_protocol = Arc::new(AgentRunProductProtocolPorts::new(
             Arc::new(ProcessAgentRunForkSagaRepository::new(Arc::new(

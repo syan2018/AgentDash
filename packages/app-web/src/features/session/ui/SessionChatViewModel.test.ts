@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   liveSideEffectCursor,
   rawEventsBelongToRuntimeStreamTarget,
+  resolveSessionInitialSubmit,
 } from "./SessionChatViewModel";
 
 describe("SessionChatView live side-effect cursor", () => {
@@ -16,6 +17,45 @@ describe("SessionChatView live side-effect cursor", () => {
 
   it("advances past records rehydrated by a gap snapshot reload", () => {
     expect(liveSideEffectCursor(15, 31)).toBe(31);
+  });
+});
+
+describe("SessionChatView Draft transition", () => {
+  const initialSubmit = {
+    transitionId: "create-command",
+    intent: { prompt: "hello" },
+  };
+  const commands = [{
+    command_id: "turn-start",
+    kind: "turn_start",
+    enabled: true,
+    requires_input: true,
+    executor_config_policy: "optional" as const,
+  }];
+
+  it("waits for the target history/live baseline before submitting", () => {
+    expect(resolveSessionInitialSubmit({
+      initialSubmit,
+      isConnected: true,
+      historyReplayBoundarySeq: null,
+      isSending: false,
+      commands,
+      primaryCommandId: "turn-start",
+    })).toBeNull();
+  });
+
+  it("routes the preserved Draft intent through the target primary command", () => {
+    expect(resolveSessionInitialSubmit({
+      initialSubmit,
+      isConnected: true,
+      historyReplayBoundarySeq: 0,
+      isSending: false,
+      commands,
+      primaryCommandId: "turn-start",
+    })).toEqual({
+      command_id: "turn-start",
+      prompt: "hello",
+    });
   });
 });
 

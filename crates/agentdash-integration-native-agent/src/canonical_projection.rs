@@ -276,9 +276,11 @@ fn surface_events(
     surface: &agentdash_agent::dash::DashSurface,
 ) -> Vec<BackboneEvent> {
     let mut events = Vec::new();
-    if !surface.system_prompt.is_empty() {
-        let kind = ContextFrameKind::Identity;
-        let role = ContextMessageRole::System;
+    for (index, instruction) in surface.instructions.iter().enumerate() {
+        if instruction.text.trim().is_empty() {
+            continue;
+        }
+        let (kind, role, title) = surface_instruction_presentation(instruction);
         let mut metadata = ContextDeliveryMetadata::for_frame(
             kind,
             ContextDeliveryChannel::ConnectorContext,
@@ -286,19 +288,45 @@ fn surface_events(
         );
         metadata.cache_key = Some(surface.digest.clone());
         metadata.cache_revision = Some(surface.revision.to_string());
+        metadata.delivery_order = u32::try_from(index).unwrap_or(u32::MAX);
         metadata.agent_consumption = ContextAgentConsumption {
             target: "dash-agent".to_owned(),
             mode: ContextAgentConsumptionMode::SystemAppend,
-            reason: "dash_materialized_system_prompt".to_owned(),
+            reason: "dash_materialized_instruction".to_owned(),
         };
         metadata.connector_profile = ContextConnectorProfile {
             profile_id: "dash-agent".to_owned(),
             declared_consumption_modes: vec![ContextAgentConsumptionMode::SystemAppend],
         };
+        let fragment = RuntimeContextFragmentEntry {
+            slot: instruction.channel.clone(),
+            label: instruction
+                .key
+                .rsplit(':')
+                .next()
+                .unwrap_or(instruction.key.as_str())
+                .to_owned(),
+            source: instruction.key.clone(),
+            content: instruction.text.clone(),
+            context_usage_kind: Some("agent_surface".to_owned()),
+        };
+        let sections = if kind == ContextFrameKind::Identity {
+            vec![ContextFrameSection::Identity {
+                title: title.to_owned(),
+                summary: instruction.key.clone(),
+                fragments: vec![fragment],
+            }]
+        } else {
+            vec![ContextFrameSection::AssignmentContext {
+                title: title.to_owned(),
+                summary: instruction.key.clone(),
+                fragments: vec![fragment],
+            }]
+        };
         events.push(BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(
             Box::new(ContextFrameChanged {
                 frame: ContextFrame {
-                    id: format!("{}:identity", entry.entry_id.0),
+                    id: format!("{}:instruction:{index}", entry.entry_id.0),
                     kind,
                     source: ContextFrameSource::RuntimeContextUpdate,
                     phase_node: None,
@@ -307,18 +335,8 @@ fn surface_events(
                     delivery_channel: ContextDeliveryChannel::ConnectorContext,
                     message_role: role,
                     delivery_metadata: metadata,
-                    rendered_text: surface.system_prompt.clone(),
-                    sections: vec![ContextFrameSection::Identity {
-                        title: "Agent Identity".to_owned(),
-                        summary: "Dash materialized system prompt".to_owned(),
-                        fragments: vec![RuntimeContextFragmentEntry {
-                            slot: "system_prompt".to_owned(),
-                            label: "System Prompt".to_owned(),
-                            source: "dash-agent".to_owned(),
-                            content: surface.system_prompt.clone(),
-                            context_usage_kind: Some("agent_surface".to_owned()),
-                        }],
-                    }],
+                    rendered_text: instruction.text.clone(),
+                    sections,
                     created_at_ms: 0,
                 },
             }),
@@ -379,6 +397,53 @@ fn surface_events(
         )));
     }
     events
+}
+
+fn surface_instruction_presentation(
+    instruction: &agentdash_agent::dash::DashSurfaceInstruction,
+) -> (ContextFrameKind, ContextMessageRole, &'static str) {
+    if instruction
+        .key
+        .starts_with("instruction:execution-profile:")
+    {
+        return (
+            ContextFrameKind::SystemGuidelines,
+            ContextMessageRole::System,
+            "System Guidelines",
+        );
+    }
+    match instruction.channel.as_str() {
+        "persona" | "agent_identity" => (
+            ContextFrameKind::Identity,
+            ContextMessageRole::System,
+            "Agent Identity",
+        ),
+        "workspace" | "vfs" | "runtime_policy" => (
+            ContextFrameKind::Environment,
+            ContextMessageRole::Context,
+            "Runtime Environment",
+        ),
+        "constraint" | "constraints" | "instruction" | "instruction_append" => (
+            ContextFrameKind::SystemGuidelines,
+            ContextMessageRole::Developer,
+            "System Guidelines",
+        ),
+        "memory" | "codebase" | "references" => (
+            ContextFrameKind::MemoryContext,
+            ContextMessageRole::Context,
+            "Memory Context",
+        ),
+        "user_context" => (
+            ContextFrameKind::UserContext,
+            ContextMessageRole::User,
+            "User Context",
+        ),
+        _ => (
+            ContextFrameKind::AssignmentContext,
+            ContextMessageRole::Context,
+            "Assignment Context",
+        ),
+    }
 }
 
 fn surface_revoked_event(

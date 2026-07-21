@@ -9,10 +9,10 @@ use agentdash_agent::dash::{
     DashAgentChange, DashAgentChangePayload, DashAgentRepositoryState, DashAgentRepositoryStore,
     DashAgentService, DashChangeCursor, DashCommandRequest, DashCoreEvent, DashExecutionCallbacks,
     DashExecutionDependencies, DashExecutionEvent, DashHistoryCallbacks, DashHistoryCommit,
-    DashPublicCommand, DashReceiptState, DashServiceError, DashSurface, DashTerminalOutcome,
-    DashToolDefinition, ForkCutoff, HistoryPayload, InitialContextContribution,
-    InitialContextInstallation, InitialContextMode, InteractionId as DashInteractionId,
-    InteractionState,
+    DashPublicCommand, DashReceiptState, DashServiceError, DashSurface, DashSurfaceInstruction,
+    DashTerminalOutcome, DashToolDefinition, ForkCutoff, HistoryPayload,
+    InitialContextContribution, InitialContextInstallation, InitialContextMode,
+    InteractionId as DashInteractionId, InteractionState,
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
@@ -1343,14 +1343,18 @@ fn service_terminal(outcome: DashTerminalOutcome) -> AgentTerminalOutcome {
 fn dash_surface_from_bound(
     surface: &agentdash_agent_service_api::BoundAgentSurface,
 ) -> Result<DashSurface, AgentServiceError> {
-    let mut system_prompt = Vec::new();
+    let mut instructions = Vec::new();
     let mut tools = Vec::new();
     for contribution in &surface.contributions {
         match &contribution.payload {
             agentdash_agent_service_api::AgentSurfaceContributionPayload::Instruction {
+                channel,
                 text,
-                ..
-            } => system_prompt.push(text.clone()),
+            } => instructions.push(DashSurfaceInstruction {
+                key: contribution.key.clone(),
+                channel: channel.clone(),
+                text: text.clone(),
+            }),
             agentdash_agent_service_api::AgentSurfaceContributionPayload::Tool {
                 name,
                 description,
@@ -1367,7 +1371,7 @@ fn dash_surface_from_bound(
     Ok(DashSurface {
         revision: surface.revision.0,
         digest: surface.digest.to_string(),
-        system_prompt: system_prompt.join("\n\n"),
+        instructions,
         tools,
     })
 }

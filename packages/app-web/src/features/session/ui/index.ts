@@ -9,6 +9,7 @@ export type {
   PromptTemplate,
   SessionChatCommandModel,
   SessionChatCommandState,
+  SessionChatInitialSubmit,
   SessionChatModel,
   SessionChatModelConfig,
   SessionChatSubmitIntent,

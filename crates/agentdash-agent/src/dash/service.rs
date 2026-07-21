@@ -1502,7 +1502,7 @@ impl DashAgentService {
         history.pop();
         let mut system_prompt = surface
             .as_ref()
-            .map(|surface| surface.system_prompt.clone())
+            .map(DashSurface::render_system_prompt)
             .unwrap_or_default();
         if let Some(initial_context) = initial_context {
             let rendered = initial_context.render_for_prompt();

@@ -1242,6 +1242,90 @@ async fn fork_profile_only_advertises_recoverable_exact_cutoffs() {
 }
 
 #[tokio::test]
+async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
+    let service = service();
+    let source = AgentSourceCoordinate::new("dash-context-surface").unwrap();
+    service
+        .create(CreateAgentCommand {
+            meta: meta("create-context-surface", "effect-create-context-surface"),
+            requested_source: Some(source.clone()),
+            initial_context: None,
+        })
+        .await
+        .unwrap();
+
+    let instruction = |key: &str, channel: &str, text: &str| BoundAgentSurfaceContribution {
+        key: key.to_owned(),
+        required: true,
+        route: AgentSurfaceRoute::ImmutableDelivery,
+        fidelity: SemanticFidelity::Exact,
+        semantics: AgentSurfaceSemanticFacet::Instruction,
+        payload: AgentSurfaceContributionPayload::Instruction {
+            channel: channel.to_owned(),
+            text: text.to_owned(),
+        },
+        payload_digest: AgentPayloadDigest::new(format!("sha256:{key}")).unwrap(),
+    };
+    service
+        .apply_surface(ApplyBoundAgentSurface {
+            command_id: AgentCommandId::new("command-context-surface").unwrap(),
+            effect_id: AgentEffectIdentity::new("effect-context-surface").unwrap(),
+            idempotency_key: AgentIdempotencyKey::new("idem-context-surface").unwrap(),
+            source: source.clone(),
+            bound_surface: BoundAgentSurface {
+                revision: AgentSurfaceRevision(1),
+                digest: AgentSurfaceDigest::new("context-surface-1").unwrap(),
+                offer_profile_digest: AgentProfileDigest::new("dash-agent-profile-v1").unwrap(),
+                contributions: vec![
+                    instruction(
+                        "instruction:execution-profile:system-prompt",
+                        "system",
+                        "system rules",
+                    ),
+                    instruction("instruction:37:persona_summary", "persona", "persona"),
+                    instruction("instruction:30:workspace_context", "workspace", "workspace"),
+                    instruction("instruction:48:workflow_summary", "workflow", "workflow"),
+                ],
+            },
+            callbacks: AgentHostCallbackBinding {
+                route_id: AgentCallbackRouteId::new("callbacks-context").unwrap(),
+                binding_generation: AgentBindingGeneration(1),
+                delivery: AgentSurfaceRoute::AgentNativeCallback,
+                default_deadline_ms: 5_000,
+            },
+        })
+        .await
+        .unwrap();
+
+    let snapshot = service
+        .read(AgentReadQuery {
+            source,
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    let context_kinds = snapshot
+        .conversation_history
+        .iter()
+        .filter_map(|record| match &record.presentation.envelope.event {
+            BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed)) => {
+                Some(changed.frame.kind)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        context_kinds,
+        vec![
+            ContextFrameKind::SystemGuidelines,
+            ContextFrameKind::Identity,
+            ContextFrameKind::Environment,
+            ContextFrameKind::AssignmentContext,
+        ]
+    );
+}
+
+#[tokio::test]
 async fn unsupported_input_is_rejected_before_history_changes() {
     let service = service();
     let source = AgentSourceCoordinate::new("dash-text-only").unwrap();

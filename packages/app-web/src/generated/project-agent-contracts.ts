@@ -2,7 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { AgentFrameRefDto, AgentInputContent, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse, AgentRunRefDto, BackendSelectionRequestDto, LifecycleRunRefDto } from "./agent-run-interaction-contracts";
+import type { AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunRefDto, BackendSelectionRequestDto, LifecycleRunRefDto } from "./agent-run-interaction-contracts";
 
 export type AgentRunModelSelectionRequest = { provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, };
 
@@ -12,11 +12,7 @@ export type ConversationModelConfigSource = "project_agent_preset" | "frame_exec
 
 export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, };
 
-export type CreateProjectAgentRunRequest = {
-/**
- * canonical 用户输入，与 steer / lifecycle message 同形。
- */
-input: Array<AgentInputContent>, client_command_id: string, executor_config?: JsonValue, subject_ref?: SubjectRefDto, backend_selection?: BackendSelectionRequestDto, };
+export type CreateProjectAgentRunRequest = { client_command_id: string, executor_config?: JsonValue, subject_ref?: SubjectRefDto, backend_selection?: BackendSelectionRequestDto, };
 
 export type ExecutionProfileAgentDto = { id: string, label: string, description?: string, is_default: boolean, };
 
@@ -38,7 +34,7 @@ export type ProjectAgent = { id: string, project_id: string, name: string, agent
 
 export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, };
 
-export type ProjectAgentRunStartResult = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, initial_message: AgentRunMessageCommandResponse, effective_executor_config?: ConversationEffectiveExecutorConfigView, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
+export type ProjectAgentRunStartResult = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, effective_executor_config?: ConversationEffectiveExecutorConfigView, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
 
 export type ProjectAgentSummary = { key: string, display_name: string, description: string, executor: ProjectAgentExecutor, effective_executor_config?: ConversationEffectiveExecutorConfigView, preset_name?: string, source: string, };
 

@@ -33,6 +33,16 @@ pub trait AgentRunProductInputDeliveryPort {
 }
 ```
 
+ProjectAgent Draft 创建与用户输入是两个明确命令：
+
+```http
+POST /projects/{project_id}/agents/{project_agent_id}/agent-runs
+POST /agent-runs/{run_id}/agents/{agent_id}/composer
+```
+
+前者只返回已建立的 `run_id + agent_id + frame_id`；后者才携带
+`AgentInputContent[] + client_command_id` 并返回 concrete Agent receipt。
+
 ```rust
 pub enum AgentRunProductRuntimeSnapshotObservation {
     Absent { requested_target: AgentRunTarget },
@@ -51,6 +61,9 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
 - launch 先写 LifecycleRun/LifecycleAgent/AgentFrame 与 execution profile intent，再 materialize
   当前 Complete Agent，创建 source，最后把 stable association 写回 LifecycleAgent owner
   document。
+- ProjectAgent Draft launch只建立可读取、可订阅的Product/Agent target。首条用户输入在客户端进入
+  该target后使用标准composer command同步handoff，原因是live subscriber必须先拥有真实source
+  coordinate，才能观察user input → turn start → partial output的完整顺序。
 - `runtime_thread_id` 是 Product/Agent 桥接坐标；concrete source coordinate 仍由 Agent owner。
 - input handoff 是同步合同。`handoff_id` 从 target + client command id 确定性派生；成功返回
   concrete operation receipt，不存在 queued 结果。
@@ -89,8 +102,8 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
 
 ## 5. Good / Base / Bad Cases
 
-- Good：Project Agent launch 创建 owner-local frames/association；首条输入被 Agent 接收后返回
-  receipt，前端同时收到 live delta。
+- Good：Project Agent launch 创建 owner-local frames/association并立即返回target；前端进入该target、
+  完成authoritative history baseline后用标准input handoff投递首条输入，同时收到live delta。
 - Base：Codex/Dash 暂时离线，列表仍展示 AgentRun shell；重新连接后 snapshot enrichment恢复。
 - Bad：List 因 Runtime projection stale 返回错误。List 只需要 Product facts，Agent view是可选
   enrichment。
@@ -99,8 +112,8 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
 
 ## 6. Tests Required
 
-- launch tests 覆盖 Product facts → Agent create → association commit，及 Create applied 后回包
-  丢失时的同 effect inspection。
+- launch tests 覆盖 Product facts → Agent create → association commit，Create请求不携带或执行
+  Agent input，以及Create applied 后回包丢失时的同 effect inspection。
 - input tests 覆盖 deterministic handoff、accepted receipt、duplicate、payload conflict 与
   unavailable 零持久化。
 - list/workspace tests 注入 binding missing、service resolve failure、Agent read failure，

@@ -74,6 +74,10 @@ pub enum HistoryPayload {
   不再拆出 branch/history/command/effect/change 关系镜像。
 - `DashSurface` 以 `SurfaceApplied/SurfaceRevoked` native history entry 表达，当前 surface 从
   history fold 得出。repository root 不保存第二个 `surface` 字段。
+- `DashSurface` 保存按应用顺序排列的materialized instructions
+  `[{ key, channel, text }]`与callable tools。provider system prompt通过拼接该instruction列表
+  得出，`ContextFrameChanged`按同一列表的key/channel逐项投影；source history不另存一份扁平
+  prompt字符串，presentation也不从prompt正文猜测分片。
 - source metadata 与 repository描述同一个 concrete Agent source，必须在同一 Dash source
   document/atomic commit 中更新。
 - Create 前还没有 source coordinate 的 effect 可以保留独立 `effect_id` lookup receipt。
@@ -118,6 +122,7 @@ pub enum HistoryPayload {
 | 场景 | 必须结果 |
 | --- | --- |
 | source document CAS conflict | reload owner document并按 typed command重试/冲突 |
+| 同surface digest重放但instruction列表不同 | typed idempotency conflict；迁移必须从已提交callback surface恢复精确列表 |
 | effect identity相同且request相同 | 返回原 receipt |
 | effect identity相同但request不同 | typed idempotency conflict |
 | unsupported input family | Core side effect 前 typed unsupported |
@@ -160,8 +165,9 @@ pub enum HistoryPayload {
   一致。
 - live composition test在执行前订阅，断言顺序为 durable user input、durable `TurnStarted`、
   ephemeral text/reasoning/tool delta 与 durable terminal；执行后从 read断言同 turn 已终态。
-- surface/context tests断言 native history保存实际 surface/context，snapshot与live均投影
-  `ContextFrameChanged`，repository root不存在平行surface字段。
+- surface/context tests断言 native history保存实际instruction边界与tools，provider prompt由
+  instructions派生，snapshot与live逐项投影`ContextFrameChanged`，repository root不存在平行
+  surface字段。
 - naming test断言成功回合把 accepted user input与最终Agent output交给namer，只提交一次非空
   `ThreadNameChanged`，且 `read/changes/live` 均投影同一标题；命名失败不改变回合terminal。
 - lag/no-subscriber tests区分临时没有观察者与 callback未装配。

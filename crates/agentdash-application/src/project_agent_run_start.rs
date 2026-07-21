@@ -1,19 +1,16 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_agent_service_api::AgentInputContent;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunProductInputDeliveryPort, AgentRunProductLaunchPort, AgentRunProductLaunchRequest,
+    AgentRunProductLaunchPort, AgentRunProductLaunchRequest,
     AgentRunProductRuntimeProvisioningRequest, ConversationEffectiveExecutorConfigModel,
-    ConversationModelConfigResolver, ConversationModelConfigSourceModel,
-    DeliverAgentRunProductInput, ProductAgentFrameRef, ProductAgentSurfaceFacts,
-    ProductCredentialScopeRef, ProductExecutionProfileRef, ResolvedProjectAgentContext,
-    build_project_agent_context,
+    ConversationModelConfigResolver, ConversationModelConfigSourceModel, ProductAgentFrameRef,
+    ProductAgentSurfaceFacts, ProductCredentialScopeRef, ProductExecutionProfileRef,
+    ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_domain::{
     agent::ProjectAgentRepository,
-    agent_input::{AgentInputOrigin, AgentInputSourceIdentity},
     agent_run_target::AgentRunTarget,
     common::AgentConfig,
     workflow::{
@@ -34,7 +31,6 @@ use crate::{ApplicationError, lifecycle::LifecycleDispatchService};
 pub struct ProjectAgentRunStartCommand {
     pub project_id: Uuid,
     pub project_agent_id: Uuid,
-    pub input: Vec<AgentInputContent>,
     pub client_command_id: String,
     pub executor_config: Option<AgentConfig>,
     pub backend_selection: Option<serde_json::Value>,
@@ -69,9 +65,6 @@ pub struct ProjectAgentRunStartOutcome {
     pub frame_id: Uuid,
     pub frame_revision: i32,
     pub runtime_thread_id: String,
-    pub runtime_operation_id: Option<String>,
-    pub runtime_operation_status: agentdash_agent_runtime_contract::ManagedRuntimeOperationStatus,
-    pub input_handoff_id: Uuid,
     pub subject_kind: String,
     pub subject_id: Uuid,
     pub effective_executor: ProjectAgentRunStartEffectiveExecutor,
@@ -95,7 +88,6 @@ pub struct ProjectAgentRunStartDeps {
     pub agent_lineage: Arc<dyn AgentLineageRepository>,
     pub frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     pub product_launch: Arc<dyn AgentRunProductLaunchPort>,
-    pub product_input: Arc<dyn AgentRunProductInputDeliveryPort>,
 }
 
 pub struct ProjectAgentRunStartService {
@@ -259,24 +251,6 @@ impl ProjectAgentRunStartService {
             .await
             .map_err(|error| ApplicationError::Internal(error.to_string()))?;
 
-        let input = self
-            .deps
-            .product_input
-            .deliver(DeliverAgentRunProductInput {
-                target: AgentRunTarget {
-                    run_id: identities.run_id,
-                    agent_id: identities.agent_id,
-                },
-                content: command.input,
-                source: AgentInputSourceIdentity::composer()
-                    .with_source_ref(command.identity.user_id.clone())
-                    .with_correlation_ref(command.client_command_id.trim().to_owned()),
-                origin: AgentInputOrigin::User,
-                client_command_id: format!("{}:initial-input", command.client_command_id.trim()),
-            })
-            .await
-            .map_err(|error| ApplicationError::Internal(error.to_string()))?;
-
         let outcome = ProjectAgentRunStartOutcome {
             client_command_id: command.client_command_id.trim().to_owned(),
             run_id: identities.run_id,
@@ -284,9 +258,6 @@ impl ProjectAgentRunStartService {
             frame_id: identities.frame_id,
             frame_revision: frame.revision,
             runtime_thread_id: runtime_thread_id.to_string(),
-            runtime_operation_id: Some(input.operation_receipt.operation_id.to_string()),
-            runtime_operation_status: input.operation_receipt.status,
-            input_handoff_id: input.handoff_id,
             subject_kind: subject_ref.kind,
             subject_id: subject_ref.id,
             effective_executor: effective_executor_snapshot(effective_executor),
@@ -349,12 +320,6 @@ fn validate_command(command: &ProjectAgentRunStartCommand) -> Result<(), Applica
         return Err(ApplicationError::BadRequest(
             "client_command_id 无效".to_owned(),
         ));
-    }
-    if !command.input.iter().any(|block| match block {
-        AgentInputContent::Text { text } => !text.trim().is_empty(),
-        _ => true,
-    }) {
-        return Err(ApplicationError::BadRequest("input 不能为空".to_owned()));
     }
     Ok(())
 }

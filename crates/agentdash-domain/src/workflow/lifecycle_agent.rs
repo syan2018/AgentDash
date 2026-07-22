@@ -91,10 +91,10 @@ pub struct LifecycleAgent {
     /// "pending" = 等待首次 bootstrap；"bootstrapped" = 已完成；"not_applicable" = 不需要。
     #[serde(default = "default_bootstrap_status")]
     pub bootstrap_status: String,
-    /// Workspace-level title — survives runtime session changes.
+    /// AgentRun title initialized from the concrete Agent once, then owned by Product.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_title: Option<String>,
-    /// Workspace-level title source (auto / source / user).
+    /// AgentRun title source (`agent` for initial naming, `user` for later edits).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_title_source: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -152,6 +152,28 @@ impl LifecycleAgent {
 
     pub fn needs_bootstrap(&self) -> bool {
         self.bootstrap_status == bootstrap_status::PENDING
+    }
+
+    /// Initializes the Product-owned AgentRun title from the concrete Agent.
+    ///
+    /// Once initialized, the title is independent from the Agent-native thread name and may only
+    /// be changed through an explicit Product mutation.
+    pub fn initialize_title_from_agent(&mut self, title: &str) -> bool {
+        if self
+            .workspace_title
+            .as_deref()
+            .is_some_and(|current| !current.trim().is_empty())
+        {
+            return false;
+        }
+        let title = title.trim();
+        if title.is_empty() {
+            return false;
+        }
+        self.workspace_title = Some(title.to_owned());
+        self.workspace_title_source = Some("agent".to_owned());
+        self.updated_at = Utc::now();
+        true
     }
 }
 
@@ -234,5 +256,21 @@ mod agent_source_tests {
             blank_agent.created_by_user_id,
             LifecycleAgent::SYSTEM_CREATED_BY_USER_ID
         );
+    }
+
+    #[test]
+    fn agent_title_initializes_once_without_overwriting_product_title() {
+        let mut agent =
+            LifecycleAgent::new_root(Uuid::new_v4(), Uuid::new_v4(), AgentSource::ProjectAgent);
+
+        assert!(agent.initialize_title_from_agent("  首次生成标题  "));
+        assert_eq!(agent.workspace_title.as_deref(), Some("首次生成标题"));
+        assert_eq!(agent.workspace_title_source.as_deref(), Some("agent"));
+
+        agent.workspace_title = Some("用户修改后的标题".to_owned());
+        agent.workspace_title_source = Some("user".to_owned());
+        assert!(!agent.initialize_title_from_agent("Agent 后续标题"));
+        assert_eq!(agent.workspace_title.as_deref(), Some("用户修改后的标题"));
+        assert_eq!(agent.workspace_title_source.as_deref(), Some("user"));
     }
 }

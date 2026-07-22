@@ -131,6 +131,31 @@ pub trait LifecycleAgentRepository: Send + Sync {
     async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError>;
     async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError>;
     async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError>;
+
+    /// Atomically initializes the Product-owned AgentRun title when it is still absent.
+    async fn initialize_title_from_agent(
+        &self,
+        target: &crate::agent_run_target::AgentRunTarget,
+        title: &str,
+    ) -> Result<bool, DomainError> {
+        let Some(mut agent) = self.get(target.agent_id).await? else {
+            return Err(DomainError::NotFound {
+                entity: "lifecycle_agent",
+                id: target.agent_id.to_string(),
+            });
+        };
+        if agent.run_id != target.run_id {
+            return Err(DomainError::NotFound {
+                entity: "lifecycle_agent",
+                id: target.agent_id.to_string(),
+            });
+        }
+        if !agent.initialize_title_from_agent(title) {
+            return Ok(false);
+        }
+        self.update(&agent).await?;
+        Ok(true)
+    }
 }
 
 #[async_trait::async_trait]

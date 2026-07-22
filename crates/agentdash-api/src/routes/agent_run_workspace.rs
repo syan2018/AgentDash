@@ -1,6 +1,6 @@
 use agentdash_application_agentrun::agent_run::runtime_capability::project_capability_state_from_frame;
 use agentdash_application_agentrun::agent_run::{
-    self as app_agent_run, AgentRunProductRuntimeSnapshotObservation, workspace as app_workspace,
+    self as app_agent_run, workspace as app_workspace,
 };
 use agentdash_contracts::workflow::{
     AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
@@ -15,10 +15,7 @@ use agentdash_contracts::workflow::{
     ConversationWaitingItemView, LifecycleRunRefDto, LifecycleSubjectAssociationDto,
     RuntimeThreadRefDto, SubjectRefDto, ValidationSeverity,
 };
-use agentdash_domain::{
-    agent_run_target::AgentRunTarget,
-    workflow::{LifecycleAgent, LifecycleRun},
-};
+use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use agentdash_workspace_module::workspace_module::{
     WorkspaceModuleVisibilityInput, project_agent_run_workspace_module_visibility,
 };
@@ -120,7 +117,7 @@ pub(crate) async fn resolve_lineage(
         }) {
         Some((parent_id, relation_kind)) => {
             match state.repos.lifecycle_agent_repo.get(parent_id).await? {
-                Some(parent) => Some(lineage_ref(state, &edges, parent, relation_kind).await?),
+                Some(parent) => Some(lineage_ref(&edges, parent, relation_kind)),
                 None => None,
             }
         }
@@ -137,19 +134,18 @@ pub(crate) async fn resolve_lineage(
             .get(edge.child_agent_id)
             .await?
         {
-            children.push(lineage_ref(state, &edges, child, edge.relation_kind.clone()).await?);
+            children.push(lineage_ref(&edges, child, edge.relation_kind.clone()));
         }
     }
     children.sort_by(|left, right| right.display_title.cmp(&left.display_title));
     Ok((parent, children))
 }
 
-async fn lineage_ref(
-    state: &AppState,
+fn lineage_ref(
     edges: &[agentdash_domain::workflow::AgentLineage],
     agent: LifecycleAgent,
     relation_kind: String,
-) -> Result<AgentRunLineageRef, ApiError> {
+) -> AgentRunLineageRef {
     fn descendants(agent_id: Uuid, edges: &[agentdash_domain::workflow::AgentLineage]) -> u32 {
         edges
             .iter()
@@ -157,33 +153,19 @@ async fn lineage_ref(
             .map(|edge| 1 + descendants(edge.child_agent_id, edges))
             .sum()
     }
-    let runtime_observation = state
-        .services
-        .agent_run_product_projection
-        .runtime_snapshot_observation(&AgentRunTarget {
-            run_id: agent.run_id,
-            agent_id: agent.id,
-        })
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let runtime_thread_name = match runtime_observation {
-        AgentRunProductRuntimeSnapshotObservation::Current { snapshot, .. } => snapshot.thread_name,
-        AgentRunProductRuntimeSnapshotObservation::Absent { .. } => None,
-    };
     let display_title = app_agent_run::resolve_agent_run_display_title(
         agent.workspace_title.as_deref(),
         agent.workspace_title_source.as_deref(),
-        runtime_thread_name.as_deref(),
     )
     .value;
-    Ok(AgentRunLineageRef {
+    AgentRunLineageRef {
         run_id: agent.run_id.to_string(),
         agent_id: agent.id.to_string(),
         source: agent.source.as_str().to_string(),
         relation_kind,
         display_title,
         subagent_count: descendants(agent.id, edges),
-    })
+    }
 }
 
 fn workspace_to_contract(

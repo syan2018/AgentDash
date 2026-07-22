@@ -167,7 +167,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             });
         let shell = shell_model(
             &agent,
-            runtime_snapshot.and_then(|snapshot| snapshot.thread_name.as_deref()),
             &workspace_state,
             workspace_state.last_turn_id.clone(),
         );
@@ -209,9 +208,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         let workspace_state = derive_workspace_state(&execution_state);
         let shell = shell_model(
             &agent,
-            runtime
-                .snapshot()
-                .and_then(|snapshot| snapshot.thread_name.as_deref()),
             &workspace_state,
             workspace_state.last_turn_id.clone(),
         );
@@ -531,14 +527,12 @@ fn project_agent_display_label(project_agent: &ProjectAgent) -> String {
 
 fn shell_model(
     agent: &LifecycleAgent,
-    runtime_thread_name: Option<&str>,
     workspace_state: &super::types::AgentRunWorkspaceStateModel,
     last_turn_id: Option<String>,
 ) -> AgentRunWorkspaceShellModel {
     let title = resolve_agent_run_display_title(
         agent.workspace_title.as_deref(),
         agent.workspace_title_source.as_deref(),
-        runtime_thread_name,
     );
     AgentRunWorkspaceShellModel {
         display_title: title.value,

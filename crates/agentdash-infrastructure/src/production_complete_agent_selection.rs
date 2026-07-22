@@ -10,7 +10,8 @@ use agentdash_domain::{
     llm_provider::{LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec},
 };
 use agentdash_integration_native_agent::{
-    bridge_dash_execution_dependencies, native_complete_agent_registration,
+    bridge_dash_execution_dependencies, dash_complete_agent_build_digest,
+    native_complete_agent_registration,
 };
 use agentdash_llm_provider::{
     ProviderCredentialScope, resolve_effective_bridge_with_model_for_scope,
@@ -260,11 +261,7 @@ pub fn dash_complete_agent_verification_template()
     Ok(crate::CompleteAgentVerificationTemplate {
         expected_publisher_integration: "builtin.dash_agent".to_owned(),
         expected_service_version: env!("CARGO_PKG_VERSION").to_owned(),
-        expected_build_digest: AgentPayloadDigest::new(format!(
-            "dash-complete-agent:{}",
-            env!("CARGO_PKG_VERSION")
-        ))
-        .map_err(|error| failed(error.to_string()))?,
+        expected_build_digest: dash_complete_agent_build_digest(),
         expected_profile_digest: descriptor.profile_digest,
         expected_conformance_suite_revision: "dash-complete-agent-v1".to_owned(),
         method: agentdash_agent_runtime_host::CompleteAgentVerificationMethod::PinnedBuiltin,
@@ -293,5 +290,19 @@ fn incompatible(reason: impl Into<String>) -> AgentRunProductRuntimeProvisioning
 fn failed(reason: impl Into<String>) -> AgentRunProductRuntimeProvisioningError {
     AgentRunProductRuntimeProvisioningError::Failed {
         reason: reason.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dash_verification_uses_the_registration_build_digest() {
+        let template = dash_complete_agent_verification_template().expect("verification template");
+        assert_eq!(
+            template.expected_build_digest,
+            dash_complete_agent_build_digest()
+        );
     }
 }

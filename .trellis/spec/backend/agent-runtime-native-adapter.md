@@ -87,6 +87,8 @@ fn materialization_digest(
     instructions: &[DashSurfaceInstruction],
     tools: &[DashToolDefinition],
 ) -> Result<String, serde_json::Error>;
+
+pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 ```
 
 ## 3. Contracts
@@ -104,8 +106,11 @@ fn materialization_digest(
   intrinsic instruction key把编译期提示词放在Product instructions之前，再把合并后的完整
   `DashSurface`提交到native history；provider prompt与Identity ContextFrame都从该entry投影。
 - `AppliedAgentSurface.digest`证明Product binding，`DashSurface.digest`证明concrete Agent实际接纳的
-  instructions/tools内容，两者不共享数值。intrinsic prompt内容进入Dash verified profile/build
-  evidence，使实现基底变化通过正常rebind追加新的`SurfaceApplied`事实。
+  instructions/tools内容，两者不共享数值。intrinsic prompt内容进入Dash verified profile evidence，
+  build digest标识发布构建；实现基底变化通过正常rebind追加新的`SurfaceApplied`事实。
+- Dash registration claim 与 production verification template 必须调用同一个
+  `dash_complete_agent_build_digest()`。build digest 证明当前服务构建，profile digest 由独立
+  verification 字段证明；共享构造保证进程重启恢复 route 时不会因两端格式漂移而拒绝内建 Agent。
 - intrinsic instruction的namespace由concrete Agent保留。Product contribution与保留key冲突时，
   Native Adapter在history mutation前返回typed invalid argument，保证accepted surface中每个key
   只有一个owner。
@@ -148,7 +153,9 @@ fn materialization_digest(
   首个成功回合后，Dash 通过 `DashConversationNamer` 生成非空标题，并以
   `ThreadNameChanged` 提交到同一 source history；`read`、`changes` 与 durable live event
   从该 entry 分别投影 `AgentThreadNameSnapshot`、`AgentChangePayload::ThreadNameChanged` 与
-  canonical `ThreadNameUpdated`。Product 只消费 Agent snapshot 中的标题，不另存或推导标题。
+  canonical `ThreadNameUpdated`。Product 消费 Agent snapshot 中的首次有效标题来初始化自己的
+  AgentRun 标题；这两个 owner 各自持久化一次的原因是 Dash thread 与 AgentRun 可以独立存在，
+  且 AgentRun 标题允许用户独立修改。Product 不持续同步，也不从消息文本推导标题。
 - 标题生成不是回合 terminal 的组成部分：生成失败不能把已经成功提交的 Agent 回合改写成失败；
   未命名 source 可在后续成功回合再次尝试。history 一旦已有标题，自动命名不再重复调用。
 - Core 只拥有 provider-neutral inference/stream/tool loop，不依赖 Product workflow、
@@ -178,6 +185,7 @@ fn materialization_digest(
 | Product contribution使用Dash intrinsic保留key | side effect与history mutation前typed invalid argument |
 | Product binding digest与Dash materialization digest比较 | 分别解释上游binding与实际接纳内容，不要求相等 |
 | 内建提示内容升级 | verified profile/build evidence变化；rebind提交新的实际surface，既有history保持原事实 |
+| registration claim 与 verification template 构建摘要 | 两端使用同一 helper，摘要完全一致 |
 | effect identity相同且request相同 | 返回原 receipt |
 | effect identity相同但request不同 | typed idempotency conflict |
 | unsupported input family | Core side effect 前 typed unsupported |
@@ -200,7 +208,8 @@ fn materialization_digest(
 - Good：Dash command 原子更新 source document，成功后把同一 committed suffix 发布为 durable
   live record；Core callback只在其间发布partial delta，重连从同一document read得到完整终态。
 - Good：首个成功回合提交 terminal 后，Dash 根据该 source 的原生对话生成标题并追加
-  `ThreadNameChanged`；列表标题、snapshot与live notification均来自这一个 entry。
+  `ThreadNameChanged`；snapshot与live notification来自该 entry，Product据此仅初始化一次
+  AgentRun标题，之后两个owner可以独立修改各自标题。
 - Good：Product提交skills/MCP/memory instructions与tool surface，Dash原样保存；Native Adapter从
   同一`SurfaceApplied` entry生成多种typed ContextFrame和真实tool delta，前端只展示变化摘要。
 - Good：Dash Adapter先加入自身intrinsic instruction，再物化Product surface；Agent收到的基础行为
@@ -210,8 +219,8 @@ fn materialization_digest(
 - Base：标题生成暂时失败，回合仍保持成功且source保持未命名；下一成功回合可以再次生成。
 - Bad：Dash 同时写 repository JSONB 与 history/effect镜像，再逐次校验相等。镜像没有独立
   owner，只会制造 drift。
-- Bad：Product 从首条用户消息截断标题并写入另一张表。该标题无法证明是 Agent 接纳的事实，
-  并会与 Agent snapshot 形成双写。
+- Bad：Product 从首条用户消息截断标题。该值没有 Agent 接纳与生成的证据，不能作为 AgentRun
+  的首次标题。
 - Bad：生产 composition 注入 Noop execution callback。输入可能执行成功，但用户永远看不到
   live delta。
 - Bad：把`ContextFrame`塞进Dash或在每个`SurfaceApplied`上把完整tools数组写成`added_tools`；前者
@@ -237,6 +246,8 @@ fn materialization_digest(
   workspace、workflow、skills、MCP、memory与user context的typed frame映射。
 - naming test断言成功回合把 accepted user input与最终Agent output交给namer，只提交一次非空
   `ThreadNameChanged`，且 `read/changes/live` 均投影同一标题；命名失败不改变回合terminal。
+- verification test断言 native registration claim 与 production template 的 build digest 都来自
+  `dash_complete_agent_build_digest()`，profile digest 仍由独立字段校验。
 - lag/no-subscriber tests区分临时没有观察者与 callback未装配。
 - source scan/migration test断言 Dash关系镜像表和 production Noop callback缺席。
 - Core dependency test断言不依赖 Application/Domain workflow/vendor DTO/repository。
@@ -253,11 +264,13 @@ repository.compare_and_swap(expected, replacement).await?;
 ```
 
 ```rust
-// Wrong: Product根据输入另建标题事实。
-product_thread_names.upsert(run_id, infer_title(prompt)).await?;
+// Wrong: Product根据输入推导标题，或在每次read时持续覆盖AgentRun标题。
+let title = infer_title(prompt);
+lifecycle_agent.workspace_title = snapshot.thread_name;
 
-// Correct: Dash保存原生标题，平台只投影Agent证据。
+// Correct: Dash保存原生标题；Product以该证据仅初始化一次自己的AgentRun标题。
 store.commit(HistoryPayload::ThreadNameChanged { thread_name })?;
+lifecycle_agents.initialize_title_from_agent(&target, &thread_name).await?;
 ```
 
 ```rust

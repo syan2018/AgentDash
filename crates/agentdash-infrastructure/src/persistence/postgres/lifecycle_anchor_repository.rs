@@ -163,6 +163,40 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
         .map_err(db_err)?;
         Ok(())
     }
+
+    async fn initialize_title_from_agent(
+        &self,
+        target: &agentdash_domain::agent_run_target::AgentRunTarget,
+        title: &str,
+    ) -> Result<bool, DomainError> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Ok(false);
+        }
+        let result = sqlx::query(
+            r#"UPDATE lifecycle_agents
+               SET workspace_title=$1, workspace_title_source='agent', updated_at=$2
+               WHERE id=$3 AND run_id=$4
+                 AND NULLIF(BTRIM(workspace_title), '') IS NULL"#,
+        )
+        .bind(title)
+        .bind(Utc::now())
+        .bind(target.agent_id.to_string())
+        .bind(target.run_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        if result.rows_affected() > 0 {
+            return Ok(true);
+        }
+        match self.get(target.agent_id).await? {
+            Some(agent) if agent.run_id == target.run_id => Ok(false),
+            _ => Err(DomainError::NotFound {
+                entity: "lifecycle_agent",
+                id: target.agent_id.to_string(),
+            }),
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -497,9 +497,12 @@ impl AppState {
             .map_err(anyhow::Error::msg)?,
         );
         let product_commands = product.commands.clone();
-        let product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort> = Arc::new(
-            AgentRunProductInputDeliveryService::new(product_commands.clone()),
-        );
+        let product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort> =
+            Arc::new(AgentRunProductInputDeliveryService::new(
+                product_commands.clone(),
+                product.gateway.clone(),
+                repos.lifecycle_agent_repo.clone(),
+            ));
         let product_launch = Arc::new(AgentRunProductLaunchService::new(
             product_runtime_provisioner.clone(),
             runtime_product_bindings.clone(),

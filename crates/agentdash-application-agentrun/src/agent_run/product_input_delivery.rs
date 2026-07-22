@@ -6,13 +6,17 @@ use agentdash_agent_runtime_contract::{
 use agentdash_agent_service_api::AgentInputContent;
 use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
 use agentdash_domain::agent_run_target::AgentRunTarget;
+use agentdash_domain::workflow::LifecycleAgentRepository;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
-use super::{AgentRunProductCommand, AgentRunProductCommandFacade, AgentRunProductCommandRequest};
+use super::{
+    AgentRunProductCommand, AgentRunProductCommandFacade, AgentRunProductCommandRequest,
+    AgentRunProductProjectionQueryPort,
+};
 
 #[derive(Debug, Clone)]
 pub struct DeliverAgentRunProductInput {
@@ -50,6 +54,8 @@ pub enum AgentRunProductInputDeliveryError {
     InvalidClientCommandId,
     #[error("Product input handoff failed: {0}")]
     Command(String),
+    #[error("AgentRun title initialization failed: {0}")]
+    TitleInitialization(String),
 }
 
 #[async_trait]
@@ -88,11 +94,36 @@ pub trait AgentRunProductInputDeliveryPort: Send + Sync {
 /// offline queue or creates a background-delivery promise.
 pub struct AgentRunProductInputDeliveryService {
     commands: Arc<AgentRunProductCommandFacade>,
+    projection: Arc<dyn AgentRunProductProjectionQueryPort>,
+    agents: Arc<dyn LifecycleAgentRepository>,
 }
 
 impl AgentRunProductInputDeliveryService {
-    pub fn new(commands: Arc<AgentRunProductCommandFacade>) -> Self {
-        Self { commands }
+    pub fn new(
+        commands: Arc<AgentRunProductCommandFacade>,
+        projection: Arc<dyn AgentRunProductProjectionQueryPort>,
+        agents: Arc<dyn LifecycleAgentRepository>,
+    ) -> Self {
+        Self {
+            commands,
+            projection,
+            agents,
+        }
+    }
+
+    async fn initialize_title(&self, target: &AgentRunTarget) -> Result<(), String> {
+        let snapshot = self
+            .projection
+            .runtime_snapshot(target)
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Some(title) = snapshot.thread_name.as_deref() {
+            self.agents
+                .initialize_title_from_agent(target, title)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 }
 
@@ -123,11 +154,15 @@ impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
         &self,
         prepared: PreparedAgentRunProductInputDelivery,
     ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError> {
+        let target = prepared.command_request.target.clone();
         let receipt = self
             .commands
             .execute(prepared.command_request)
             .await
             .map_err(|error| AgentRunProductInputDeliveryError::Command(error.to_string()))?;
+        self.initialize_title(&target)
+            .await
+            .map_err(AgentRunProductInputDeliveryError::TitleInitialization)?;
         Ok(AgentRunProductInputDelivery {
             handoff_id: prepared.handoff_id,
             operation_receipt: receipt,

@@ -225,9 +225,6 @@ impl ProjectAgentRunListQuery {
         let title = resolve_agent_run_display_title(
             agent.workspace_title.as_deref(),
             agent.workspace_title_source.as_deref(),
-            runtime_snapshot
-                .as_ref()
-                .and_then(|snapshot| snapshot.thread_name.as_deref()),
         )
         .value;
         let runtime = runtime_snapshot.map(|snapshot| AgentRunListRuntimeSummaryModel {
@@ -747,7 +744,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn query_uses_runtime_thread_name_without_falling_back_to_agent_identity() {
+    async fn query_keeps_uninitialized_product_title_pending() {
         let fixture = query_fixture_with_thread_name(false, Some("Runtime 会话名"));
         let project_id = Uuid::new_v4();
         let run = LifecycleRun::new_plain(project_id);
@@ -768,7 +765,7 @@ mod tests {
             .expect("AgentRun list");
 
         assert_eq!(page.entries.len(), 1);
-        assert_eq!(page.entries[0].title, "Runtime 会话名");
+        assert_eq!(page.entries[0].title, "新会话");
         assert_eq!(
             page.entries[0]
                 .runtime

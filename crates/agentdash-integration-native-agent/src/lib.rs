@@ -18,5 +18,6 @@ pub use core_callbacks::DashAgentCoreToolCallbacks;
 pub use service::{
     DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
     DashCompleteEffectRecord, DashCompleteRecordedReceipt, DashCompleteSourceMetadata,
-    DashCompleteSourceMutation, NativeCompleteAgentIntegration, native_complete_agent_registration,
+    DashCompleteSourceMutation, NativeCompleteAgentIntegration, dash_complete_agent_build_digest,
+    native_complete_agent_registration,
 };

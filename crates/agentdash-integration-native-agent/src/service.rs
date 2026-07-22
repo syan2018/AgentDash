@@ -1136,7 +1136,6 @@ pub fn native_complete_agent_registration(
     agentdash_integration_api::CompleteAgentContributionError,
 > {
     let declared_descriptor = DashAgentCompleteService::descriptor();
-    let verified_profile_digest = declared_descriptor.profile_digest.clone();
     CompleteAgentRegistrationContribution::new(
         declared_descriptor,
         instance_id,
@@ -1145,12 +1144,7 @@ pub fn native_complete_agent_registration(
         CompleteAgentRegistrationClaim {
             publisher_integration: "builtin.dash_agent".to_owned(),
             service_version: env!("CARGO_PKG_VERSION").to_owned(),
-            claimed_service_build_digest: AgentPayloadDigest::new(format!(
-                "dash-complete-agent:{}:{}",
-                env!("CARGO_PKG_VERSION"),
-                verified_profile_digest
-            ))
-            .expect("static Dash Complete Agent build digest"),
+            claimed_service_build_digest: dash_complete_agent_build_digest(),
             claimed_conformance_suite_revision: "dash-complete-agent-v1".to_owned(),
         },
         Arc::new(NativeCompleteAgentServiceFactory {
@@ -1159,6 +1153,11 @@ pub fn native_complete_agent_registration(
             store,
         }),
     )
+}
+
+pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest {
+    AgentPayloadDigest::new(format!("dash-complete-agent:{}", env!("CARGO_PKG_VERSION")))
+        .expect("static Dash Complete Agent build digest")
 }
 
 impl DashCompleteEffectRecord {

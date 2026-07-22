@@ -31,6 +31,14 @@ pub trait AgentRunProductInputDeliveryPort {
         command: DeliverAgentRunProductInput,
     ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError>;
 }
+
+pub trait LifecycleAgentRepository {
+    async fn initialize_title_from_agent(
+        &self,
+        target: &AgentRunTarget,
+        title: &str,
+    ) -> Result<bool, DomainError>;
+}
 ```
 
 ProjectAgent Draft 创建与用户输入是两个明确命令：
@@ -67,13 +75,18 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
 - `runtime_thread_id` 是 Product/Agent 桥接坐标；concrete source coordinate 仍由 Agent owner。
 - input handoff 是同步合同。`handoff_id` 从 target + client command id 确定性派生；成功返回
   concrete operation receipt，不存在 queued 结果。
+- concrete Agent 首次生成非空 thread name 后，同一次 input handoff 从 authoritative snapshot
+  调用 `initialize_title_from_agent` 初始化 `LifecycleAgent.workspace_title`。该更新必须以
+  `run_id + agent_id + title absent` 为条件原子执行；此后 AgentRun 标题由 Product 独立持有，
+  Agent-native thread name 的后续变化不会覆盖用户修改。
 - Product 不提供离线输入队列。Agent unavailable 直接返回 typed error，调用者使用同一 client
   identity 重试。
 - Companion、Routine、Workflow 与 human response 都调用同一个
   `AgentRunProductInputDeliveryPort`。其 owner-local document可以保存 handoff/operation
   coordinate，但不能建立 mailbox lifecycle。
-- list/workspace/delete 先读取 Product shell。Agent snapshot 是 optional enrichment；
-  service/source read 失败不得让 Product shell、lineage、title、subject 或删除能力整体失败。
+- list/workspace/delete 先读取 Product shell。标题只从 `LifecycleAgent.workspace_title` 解析；
+  Agent snapshot 是 optional enrichment，service/source read 失败不得让 Product shell、lineage、
+  title、subject 或删除能力整体失败。
 - conversation snapshot 每次来自 concrete Agent authoritative read。`waiting_items` 来自
   LifecycleGate 等 Product owner，和 Agent history在 response 组合，不合并为 mailbox。
 - live stream 直接订阅 concrete Agent source 的 process-local events。断线重连重新请求
@@ -94,6 +107,9 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
 | Agent unavailable | typed unavailable；无 pending Product row |
 | duplicate client command | 返回同一 Agent effect/operation receipt |
 | 相同 client id 不同 payload | typed conflict |
+| Agent title 为空 | 不初始化 AgentRun title，保持 pending |
+| AgentRun title 已存在 | conditional update 返回 false，保留当前 Product title/source |
+| 首次标题持久化失败 | handoff 返回 typed unavailable；调用者以同一 client id 重试，Agent effect 不重复 |
 | list item 无 association | 返回 Product item，Agent presentation absent |
 | list item Agent read 失败 | 返回 Product item，Agent presentation unavailable |
 | binding 指向非 owner AgentFrame | Product document conflict |
@@ -104,6 +120,8 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
 
 - Good：Project Agent launch 创建 owner-local frames/association并立即返回target；前端进入该target、
   完成authoritative history baseline后用标准input handoff投递首条输入，同时收到live delta。
+- Good：Dash 首次命名写入自身 history 后，input handoff 将同名值仅初始化到 LifecycleAgent；用户
+  后续重命名只修改 LifecycleAgent，列表与 workspace 不再依赖 Dash service 可用性。
 - Base：Codex/Dash 暂时离线，列表仍展示 AgentRun shell；重新连接后 snapshot enrichment恢复。
 - Bad：List 因 Runtime projection stale 返回错误。List 只需要 Product facts，Agent view是可选
   enrichment。
@@ -116,6 +134,8 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
   Agent input，以及Create applied 后回包丢失时的同 effect inspection。
 - input tests 覆盖 deterministic handoff、accepted receipt、duplicate、payload conflict 与
   unavailable 零持久化。
+- title tests 覆盖首次非空初始化、空标题忽略、已有 Product title 不覆盖、持久化失败后同 client id
+  重试，以及 list/workspace 在 Agent read 失败时仍返回已存标题。
 - list/workspace tests 注入 binding missing、service resolve failure、Agent read failure，
   断言 Product shell仍返回。
 - conversation tests 覆盖 Agent history + LifecycleGate waiting items，且 contract没有 mailbox。
@@ -142,4 +162,15 @@ let runtime = projection.runtime_snapshot(&target).await?;
 
 // Correct: Product item先成立，Agent presentation按可用性补充。
 let runtime = projection.runtime_presentation_snapshot(&target).await.ok().flatten();
+```
+
+```rust
+// Wrong: 每次展示都把 Agent-native thread name 当作 AgentRun 标题读穿。
+let title = runtime_snapshot.thread_name.unwrap_or_else(|| "新会话".to_owned());
+
+// Correct: 首次命名只初始化一次，之后展示读取 Product-owned LifecycleAgent。
+lifecycle_agents
+    .initialize_title_from_agent(&target, &snapshot_title)
+    .await?;
+let title = lifecycle_agent.workspace_title;
 ```

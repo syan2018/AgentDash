@@ -414,7 +414,8 @@ fn product_input_delivery_error(error: AgentRunProductInputDeliveryError) -> Api
         | AgentRunProductInputDeliveryError::InvalidClientCommandId => {
             ApiError::BadRequest(error.to_string())
         }
-        AgentRunProductInputDeliveryError::Command(_) => {
+        AgentRunProductInputDeliveryError::Command(_)
+        | AgentRunProductInputDeliveryError::TitleInitialization(_) => {
             ApiError::ServiceUnavailable(error.to_string())
         }
     }

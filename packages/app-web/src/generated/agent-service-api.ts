@@ -27,7 +27,7 @@ export type AgentServiceApiSchema = { descriptor: AgentServiceDescriptor, create
  * 该字段随工具定义穿过 Product surface、Complete Agent binding 与 Agent native history；
  * presentation adapter 只消费此声明，不从运行时工具名反推卡片类型。
  */
-export type ToolProtocolProjector = { "family": "command" } | { "family": "file_change" } | { "family": "fs_read" } | { "family": "fs_grep" } | { "family": "fs_glob" } | { "family": "mcp", server_key: string, } | { "family": "dynamic", namespace: string | null, };
+export type ToolProtocolProjector = { "family": "command" } | { "family": "file_change" } | { "family": "fs_read" } | { "family": "fs_grep" } | { "family": "fs_glob" } | { "family": "mcp", server_key: string, } | { "family": "dynamic" };
 
 export type AgentAppliedEffectOutcome = { "kind": "create", receipt: AppliedAgentCommandReceipt, } | { "kind": "resume", receipt: AppliedAgentCommandReceipt, } | { "kind": "fork", receipt: AppliedForkAgentReceipt, } | { "kind": "command", receipt: AppliedAgentCommandReceipt, } | { "kind": "surface_apply", receipt: AppliedAgentSurfaceReceipt, } | { "kind": "surface_revoke", receipt: AppliedAgentCommandReceipt, };
 

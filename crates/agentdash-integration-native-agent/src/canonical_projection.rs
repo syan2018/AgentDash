@@ -1422,9 +1422,7 @@ mod tests {
 
     #[test]
     fn workspace_module_presentation_is_projected_from_committed_tool_result() {
-        let projector = agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
-            namespace: Some("workspace_module".to_owned()),
-        };
+        let projector = agentdash_agent_protocol::ToolProtocolProjector::Dynamic;
         let surface = DashSurface {
             revision: 1,
             digest: "surface-1".to_owned(),

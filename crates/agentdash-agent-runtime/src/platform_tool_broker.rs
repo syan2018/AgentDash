@@ -421,9 +421,7 @@ mod tests {
                     "type": "object",
                     "additionalProperties": false
                 }),
-                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
-                    namespace: Some("vfs".to_owned()),
-                },
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 permission: RuntimeToolPermission::VfsRead,
                 effect: RuntimeToolEffect::ReadOnly,
             }

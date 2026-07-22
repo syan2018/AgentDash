@@ -131,9 +131,7 @@ impl RuntimeToolExecutor for ProductCommandRuntimeTool {
             name: AgentToolName::new(name).expect("static Product runtime tool name"),
             description: description.to_owned(),
             parameters_schema: self.service.parameters_schema(),
-            protocol_projector: ToolProtocolProjector::Dynamic {
-                namespace: Some("agentdash".to_owned()),
-            },
+            protocol_projector: ToolProtocolProjector::Dynamic,
             permission,
             effect,
         }
@@ -288,9 +286,7 @@ vfs_executor!(
     "mounts_list",
     AppliedVfsToolKind::MountsList,
     "List VFS mounts granted by the applied AgentRun resource surface.",
-    ToolProtocolProjector::Dynamic {
-        namespace: Some("vfs".to_owned())
-    },
+    ToolProtocolProjector::Dynamic,
     RuntimeToolPermission::VfsRead,
     RuntimeToolEffect::ReadOnly
 );
@@ -367,9 +363,7 @@ impl RuntimeToolExecutor for RuntimeTaskReadTool {
             name: AgentToolName::new("task_read").expect("static runtime tool name"),
             description: "Read the granted Product Task scope.".to_owned(),
             parameters_schema: self.service.parameters_schema(RuntimeTaskToolKind::Read),
-            protocol_projector: ToolProtocolProjector::Dynamic {
-                namespace: Some("task".to_owned()),
-            },
+            protocol_projector: ToolProtocolProjector::Dynamic,
             permission: RuntimeToolPermission::ProductRead,
             effect: RuntimeToolEffect::ReadOnly,
         }
@@ -387,9 +381,7 @@ impl RuntimeToolExecutor for RuntimeTaskWriteTool {
             name: AgentToolName::new("task_write").expect("static runtime tool name"),
             description: "Mutate the granted Product Task scope.".to_owned(),
             parameters_schema: self.service.parameters_schema(RuntimeTaskToolKind::Write),
-            protocol_projector: ToolProtocolProjector::Dynamic {
-                namespace: Some("task".to_owned()),
-            },
+            protocol_projector: ToolProtocolProjector::Dynamic,
             permission: RuntimeToolPermission::ProductWrite,
             effect: RuntimeToolEffect::ProductMutation,
         }
@@ -441,9 +433,7 @@ impl RuntimeToolExecutor for WorkspaceModulePresentRuntimeTool {
                     "diagnostics": {}
                 }
             }),
-            protocol_projector: ToolProtocolProjector::Dynamic {
-                namespace: Some("workspace_module".to_owned()),
-            },
+            protocol_projector: ToolProtocolProjector::Dynamic,
             permission: RuntimeToolPermission::ProductRead,
             effect: RuntimeToolEffect::ReadOnly,
         }
@@ -730,9 +720,7 @@ mod tests {
                     "type": "object",
                     "owner": "workspace_module_present"
                 }),
-                protocol_projector: ToolProtocolProjector::Dynamic {
-                    namespace: Some("workspace_module".to_owned()),
-                },
+                protocol_projector: ToolProtocolProjector::Dynamic,
                 permission: RuntimeToolPermission::ProductWrite,
                 effect: RuntimeToolEffect::ProductMutation,
             }

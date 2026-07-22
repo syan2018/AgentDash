@@ -10413,12 +10413,6 @@
         {
           "type": "object",
           "properties": {
-            "namespace": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "family": {
               "type": "string",
               "const": "dynamic"

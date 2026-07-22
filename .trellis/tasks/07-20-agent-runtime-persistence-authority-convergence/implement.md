@@ -233,3 +233,15 @@ CAPABILITY frame，随后`READ -> EDIT -> READ`成功把`cvs-capability-tracer:/
 - [x] 红灯回归先证明provider缺失内建提示；实现后Native Integration共40项测试通过，并覆盖
   provider request、Identity ContextFrame、Product receipt边界及双digest语义。
 - [ ] 用户完成本轮实际会话验收后再生成最终closeout并归档任务。
+
+## 工具 Card 投影与 main 对齐
+
+- [x] 对照main确认前端Card registry与renderer没有分叉；差异来自Native Adapter把工具owner
+  namespace写进了普通`DynamicToolCall`。
+- [x] `ToolProtocolProjector::Dynamic`收口为无附加字段的展示family，普通平台、Task、Workspace
+  Module、Companion与VFS工具统一复用main的`dynamic_tool_call`构造，Card仅显示真实callable name。
+- [x] 0112正向迁移规范化Dash source/effect中的projector证据，同时把0108写入的`kind`标签收口为
+  当前协议的`family`标签；不修改已经应用的迁移历史。
+- [x] 定向projector/Native投影测试、API生产组合check、contract生成/check、前端typecheck与migration
+  guard通过；当前开发库已正向迁移到schema 112并通过doctor readiness。
+- [ ] 用户完成本轮实际会话验收后再生成最终closeout并归档任务。

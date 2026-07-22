@@ -161,16 +161,14 @@ pub(crate) fn project_tool_item(
                 reason: error.to_string(),
             })
         }
-        ToolProtocolProjector::Dynamic { namespace } => Ok(codex::ThreadItem::DynamicToolCall {
-            id: item_id.to_owned(),
-            namespace: Some(namespace.clone()),
-            tool: tool_name.to_owned(),
+        ToolProtocolProjector::Dynamic => Ok(thread_item::dynamic_tool_call(
+            item_id,
+            tool_name,
             arguments,
             status,
-            content_items: Some(content_items),
-            success: Some(success),
-            duration_ms: None,
-        }
+            content_items,
+            success,
+        )
         .into()),
     }
 }
@@ -336,6 +334,35 @@ mod tests {
                 limit: Some(8),
                 ..
             }) if path == "main://README.md"
+        ));
+    }
+
+    #[test]
+    fn dynamic_tool_matches_main_without_owner_namespace() {
+        let item = project_tool_item(
+            "tool-2",
+            "workspace_module_list",
+            serde_json::json!({"kind": "canvas"}),
+            &ToolProtocolProjector::Dynamic,
+            false,
+            false,
+            Some(ToolPresentationResult {
+                content: &[agentdash_agent::ContentPart::Text {
+                    text: "listed".to_owned(),
+                }],
+                details: None,
+                is_error: false,
+            }),
+        )
+        .expect("project dynamic tool");
+
+        assert!(matches!(
+            item,
+            AgentDashThreadItem::Codex(codex::ThreadItem::DynamicToolCall {
+                namespace: None,
+                tool,
+                ..
+            }) if tool == "workspace_module_list"
         ));
     }
 }

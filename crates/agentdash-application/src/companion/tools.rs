@@ -1171,7 +1171,7 @@ impl AgentTool for CompanionRequestTool {
         schema_value::<CompanionRequestParams>()
     }
     fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
-        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic)
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {
@@ -2102,7 +2102,7 @@ impl AgentTool for CompanionRespondTool {
         schema_value::<CompanionRespondParams>()
     }
     fn protocol_projector(&self) -> Option<agentdash_platform_spi::ToolProtocolProjector> {
-        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic { namespace: None })
+        Some(agentdash_platform_spi::ToolProtocolProjector::Dynamic)
     }
 
     fn protocol_fixture_id(&self) -> Option<String> {

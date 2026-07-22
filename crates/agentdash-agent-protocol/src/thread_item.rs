@@ -27,7 +27,7 @@ pub enum ToolProtocolProjector {
     FsGrep,
     FsGlob,
     Mcp { server_key: String },
-    Dynamic { namespace: Option<String> },
+    Dynamic,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -310,5 +310,18 @@ impl From<crate::generated::codex_v2::server_notification::ThreadItem> for Agent
 impl From<AgentDashNativeThreadItem> for AgentDashThreadItem {
     fn from(value: AgentDashNativeThreadItem) -> Self {
         AgentDashThreadItem::AgentDash(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolProtocolProjector;
+
+    #[test]
+    fn dynamic_projector_has_only_its_card_family() {
+        assert_eq!(
+            serde_json::to_value(ToolProtocolProjector::Dynamic).expect("serialize projector"),
+            serde_json::json!({"family": "dynamic"})
+        );
     }
 }

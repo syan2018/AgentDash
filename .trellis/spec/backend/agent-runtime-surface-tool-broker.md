@@ -95,7 +95,7 @@ struct ToolCallCoordinates {
 - VFS mount 的通用事实是 provider、root、capabilities 与 path scopes。`backend_id`只属于需要转发到
   concrete backend 的 provider；Canvas、inline、skill 等逻辑 provider 可以由自己的 root identity
   完整路由，因此其空 backend 不影响 surface evidence 的完整性。
-- 每个进入最终Tool Catalog的`ToolContribution`必须由owner声明protocol projector与family；Surface compile缺projector即typed reject。Command、FileChange、FS、MCP、VFS、RuntimeAction、Workspace Module、Companion、Task、Wait、LifecycleComplete与explicit Dynamic使用各自typed family，禁止按tool name猜测或以Dynamic作为缺省。
+- 每个进入最终Tool Catalog的`ToolContribution`必须由owner声明protocol projector与family；Surface compile缺projector即typed reject。Command、FileChange、FS与MCP使用各自typed family，普通VFS、RuntimeAction、Workspace Module、Companion、Task、Wait与LifecycleComplete显式声明Dynamic，禁止按tool name猜测或以Dynamic作为缺省。Dynamic的展示身份就是callable tool name，不附加owner namespace；来源归属已经由accepted definition与projector证据表达，不进入Card标题。
 - 每个binding的effective presentation route必须把owner projector与`VendorStream|ToolBroker` emitter作为一个原子事实发布和替换。owner显式声明Dynamic时才允许Dynamic；route缺失是typed protocol violation，不能把原本的FS、Command、FileChange或MCP静默换型。
 - Tool item lifecycle必须exactly-one presentation producer：`VendorStream`由connector mapper发布、Broker只维护internal canonical state；`ToolBroker`由`ToolContribution + ManagedRuntimeToolJournal`发布、connector mapper抑制同一tool的vendor lifecycle。Native、Codex与Remote均消费binding effective route，不能由全局默认或工具名推断owner。
 - Driver callback同时传递canonical Runtime item、独立session-visible `PresentationItemId`、原样source thread/turn/item三元组及binding/generation/tool identity/arguments。canonical ID只用于Runtime state与side-effect idempotency；presentation ID只进入Backbone payload；source坐标只进入carrier correlation，三者不得互相替代。

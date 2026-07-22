@@ -273,9 +273,7 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
                     name: "workspace_module_operate".into(),
                     description: "Operate a workspace module".into(),
                     input_schema: serde_json::json!({"type": "object"}),
-                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
-                        namespace: Some("workspace_module".into()),
-                    },
+                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 },
                 DashToolDefinition {
                     name: "fs_apply_patch".into(),
@@ -346,9 +344,7 @@ async fn failed_turn_retains_each_completed_tool_call_in_native_history() {
                 name: "inspect_capability".into(),
                 description: "Inspect a capability".into(),
                 input_schema: serde_json::json!({"type": "object"}),
-                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
-                    namespace: Some("capability".into()),
-                },
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
             }],
         })
         .await

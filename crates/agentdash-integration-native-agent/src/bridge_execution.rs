@@ -603,9 +603,7 @@ mod tests {
                 },
                 "required": ["module_id"]
             }),
-            protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
-                namespace: Some("workspace_module".to_owned()),
-            },
+            protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
         };
         let expected_schema = definition.input_schema.clone();
 

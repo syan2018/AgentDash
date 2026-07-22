@@ -1123,9 +1123,7 @@ async fn apply_surface_rejects_unadvertised_dynamic_tools_before_side_effect() {
                     description: "search".to_owned(),
                     input_schema: json!({"type": "object"}),
                     output_schema: None,
-                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
-                        namespace: Some("fixture".to_owned()),
-                    },
+                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 },
                 payload_digest,
             }],

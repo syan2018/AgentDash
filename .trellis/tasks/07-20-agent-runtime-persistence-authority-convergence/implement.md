@@ -217,3 +217,19 @@ CAPABILITY frame，随后`READ -> EDIT -> READ`成功把`cvs-capability-tracer:/
   约44.4秒到达；面板在turn仍处于执行中时已经可用。切换到资源浏览并整页重载后仍保持资源浏览，
   historical展示record未自动重放。
 - [ ] 用户完成本轮验收后再生成最终closeout并归档任务。
+
+## Dash intrinsic prompt 与 accepted surface 收口
+
+- [x] 从`main`定位PI Agent编译期系统提示，恢复为Native Dash Complete Agent自有`.md`资源；其稳定
+  intrinsic key、system channel与Identity presentation由Integration定义。
+- [x] `dash_surface_from_bound`先物化intrinsic instruction，再追加accepted Product instructions与
+  tools；Product使用保留key时在history mutation前typed reject。
+- [x] Product applied receipt继续只证明BoundAgentSurface；Dash history digest改为按实际
+  instructions/tools计算，provider prompt和ContextFrame共同读取该`SurfaceApplied`。
+- [x] embedded prompt digest进入Dash verified profile与service build evidence，提示内容变化可通过
+  canonical rebind形成新的surface generation。
+- [x] 保持既有source history不变：当前JSONB shape无需schema升级，旧source在rebind时追加新
+  `SurfaceApplied`，避免SQL改写历史后破坏compaction source digest与fork lineage。
+- [x] 红灯回归先证明provider缺失内建提示；实现后Native Integration共40项测试通过，并覆盖
+  provider request、Identity ContextFrame、Product receipt边界及双digest语义。
+- [ ] 用户完成本轮实际会话验收后再生成最终closeout并归档任务。

@@ -125,6 +125,12 @@ child association；Agent fork history 留在 Agent store。
 - bound surface 是进程内求交结果；
 - applied surface 是 concrete Agent receipt/inspection。
 
+concrete Agent自身的执行基底不进入desired business surface。Dash Complete Agent把编译期intrinsic
+instruction确定性置于Product instructions之前，最终实际接纳的instruction/tool集合进入Dash native
+history。Product binding digest只证明上游交付，Dash materialization digest只证明实际输入；同一
+`SurfaceApplied`同时派生provider prompt与ContextFrame。intrinsic内容进入verified profile/build
+evidence，因此版本变化通过正常rebind形成新的Agent历史，而不是改写既有entry。
+
 Host 可在每次 attach/rebind 时重新编译并 idempotent apply。Product 不保存 Host generation 或
 applied digest；Runtime 不保存 surface snapshot。
 
@@ -259,6 +265,10 @@ AgentFrame 与 Product binding 的最终物理形态优先并入 LifecycleAgent/
 
 Dash source canonical document包含其 native history/context/branch/command/effect/change fold state。
 删除由该文档机械展开的 relational mirrors 与每次 load drift verification。
+
+实际接纳的surface包含concrete Agent intrinsic instruction和Product贡献，保存在同一source history
+entry中。历史entry保留当时实际使用的提示与工具；实现升级通过追加surface entry表达，保持compaction
+source digest与fork lineage引用的历史前缀不变。
 
 Create 前 effect 可使用独立 `effect_id -> Agent effect record` 存储，因为此时尚无 source；
 source 创建后该记录仍属于 Complete Agent service，不属于 Product。

@@ -274,6 +274,31 @@ fn test_conflict(message: &str) -> AgentServiceError {
 
 struct FixtureProvider;
 
+#[derive(Default)]
+struct RecordingPromptProvider {
+    requests: Mutex<Vec<DashProviderRequest>>,
+}
+
+#[async_trait]
+impl DashProvider for RecordingPromptProvider {
+    async fn stream(
+        &self,
+        request: DashProviderRequest,
+    ) -> Result<DashProviderEventStream, DashCoreError> {
+        self.requests.lock().unwrap().push(request);
+        Ok(Box::pin(stream::iter([
+            Ok(DashProviderEvent::TextDelta {
+                delta: "fixture answer".into(),
+            }),
+            Ok(DashProviderEvent::Completed {
+                finish_reason: DashFinishReason::Stop,
+                input_tokens: 1,
+                output_tokens: 2,
+            }),
+        ])))
+    }
+}
+
 struct FixtureConversationNamer;
 
 #[async_trait]
@@ -1352,6 +1377,7 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
     assert_eq!(
         context_kinds,
         vec![
+            ContextFrameKind::Identity,
             ContextFrameKind::SystemGuidelines,
             ContextFrameKind::Identity,
             ContextFrameKind::Environment,
@@ -1361,6 +1387,225 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
             ContextFrameKind::MemoryContext,
             ContextFrameKind::UserContext,
         ]
+    );
+}
+
+#[tokio::test]
+async fn dash_intrinsic_prompt_is_one_accepted_fact_for_provider_and_context_frame() {
+    let provider = Arc::new(RecordingPromptProvider::default());
+    let store = Arc::new(RecordingCompleteStore::default());
+    let service = DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider: provider.clone(),
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: Arc::new(FixtureCompactor),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
+        },
+        Arc::new(FixtureHostCallbacks),
+        store.clone(),
+    );
+    let descriptor = service.describe().await.unwrap();
+    let source = AgentSourceCoordinate::new("dash-intrinsic-prompt").unwrap();
+    service
+        .create(CreateAgentCommand {
+            meta: meta("create-intrinsic-prompt", "effect-create-intrinsic-prompt"),
+            requested_source: Some(source.clone()),
+            initial_context: None,
+        })
+        .await
+        .unwrap();
+
+    let applied = service
+        .apply_surface(ApplyBoundAgentSurface {
+            command_id: AgentCommandId::new("apply-intrinsic-prompt").unwrap(),
+            effect_id: AgentEffectIdentity::new("effect-apply-intrinsic-prompt").unwrap(),
+            idempotency_key: AgentIdempotencyKey::new("idem-apply-intrinsic-prompt").unwrap(),
+            source: source.clone(),
+            bound_surface: BoundAgentSurface {
+                revision: AgentSurfaceRevision(1),
+                digest: AgentSurfaceDigest::new("product-surface-intrinsic-prompt").unwrap(),
+                offer_profile_digest: descriptor.profile_digest,
+                contributions: vec![BoundAgentSurfaceContribution {
+                    key: "instruction:product:agent-prompt".to_owned(),
+                    required: true,
+                    route: AgentSurfaceRoute::ImmutableDelivery,
+                    fidelity: SemanticFidelity::Exact,
+                    semantics: AgentSurfaceSemanticFacet::Instruction,
+                    payload: AgentSurfaceContributionPayload::Instruction {
+                        channel: "system".to_owned(),
+                        text: "product-specific instruction".to_owned(),
+                        presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
+                    },
+                    payload_digest: AgentPayloadDigest::new("product-agent-prompt").unwrap(),
+                }],
+            },
+            callbacks: AgentHostCallbackBinding {
+                route_id: AgentCallbackRouteId::new("callbacks-intrinsic-prompt").unwrap(),
+                binding_generation: AgentBindingGeneration(1),
+                delivery: AgentSurfaceRoute::AgentNativeCallback,
+                default_deadline_ms: 5_000,
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        applied.applied.contributions.len(),
+        1,
+        "the Product receipt must not claim a concrete Agent intrinsic instruction"
+    );
+    assert_eq!(
+        applied.applied.digest.as_str(),
+        "product-surface-intrinsic-prompt"
+    );
+    let materialized_digest = store
+        .durable
+        .read()
+        .await
+        .repositories
+        .get(source.as_str())
+        .unwrap()
+        .history()
+        .state()
+        .unwrap()
+        .surface
+        .unwrap()
+        .digest;
+    assert_ne!(
+        materialized_digest,
+        applied.applied.digest.as_str(),
+        "the concrete Agent materialization digest must not reuse the Product binding digest"
+    );
+
+    service
+        .execute(AgentCommandEnvelope {
+            meta: meta(
+                "execute-intrinsic-prompt",
+                "effect-execute-intrinsic-prompt",
+            ),
+            source: source.clone(),
+            command: AgentCommand::SubmitInput {
+                input: AgentInput {
+                    content: vec![AgentInputContent::Text {
+                        text: "work".to_owned(),
+                    }],
+                },
+            },
+        })
+        .await
+        .unwrap();
+
+    {
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0]
+                .system_prompt
+                .contains("share brief one-sentence progress updates"),
+            "the provider prompt must include the Dash intrinsic behavior baseline"
+        );
+        assert!(
+            requests[0]
+                .system_prompt
+                .contains("product-specific instruction"),
+            "the provider prompt must also include the accepted Product instruction"
+        );
+    }
+
+    let snapshot = service
+        .read(AgentReadQuery {
+            source,
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    let intrinsic_frames = snapshot
+        .conversation_history
+        .iter()
+        .filter_map(|record| match &record.presentation.envelope.event {
+            BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
+                if changed.frame.kind == ContextFrameKind::Identity
+                    && changed
+                        .frame
+                        .rendered_text
+                        .contains("share brief one-sentence progress updates") =>
+            {
+                Some(&changed.frame)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        intrinsic_frames.len(),
+        1,
+        "the same accepted intrinsic instruction must project one Identity ContextFrame"
+    );
+}
+
+#[tokio::test]
+async fn product_surface_cannot_replace_the_dash_intrinsic_instruction() {
+    let service = service();
+    let descriptor = service.describe().await.unwrap();
+    let source = AgentSourceCoordinate::new("dash-intrinsic-key-owner").unwrap();
+    service
+        .create(CreateAgentCommand {
+            meta: meta(
+                "create-intrinsic-key-owner",
+                "effect-create-intrinsic-key-owner",
+            ),
+            requested_source: Some(source.clone()),
+            initial_context: None,
+        })
+        .await
+        .unwrap();
+
+    let error = service
+        .apply_surface(ApplyBoundAgentSurface {
+            command_id: AgentCommandId::new("replace-intrinsic-key").unwrap(),
+            effect_id: AgentEffectIdentity::new("effect-replace-intrinsic-key").unwrap(),
+            idempotency_key: AgentIdempotencyKey::new("idem-replace-intrinsic-key").unwrap(),
+            source: source.clone(),
+            bound_surface: BoundAgentSurface {
+                revision: AgentSurfaceRevision(1),
+                digest: AgentSurfaceDigest::new("replace-intrinsic-key").unwrap(),
+                offer_profile_digest: descriptor.profile_digest,
+                contributions: vec![BoundAgentSurfaceContribution {
+                    key: "native:dash-agent:base-system-prompt".to_owned(),
+                    required: true,
+                    route: AgentSurfaceRoute::ImmutableDelivery,
+                    fidelity: SemanticFidelity::Exact,
+                    semantics: AgentSurfaceSemanticFacet::Instruction,
+                    payload: AgentSurfaceContributionPayload::Instruction {
+                        channel: "system".to_owned(),
+                        text: "replacement".to_owned(),
+                        presentation:
+                            agentdash_agent_protocol::AgentSurfaceInstructionPresentation::Identity,
+                    },
+                    payload_digest: AgentPayloadDigest::new("replacement").unwrap(),
+                }],
+            },
+            callbacks: AgentHostCallbackBinding {
+                route_id: AgentCallbackRouteId::new("callbacks-intrinsic-key-owner").unwrap(),
+                binding_generation: AgentBindingGeneration(1),
+                delivery: AgentSurfaceRoute::AgentNativeCallback,
+                default_deadline_ms: 5_000,
+            },
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, AgentServiceErrorCode::InvalidArgument);
+
+    let snapshot = service
+        .read(AgentReadQuery {
+            source,
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        snapshot.conversation_history.is_empty(),
+        "a Product collision must not commit any accepted surface history"
     );
 }
 

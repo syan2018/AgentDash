@@ -30,20 +30,19 @@ use agentdash_agent_service_api::{
     AgentHostCallbacks, AgentInput, AgentInputContent, AgentInteractionRequest,
     AgentInteractionResolution, AgentInteractionSnapshot, AgentInteractionStatus,
     AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveEvent, AgentLiveEventStream,
-    AgentPayloadDigest, AgentProfileDigest, AgentReadQuery, AgentReceiptState,
-    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
-    AgentServiceInstanceId, AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority,
-    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
-    AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile,
-    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot,
-    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics,
-    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
-    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
-    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
-    BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
-    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
-    InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
-    ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentPayloadDigest, AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId,
+    AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
+    AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
+    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
+    AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute,
+    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot, AgentToolDelivery,
+    AgentToolSemanticFacet, AgentToolUpdateSemantics, AppliedAgentCommandReceipt,
+    AppliedAgentSurface, AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt,
+    AppliedContributionStatus, AppliedForkAgentReceipt, AppliedInitialContextEvidence,
+    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
+    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
+    InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
+    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, CompleteAgentPlacementRequirement, CompleteAgentRegistrationClaim,
@@ -54,6 +53,7 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use crate::DashAgentCoreToolCallbacks;
+use crate::intrinsic_surface;
 use crate::tool_presentation::{ToolPresentationResult, project_tool_item};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -282,8 +282,7 @@ impl DashAgentCompleteService {
                 },
                 inspect_effects: SemanticFidelity::Exact,
             },
-            profile_digest: AgentProfileDigest::new("dash-agent-profile-v1")
-                .expect("static profile digest"),
+            profile_digest: intrinsic_surface::profile_digest(),
             configuration_boundary: AgentConfigurationBoundary::Create,
         }
     }
@@ -1137,6 +1136,7 @@ pub fn native_complete_agent_registration(
     agentdash_integration_api::CompleteAgentContributionError,
 > {
     let declared_descriptor = DashAgentCompleteService::descriptor();
+    let verified_profile_digest = declared_descriptor.profile_digest.clone();
     CompleteAgentRegistrationContribution::new(
         declared_descriptor,
         instance_id,
@@ -1146,8 +1146,9 @@ pub fn native_complete_agent_registration(
             publisher_integration: "builtin.dash_agent".to_owned(),
             service_version: env!("CARGO_PKG_VERSION").to_owned(),
             claimed_service_build_digest: AgentPayloadDigest::new(format!(
-                "dash-complete-agent:{}",
-                env!("CARGO_PKG_VERSION")
+                "dash-complete-agent:{}:{}",
+                env!("CARGO_PKG_VERSION"),
+                verified_profile_digest
             ))
             .expect("static Dash Complete Agent build digest"),
             claimed_conformance_suite_revision: "dash-complete-agent-v1".to_owned(),
@@ -1355,9 +1356,14 @@ fn service_terminal(outcome: DashTerminalOutcome) -> AgentTerminalOutcome {
 fn dash_surface_from_bound(
     surface: &agentdash_agent_service_api::BoundAgentSurface,
 ) -> Result<DashSurface, AgentServiceError> {
-    let mut instructions = Vec::new();
+    let mut instructions = vec![intrinsic_surface::instruction()];
     let mut tools = Vec::new();
     for contribution in &surface.contributions {
+        if contribution.key == intrinsic_surface::DASH_INTRINSIC_INSTRUCTION_KEY {
+            return Err(invalid_argument(
+                "Product surface cannot replace a Dash intrinsic instruction",
+            ));
+        }
         match &contribution.payload {
             agentdash_agent_service_api::AgentSurfaceContributionPayload::Instruction {
                 channel,
@@ -1402,9 +1408,11 @@ fn dash_surface_from_bound(
             agentdash_agent_service_api::AgentSurfaceContributionPayload::Hook { .. } => {}
         }
     }
+    let digest =
+        intrinsic_surface::materialization_digest(&instructions, &tools).map_err(internal)?;
     Ok(DashSurface {
         revision: surface.revision.0,
-        digest: surface.digest.to_string(),
+        digest,
         instructions,
         tools,
     })

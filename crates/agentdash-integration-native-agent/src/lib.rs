@@ -7,6 +7,7 @@
 mod bridge_execution;
 mod canonical_projection;
 mod core_callbacks;
+mod intrinsic_surface;
 mod service;
 mod tool_presentation;
 

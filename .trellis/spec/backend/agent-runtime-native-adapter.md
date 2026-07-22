@@ -76,6 +76,19 @@ pub enum ContextFrameSection {
 }
 ```
 
+```rust
+const DEFAULT_SYSTEM_PROMPT: &str = include_str!("prompts/default_system_prompt.md");
+
+fn dash_surface_from_bound(
+    surface: &BoundAgentSurface,
+) -> Result<DashSurface, AgentServiceError>;
+
+fn materialization_digest(
+    instructions: &[DashSurfaceInstruction],
+    tools: &[DashToolDefinition],
+) -> Result<String, serde_json::Error>;
+```
+
 ## 3. Contracts
 
 - 一个 Dash source 使用一个 canonical repository document 保存 history、context、branch、
@@ -87,6 +100,15 @@ pub enum ContextFrameSection {
   `[{ key, channel, text }]`与callable tools。provider system prompt通过拼接该instruction列表
   得出，`ContextFrameChanged`按同一列表的key/channel逐项投影；source history不另存一份扁平
   prompt字符串，presentation也不从prompt正文猜测分片。
+- concrete Agent内建工作基底属于该Complete Agent实现，不属于Product或AgentFrame。Dash以稳定
+  intrinsic instruction key把编译期提示词放在Product instructions之前，再把合并后的完整
+  `DashSurface`提交到native history；provider prompt与Identity ContextFrame都从该entry投影。
+- `AppliedAgentSurface.digest`证明Product binding，`DashSurface.digest`证明concrete Agent实际接纳的
+  instructions/tools内容，两者不共享数值。intrinsic prompt内容进入Dash verified profile/build
+  evidence，使实现基底变化通过正常rebind追加新的`SurfaceApplied`事实。
+- intrinsic instruction的namespace由concrete Agent保留。Product contribution与保留key冲突时，
+  Native Adapter在history mutation前返回typed invalid argument，保证accepted surface中每个key
+  只有一个owner。
 - callable tools在accepted surface中保存名称、description、input schema与owner projector。provider
   `tools[]`携带完整机器契约；Dash system prompt中的工具参数摘要从同一列表按需渲染，帮助模型读取
   用途、类型、必填性与关键嵌套字段。`tool_schema_delta`是Native Adapter面向平台UI的变化投影，
@@ -153,6 +175,9 @@ pub enum ContextFrameSection {
 | tool同名但description/schema变化 | 发布到`changed_tools`，不同时出现在`added_tools` |
 | tool从surface消失 | tool name进入`removed_tools` |
 | surface revision变化但instruction/tool语义未变 | 不发布伪ContextFrame delta |
+| Product contribution使用Dash intrinsic保留key | side effect与history mutation前typed invalid argument |
+| Product binding digest与Dash materialization digest比较 | 分别解释上游binding与实际接纳内容，不要求相等 |
+| 内建提示内容升级 | verified profile/build evidence变化；rebind提交新的实际surface，既有history保持原事实 |
 | effect identity相同且request相同 | 返回原 receipt |
 | effect identity相同但request不同 | typed idempotency conflict |
 | unsupported input family | Core side effect 前 typed unsupported |
@@ -178,6 +203,8 @@ pub enum ContextFrameSection {
   `ThreadNameChanged`；列表标题、snapshot与live notification均来自这一个 entry。
 - Good：Product提交skills/MCP/memory instructions与tool surface，Dash原样保存；Native Adapter从
   同一`SurfaceApplied` entry生成多种typed ContextFrame和真实tool delta，前端只展示变化摘要。
+- Good：Dash Adapter先加入自身intrinsic instruction，再物化Product surface；Agent收到的基础行为
+  规则和平台展示的Identity frame来自同一source-owned history entry。
 - Base：live subscriber掉线，Core继续执行并提交 history；新 subscriber先 read再订阅。
 - Base：同一surface幂等重放不产生新的history entry，因此不产生重复ContextFrame。
 - Base：标题生成暂时失败，回合仍保持成功且source保持未命名；下一成功回合可以再次生成。
@@ -203,6 +230,8 @@ pub enum ContextFrameSection {
 - surface/context tests断言 native history保存实际instruction边界与tools，provider prompt由
   instructions派生，snapshot与live逐项投影`ContextFrameChanged`，repository root不存在平行
   surface字段。
+- intrinsic surface测试断言内建`.md`进入provider request与Identity ContextFrame，Product applied
+  receipt不认领该contribution，且Product binding digest不同于Dash materialization digest。
 - surface delta tests连续应用三版surface，覆盖tool新增、修改、删除，断言read重放只返回真实
   变化且`rendered_text`不包含原始JSON schema；context channel矩阵覆盖system、identity、
   workspace、workflow、skills、MCP、memory与user context的typed frame映射。
@@ -249,4 +278,18 @@ let added_tools = surface.tools.iter().map(runtime_tool_schema_entry).collect();
 // Correct: Native Adapter比较同一source history中的相邻surface事实。
 let previous = history.state_at(entry.sequence - 1)?.surface;
 let (added_tools, removed_tools, changed_tools) = diff_tools(previous, &surface);
+```
+
+```rust
+// Wrong: Product compiler复制concrete Agent的默认行为，或provider bridge在最后隐藏拼接。
+requirements.push(dash_specific_default_prompt());
+provider.system_prompt.push_str(HIDDEN_DEFAULT);
+
+// Correct: concrete Agent先形成自己的intrinsic contribution，再保存完整accepted surface。
+let mut instructions = vec![dash_intrinsic_instruction()];
+instructions.extend(materialize_product_instructions(bound_surface)?);
+let digest = materialization_digest(&instructions, &tools)?;
+history.commit(HistoryPayload::SurfaceApplied {
+    surface: DashSurface { digest, instructions, tools, .. },
+})?;
 ```

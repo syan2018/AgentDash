@@ -63,6 +63,9 @@ type AgentLiveEvent = {
 - `ItemStarted`/`ItemUpdated`/`ItemCompleted` 的 `AgentDashThreadItem` discriminant 决定 UI 形态。
   `agentMessage` 与 `reasoning` 进入消息卡，其余 item 进入对应工具/资源卡；未知 discriminant 是
   协议错误，不降级为“TOOL 未知”。
+- 工具结果正文以typed content parts保存在concrete Agent history；canonical projector根据ToolCall
+  固定的owner projector生成`fsRead`、`fsApplyPatch`、`commandExecution`等ThreadItem。前端Card只
+  消费对应`contentItems/details`，不解析callback或provider原始JSON。
 - provider/Core 事件只能在 concrete Agent 内部用于构造 canonical records；provider round 完成
   不是 Agent turn terminal，也不能触发前端终态 reload。
 - Agent实际保存的surface/context history通过
@@ -96,6 +99,7 @@ type AgentLiveEvent = {
 | tool surface同名定义改变 | `changed_tools`渲染↻；不渲染为第二次新增 |
 | 多个ContextFrame拥有相同phase/order/time | 以稳定frame id确定顺序，snapshot与live merge后顺序一致 |
 | tool delta带完整parameters schema | schema保留为structured contract；默认UI只呈现参数字段计数，不展开原始JSON |
+| fsRead结果同时包含typed正文与details | Read Card显示路径、行数和逐行正文；重载后使用同一内容，不展示executor envelope |
 
 ## 5. Good / Base / Bad Cases
 

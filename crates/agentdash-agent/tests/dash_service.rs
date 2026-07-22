@@ -215,8 +215,9 @@ impl DashToolCallbacks for BlockingToolCallbacks {
         }
         Ok(DashToolResult {
             call_id: call.call_id,
-            content: "ok".into(),
+            content: vec![agentdash_agent::ContentPart::text("ok")],
             is_error: false,
+            details: None,
         })
     }
 }
@@ -236,8 +237,9 @@ impl DashToolCallbacks for RecordingToolCallbacks {
         self.calls.lock().await.push(call.call_id.clone());
         Ok(DashToolResult {
             call_id: call.call_id,
-            content: "ok".into(),
+            content: vec![agentdash_agent::ContentPart::text("ok")],
             is_error: false,
+            details: None,
         })
     }
 }

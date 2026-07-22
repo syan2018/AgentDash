@@ -11,7 +11,7 @@ use agentdash_agent_service_api::{
     AgentToolResult, AgentTurnId, BoundAgentSurface,
 };
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[derive(Clone)]
 struct DashHookBinding {
@@ -184,8 +184,11 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
                     return Ok(DashBeforeToolDecision::Deny {
                         result: DashToolResult {
                             call_id: call.call_id,
-                            content: json!({"code": "hook_denied", "message": reason}).to_string(),
+                            content: vec![agentdash_agent::ContentPart::text(format!(
+                                "Tool call denied by hook: {reason}"
+                            ))],
                             is_error: true,
+                            details: Some(json!({"code": "hook_denied", "message": reason})),
                         },
                     });
                 }
@@ -251,16 +254,15 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
                 retryable: false,
             })?;
         match result {
-            AgentToolResult::Completed { output } => Ok(DashToolResult {
-                call_id: call.call_id,
-                content: output.to_string(),
-                is_error: false,
-            }),
+            AgentToolResult::Completed { output } => {
+                Ok(completed_tool_result(call.call_id, output))
+            }
             AgentToolResult::Rejected { code, message }
             | AgentToolResult::Failed { code, message } => Ok(DashToolResult {
                 call_id: call.call_id,
-                content: serde_json::json!({"code": code, "message": message}).to_string(),
+                content: vec![agentdash_agent::ContentPart::text(message.clone())],
                 is_error: true,
+                details: Some(serde_json::json!({"code": code, "message": message})),
             }),
         }
     }
@@ -285,6 +287,7 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
                         "result": {
                             "content": result.content,
                             "is_error": result.is_error,
+                            "details": result.details,
                         }
                     }),
                 )
@@ -294,25 +297,81 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
                 AgentHookDecision::ReplaceResult {
                     result: replacement,
                 } if hook.actions.contains(&AgentHookAction::RewriteResult) => {
-                    result.content = replacement
-                        .get("content")
-                        .map(|value| {
-                            value
-                                .as_str()
-                                .map(str::to_owned)
-                                .unwrap_or_else(|| value.to_string())
-                        })
-                        .unwrap_or_else(|| replacement.to_string());
+                    if let Some(content) = replacement.get("content") {
+                        result.content = decode_content(content);
+                    }
                     result.is_error = replacement
                         .get("is_error")
                         .and_then(serde_json::Value::as_bool)
                         .unwrap_or(result.is_error);
+                    if replacement.get("details").is_some() {
+                        result.details = replacement.get("details").cloned();
+                    }
                 }
                 other => return Err(unsupported_hook_decision(other)),
             }
         }
         Ok(result)
     }
+}
+
+fn completed_tool_result(call_id: String, output: Value) -> DashToolResult {
+    if let Ok(decoded) = serde_json::from_value::<agentdash_agent::AgentToolResult>(output.clone())
+    {
+        return DashToolResult {
+            call_id,
+            content: decoded.content,
+            is_error: decoded.is_error,
+            details: decoded.details,
+        };
+    }
+
+    let content = output
+        .get("content")
+        .map(decode_content)
+        .filter(|content| !content.is_empty())
+        .unwrap_or_else(|| {
+            vec![agentdash_agent::ContentPart::text(match &output {
+                Value::String(text) => text.clone(),
+                _ => output.to_string(),
+            })]
+        });
+    let is_error = output
+        .get("is_error")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let details = output
+        .get("details")
+        .cloned()
+        .filter(|details| !details.is_null())
+        .or_else(|| Some(output));
+    DashToolResult {
+        call_id,
+        content,
+        is_error,
+        details,
+    }
+}
+
+fn decode_content(value: &Value) -> Vec<agentdash_agent::ContentPart> {
+    match value {
+        Value::String(text) => vec![agentdash_agent::ContentPart::text(text.clone())],
+        Value::Array(parts) => parts.iter().filter_map(decode_content_part).collect(),
+        Value::Null => Vec::new(),
+        other => vec![agentdash_agent::ContentPart::text(other.to_string())],
+    }
+}
+
+fn decode_content_part(value: &Value) -> Option<agentdash_agent::ContentPart> {
+    serde_json::from_value::<agentdash_agent::ContentPart>(value.clone())
+        .ok()
+        .or_else(|| match value.get("type").and_then(Value::as_str) {
+            Some("text") | Some("input_text") => value
+                .get("text")
+                .and_then(Value::as_str)
+                .map(agentdash_agent::ContentPart::text),
+            _ => None,
+        })
 }
 
 fn callback_error(error: impl std::fmt::Display) -> DashCoreError {

@@ -37,8 +37,11 @@ impl CoreToolCallbacks for ToolRecorder {
         self.calls.lock().unwrap().push(call.clone());
         Ok(CoreToolResult {
             call_id: call.call_id,
-            content: "tool-result".into(),
+            content: vec![agentdash_agent_core::CoreToolContent::Text {
+                text: "tool-result".into(),
+            }],
             is_error: false,
+            details: None,
         })
     }
 }

@@ -205,7 +205,7 @@ export type AgentSurfaceContributionPayload = { "kind": "instruction", channel: 
 
 export type AgentSurfaceDigest = string;
 
-export type AgentSurfaceInstructionPresentation = { "kind": "system_guidelines" } | { "kind": "identity" } | { "kind": "assignment_context" } | { "kind": "environment" } | { "kind": "user_context" } | { "kind": "capability_manifest", manifest: AgentCapabilityManifest, };
+export type AgentSurfaceInstructionPresentation = { "kind": "system_guidelines" } | { "kind": "identity" } | { "kind": "assignment_context" } | { "kind": "environment" } | { "kind": "memory_context" } | { "kind": "user_context" } | { "kind": "capability_manifest", manifest: AgentCapabilityManifest, };
 
 export type AgentSurfaceProfile = { facets: Array<AgentSurfaceCapabilityFacet>, };
 

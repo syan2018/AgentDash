@@ -132,9 +132,10 @@ pub async fn run_agent_loop(
                             result: result.clone(),
                         })
                         .await?;
+                    let provider_text = result.text();
                     messages.push(CoreMessage::tool(
                         result.call_id,
-                        result.content,
+                        provider_text,
                         result.is_error,
                     ));
                 }

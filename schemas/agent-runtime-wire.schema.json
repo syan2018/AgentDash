@@ -1623,6 +1623,18 @@
           "properties": {
             "kind": {
               "type": "string",
+              "const": "memory_context"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
               "const": "user_context"
             }
           },

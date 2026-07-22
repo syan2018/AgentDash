@@ -458,6 +458,7 @@ impl DurableDashExecutionCallbacks {
                     item_id: item_id.clone(),
                     content: result.content.clone(),
                     is_error: result.is_error,
+                    details: result.details.clone(),
                 },
             },
             HistoryContribution {
@@ -1830,7 +1831,11 @@ impl DashAgentService {
                     if let Some(call_id) = tool_call_ids.get(item_id) {
                         history.push(DashMessage {
                             role: DashMessageRole::Tool,
-                            content: content.clone(),
+                            content: content
+                                .iter()
+                                .filter_map(crate::ContentPart::extract_text)
+                                .collect::<Vec<_>>()
+                                .join("\n"),
                             tool_call_id: Some(call_id.clone()),
                             tool_calls: Vec::new(),
                             is_error: *is_error,

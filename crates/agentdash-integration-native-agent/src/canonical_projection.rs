@@ -953,6 +953,11 @@ fn surface_instruction_presentation(
             ContextMessageRole::Context,
             "Runtime Environment",
         ),
+        AgentSurfaceInstructionPresentation::MemoryContext => (
+            ContextFrameKind::MemoryContext,
+            ContextMessageRole::Context,
+            "Memory Context",
+        ),
         AgentSurfaceInstructionPresentation::CapabilityManifest { .. } => (
             ContextFrameKind::CapabilityStateDelta,
             ContextMessageRole::Context,
@@ -1044,7 +1049,8 @@ fn item(
                     ActivityStatus::Failed | ActivityStatus::Lost | ActivityStatus::Interrupted
                 ),
                 result.as_ref().map(|result| ToolPresentationResult {
-                    content: &result.content,
+                    content: result.content.as_slice(),
+                    details: result.details.as_ref(),
                     is_error: result.is_error,
                 }),
             )
@@ -1331,8 +1337,11 @@ mod tests {
             HistoryPayload::ToolResult {
                 turn_id: turn_id.clone(),
                 item_id: item_id.clone(),
-                content: "contents".to_owned(),
+                content: vec![agentdash_agent::ContentPart::text(
+                    "file: README.md\n1 | first\n2 | second",
+                )],
                 is_error: false,
+                details: None,
             },
             HistoryPayload::ItemCompleted {
                 turn_id: turn_id.clone(),
@@ -1353,7 +1362,12 @@ mod tests {
         let state = history.state().expect("folded history");
         assert!(state.surface.is_none());
         let projected = item(&state, &item_id).expect("historical tool projection");
-        assert_eq!(serde_json::to_value(projected).unwrap()["type"], "fsRead");
+        let projected = serde_json::to_value(projected).unwrap();
+        assert_eq!(projected["type"], "fsRead");
+        assert_eq!(
+            projected["contentItems"][0]["text"],
+            "file: README.md\n1 | first\n2 | second"
+        );
 
         let records = history_records(&history)
             .expect("canonical turn container must retain AgentDash-native items");

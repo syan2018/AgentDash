@@ -15,7 +15,8 @@ pub(crate) enum ToolPresentationError {
 }
 
 pub(crate) struct ToolPresentationResult<'a> {
-    pub content: &'a str,
+    pub content: &'a [agentdash_agent::ContentPart],
+    pub details: Option<&'a serde_json::Value>,
     pub is_error: bool,
 }
 
@@ -35,16 +36,14 @@ pub(crate) fn project_tool_item(
     } else {
         codex::DynamicToolCallStatus::Completed
     };
-    let content_items = result.as_ref().map(|result| {
-        vec![codex::DynamicToolCallOutputContentItem::InputText {
-            text: result.content.to_owned(),
-        }]
-    });
+    let content_items = result
+        .as_ref()
+        .map(|result| tool_content_items(result.content));
     let success = result.as_ref().map(|result| !result.is_error);
 
     match projector {
         ToolProtocolProjector::Command => {
-            let command = required_string(&arguments, "command", tool_name, "command")?;
+            let command = string_arg(&arguments, "command").unwrap_or_default();
             let raw_cwd = string_arg(&arguments, "cwd")
                 .map(|value| value.trim().to_owned())
                 .filter(|value| !value.is_empty());
@@ -60,8 +59,14 @@ pub(crate) fn project_tool_item(
             };
             let exit_code = result
                 .as_ref()
-                .and_then(|result| parse_result_json(result.content))
-                .and_then(|output| integer_field(&output, &["exit_code", "exitCode"]))
+                .and_then(|result| result.details)
+                .and_then(|output| integer_field(output, &["exit_code", "exitCode"]))
+                .or_else(|| {
+                    result
+                        .as_ref()
+                        .and_then(|result| parse_result_json(&tool_content_text(result.content)))
+                        .and_then(|output| integer_field(&output, &["exit_code", "exitCode"]))
+                })
                 .and_then(|value| i32::try_from(value).ok());
             Ok(AgentDashNativeThreadItem::ShellExec {
                 id: item_id.to_owned(),
@@ -70,21 +75,17 @@ pub(crate) fn project_tool_item(
                 execution_mode,
                 arguments,
                 status,
-                aggregated_output: result.map(|result| result.content.to_owned()),
+                aggregated_output: result.map(|result| tool_content_text(result.content)),
                 exit_code,
                 success,
             }
             .into())
         }
         ToolProtocolProjector::FileChange => {
-            let patch = required_string(&arguments, "patch", tool_name, "file_change")?;
-            let changes = parse_apply_patch_specs(&patch).map_err(|reason| {
-                ToolPresentationError::Invalid {
-                    tool: tool_name.to_owned(),
-                    family: "file_change",
-                    reason,
-                }
-            })?;
+            let changes = string_arg(&arguments, "patch")
+                .as_deref()
+                .and_then(|patch| parse_apply_patch_specs(patch).ok())
+                .unwrap_or_default();
             let patch_status = match status {
                 codex::DynamicToolCallStatus::InProgress => codex::PatchApplyStatus::InProgress,
                 codex::DynamicToolCallStatus::Completed => codex::PatchApplyStatus::Completed,
@@ -100,7 +101,9 @@ pub(crate) fn project_tool_item(
         }
         ToolProtocolProjector::FsRead => Ok(AgentDashNativeThreadItem::FsRead {
             id: item_id.to_owned(),
-            path: required_string(&arguments, "path", tool_name, "fs_read")?,
+            path: string_arg(&arguments, "path")
+                .or_else(|| string_arg(&arguments, "file_path"))
+                .unwrap_or_default(),
             offset: usize_arg(&arguments, "offset"),
             limit: usize_arg(&arguments, "limit"),
             arguments,
@@ -111,7 +114,7 @@ pub(crate) fn project_tool_item(
         .into()),
         ToolProtocolProjector::FsGrep => Ok(AgentDashNativeThreadItem::FsGrep {
             id: item_id.to_owned(),
-            pattern: required_string(&arguments, "pattern", tool_name, "fs_grep")?,
+            pattern: string_arg(&arguments, "pattern").unwrap_or_default(),
             path: string_arg(&arguments, "path"),
             glob: string_arg(&arguments, "glob"),
             file_type: string_arg(&arguments, "type"),
@@ -126,7 +129,7 @@ pub(crate) fn project_tool_item(
         .into()),
         ToolProtocolProjector::FsGlob => Ok(AgentDashNativeThreadItem::FsGlob {
             id: item_id.to_owned(),
-            pattern: required_string(&arguments, "pattern", tool_name, "fs_glob")?,
+            pattern: string_arg(&arguments, "pattern").unwrap_or_default(),
             path: string_arg(&arguments, "path"),
             max_results: usize_arg(&arguments, "max_results")
                 .or_else(|| usize_arg(&arguments, "maxResults")),
@@ -145,10 +148,10 @@ pub(crate) fn project_tool_item(
                 "arguments": arguments,
                 "status": status,
                 "result": result.as_ref().filter(|result| !result.is_error).map(|result| {
-                    serde_json::json!({"content": [{"type": "text", "text": result.content}]})
+                    serde_json::json!({"content": result.content, "details": result.details})
                 }),
                 "error": result.as_ref().filter(|result| result.is_error).map(|result| {
-                    serde_json::json!({"message": result.content})
+                    serde_json::json!({"message": tool_content_text(result.content), "details": result.details})
                 }),
             }))
             .map(Into::into)
@@ -172,17 +175,31 @@ pub(crate) fn project_tool_item(
     }
 }
 
-fn required_string(
-    arguments: &serde_json::Value,
-    key: &'static str,
-    tool: &str,
-    family: &'static str,
-) -> Result<String, ToolPresentationError> {
-    string_arg(arguments, key).ok_or_else(|| ToolPresentationError::Invalid {
-        tool: tool.to_owned(),
-        family,
-        reason: format!("typed arguments require a string `{key}` field"),
-    })
+fn tool_content_items(
+    content: &[agentdash_agent::ContentPart],
+) -> Vec<codex::DynamicToolCallOutputContentItem> {
+    content
+        .iter()
+        .filter_map(|part| match part {
+            agentdash_agent::ContentPart::Text { text } => {
+                Some(codex::DynamicToolCallOutputContentItem::InputText { text: text.clone() })
+            }
+            agentdash_agent::ContentPart::Image { mime_type, data } => {
+                Some(codex::DynamicToolCallOutputContentItem::InputImage {
+                    image_url: format!("data:{mime_type};base64,{data}"),
+                })
+            }
+            agentdash_agent::ContentPart::Reasoning { .. } => None,
+        })
+        .collect()
+}
+
+fn tool_content_text(content: &[agentdash_agent::ContentPart]) -> String {
+    content
+        .iter()
+        .filter_map(agentdash_agent::ContentPart::extract_text)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn string_arg(arguments: &serde_json::Value, key: &str) -> Option<String> {
@@ -302,7 +319,10 @@ mod tests {
             false,
             false,
             Some(ToolPresentationResult {
-                content: "hello",
+                content: &[agentdash_agent::ContentPart::Text {
+                    text: "hello".to_owned(),
+                }],
+                details: None,
                 is_error: false,
             }),
         )

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// 内容片段 — 跨层共享的最小内容单元。
 /// 支持 Text、Image、Reasoning 三种载体，覆盖主流 LLM 的输出模式。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentPart {
     Text {

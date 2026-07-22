@@ -1254,7 +1254,8 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         .await
         .unwrap();
 
-    let instruction = |key: &str, channel: &str, text: &str| BoundAgentSurfaceContribution {
+    let instruction = |key: &str, channel: &str, text: &str| {
+        BoundAgentSurfaceContribution {
         key: key.to_owned(),
         required: true,
         route: AgentSurfaceRoute::ImmutableDelivery,
@@ -1263,10 +1264,34 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         payload: AgentSurfaceContributionPayload::Instruction {
             channel: channel.to_owned(),
             text: text.to_owned(),
-            presentation:
-                agentdash_agent_protocol::AgentSurfaceInstructionPresentation::AssignmentContext,
+            presentation: match channel {
+                "system" => {
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines
+                }
+                "persona" => {
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::Identity
+                }
+                "workspace" => {
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::Environment
+                }
+                "skills" | "mcp" => {
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::CapabilityManifest {
+                        manifest: agentdash_agent_protocol::AgentCapabilityManifest::default(),
+                    }
+                }
+                "memory" => {
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::MemoryContext
+                }
+                "user_context" => {
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::UserContext
+                }
+                _ => {
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::AssignmentContext
+                }
+            },
         },
         payload_digest: AgentPayloadDigest::new(format!("sha256:{key}")).unwrap(),
+    }
     };
     service
         .apply_surface(ApplyBoundAgentSurface {
@@ -2023,9 +2048,12 @@ async fn exact_hooks_run_once_rewrite_and_do_not_retrigger_on_effect_replay() {
         BackboneEvent::ItemCompleted(notification)
             if matches!(
                 &notification.item,
-                agentdash_agent_protocol::AgentDashThreadItem::Codex(
-                    codex::ThreadItem::DynamicToolCall { tool, success, .. }
-                ) if tool == "read" && *success == Some(Some(true))
+                agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                    agentdash_agent_protocol::AgentDashNativeThreadItem::FsRead {
+                        success,
+                        ..
+                    }
+                ) if *success == Some(true)
             )
     )));
     assert!(snapshot.conversation_history.iter().any(|record| matches!(

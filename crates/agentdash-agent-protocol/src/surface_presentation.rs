@@ -9,6 +9,7 @@ pub enum AgentSurfaceInstructionPresentation {
     Identity,
     AssignmentContext,
     Environment,
+    MemoryContext,
     UserContext,
     CapabilityManifest { manifest: AgentCapabilityManifest },
 }

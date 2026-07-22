@@ -434,13 +434,16 @@ Correct: task runtime capability exposes task_read/task_write and execution arti
 
 ## 工具 schema 与模型可见说明
 
-运行时工具更新必须同时维护两条链路：
+运行时工具更新从Agent实际接纳的tool definition派生三种用途不同的投影：
 
 - Provider `tools[]` 携带完整机器 schema，用于 OpenAI/Codex Responses 等服务解析工具调用。
-- `tool_schema_delta` 的模型可见文本携带可调用说明，用工具名、用途、来源、参数名、必填性、类型和关键嵌套字段摘要指导模型调用。
+- Complete Agent按需生成模型可读摘要，用工具名、用途、参数名、必填性、类型和关键嵌套字段指导
+  调用；该摘要与provider工具定义读取同一accepted list。
+- `tool_schema_delta`携带added/removed/changed结构化证据，供平台ContextFrame展示工具面变化，
+  不承担Agent prompt输入。
 
-模型可见文本禁止直接 dump 完整 pretty JSON Schema。复杂工具应输出结构化参数摘要，并依赖 provider
-`tools[]` 保留完整机器契约。
+模型可读摘要采用结构化参数说明，完整机器契约保留在provider `tools[]`。这样模型阅读体验、provider
+解析与平台展示共享同一definition，同时各自保留适合其消费者的形态。
 
 进入 Responses API 的工具 schema 必须先经过 sanitizer：递归内联本地 `$ref`，移除 `$defs` /
 `definitions` 与装饰性关键字，确保 object/array 结构、nullable 与组合器表达在目标 provider

@@ -87,6 +87,10 @@ pub enum ContextFrameSection {
   `[{ key, channel, text }]`与callable tools。provider system prompt通过拼接该instruction列表
   得出，`ContextFrameChanged`按同一列表的key/channel逐项投影；source history不另存一份扁平
   prompt字符串，presentation也不从prompt正文猜测分片。
+- callable tools在accepted surface中保存名称、description、input schema与owner projector。provider
+  `tools[]`携带完整机器契约；Dash system prompt中的工具参数摘要从同一列表按需渲染，帮助模型读取
+  用途、类型、必填性与关键嵌套字段。`tool_schema_delta`是Native Adapter面向平台UI的变化投影，
+  不作为另一条Agent输入通道。
 - Dash Core只理解`DashSurface { instructions, tools }`。`ContextFrame`是Native Adapter从
   `SurfaceApplied` history生成的平台展示协议，不进入Dash领域模型，也不作为prompt的另一份输入。
   Adapter以`state_at(sequence - 1)`与当前surface比较：instruction只发布新增/修改项，tool发布
@@ -129,6 +133,11 @@ pub enum ContextFrameSection {
   Lifecycle、PostgreSQL repository、Codex DTO 或 Runtime persistence。
 - Tool/Hook 通过 Host callback route调用真实 handler。Dash 在 callback identity 上重试；
   handler owner负责副作用幂等。
+- callback result以typed text/image/reasoning content parts与structured details穿过Core、Dash event和
+  folded state。provider transcript只选择其支持的content，Native Adapter按owner projector生成
+  AgentDash ThreadItem；两者不解析序列化callback envelope。
+- owner projector固定展示family，不决定工具执行准入。presentation所需的path/command等参数缺失时，
+  callback仍到达实际工具owner，由owner的typed validation result形成同一ToolResult。
 - compaction/fork/context state 属于 Dash source。Product只保存 fork lineage与 source
   association，不复制 checkpoint/history digest作为执行 authority。
 - provider protocol terminal决定一次 model response是否完成。transport EOF不能冒充 terminal；

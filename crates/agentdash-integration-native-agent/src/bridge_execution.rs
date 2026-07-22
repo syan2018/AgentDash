@@ -579,6 +579,60 @@ mod tests {
         assert_eq!(request.thinking_level, Some(ThinkingLevel::High));
     }
 
+    #[test]
+    fn accepted_tool_description_and_nested_schema_reach_the_provider_without_reconstruction() {
+        let definition = agentdash_agent::dash::DashToolDefinition {
+            name: "workspace_module_invoke".to_owned(),
+            description: "Invoke one operation exposed by a workspace module.".to_owned(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "module_id": {
+                        "type": "string",
+                        "description": "Canonical workspace module id"
+                    },
+                    "input": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Operation-local VFS path"
+                            }
+                        }
+                    }
+                },
+                "required": ["module_id"]
+            }),
+            protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
+                namespace: Some("workspace_module".to_owned()),
+            },
+        };
+        let expected_schema = definition.input_schema.clone();
+
+        let request = bridge_request(
+            DashProviderRequest {
+                system_prompt: "system".to_owned(),
+                messages: Vec::new(),
+                tools: vec![definition],
+                round: 1,
+            },
+            None,
+        )
+        .expect("Dash request should map to bridge request");
+
+        assert_eq!(request.tools.len(), 1);
+        assert_eq!(request.tools[0].name, "workspace_module_invoke");
+        assert_eq!(
+            request.tools[0].description,
+            "Invoke one operation exposed by a workspace module."
+        );
+        assert_eq!(request.tools[0].parameters, expected_schema);
+        assert_eq!(
+            request.tools[0].parameters["properties"]["input"]["properties"]["path"]["description"],
+            "Operation-local VFS path"
+        );
+    }
+
     #[tokio::test]
     async fn finalized_bridge_response_is_the_complete_tool_call_fact() {
         let provider = BridgeDashProvider::new(Arc::new(DeltaOnlyToolBridge), None);

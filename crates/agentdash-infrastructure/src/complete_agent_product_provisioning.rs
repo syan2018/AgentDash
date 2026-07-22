@@ -1151,6 +1151,7 @@ fn instruction_presentation(slot: &str) -> AgentSurfaceInstructionPresentation {
     match slot {
         "persona" | "agent_identity" => AgentSurfaceInstructionPresentation::Identity,
         "workspace" | "vfs" | "runtime_policy" => AgentSurfaceInstructionPresentation::Environment,
+        "memory" | "memory_context" => AgentSurfaceInstructionPresentation::MemoryContext,
         "constraint" | "constraints" | "instruction" | "instruction_append" => {
             AgentSurfaceInstructionPresentation::SystemGuidelines
         }

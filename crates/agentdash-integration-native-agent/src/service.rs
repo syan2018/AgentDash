@@ -1872,7 +1872,8 @@ fn live_tool_item(
         result.is_none(),
         result.is_some_and(|result| result.is_error),
         result.map(|result| ToolPresentationResult {
-            content: &result.content,
+            content: result.content.as_slice(),
+            details: result.details.as_ref(),
             is_error: result.is_error,
         }),
     )

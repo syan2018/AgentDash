@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, pin::Pin};
 use agentdash_agent_core::{
     CoreBeforeToolDecision, CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput,
     CoreMessage, CoreOutput, CoreProvider, CoreRole, CoreTokenUsage, CoreTool, CoreToolCall,
-    CoreToolCallbacks, CoreToolResult, FinishReason, ProviderEvent, ProviderEventStream,
-    ProviderRequest, run_agent_loop,
+    CoreToolCallbacks, CoreToolContent, CoreToolResult, FinishReason, ProviderEvent,
+    ProviderEventStream, ProviderRequest, run_agent_loop,
 };
 use agentdash_agent_protocol::ToolProtocolProjector;
 use async_trait::async_trait;
@@ -15,6 +15,7 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use super::{AgentItemId, AgentTurnId, HistoryContribution, HistoryEntryId, HistoryPayload};
+use crate::ContentPart;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DashExecutionFailure {
@@ -74,8 +75,21 @@ pub struct DashToolCall {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DashToolResult {
     pub call_id: String,
-    pub content: String,
+    pub content: Vec<ContentPart>,
     pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+impl DashToolResult {
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(ContentPart::extract_text)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -458,8 +472,9 @@ impl CoreToolCallbacks for ToolAdapter<'_> {
                 DashBeforeToolDecision::Deny { result } => CoreBeforeToolDecision::Deny {
                     result: CoreToolResult {
                         call_id: result.call_id,
-                        content: result.content,
+                        content: result.content.into_iter().map(core_tool_content).collect(),
                         is_error: result.is_error,
+                        details: result.details,
                     },
                 },
             })
@@ -479,8 +494,9 @@ impl CoreToolCallbacks for ToolAdapter<'_> {
             .await
             .map(|result| CoreToolResult {
                 call_id: result.call_id,
-                content: result.content,
+                content: result.content.into_iter().map(core_tool_content).collect(),
                 is_error: result.is_error,
+                details: result.details,
             })
             .map_err(core_error)
     }
@@ -500,15 +516,17 @@ impl CoreToolCallbacks for ToolAdapter<'_> {
                 },
                 DashToolResult {
                     call_id: result.call_id,
-                    content: result.content,
+                    content: result.content.into_iter().map(dash_tool_content).collect(),
                     is_error: result.is_error,
+                    details: result.details,
                 },
             )
             .await
             .map(|result| CoreToolResult {
                 call_id: result.call_id,
-                content: result.content,
+                content: result.content.into_iter().map(core_tool_content).collect(),
                 is_error: result.is_error,
+                details: result.details,
             })
             .map_err(core_error)
     }
@@ -651,8 +669,9 @@ fn dash_event(event: CoreEvent) -> DashCoreEvent {
             },
             result: DashToolResult {
                 call_id: result.call_id,
-                content: result.content,
+                content: result.content.into_iter().map(dash_tool_content).collect(),
                 is_error: result.is_error,
+                details: result.details,
             },
         },
         CoreEvent::ProviderRoundCompleted {
@@ -664,6 +683,38 @@ fn dash_event(event: CoreEvent) -> DashCoreEvent {
                 FinishReason::Stop => DashFinishReason::Stop,
                 FinishReason::ToolCalls => DashFinishReason::ToolCalls,
             },
+        },
+    }
+}
+
+fn core_tool_content(content: ContentPart) -> CoreToolContent {
+    match content {
+        ContentPart::Text { text } => CoreToolContent::Text { text },
+        ContentPart::Image { mime_type, data } => CoreToolContent::Image { mime_type, data },
+        ContentPart::Reasoning {
+            text,
+            id,
+            signature,
+        } => CoreToolContent::Reasoning {
+            text,
+            id,
+            signature,
+        },
+    }
+}
+
+fn dash_tool_content(content: CoreToolContent) -> ContentPart {
+    match content {
+        CoreToolContent::Text { text } => ContentPart::Text { text },
+        CoreToolContent::Image { mime_type, data } => ContentPart::Image { mime_type, data },
+        CoreToolContent::Reasoning {
+            text,
+            id,
+            signature,
+        } => ContentPart::Reasoning {
+            text,
+            id,
+            signature,
         },
     }
 }

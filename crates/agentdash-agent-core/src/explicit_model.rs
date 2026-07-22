@@ -109,8 +109,49 @@ pub struct CoreToolCall {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreToolResult {
     pub call_id: String,
-    pub content: String,
+    pub content: Vec<CoreToolContent>,
     pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+impl CoreToolResult {
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(CoreToolContent::extract_text)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CoreToolContent {
+    Text {
+        text: String,
+    },
+    Image {
+        mime_type: String,
+        data: String,
+    },
+    Reasoning {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+}
+
+impl CoreToolContent {
+    fn extract_text(&self) -> Option<&str> {
+        match self {
+            Self::Text { text } => Some(text),
+            Self::Image { .. } | Self::Reasoning { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

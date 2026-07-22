@@ -174,10 +174,30 @@
   LifecycleAgent创建者事实计算，个人owner获得write，共享项目资源保持read-only。
 - [x] capability篮子完整投影tool path、MCP、VFS、skill discovery、memory、companion、channel与
   workspace module；空inventory也显式呈现，避免把“0项”误判为能力链缺失。
-- [ ] 用户在接力设备完成验收后生成最终closeout并归档任务。
 
 真实能力闭环在AgentRun `9851f356-75b7-5d67-93db-bc99836dfbbe`验证：开发库迁移到schema 108，
 authoritative history重载后恢复15个项目/内置Skill、MCP、`main`/`lifecycle` VFS、Workspace
 Modules、0个Memory source、0个Companion Agent和0个Channel。Canvas attach产生新的accepted
 CAPABILITY frame，随后`READ -> EDIT -> READ`成功把`cvs-capability-tracer://src/main.tsx`改为
 `Capability tracer passed`；三条工具消息均以专属Card恢复，会话标题和terminal状态保持一致。
+
+## 工具定义与结构化结果展示收口
+
+- [x] `DashSurface.tools`成为工具说明的唯一accepted事实：完整description/schema进入provider
+  `tools[]`，同一列表按需生成模型可读的参数类型、必填性与嵌套字段摘要。
+- [x] Core callback、Dash event/folded state与Native Adapter统一传递typed content parts和structured
+  details；provider transcript与AgentDash ThreadItem从这份结果分别投影。
+- [x] owner声明的`ToolProtocolProjector`继续固定Read/Edit/Shell等专属Card family；展示参数缺失不会
+  在实际工具owner校验之前中断执行。
+- [x] `MemoryContext`进入surface presentation协议，使memory instruction从accepted native history
+  投影为对应ContextFrame，而不是复用assignment展示类型。
+- [x] 0109迁移native history中的tool result与memory presentation；0110继续统一folded item snapshots，
+  并解包旧VFS callback envelope。当前开发库升级到schema 110且不存在encoded result envelope。
+- [x] Rust定向/包级测试、contract generation/check、frontend typecheck、migration guard与真实浏览器
+  tracer通过。
+- [ ] 用户在接力设备完成验收后生成最终closeout并归档任务。
+
+真实浏览器回归在既有AgentRun“问候与项目协助”验证：历史ContextFrame和Read Card可从Dash source
+恢复；新用户输入先进入canonical feed，随后出现执行中状态与Read工具项。`fs_read`实时卡展示目标
+路径、8行正文与行号，最终返回`READ_UI_OK`；整页重载后用户消息、工具项、Agent输出和ContextFrame
+保持一致。

@@ -119,6 +119,11 @@ struct ToolCallCoordinates {
 - Dynamic工具typed content提供可读分行摘要，结构化details用于机器消费；两者不得以单行协议JSON互相替代。
 - Native presentation接收Broker envelope时优先恢复typed `content_items`；只有不存在typed/text content的未知payload才允许使用JSON诊断兜底。
 - Native `AfterTool`的结构化`result`只更新details；仅显式typed `content`可改写用户正文，Hook不得从details调用`to_string()`覆盖executor content。
+- Complete Agent callback将Broker/VFS envelope解码为typed content parts与details后写入Agent native
+  history；Read、Shell、FileChange等AgentDash专属Card从typed正文投影，实时与重载不重新解释原始
+  executor JSON。
+- protocol projector固定展示family并随ToolCall保存；实际工具owner独占参数校验和执行，因此Card
+  formatter即使缺少path、pattern或command等可选展示字段，也会保持family并等待owner结果。
 - Credential material只在local executor boundary解引用，不实现Serialize或Debug；MCP schema与日志只暴露credential ref/provenance，不暴露secret。
 
 ## 4. Validation & Error Matrix

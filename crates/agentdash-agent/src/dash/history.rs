@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{DashExecutionFailure, DashToolDefinition};
+use crate::ContentPart;
 use thiserror::Error;
 
 macro_rules! string_id {
@@ -118,12 +119,188 @@ pub struct DashSurface {
 impl DashSurface {
     #[must_use]
     pub fn render_system_prompt(&self) -> String {
-        self.instructions
+        let mut sections = self
+            .instructions
             .iter()
             .map(|instruction| instruction.text.as_str())
             .filter(|text| !text.trim().is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if let Some(tool_notice) = render_tool_schema_notice(&self.tools) {
+            sections.push(tool_notice);
+        }
+        sections.join("\n\n")
+    }
+}
+
+fn render_tool_schema_notice(tools: &[DashToolDefinition]) -> Option<String> {
+    if tools.is_empty() {
+        return None;
+    }
+    let mut sections = vec![
+        "## Runtime Tool Schema".to_owned(),
+        "Only the tools listed below are callable in the current accepted Agent surface."
+            .to_owned(),
+    ];
+    for tool in tools {
+        let mut lines = vec![format!("### `{}`", tool.name)];
+        let description = tool.description.trim();
+        if !description.is_empty() {
+            lines.push(description.to_owned());
+        }
+        let parameters = summarize_tool_parameters(&tool.input_schema);
+        if parameters.is_empty() {
+            lines.push("Parameters: none.".to_owned());
+        } else {
+            lines.push(format!("Parameters:\n{}", parameters.join("\n")));
+        }
+        sections.push(lines.join("\n\n"));
+    }
+    Some(sections.join("\n\n"))
+}
+
+fn summarize_tool_parameters(schema: &serde_json::Value) -> Vec<String> {
+    let required = schema
+        .get("required")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<BTreeSet<_>>();
+    let Some(properties) = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    for (name, property) in properties {
+        summarize_tool_parameter(
+            name,
+            property,
+            required.contains(name.as_str()),
+            0,
+            &mut lines,
+        );
+    }
+    lines
+}
+
+fn summarize_tool_parameter(
+    path: &str,
+    schema: &serde_json::Value,
+    required: bool,
+    depth: usize,
+    lines: &mut Vec<String>,
+) {
+    let kind = schema_type_label(schema);
+    let requirement = if required { "required" } else { "optional" };
+    let description = schema
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|description| !description.is_empty())
+        .map(|description| format!(": {description}"))
+        .unwrap_or_default();
+    lines.push(format!(
+        "{}- `{path}` ({kind}, {requirement}){description}",
+        "  ".repeat(depth)
+    ));
+
+    let child_required = schema
+        .get("required")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<BTreeSet<_>>();
+    if let Some(properties) = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+    {
+        for (name, property) in properties {
+            let child_path = format!("{path}.{name}");
+            summarize_tool_parameter(
+                &child_path,
+                property,
+                child_required.contains(name.as_str()),
+                depth + 1,
+                lines,
+            );
+        }
+    }
+    if let Some(items) = schema.get("items") {
+        let item_path = format!("{path}[]");
+        summarize_tool_parameter(&item_path, items, true, depth + 1, lines);
+    }
+}
+
+fn schema_type_label(schema: &serde_json::Value) -> String {
+    if let Some(values) = schema.get("enum").and_then(serde_json::Value::as_array) {
+        let values = values
+            .iter()
+            .map(|value| match value {
+                serde_json::Value::String(value) => value.clone(),
+                other => other.to_string(),
+            })
             .collect::<Vec<_>>()
-            .join("\n\n")
+            .join(" | ");
+        return format!("enum: {values}");
+    }
+    match schema.get("type") {
+        Some(serde_json::Value::String(kind)) => kind.clone(),
+        Some(serde_json::Value::Array(kinds)) => kinds
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>()
+            .join(" | "),
+        _ if schema.get("oneOf").is_some() => "oneOf".to_owned(),
+        _ if schema.get("anyOf").is_some() => "anyOf".to_owned(),
+        _ => "value".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod surface_prompt_tests {
+    use super::*;
+
+    #[test]
+    fn accepted_tools_render_one_model_readable_schema_notice_from_their_exact_definitions() {
+        let surface = DashSurface {
+            revision: 1,
+            digest: "surface".to_owned(),
+            instructions: vec![DashSurfaceInstruction {
+                key: "identity".to_owned(),
+                channel: "identity".to_owned(),
+                text: "You are Dash.".to_owned(),
+                presentation:
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::Identity,
+            }],
+            tools: vec![DashToolDefinition {
+                name: "fs_read".to_owned(),
+                description: "Read a file from the applied VFS surface.".to_owned(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "VFS URI to read"
+                        }
+                    },
+                    "required": ["path"]
+                }),
+                protocol_projector: ToolProtocolProjector::FsRead,
+            }],
+        };
+
+        let prompt = surface.render_system_prompt();
+        assert!(prompt.contains("You are Dash."));
+        assert!(prompt.contains("## Runtime Tool Schema"));
+        assert!(prompt.contains("`fs_read`"));
+        assert!(prompt.contains("Read a file from the applied VFS surface."));
+        assert!(prompt.contains("`path` (string, required): VFS URI to read"));
+        assert!(!prompt.contains("Dash materialized"));
+        assert!(!prompt.contains("\"properties\""));
     }
 }
 
@@ -191,8 +368,10 @@ pub enum HistoryPayload {
     ToolResult {
         turn_id: AgentTurnId,
         item_id: AgentItemId,
-        content: String,
+        content: Vec<ContentPart>,
         is_error: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        details: Option<serde_json::Value>,
     },
     InteractionRequested {
         turn_id: AgentTurnId,
@@ -465,8 +644,9 @@ pub enum ItemDetails {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolActivityResult {
-    pub content: String,
+    pub content: Vec<ContentPart>,
     pub is_error: bool,
+    pub details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -700,6 +880,7 @@ fn apply_payload(
             item_id,
             content,
             is_error,
+            details,
         } => {
             ensure_active_turn(state, turn_id)?;
             let item = state
@@ -727,6 +908,7 @@ fn apply_payload(
                 result: Some(ToolActivityResult {
                     content: content.clone(),
                     is_error: *is_error,
+                    details: details.clone(),
                 }),
             };
         }

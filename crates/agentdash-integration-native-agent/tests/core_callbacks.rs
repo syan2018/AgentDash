@@ -22,6 +22,7 @@ struct RecordingCallbacks {
     tools: Mutex<Vec<AgentToolInvocation>>,
     hooks: Mutex<Vec<AgentHookInvocation>>,
     decisions: Mutex<VecDeque<AgentHookDecision>>,
+    tool_output: Mutex<Option<serde_json::Value>>,
 }
 
 #[async_trait]
@@ -32,7 +33,12 @@ impl AgentHostCallbacks for RecordingCallbacks {
     ) -> Result<AgentToolResult, AgentHostCallbackError> {
         self.tools.lock().unwrap().push(call);
         Ok(AgentToolResult::Completed {
-            output: serde_json::json!({"value": 7}),
+            output: self
+                .tool_output
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| serde_json::json!({"value": 7})),
         })
     }
 
@@ -48,6 +54,54 @@ impl AgentHostCallbacks for RecordingCallbacks {
             .pop_front()
             .unwrap_or(AgentHookDecision::Allow))
     }
+}
+
+#[tokio::test]
+async fn completed_vfs_result_preserves_typed_text_instead_of_serializing_the_envelope() {
+    let host = Arc::new(RecordingCallbacks::default());
+    *host.tool_output.lock().unwrap() = Some(serde_json::json!({
+        "content": [
+            {
+                "type": "text",
+                "text": "file: main://README.md\n1 | first\n2 | second"
+            }
+        ],
+        "is_error": false,
+        "details": {
+            "kind": "fs_read"
+        }
+    }));
+    let callbacks = DashAgentCoreToolCallbacks::from_bound_surface(
+        host,
+        AgentCallbackRouteId::new("route-read-result").unwrap(),
+        AgentBindingGeneration(1),
+        AgentSourceCoordinate::new("source-read-result").unwrap(),
+        5_000,
+        &BoundAgentSurface {
+            revision: AgentSurfaceRevision(1),
+            digest: AgentSurfaceDigest::new("read-surface").unwrap(),
+            offer_profile_digest: AgentProfileDigest::new("dash-agent-profile-v1").unwrap(),
+            contributions: Vec::new(),
+        },
+    );
+
+    let result = callbacks
+        .invoke(
+            &agentdash_agent::dash::AgentTurnId::new("turn-read-result"),
+            DashToolCall {
+                call_id: "item-read-result".into(),
+                name: "fs_read".into(),
+                arguments: serde_json::json!({"path": "main://README.md"}),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.text(),
+        "file: main://README.md\n1 | first\n2 | second"
+    );
+    assert_eq!(result.details, Some(serde_json::json!({"kind": "fs_read"})));
 }
 
 fn hook_surface() -> BoundAgentSurface {
@@ -141,13 +195,14 @@ async fn before_and_after_hooks_materialize_once_and_rewrite_typed_values() {
             &call,
             DashToolResult {
                 call_id: call.call_id.clone(),
-                content: "original-result".into(),
+                content: vec![agentdash_agent::ContentPart::text("original-result")],
                 is_error: false,
+                details: None,
             },
         )
         .await
         .unwrap();
-    assert_eq!(result.content, "rewritten-result");
+    assert_eq!(result.text(), "rewritten-result");
     let hooks = host.hooks.lock().unwrap();
     assert_eq!(hooks.len(), 2);
     assert_eq!(hooks[0].point, AgentHookPoint::BeforeTool);

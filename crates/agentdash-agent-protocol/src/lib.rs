@@ -1,6 +1,7 @@
 pub mod backbone;
 pub mod generated;
 pub mod presentation;
+pub mod surface_presentation;
 pub mod thread_item;
 
 // ─── 集中 re-export（保持外部 API 不变）───────────────────
@@ -17,6 +18,7 @@ pub use backbone::platform::{
     HookTraceSeverity, HookTraceTrigger, PlatformEvent, ProviderAttemptPhase,
     ProviderAttemptStatus, RuntimeTerminalDiagnostic, SessionRewindReason, SessionRewound,
 };
+pub use backbone::turn::{Turn, TurnCompletedNotification, TurnStartedNotification};
 pub use backbone::usage::{
     ContextUsageSource, NormalizedContextUsage, ThreadTokenUsage,
     ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown,
@@ -29,6 +31,12 @@ pub use backbone::user_input::{
 pub use presentation::{
     CanonicalConversationPresentation, CanonicalConversationRecord, CanonicalConversationView,
     CompletedConversationItem, PresentationDurability,
+};
+pub use surface_presentation::{
+    AgentCapabilityChannel, AgentCapabilityCompanionAgent, AgentCapabilityDiagnostic,
+    AgentCapabilityManifest, AgentCapabilityMcpServer, AgentCapabilityMemorySource,
+    AgentCapabilityMount, AgentCapabilitySkill, AgentCapabilityVfs, AgentCapabilityWorkspaceModule,
+    AgentSurfaceInstructionPresentation,
 };
 
 /// AgentDash-owned Codex-shaped protocol facade.
@@ -50,9 +58,9 @@ pub mod codex_app_server_protocol {
         ServerRequestResolvedNotification, TerminalInteractionNotification,
         ThreadNameUpdatedNotification, ThreadStatusChangedNotification, ThreadTokenUsage,
         ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown, Turn, TurnCompletedNotification,
-        TurnDiffUpdatedNotification, TurnError, TurnModerationMetadataNotification, TurnPlanStep,
-        TurnPlanStepStatus, TurnPlanUpdatedNotification, TurnStartedNotification, TurnStatus,
-        WarningNotification,
+        TurnDiffUpdatedNotification, TurnError, TurnItemsView, TurnModerationMetadataNotification,
+        TurnPlanStep, TurnPlanStepStatus, TurnPlanUpdatedNotification, TurnStartedNotification,
+        TurnStatus, WarningNotification,
     };
     pub use crate::generated::codex_v2::thread_item::*;
     pub use crate::generated::codex_v2::tool_request_user_input_params::ToolRequestUserInputParams;
@@ -61,7 +69,7 @@ pub mod codex_app_server_protocol {
 pub use thread_item::{
     AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus,
     DynamicToolCallOutputContentItem, DynamicToolCallStatus, McpToolCallStatus, PatchApplyStatus,
-    ShellExecExecutionMode,
+    ShellExecExecutionMode, ToolProtocolProjector,
 };
 
 #[cfg(test)]

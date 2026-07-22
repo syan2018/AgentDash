@@ -223,7 +223,7 @@ pub(crate) fn snapshot_records(
             format!("codex:{source_thread_id}:snapshot:{turn_index}:started"),
             PresentationDurability::Durable,
             source_thread_id,
-            BackboneEvent::TurnStarted(started),
+            BackboneEvent::TurnStarted(started.into()),
         ));
         let items = turn
             .get("items")
@@ -302,7 +302,7 @@ pub(crate) fn snapshot_records(
                 format!("codex:{source_thread_id}:snapshot:{turn_index}:completed"),
                 PresentationDurability::Durable,
                 source_thread_id,
-                BackboneEvent::TurnCompleted(completed),
+                BackboneEvent::TurnCompleted(completed.into()),
             ));
         }
     }

@@ -274,6 +274,7 @@ async fn immutable_surface_command(
                     agentdash_agent_service_api::AgentSurfaceContributionPayload::Instruction {
                         channel: "developer".to_owned(),
                         text: "bound instruction".to_owned(),
+                        presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
                     },
                 payload_digest: AgentPayloadDigest::new(format!("sha256:instruction-{id}"))
                     .expect("payload"),
@@ -1017,6 +1018,7 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
                         agentdash_agent_service_api::AgentSurfaceContributionPayload::Instruction {
                             channel: "developer".to_owned(),
                             text: "bound instruction".to_owned(),
+                            presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
                         },
                     payload_digest,
                 }],
@@ -1121,6 +1123,9 @@ async fn apply_surface_rejects_unadvertised_dynamic_tools_before_side_effect() {
                     description: "search".to_owned(),
                     input_schema: json!({"type": "object"}),
                     output_schema: None,
+                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
+                        namespace: Some("fixture".to_owned()),
+                    },
                 },
                 payload_digest,
             }],

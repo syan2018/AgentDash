@@ -10,6 +10,7 @@ mod lifecycle;
 mod platform_tool_broker;
 
 pub use agent_snapshot_projection::*;
+pub use agentdash_agent_protocol::ToolProtocolProjector;
 pub use complete_agent_surface::*;
 pub use lifecycle::*;
 pub use platform_tool_broker::*;

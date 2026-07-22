@@ -1406,6 +1406,9 @@ mod tests {
                 name: AgentToolName::new(tool).unwrap(),
                 description: tool.to_owned(),
                 parameters_schema: serde_json::json!({}),
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
+                    namespace: Some("fixture".to_owned()),
+                },
                 permission,
                 effect,
             },

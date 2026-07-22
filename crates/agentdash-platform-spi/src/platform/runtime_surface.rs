@@ -432,6 +432,11 @@ pub struct SkillDimension {
     /// 顺序即 provider 注册顺序，渲染时应保留。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cluster_meta: Vec<SkillClusterMeta>,
+    /// Discovery failures are part of the accepted capability evidence. An empty skill list is
+    /// only authoritative when this collection proves discovery completed without transport or
+    /// provider failures.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<crate::platform::skill_discovery::SkillDiscoveryDiagnostic>,
 }
 
 /// Skill provider cluster 的轻量元数据（仅用于 model context 分组渲染）。

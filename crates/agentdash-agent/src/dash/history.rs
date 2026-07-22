@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use agentdash_agent_protocol::ToolProtocolProjector;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -103,6 +104,7 @@ pub struct DashSurfaceInstruction {
     pub key: String,
     pub channel: String,
     pub text: String,
+    pub presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,6 +186,7 @@ pub enum HistoryPayload {
         call_id: String,
         name: String,
         arguments: String,
+        protocol_projector: ToolProtocolProjector,
     },
     ToolResult {
         turn_id: AgentTurnId,
@@ -451,6 +454,7 @@ pub enum ItemDetails {
         call_id: String,
         name: String,
         arguments: String,
+        protocol_projector: ToolProtocolProjector,
         result: Option<ToolActivityResult>,
     },
     Interaction {
@@ -673,6 +677,7 @@ fn apply_payload(
             call_id,
             name,
             arguments,
+            protocol_projector,
         } => {
             ensure_active_turn(state, turn_id)?;
             let item = state
@@ -686,6 +691,7 @@ fn apply_payload(
                 call_id: call_id.clone(),
                 name: name.clone(),
                 arguments: arguments.clone(),
+                protocol_projector: protocol_projector.clone(),
                 result: None,
             };
         }
@@ -707,6 +713,7 @@ fn apply_payload(
                 call_id,
                 name,
                 arguments,
+                protocol_projector,
                 ..
             } = &item.details
             else {
@@ -716,6 +723,7 @@ fn apply_payload(
                 call_id: call_id.clone(),
                 name: name.clone(),
                 arguments: arguments.clone(),
+                protocol_projector: protocol_projector.clone(),
                 result: Some(ToolActivityResult {
                     content: content.clone(),
                     is_error: *is_error,

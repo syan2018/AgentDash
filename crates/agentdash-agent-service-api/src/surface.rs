@@ -290,12 +290,14 @@ pub enum AgentSurfaceContributionPayload {
     Instruction {
         channel: String,
         text: String,
+        presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation,
     },
     Tool {
         name: AgentToolName,
         description: String,
         input_schema: Value,
         output_schema: Option<Value>,
+        protocol_projector: agentdash_agent_protocol::ToolProtocolProjector,
     },
     Hook {
         definition_id: AgentHookDefinitionId,

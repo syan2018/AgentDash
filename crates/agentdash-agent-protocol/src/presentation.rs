@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::codex_app_server_protocol as codex;
-use crate::{AgentDashThreadItem, BackboneEnvelope, BackboneEvent};
+use crate::{AgentDashThreadItem, BackboneEnvelope, BackboneEvent, Turn};
 
 /// Presentation durability is explicit producer evidence and is never inferred
 /// from a Runtime cursor or transport replay.
@@ -77,7 +77,7 @@ impl<'a> CanonicalConversationView<'a> {
         self.records
     }
 
-    pub fn latest_turn(self) -> Option<&'a codex::Turn> {
+    pub fn latest_turn(self) -> Option<&'a Turn> {
         self.records
             .iter()
             .rev()
@@ -88,12 +88,12 @@ impl<'a> CanonicalConversationView<'a> {
             })
     }
 
-    pub fn active_turn(self) -> Option<&'a codex::Turn> {
+    pub fn active_turn(self) -> Option<&'a Turn> {
         self.latest_turn()
             .filter(|turn| turn.status == codex::TurnStatus::InProgress)
     }
 
-    pub fn completed_turn(self, turn_id: Option<&str>) -> Option<&'a codex::Turn> {
+    pub fn completed_turn(self, turn_id: Option<&str>) -> Option<&'a Turn> {
         self.records
             .iter()
             .rev()
@@ -107,7 +107,7 @@ impl<'a> CanonicalConversationView<'a> {
             })
     }
 
-    pub fn completed_turns(self) -> impl Iterator<Item = &'a codex::Turn> {
+    pub fn completed_turns(self) -> impl Iterator<Item = &'a Turn> {
         self.records
             .iter()
             .filter_map(|record| match &record.presentation.envelope.event {

@@ -546,6 +546,7 @@ pub fn normalize_capability_state_dimensions(
             model_summary: c.model_summary.clone(),
         })
         .collect();
+    state.skill.diagnostics = session_capabilities.skill_diagnostics.clone();
 }
 
 pub fn merge_live_vfs_skill_entries(
@@ -668,7 +669,7 @@ fn skill_diagnostic_to_discovery(
 ) -> SkillDiscoveryDiagnostic {
     SkillDiscoveryDiagnostic {
         provider_key: provider_key.to_string(),
-        code: "skill_file_invalid".to_string(),
+        code: diag.code.to_string(),
         message: diag.message,
         local_name: Some(diag.name),
         file_path: Some(diag.file_path.to_string_lossy().to_string()),

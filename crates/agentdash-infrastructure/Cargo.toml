@@ -15,6 +15,7 @@ agentdash-workspace-module = { workspace = true }
 agentdash-contracts = { workspace = true }
 agentdash-platform-spi = { workspace = true }
 agentdash-agent = { workspace = true }
+agentdash-agent-protocol = { workspace = true }
 agentdash-agent-service-api = { workspace = true }
 agentdash-agent-runtime = { workspace = true }
 agentdash-agent-runtime-host = { workspace = true }

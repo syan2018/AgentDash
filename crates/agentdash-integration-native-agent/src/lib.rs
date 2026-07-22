@@ -8,6 +8,7 @@ mod bridge_execution;
 mod canonical_projection;
 mod core_callbacks;
 mod service;
+mod tool_presentation;
 
 pub use bridge_execution::{
     BridgeDashCompactor, BridgeDashProvider, bridge_dash_execution_dependencies,

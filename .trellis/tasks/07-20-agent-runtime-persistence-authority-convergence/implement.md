@@ -1,4 +1,4 @@
-# Agent Runtime 持久化职责与事实边界清理实施结果
+# Agent Runtime 持久化职责与事实边界清理实施进展
 
 ## 权威与持久化
 
@@ -144,15 +144,40 @@
 - [x] 定向验证通过：Rust package check、Product frame discovery、skill/MCP surface、Task/VFS授权、
   Workspace Module final broker tracer、Native surface delta，以及前端22项ContextFrame测试和
   typecheck。
-- [x] 重启`pnpm dev`后完成真实Draft tracer：确认Task Write、Canvas create、mount完整能力、
-  skills/MCP/memory ContextFrame、工具增量展示与会话流均来自同一authoritative Agent history。
+- [x] 重启`pnpm dev`后完成真实Draft tracer：确认Task Write、Canvas create后同一turn可编辑、项目本地
+  skills、MCP/memory/mount/workspace module完整ContextFrame、专属工具Card与会话流均来自同一
+  authoritative Agent history。
 
-真实Draft tracer在AgentRun `711b0717-d772-5422-9f74-6d34a8078ac5`验证：约1068ms完成
-Draft到目标页导航且canonical用户消息立即可见；同一回合成功创建Canvas Module
-`canvas:cvs-unique-turn-section-verification`并再次list发现。最终authoritative history包含5个唯一
-tool item、完整Agent message与`TurnCompleted`，页面只渲染一个“调用 5 个”工具组、一个turn section，
-浏览器console零error/零warning。AgentFrame revision 2与Product resource surface均包含main、lifecycle
-和新Canvas三个mount；Canvas逻辑provider以`canvas_fs + canvas-root://...`路由，无需伪造backend。
-ContextFrame从同一Dash `SurfaceApplied` instruction/tool history投影出Identity、Environment、
-Guidelines、Assignment与Capability State增量。`TurnCompleted`后的authoritative reload替换live overlay，
-并保留请求在途期间到达的后续canonical record。
+## Surface 语义证据与能力闭环
+
+- [x] `AgentFrame::CapabilityState`作为完整能力事实，Product只编译一份同时包含model prompt与
+  structured manifest的surface contribution；Native Adapter只从accepted manifest生成平台
+  ContextFrame，不从提示词文本或channel名称反猜能力。
+- [x] 工具owner为每个definition声明`ToolProtocolProjector`，并沿Runtime definition、Complete Agent
+  surface、Dash accepted surface和native history单向传递；live与durable projection共用该证据。
+- [x] 每次ToolCall保存调用时已接受的projector，历史工具消息在surface变更或撤销后仍能稳定恢复
+  专属Card，不依赖当前工具清单或工具名约定。
+- [x] 同一turn的callback router在单个调用期间固定route，在下一次调用前采用新surface route；
+  Canvas create产生的新mount因此能被随后`fs_apply_patch`使用。
+- [x] VFS发现将真实NotFound与provider/list/read失败区分；只有完成扫描才能形成权威空skill inventory，
+  `.agents/skills`和`skills`均从AgentFrame的canonical VFS派生。
+- [x] 0108迁移为既有Complete Agent surface与tool history补齐结构化presentation/projector证据，避免
+  新代码读取开发数据库时在JSONB反序列化阶段失败。
+- [x] 定向Rust测试、受影响package check、contract generation/check、frontend typecheck、migration
+  history guard与`git diff --check`通过。
+- [x] 0108在当前开发数据库执行成功，新后端可读取既有source/effect document。
+- [x] AgentDash canonical Turn直接承载`AgentDashThreadItem[]`，turn边界不再把Native工具消息反序列化
+  为vendor协议；`fsRead`/`fsApplyPatch`等专属消息可同时穿过item事件和turn完成事件。
+- [x] ToolCall在副作用执行前、ToolResult在每轮完成后立即进入Dash native history；即使provider达到
+  round limit，已执行的完整工具轨迹仍可从authoritative snapshot恢复。
+- [x] Canvas VFS provider进入生产provider registry；Canvas mount访问权从Canvas归属与
+  LifecycleAgent创建者事实计算，个人owner获得write，共享项目资源保持read-only。
+- [x] capability篮子完整投影tool path、MCP、VFS、skill discovery、memory、companion、channel与
+  workspace module；空inventory也显式呈现，避免把“0项”误判为能力链缺失。
+- [ ] 用户在接力设备完成验收后生成最终closeout并归档任务。
+
+真实能力闭环在AgentRun `9851f356-75b7-5d67-93db-bc99836dfbbe`验证：开发库迁移到schema 108，
+authoritative history重载后恢复15个项目/内置Skill、MCP、`main`/`lifecycle` VFS、Workspace
+Modules、0个Memory source、0个Companion Agent和0个Channel。Canvas attach产生新的accepted
+CAPABILITY frame，随后`READ -> EDIT -> READ`成功把`cvs-capability-tracer://src/main.tsx`改为
+`Capability tracer passed`；三条工具消息均以专属Card恢复，会话标题和terminal状态保持一致。

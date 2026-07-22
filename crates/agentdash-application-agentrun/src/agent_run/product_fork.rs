@@ -433,15 +433,21 @@ mod tests {
         }))
         .expect("turn fixture");
         let event = if status == codex::TurnStatus::InProgress {
-            BackboneEvent::TurnStarted(codex::TurnStartedNotification {
-                thread_id: "runtime-parent".to_owned(),
-                turn,
-            })
+            BackboneEvent::TurnStarted(
+                codex::TurnStartedNotification {
+                    thread_id: "runtime-parent".to_owned(),
+                    turn,
+                }
+                .into(),
+            )
         } else {
-            BackboneEvent::TurnCompleted(codex::TurnCompletedNotification {
-                thread_id: "runtime-parent".to_owned(),
-                turn,
-            })
+            BackboneEvent::TurnCompleted(
+                codex::TurnCompletedNotification {
+                    thread_id: "runtime-parent".to_owned(),
+                    turn,
+                }
+                .into(),
+            )
         };
         CanonicalConversationRecord::new(
             format!("test:{sequence}"),

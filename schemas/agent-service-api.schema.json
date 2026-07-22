@@ -5397,7 +5397,6 @@
       ]
     },
     "TurnStartedNotification": {
-      "description": "`TurnStartedNotification`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"title\": \"TurnStartedNotification\",\n \"type\": \"object\",\n \"required\": [\n   \"threadId\",\n   \"turn\"\n ],\n \"properties\": {\n   \"threadId\": {\n     \"type\": \"string\"\n   },\n   \"turn\": {\n     \"$ref\": \"#/definitions/Turn\"\n   }\n },\n \"$schema\": \"http://json-schema.org/draft-07/schema#\"\n}\n```\n</details>",
       "type": "object",
       "properties": {
         "threadId": {
@@ -5413,11 +5412,32 @@
       ]
     },
     "Turn": {
-      "description": "`Turn`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"object\",\n \"required\": [\n   \"id\",\n   \"items\",\n   \"status\"\n ],\n \"properties\": {\n   \"completedAt\": {\n     \"description\": \"Unix timestamp (in seconds) when the turn completed.\",\n     \"oneOf\": [\n       {\n         \"description\": \"Unix timestamp (in seconds) when the turn completed.\",\n         \"type\": \"integer\",\n         \"format\": \"int64\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   },\n   \"durationMs\": {\n     \"description\": \"Duration between turn start and completion in milliseconds, if known.\",\n     \"oneOf\": [\n       {\n         \"description\": \"Duration between turn start and completion in milliseconds, if known.\",\n         \"type\": \"integer\",\n         \"format\": \"int64\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   },\n   \"error\": {\n     \"description\": \"Only populated when the Turn's status is failed.\",\n     \"anyOf\": [\n       {\n         \"$ref\": \"#/definitions/TurnError\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   },\n   \"id\": {\n     \"description\": \"Identifier for this turn. Codex-generated turn IDs are UUIDv7.\",\n     \"type\": \"string\"\n   },\n   \"items\": {\n     \"description\": \"Thread items currently included in this turn payload.\",\n     \"type\": \"array\",\n     \"items\": {\n       \"$ref\": \"#/definitions/ThreadItem\"\n     }\n   },\n   \"itemsView\": {\n     \"description\": \"Describes how much of `items` has been loaded for this turn.\",\n     \"default\": \"full\",\n     \"allOf\": [\n       {\n         \"$ref\": \"#/definitions/TurnItemsView\"\n       }\n     ]\n   },\n   \"startedAt\": {\n     \"description\": \"Unix timestamp (in seconds) when the turn started.\",\n     \"oneOf\": [\n       {\n         \"description\": \"Unix timestamp (in seconds) when the turn started.\",\n         \"type\": \"integer\",\n         \"format\": \"int64\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   },\n   \"status\": {\n     \"$ref\": \"#/definitions/TurnStatus\"\n   }\n }\n}\n```\n</details>",
+      "description": "AgentDash canonical turn. A turn is only an ordered container around the\ncanonical AgentDash thread-item stream; it must not narrow native items back\nto one connector's protocol vocabulary.",
       "type": "object",
       "properties": {
+        "id": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentDashThreadItem"
+          }
+        },
+        "itemsView": {
+          "$ref": "#/$defs/TurnItemsView"
+        },
+        "status": {
+          "$ref": "#/$defs/TurnStatus"
+        },
+        "startedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
         "completedAt": {
-          "description": "Unix timestamp (in seconds) when the turn completed.",
           "type": [
             "integer",
             "null"
@@ -5425,7 +5445,6 @@
           "format": "int64"
         },
         "durationMs": {
-          "description": "Duration between turn start and completion in milliseconds, if known.",
           "type": [
             "integer",
             "null"
@@ -5433,7 +5452,6 @@
           "format": "int64"
         },
         "error": {
-          "description": "Only populated when the Turn's status is failed.",
           "anyOf": [
             {
               "$ref": "#/$defs/TurnError"
@@ -5442,39 +5460,43 @@
               "type": "null"
             }
           ]
-        },
-        "id": {
-          "description": "Identifier for this turn. Codex-generated turn IDs are UUIDv7.",
-          "type": "string"
-        },
-        "items": {
-          "description": "Thread items currently included in this turn payload.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ThreadItem2"
-          }
-        },
-        "itemsView": {
-          "description": "Describes how much of `items` has been loaded for this turn.",
-          "$ref": "#/$defs/TurnItemsView",
-          "default": "full"
-        },
-        "startedAt": {
-          "description": "Unix timestamp (in seconds) when the turn started.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "int64"
-        },
-        "status": {
-          "$ref": "#/$defs/TurnStatus"
         }
       },
       "required": [
         "id",
         "items",
+        "itemsView",
         "status"
+      ]
+    },
+    "TurnItemsView": {
+      "description": "`TurnItemsView`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"oneOf\": [\n   {\n     \"description\": \"`items` was not loaded for this turn. The field is intentionally empty.\",\n     \"type\": \"string\",\n     \"enum\": [\n       \"notLoaded\"\n     ]\n   },\n   {\n     \"description\": \"`items` contains only a display summary for this turn.\",\n     \"type\": \"string\",\n     \"enum\": [\n       \"summary\"\n     ]\n   },\n   {\n     \"description\": \"`items` contains every ThreadItem available from persisted app-server history for this turn.\",\n     \"type\": \"string\",\n     \"enum\": [\n       \"full\"\n     ]\n   }\n ]\n}\n```\n</details>",
+      "oneOf": [
+        {
+          "description": "`items` was not loaded for this turn. The field is intentionally empty.",
+          "type": "string",
+          "const": "notLoaded"
+        },
+        {
+          "description": "`items` contains only a display summary for this turn.",
+          "type": "string",
+          "const": "summary"
+        },
+        {
+          "description": "`items` contains every ThreadItem available from persisted app-server history for this turn.",
+          "type": "string",
+          "const": "full"
+        }
+      ]
+    },
+    "TurnStatus": {
+      "description": "`TurnStatus`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"completed\",\n   \"interrupted\",\n   \"failed\",\n   \"inProgress\"\n ]\n}\n```\n</details>",
+      "type": "string",
+      "enum": [
+        "completed",
+        "interrupted",
+        "failed",
+        "inProgress"
       ]
     },
     "TurnError": {
@@ -5650,1372 +5672,7 @@
         "compact"
       ]
     },
-    "ThreadItem2": {
-      "description": "`ThreadItem`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"oneOf\": [\n   {\n     \"title\": \"UserMessageThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"content\",\n       \"id\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"clientId\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"content\": {\n         \"type\": \"array\",\n         \"items\": {\n           \"$ref\": \"#/definitions/UserInput\"\n         }\n       },\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"UserMessageThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"userMessage\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"HookPromptThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"fragments\",\n       \"id\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"fragments\": {\n         \"type\": \"array\",\n         \"items\": {\n           \"$ref\": \"#/definitions/HookPromptFragment\"\n         }\n       },\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"HookPromptThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"hookPrompt\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"AgentMessageThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"id\",\n       \"text\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"memoryCitation\": {\n         \"default\": null,\n         \"anyOf\": [\n           {\n             \"$ref\": \"#/definitions/MemoryCitation\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"phase\": {\n         \"default\": null,\n         \"anyOf\": [\n           {\n             \"$ref\": \"#/definitions/MessagePhase\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"text\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"AgentMessageThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"agentMessage\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"PlanThreadItem\",\n     \"description\": \"EXPERIMENTAL - proposed plan item content. The completed plan item is authoritative and may not match the concatenation of `PlanDelta` text.\",\n     \"type\": \"object\",\n     \"required\": [\n       \"id\",\n       \"text\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"text\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"PlanThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"plan\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"ReasoningThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"id\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"content\": {\n         \"default\": [],\n         \"type\": \"array\",\n         \"items\": {\n           \"type\": \"string\"\n         }\n       },\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"summary\": {\n         \"default\": [],\n         \"type\": \"array\",\n         \"items\": {\n           \"type\": \"string\"\n         }\n       },\n       \"type\": {\n         \"title\": \"ReasoningThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"reasoning\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"CommandExecutionThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"command\",\n       \"commandActions\",\n       \"cwd\",\n       \"id\",\n       \"status\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"aggregatedOutput\": {\n         \"description\": \"The command's output, aggregated from stdout and stderr.\",\n         \"oneOf\": [\n           {\n             \"description\": \"The command's output, aggregated from stdout and stderr.\",\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"command\": {\n         \"description\": \"The command to be executed.\",\n         \"type\": \"string\"\n       },\n       \"commandActions\": {\n         \"description\": \"A best-effort parsing of the command to understand the action(s) it will perform. This returns a list of CommandAction objects because a single shell command may be composed of many commands piped together.\",\n         \"type\": \"array\",\n         \"items\": {\n           \"$ref\": \"#/definitions/CommandAction\"\n         }\n       },\n       \"cwd\": {\n         \"description\": \"The command's working directory.\",\n         \"allOf\": [\n           {\n             \"$ref\": \"#/definitions/LegacyAppPathString\"\n           }\n         ]\n       },\n       \"durationMs\": {\n         \"description\": \"The duration of the command execution in milliseconds.\",\n         \"oneOf\": [\n           {\n             \"description\": \"The duration of the command execution in milliseconds.\",\n             \"type\": \"integer\",\n             \"format\": \"int64\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"exitCode\": {\n         \"description\": \"The command's exit code.\",\n         \"oneOf\": [\n           {\n             \"description\": \"The command's exit code.\",\n             \"type\": \"integer\",\n             \"format\": \"int32\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"processId\": {\n         \"description\": \"Identifier for the underlying PTY process (when available).\",\n         \"oneOf\": [\n           {\n             \"description\": \"Identifier for the underlying PTY process (when available).\",\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"source\": {\n         \"default\": \"agent\",\n         \"allOf\": [\n           {\n             \"$ref\": \"#/definitions/CommandExecutionSource\"\n           }\n         ]\n       },\n       \"status\": {\n         \"$ref\": \"#/definitions/CommandExecutionStatus\"\n       },\n       \"type\": {\n         \"title\": \"CommandExecutionThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"commandExecution\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"FileChangeThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"changes\",\n       \"id\",\n       \"status\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"changes\": {\n         \"type\": \"array\",\n         \"items\": {\n           \"$ref\": \"#/definitions/FileUpdateChange\"\n         }\n       },\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"status\": {\n         \"$ref\": \"#/definitions/PatchApplyStatus\"\n       },\n       \"type\": {\n         \"title\": \"FileChangeThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"fileChange\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"McpToolCallThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"arguments\",\n       \"id\",\n       \"server\",\n       \"status\",\n       \"tool\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"appContext\": {\n         \"anyOf\": [\n           {\n             \"$ref\": \"#/definitions/McpToolCallAppContext\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"arguments\": true,\n       \"durationMs\": {\n         \"description\": \"The duration of the MCP tool call in milliseconds.\",\n         \"oneOf\": [\n           {\n             \"description\": \"The duration of the MCP tool call in milliseconds.\",\n             \"type\": \"integer\",\n             \"format\": \"int64\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"error\": {\n         \"anyOf\": [\n           {\n             \"$ref\": \"#/definitions/McpToolCallError\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"mcpAppResourceUri\": {\n         \"description\": \"Deprecated: use `appContext.resourceUri` instead.\",\n         \"oneOf\": [\n           {\n             \"description\": \"Deprecated: use `appContext.resourceUri` instead.\",\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"pluginId\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"result\": {\n         \"anyOf\": [\n           {\n             \"$ref\": \"#/definitions/McpToolCallResult\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"server\": {\n         \"type\": \"string\"\n       },\n       \"status\": {\n         \"$ref\": \"#/definitions/McpToolCallStatus\"\n       },\n       \"tool\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"McpToolCallThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"mcpToolCall\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"DynamicToolCallThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"arguments\",\n       \"id\",\n       \"status\",\n       \"tool\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"arguments\": true,\n       \"contentItems\": {\n         \"oneOf\": [\n           {\n             \"type\": \"array\",\n             \"items\": {\n               \"$ref\": \"#/definitions/DynamicToolCallOutputContentItem\"\n             }\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"durationMs\": {\n         \"description\": \"The duration of the dynamic tool call in milliseconds.\",\n         \"oneOf\": [\n           {\n             \"description\": \"The duration of the dynamic tool call in milliseconds.\",\n             \"type\": \"integer\",\n             \"format\": \"int64\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"namespace\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"status\": {\n         \"$ref\": \"#/definitions/DynamicToolCallStatus\"\n       },\n       \"success\": {\n         \"oneOf\": [\n           {\n             \"type\": \"boolean\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"tool\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"DynamicToolCallThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"dynamicToolCall\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"CollabAgentToolCallThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"agentsStates\",\n       \"id\",\n       \"receiverThreadIds\",\n       \"senderThreadId\",\n       \"status\",\n       \"tool\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"agentsStates\": {\n         \"description\": \"Last known status of the target agents, when available.\",\n         \"type\": \"object\",\n         \"additionalProperties\": {\n           \"$ref\": \"#/definitions/CollabAgentState\"\n         }\n       },\n       \"id\": {\n         \"description\": \"Unique identifier for this collab tool call.\",\n         \"type\": \"string\"\n       },\n       \"model\": {\n         \"description\": \"Model requested for the spawned agent, when applicable.\",\n         \"oneOf\": [\n           {\n             \"description\": \"Model requested for the spawned agent, when applicable.\",\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"prompt\": {\n         \"description\": \"Prompt text sent as part of the collab tool call, when available.\",\n         \"oneOf\": [\n           {\n             \"description\": \"Prompt text sent as part of the collab tool call, when available.\",\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"reasoningEffort\": {\n         \"description\": \"Reasoning effort requested for the spawned agent, when applicable.\",\n         \"anyOf\": [\n           {\n             \"$ref\": \"#/definitions/ReasoningEffort\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"receiverThreadIds\": {\n         \"description\": \"Thread ID of the receiving agent, when applicable. In case of spawn operation, this corresponds to the newly spawned agent.\",\n         \"type\": \"array\",\n         \"items\": {\n           \"type\": \"string\"\n         }\n       },\n       \"senderThreadId\": {\n         \"description\": \"Thread ID of the agent issuing the collab request.\",\n         \"type\": \"string\"\n       },\n       \"status\": {\n         \"description\": \"Current status of the collab tool call.\",\n         \"allOf\": [\n           {\n             \"$ref\": \"#/definitions/CollabAgentToolCallStatus\"\n           }\n         ]\n       },\n       \"tool\": {\n         \"description\": \"Name of the collab tool that was invoked.\",\n         \"allOf\": [\n           {\n             \"$ref\": \"#/definitions/CollabAgentTool\"\n           }\n         ]\n       },\n       \"type\": {\n         \"title\": \"CollabAgentToolCallThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"collabAgentToolCall\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"SubAgentActivityThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"agentPath\",\n       \"agentThreadId\",\n       \"id\",\n       \"kind\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"agentPath\": {\n         \"type\": \"string\"\n       },\n       \"agentThreadId\": {\n         \"type\": \"string\"\n       },\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"kind\": {\n         \"$ref\": \"#/definitions/SubAgentActivityKind\"\n       },\n       \"type\": {\n         \"title\": \"SubAgentActivityThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"subAgentActivity\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"WebSearchThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"id\",\n       \"query\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"action\": {\n         \"anyOf\": [\n           {\n             \"$ref\": \"#/definitions/WebSearchAction\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"query\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"WebSearchThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"webSearch\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"ImageViewThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"id\",\n       \"path\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"path\": {\n         \"$ref\": \"#/definitions/LegacyAppPathString\"\n       },\n       \"type\": {\n         \"title\": \"ImageViewThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"imageView\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"SleepThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"durationMs\",\n       \"id\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"durationMs\": {\n         \"type\": \"integer\",\n         \"format\": \"uint64\",\n         \"minimum\": 0.0\n       },\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"SleepThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"sleep\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"ImageGenerationThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"id\",\n       \"result\",\n       \"status\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"result\": {\n         \"type\": \"string\"\n       },\n       \"revisedPrompt\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"savedPath\": {\n         \"anyOf\": [\n           {\n             \"$ref\": \"#/definitions/AbsolutePathBuf\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"status\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"ImageGenerationThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"imageGeneration\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"EnteredReviewModeThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"id\",\n       \"review\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"review\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"EnteredReviewModeThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"enteredReviewMode\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"ExitedReviewModeThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"id\",\n       \"review\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"review\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"ExitedReviewModeThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"exitedReviewMode\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"ContextCompactionThreadItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"id\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"id\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"ContextCompactionThreadItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"contextCompaction\"\n         ]\n       }\n     }\n   }\n ]\n}\n```\n</details>",
-      "oneOf": [
-        {
-          "description": "UserMessageThreadItem",
-          "type": "object",
-          "properties": {
-            "clientId": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "content": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/UserInput2"
-              }
-            },
-            "id": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "userMessage"
-            }
-          },
-          "required": [
-            "type",
-            "content",
-            "id"
-          ]
-        },
-        {
-          "description": "HookPromptThreadItem",
-          "type": "object",
-          "properties": {
-            "fragments": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/HookPromptFragment2"
-              }
-            },
-            "id": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "hookPrompt"
-            }
-          },
-          "required": [
-            "type",
-            "fragments",
-            "id"
-          ]
-        },
-        {
-          "description": "AgentMessageThreadItem",
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "memoryCitation": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/MemoryCitation2"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "phase": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/MessagePhase2"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "text": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "agentMessage"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "text"
-          ]
-        },
-        {
-          "description": "PlanThreadItem\n\nEXPERIMENTAL - proposed plan item content. The completed plan item is authoritative and may not match the concatenation of `PlanDelta` text.",
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "plan"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "text"
-          ]
-        },
-        {
-          "description": "ReasoningThreadItem",
-          "type": "object",
-          "properties": {
-            "content": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "default": []
-            },
-            "id": {
-              "type": "string"
-            },
-            "summary": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "default": []
-            },
-            "type": {
-              "type": "string",
-              "const": "reasoning"
-            }
-          },
-          "required": [
-            "type",
-            "id"
-          ]
-        },
-        {
-          "description": "CommandExecutionThreadItem",
-          "type": "object",
-          "properties": {
-            "aggregatedOutput": {
-              "description": "The command's output, aggregated from stdout and stderr.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "command": {
-              "description": "The command to be executed.",
-              "type": "string"
-            },
-            "commandActions": {
-              "description": "A best-effort parsing of the command to understand the action(s) it will perform. This returns a list of CommandAction objects because a single shell command may be composed of many commands piped together.",
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/CommandAction2"
-              }
-            },
-            "cwd": {
-              "description": "The command's working directory.",
-              "$ref": "#/$defs/LegacyAppPathString2"
-            },
-            "durationMs": {
-              "description": "The duration of the command execution in milliseconds.",
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int64"
-            },
-            "exitCode": {
-              "description": "The command's exit code.",
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            },
-            "id": {
-              "type": "string"
-            },
-            "processId": {
-              "description": "Identifier for the underlying PTY process (when available).",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "source": {
-              "$ref": "#/$defs/CommandExecutionSource2",
-              "default": "agent"
-            },
-            "status": {
-              "$ref": "#/$defs/CommandExecutionStatus2"
-            },
-            "type": {
-              "type": "string",
-              "const": "commandExecution"
-            }
-          },
-          "required": [
-            "type",
-            "command",
-            "commandActions",
-            "cwd",
-            "id",
-            "status"
-          ]
-        },
-        {
-          "description": "FileChangeThreadItem",
-          "type": "object",
-          "properties": {
-            "changes": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/FileUpdateChange2"
-              }
-            },
-            "id": {
-              "type": "string"
-            },
-            "status": {
-              "$ref": "#/$defs/PatchApplyStatus2"
-            },
-            "type": {
-              "type": "string",
-              "const": "fileChange"
-            }
-          },
-          "required": [
-            "type",
-            "changes",
-            "id",
-            "status"
-          ]
-        },
-        {
-          "description": "McpToolCallThreadItem",
-          "type": "object",
-          "properties": {
-            "appContext": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/McpToolCallAppContext2"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "arguments": true,
-            "durationMs": {
-              "description": "The duration of the MCP tool call in milliseconds.",
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int64"
-            },
-            "error": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/McpToolCallError2"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "id": {
-              "type": "string"
-            },
-            "mcpAppResourceUri": {
-              "description": "Deprecated: use `appContext.resourceUri` instead.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "pluginId": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "result": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/McpToolCallResult2"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "server": {
-              "type": "string"
-            },
-            "status": {
-              "$ref": "#/$defs/McpToolCallStatus2"
-            },
-            "tool": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "mcpToolCall"
-            }
-          },
-          "required": [
-            "type",
-            "arguments",
-            "id",
-            "server",
-            "status",
-            "tool"
-          ]
-        },
-        {
-          "description": "DynamicToolCallThreadItem",
-          "type": "object",
-          "properties": {
-            "arguments": true,
-            "contentItems": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "$ref": "#/$defs/DynamicToolCallOutputContentItem2"
-              }
-            },
-            "durationMs": {
-              "description": "The duration of the dynamic tool call in milliseconds.",
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int64"
-            },
-            "id": {
-              "type": "string"
-            },
-            "namespace": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "status": {
-              "$ref": "#/$defs/DynamicToolCallStatus2"
-            },
-            "success": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "tool": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "dynamicToolCall"
-            }
-          },
-          "required": [
-            "type",
-            "arguments",
-            "id",
-            "status",
-            "tool"
-          ]
-        },
-        {
-          "description": "CollabAgentToolCallThreadItem",
-          "type": "object",
-          "properties": {
-            "agentsStates": {
-              "description": "Last known status of the target agents, when available.",
-              "type": "object",
-              "additionalProperties": {
-                "$ref": "#/$defs/CollabAgentState2"
-              }
-            },
-            "id": {
-              "description": "Unique identifier for this collab tool call.",
-              "type": "string"
-            },
-            "model": {
-              "description": "Model requested for the spawned agent, when applicable.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "prompt": {
-              "description": "Prompt text sent as part of the collab tool call, when available.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "reasoningEffort": {
-              "description": "Reasoning effort requested for the spawned agent, when applicable.",
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/ReasoningEffort2"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "receiverThreadIds": {
-              "description": "Thread ID of the receiving agent, when applicable. In case of spawn operation, this corresponds to the newly spawned agent.",
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "senderThreadId": {
-              "description": "Thread ID of the agent issuing the collab request.",
-              "type": "string"
-            },
-            "status": {
-              "description": "Current status of the collab tool call.",
-              "$ref": "#/$defs/CollabAgentToolCallStatus2"
-            },
-            "tool": {
-              "description": "Name of the collab tool that was invoked.",
-              "$ref": "#/$defs/CollabAgentTool2"
-            },
-            "type": {
-              "type": "string",
-              "const": "collabAgentToolCall"
-            }
-          },
-          "required": [
-            "type",
-            "agentsStates",
-            "id",
-            "receiverThreadIds",
-            "senderThreadId",
-            "status",
-            "tool"
-          ]
-        },
-        {
-          "description": "SubAgentActivityThreadItem",
-          "type": "object",
-          "properties": {
-            "agentPath": {
-              "type": "string"
-            },
-            "agentThreadId": {
-              "type": "string"
-            },
-            "id": {
-              "type": "string"
-            },
-            "kind": {
-              "$ref": "#/$defs/SubAgentActivityKind2"
-            },
-            "type": {
-              "type": "string",
-              "const": "subAgentActivity"
-            }
-          },
-          "required": [
-            "type",
-            "agentPath",
-            "agentThreadId",
-            "id",
-            "kind"
-          ]
-        },
-        {
-          "description": "WebSearchThreadItem",
-          "type": "object",
-          "properties": {
-            "action": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/WebSearchAction2"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "id": {
-              "type": "string"
-            },
-            "query": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "webSearch"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "query"
-          ]
-        },
-        {
-          "description": "ImageViewThreadItem",
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "path": {
-              "$ref": "#/$defs/LegacyAppPathString2"
-            },
-            "type": {
-              "type": "string",
-              "const": "imageView"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "path"
-          ]
-        },
-        {
-          "description": "SleepThreadItem",
-          "type": "object",
-          "properties": {
-            "durationMs": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            },
-            "id": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "sleep"
-            }
-          },
-          "required": [
-            "type",
-            "durationMs",
-            "id"
-          ]
-        },
-        {
-          "description": "ImageGenerationThreadItem",
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "result": {
-              "type": "string"
-            },
-            "revisedPrompt": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "savedPath": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/AbsolutePathBuf2"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "status": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "imageGeneration"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "result",
-            "status"
-          ]
-        },
-        {
-          "description": "EnteredReviewModeThreadItem",
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "review": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "enteredReviewMode"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "review"
-          ]
-        },
-        {
-          "description": "ExitedReviewModeThreadItem",
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "review": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "exitedReviewMode"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "review"
-          ]
-        },
-        {
-          "description": "ContextCompactionThreadItem",
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "contextCompaction"
-            }
-          },
-          "required": [
-            "type",
-            "id"
-          ]
-        }
-      ]
-    },
-    "UserInput2": {
-      "description": "`UserInput`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"oneOf\": [\n   {\n     \"title\": \"TextUserInput\",\n     \"type\": \"object\",\n     \"required\": [\n       \"text\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"text\": {\n         \"type\": \"string\"\n       },\n       \"text_elements\": {\n         \"description\": \"UI-defined spans within `text` used to render or persist special elements.\",\n         \"default\": [],\n         \"type\": \"array\",\n         \"items\": {\n           \"$ref\": \"#/definitions/TextElement\"\n         }\n       },\n       \"type\": {\n         \"title\": \"TextUserInputType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"text\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"ImageUserInput\",\n     \"type\": \"object\",\n     \"required\": [\n       \"type\",\n       \"url\"\n     ],\n     \"properties\": {\n       \"detail\": {\n         \"default\": null,\n         \"anyOf\": [\n           {\n             \"$ref\": \"#/definitions/ImageDetail\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"type\": {\n         \"title\": \"ImageUserInputType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"image\"\n         ]\n       },\n       \"url\": {\n         \"type\": \"string\"\n       }\n     }\n   },\n   {\n     \"title\": \"LocalImageUserInput\",\n     \"type\": \"object\",\n     \"required\": [\n       \"path\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"detail\": {\n         \"default\": null,\n         \"anyOf\": [\n           {\n             \"$ref\": \"#/definitions/ImageDetail\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"path\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"LocalImageUserInputType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"localImage\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"SkillUserInput\",\n     \"type\": \"object\",\n     \"required\": [\n       \"name\",\n       \"path\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"name\": {\n         \"type\": \"string\"\n       },\n       \"path\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"SkillUserInputType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"skill\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"MentionUserInput\",\n     \"type\": \"object\",\n     \"required\": [\n       \"name\",\n       \"path\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"name\": {\n         \"type\": \"string\"\n       },\n       \"path\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"MentionUserInputType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"mention\"\n         ]\n       }\n     }\n   }\n ]\n}\n```\n</details>",
-      "oneOf": [
-        {
-          "description": "TextUserInput",
-          "type": "object",
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "text_elements": {
-              "description": "UI-defined spans within `text` used to render or persist special elements.",
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/TextElement2"
-              },
-              "default": []
-            },
-            "type": {
-              "type": "string",
-              "const": "text"
-            }
-          },
-          "required": [
-            "type",
-            "text"
-          ]
-        },
-        {
-          "description": "ImageUserInput",
-          "type": "object",
-          "properties": {
-            "detail": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/ImageDetail2"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "url": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "image"
-            }
-          },
-          "required": [
-            "type",
-            "url"
-          ]
-        },
-        {
-          "description": "LocalImageUserInput",
-          "type": "object",
-          "properties": {
-            "detail": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/ImageDetail2"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "localImage"
-            }
-          },
-          "required": [
-            "type",
-            "path"
-          ]
-        },
-        {
-          "description": "SkillUserInput",
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "skill"
-            }
-          },
-          "required": [
-            "type",
-            "name",
-            "path"
-          ]
-        },
-        {
-          "description": "MentionUserInput",
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "mention"
-            }
-          },
-          "required": [
-            "type",
-            "name",
-            "path"
-          ]
-        }
-      ]
-    },
-    "TextElement2": {
-      "description": "`TextElement`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"object\",\n \"required\": [\n   \"byteRange\"\n ],\n \"properties\": {\n   \"byteRange\": {\n     \"description\": \"Byte range in the parent `text` buffer that this element occupies.\",\n     \"allOf\": [\n       {\n         \"$ref\": \"#/definitions/ByteRange\"\n       }\n     ]\n   },\n   \"placeholder\": {\n     \"description\": \"Optional human-readable placeholder for the element, displayed in the UI.\",\n     \"oneOf\": [\n       {\n         \"description\": \"Optional human-readable placeholder for the element, displayed in the UI.\",\n         \"type\": \"string\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   }\n }\n}\n```\n</details>",
-      "type": "object",
-      "properties": {
-        "byteRange": {
-          "description": "Byte range in the parent `text` buffer that this element occupies.",
-          "$ref": "#/$defs/ByteRange2"
-        },
-        "placeholder": {
-          "description": "Optional human-readable placeholder for the element, displayed in the UI.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "byteRange"
-      ]
-    },
-    "ByteRange2": {
-      "description": "`ByteRange`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"object\",\n \"required\": [\n   \"end\",\n   \"start\"\n ],\n \"properties\": {\n   \"end\": {\n     \"type\": \"integer\",\n     \"format\": \"uint\",\n     \"minimum\": 0.0\n   },\n   \"start\": {\n     \"type\": \"integer\",\n     \"format\": \"uint\",\n     \"minimum\": 0.0\n   }\n }\n}\n```\n</details>",
-      "type": "object",
-      "properties": {
-        "end": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        },
-        "start": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "end",
-        "start"
-      ]
-    },
-    "ImageDetail2": {
-      "description": "`ImageDetail`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"auto\",\n   \"low\",\n   \"high\",\n   \"original\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "auto",
-        "low",
-        "high",
-        "original"
-      ]
-    },
-    "HookPromptFragment2": {
-      "description": "`HookPromptFragment`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"object\",\n \"required\": [\n   \"hookRunId\",\n   \"text\"\n ],\n \"properties\": {\n   \"hookRunId\": {\n     \"type\": \"string\"\n   },\n   \"text\": {\n     \"type\": \"string\"\n   }\n }\n}\n```\n</details>",
-      "type": "object",
-      "properties": {
-        "hookRunId": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "hookRunId",
-        "text"
-      ]
-    },
-    "MemoryCitation2": {
-      "description": "`MemoryCitation`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"object\",\n \"required\": [\n   \"entries\",\n   \"threadIds\"\n ],\n \"properties\": {\n   \"entries\": {\n     \"type\": \"array\",\n     \"items\": {\n       \"$ref\": \"#/definitions/MemoryCitationEntry\"\n     }\n   },\n   \"threadIds\": {\n     \"type\": \"array\",\n     \"items\": {\n       \"type\": \"string\"\n     }\n   }\n }\n}\n```\n</details>",
-      "type": "object",
-      "properties": {
-        "entries": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/MemoryCitationEntry2"
-          }
-        },
-        "threadIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "entries",
-        "threadIds"
-      ]
-    },
-    "MemoryCitationEntry2": {
-      "description": "`MemoryCitationEntry`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"object\",\n \"required\": [\n   \"lineEnd\",\n   \"lineStart\",\n   \"note\",\n   \"path\"\n ],\n \"properties\": {\n   \"lineEnd\": {\n     \"type\": \"integer\",\n     \"format\": \"uint32\",\n     \"minimum\": 0.0\n   },\n   \"lineStart\": {\n     \"type\": \"integer\",\n     \"format\": \"uint32\",\n     \"minimum\": 0.0\n   },\n   \"note\": {\n     \"type\": \"string\"\n   },\n   \"path\": {\n     \"type\": \"string\"\n   }\n }\n}\n```\n</details>",
-      "type": "object",
-      "properties": {
-        "lineEnd": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        },
-        "lineStart": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        },
-        "note": {
-          "type": "string"
-        },
-        "path": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "lineEnd",
-        "lineStart",
-        "note",
-        "path"
-      ]
-    },
-    "MessagePhase2": {
-      "description": "Classifies an assistant message as interim commentary or final answer text.\n\nProviders do not emit this consistently, so callers must treat `None` as \"phase unknown\" and keep compatibility behavior for legacy models.\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"description\": \"Classifies an assistant message as interim commentary or final answer text.\\n\\nProviders do not emit this consistently, so callers must treat `None` as \\\"phase unknown\\\" and keep compatibility behavior for legacy models.\",\n \"oneOf\": [\n   {\n     \"description\": \"Mid-turn assistant text (for example preamble/progress narration).\\n\\nAdditional tool calls or assistant output may follow before turn completion.\",\n     \"type\": \"string\",\n     \"enum\": [\n       \"commentary\"\n     ]\n   },\n   {\n     \"description\": \"The assistant's terminal answer text for the current turn.\",\n     \"type\": \"string\",\n     \"enum\": [\n       \"final_answer\"\n     ]\n   }\n ]\n}\n```\n</details>",
-      "oneOf": [
-        {
-          "description": "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
-          "type": "string",
-          "const": "commentary"
-        },
-        {
-          "description": "The assistant's terminal answer text for the current turn.",
-          "type": "string",
-          "const": "final_answer"
-        }
-      ]
-    },
-    "CommandAction2": {
-      "description": "`CommandAction`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"oneOf\": [\n   {\n     \"title\": \"ReadCommandAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"command\",\n       \"name\",\n       \"path\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"command\": {\n         \"type\": \"string\"\n       },\n       \"name\": {\n         \"type\": \"string\"\n       },\n       \"path\": {\n         \"$ref\": \"#/definitions/AbsolutePathBuf\"\n       },\n       \"type\": {\n         \"title\": \"ReadCommandActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"read\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"ListFilesCommandAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"command\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"command\": {\n         \"type\": \"string\"\n       },\n       \"path\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"type\": {\n         \"title\": \"ListFilesCommandActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"listFiles\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"SearchCommandAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"command\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"command\": {\n         \"type\": \"string\"\n       },\n       \"path\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"query\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"type\": {\n         \"title\": \"SearchCommandActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"search\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"UnknownCommandAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"command\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"command\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"UnknownCommandActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"unknown\"\n         ]\n       }\n     }\n   }\n ]\n}\n```\n</details>",
-      "oneOf": [
-        {
-          "description": "ReadCommandAction",
-          "type": "object",
-          "properties": {
-            "command": {
-              "type": "string"
-            },
-            "name": {
-              "type": "string"
-            },
-            "path": {
-              "$ref": "#/$defs/AbsolutePathBuf2"
-            },
-            "type": {
-              "type": "string",
-              "const": "read"
-            }
-          },
-          "required": [
-            "type",
-            "command",
-            "name",
-            "path"
-          ]
-        },
-        {
-          "description": "ListFilesCommandAction",
-          "type": "object",
-          "properties": {
-            "command": {
-              "type": "string"
-            },
-            "path": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "listFiles"
-            }
-          },
-          "required": [
-            "type",
-            "command"
-          ]
-        },
-        {
-          "description": "SearchCommandAction",
-          "type": "object",
-          "properties": {
-            "command": {
-              "type": "string"
-            },
-            "path": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "query": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "search"
-            }
-          },
-          "required": [
-            "type",
-            "command"
-          ]
-        },
-        {
-          "description": "UnknownCommandAction",
-          "type": "object",
-          "properties": {
-            "command": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "unknown"
-            }
-          },
-          "required": [
-            "type",
-            "command"
-          ]
-        }
-      ]
-    },
-    "CommandExecutionSource2": {
-      "description": "`CommandExecutionSource`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"agent\",\n   \"userShell\",\n   \"unifiedExecStartup\",\n   \"unifiedExecInteraction\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "agent",
-        "userShell",
-        "unifiedExecStartup",
-        "unifiedExecInteraction"
-      ]
-    },
-    "CommandExecutionStatus2": {
-      "description": "`CommandExecutionStatus`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"inProgress\",\n   \"completed\",\n   \"failed\",\n   \"declined\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "inProgress",
-        "completed",
-        "failed",
-        "declined"
-      ]
-    },
-    "PatchApplyStatus2": {
-      "description": "`PatchApplyStatus`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"inProgress\",\n   \"completed\",\n   \"failed\",\n   \"declined\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "inProgress",
-        "completed",
-        "failed",
-        "declined"
-      ]
-    },
-    "McpToolCallAppContext2": {
-      "description": "`McpToolCallAppContext`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"object\",\n \"required\": [\n   \"connectorId\"\n ],\n \"properties\": {\n   \"actionName\": {\n     \"oneOf\": [\n       {\n         \"type\": \"string\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   },\n   \"appName\": {\n     \"oneOf\": [\n       {\n         \"type\": \"string\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   },\n   \"connectorId\": {\n     \"type\": \"string\"\n   },\n   \"linkId\": {\n     \"oneOf\": [\n       {\n         \"type\": \"string\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   },\n   \"resourceUri\": {\n     \"oneOf\": [\n       {\n         \"type\": \"string\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   },\n   \"templateId\": {\n     \"oneOf\": [\n       {\n         \"type\": \"string\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   }\n }\n}\n```\n</details>",
-      "type": "object",
-      "properties": {
-        "actionName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "appName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "connectorId": {
-          "type": "string"
-        },
-        "linkId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "resourceUri": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "templateId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "connectorId"
-      ]
-    },
-    "McpToolCallError2": {
-      "description": "`McpToolCallError`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"object\",\n \"required\": [\n   \"message\"\n ],\n \"properties\": {\n   \"message\": {\n     \"type\": \"string\"\n   }\n }\n}\n```\n</details>",
-      "type": "object",
-      "properties": {
-        "message": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "message"
-      ]
-    },
-    "McpToolCallResult2": {
-      "description": "`McpToolCallResult`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"object\",\n \"required\": [\n   \"content\"\n ],\n \"properties\": {\n   \"_meta\": true,\n   \"content\": {\n     \"type\": \"array\",\n     \"items\": true\n   },\n   \"structuredContent\": true\n }\n}\n```\n</details>",
-      "type": "object",
-      "properties": {
-        "content": {
-          "type": "array",
-          "items": true
-        },
-        "_meta": true,
-        "structuredContent": true
-      },
-      "required": [
-        "content"
-      ]
-    },
-    "McpToolCallStatus2": {
-      "description": "`McpToolCallStatus`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"inProgress\",\n   \"completed\",\n   \"failed\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "inProgress",
-        "completed",
-        "failed"
-      ]
-    },
-    "DynamicToolCallOutputContentItem2": {
-      "description": "`DynamicToolCallOutputContentItem`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"oneOf\": [\n   {\n     \"title\": \"InputTextDynamicToolCallOutputContentItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"text\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"text\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"InputTextDynamicToolCallOutputContentItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"inputText\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"InputImageDynamicToolCallOutputContentItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"imageUrl\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"imageUrl\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"InputImageDynamicToolCallOutputContentItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"inputImage\"\n         ]\n       }\n     }\n   }\n ]\n}\n```\n</details>",
-      "oneOf": [
-        {
-          "description": "InputTextDynamicToolCallOutputContentItem",
-          "type": "object",
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "inputText"
-            }
-          },
-          "required": [
-            "type",
-            "text"
-          ]
-        },
-        {
-          "description": "InputImageDynamicToolCallOutputContentItem",
-          "type": "object",
-          "properties": {
-            "imageUrl": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "inputImage"
-            }
-          },
-          "required": [
-            "type",
-            "imageUrl"
-          ]
-        }
-      ]
-    },
-    "DynamicToolCallStatus2": {
-      "description": "`DynamicToolCallStatus`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"inProgress\",\n   \"completed\",\n   \"failed\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "inProgress",
-        "completed",
-        "failed"
-      ]
-    },
-    "CollabAgentState2": {
-      "description": "`CollabAgentState`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"object\",\n \"required\": [\n   \"status\"\n ],\n \"properties\": {\n   \"message\": {\n     \"oneOf\": [\n       {\n         \"type\": \"string\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   },\n   \"status\": {\n     \"$ref\": \"#/definitions/CollabAgentStatus\"\n   }\n }\n}\n```\n</details>",
-      "type": "object",
-      "properties": {
-        "message": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "status": {
-          "$ref": "#/$defs/CollabAgentStatus2"
-        }
-      },
-      "required": [
-        "status"
-      ]
-    },
-    "CollabAgentStatus2": {
-      "description": "`CollabAgentStatus`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"pendingInit\",\n   \"running\",\n   \"interrupted\",\n   \"completed\",\n   \"errored\",\n   \"shutdown\",\n   \"notFound\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "pendingInit",
-        "running",
-        "interrupted",
-        "completed",
-        "errored",
-        "shutdown",
-        "notFound"
-      ]
-    },
-    "ReasoningEffort2": {
-      "description": "A non-empty reasoning effort value advertised by the model.\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"description\": \"A non-empty reasoning effort value advertised by the model.\",\n \"type\": \"string\",\n \"minLength\": 1\n}\n```\n</details>",
-      "type": "string"
-    },
-    "CollabAgentToolCallStatus2": {
-      "description": "`CollabAgentToolCallStatus`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"inProgress\",\n   \"completed\",\n   \"failed\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "inProgress",
-        "completed",
-        "failed"
-      ]
-    },
-    "CollabAgentTool2": {
-      "description": "`CollabAgentTool`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"spawnAgent\",\n   \"sendInput\",\n   \"resumeAgent\",\n   \"wait\",\n   \"closeAgent\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "spawnAgent",
-        "sendInput",
-        "resumeAgent",
-        "wait",
-        "closeAgent"
-      ]
-    },
-    "SubAgentActivityKind2": {
-      "description": "`SubAgentActivityKind`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"started\",\n   \"interacted\",\n   \"interrupted\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "started",
-        "interacted",
-        "interrupted"
-      ]
-    },
-    "WebSearchAction2": {
-      "description": "`WebSearchAction`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"oneOf\": [\n   {\n     \"title\": \"SearchWebSearchAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"type\"\n     ],\n     \"properties\": {\n       \"queries\": {\n         \"oneOf\": [\n           {\n             \"type\": \"array\",\n             \"items\": {\n               \"type\": \"string\"\n             }\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"query\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"type\": {\n         \"title\": \"SearchWebSearchActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"search\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"OpenPageWebSearchAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"type\"\n     ],\n     \"properties\": {\n       \"type\": {\n         \"title\": \"OpenPageWebSearchActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"openPage\"\n         ]\n       },\n       \"url\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"FindInPageWebSearchAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"type\"\n     ],\n     \"properties\": {\n       \"pattern\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"type\": {\n         \"title\": \"FindInPageWebSearchActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"findInPage\"\n         ]\n       },\n       \"url\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"OtherWebSearchAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"type\"\n     ],\n     \"properties\": {\n       \"type\": {\n         \"title\": \"OtherWebSearchActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"other\"\n         ]\n       }\n     }\n   }\n ]\n}\n```\n</details>",
-      "oneOf": [
-        {
-          "description": "SearchWebSearchAction",
-          "type": "object",
-          "properties": {
-            "queries": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "type": "string"
-              }
-            },
-            "query": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "search"
-            }
-          },
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "description": "OpenPageWebSearchAction",
-          "type": "object",
-          "properties": {
-            "url": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "openPage"
-            }
-          },
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "description": "FindInPageWebSearchAction",
-          "type": "object",
-          "properties": {
-            "pattern": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "url": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "findInPage"
-            }
-          },
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "type": {
-              "type": "string",
-              "const": "other"
-            }
-          },
-          "required": [
-            "type"
-          ]
-        }
-      ]
-    },
-    "TurnItemsView": {
-      "description": "`TurnItemsView`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"oneOf\": [\n   {\n     \"description\": \"`items` was not loaded for this turn. The field is intentionally empty.\",\n     \"type\": \"string\",\n     \"enum\": [\n       \"notLoaded\"\n     ]\n   },\n   {\n     \"description\": \"`items` contains only a display summary for this turn.\",\n     \"type\": \"string\",\n     \"enum\": [\n       \"summary\"\n     ]\n   },\n   {\n     \"description\": \"`items` contains every ThreadItem available from persisted app-server history for this turn.\",\n     \"type\": \"string\",\n     \"enum\": [\n       \"full\"\n     ]\n   }\n ]\n}\n```\n</details>",
-      "oneOf": [
-        {
-          "description": "`items` was not loaded for this turn. The field is intentionally empty.",
-          "type": "string",
-          "const": "notLoaded"
-        },
-        {
-          "description": "`items` contains only a display summary for this turn.",
-          "type": "string",
-          "const": "summary"
-        },
-        {
-          "description": "`items` contains every ThreadItem available from persisted app-server history for this turn.",
-          "type": "string",
-          "const": "full"
-        }
-      ]
-    },
-    "TurnStatus": {
-      "description": "`TurnStatus`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"completed\",\n   \"interrupted\",\n   \"failed\",\n   \"inProgress\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "completed",
-        "interrupted",
-        "failed",
-        "inProgress"
-      ]
-    },
     "TurnCompletedNotification": {
-      "description": "`TurnCompletedNotification`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"title\": \"TurnCompletedNotification\",\n \"type\": \"object\",\n \"required\": [\n   \"threadId\",\n   \"turn\"\n ],\n \"properties\": {\n   \"threadId\": {\n     \"type\": \"string\"\n   },\n   \"turn\": {\n     \"$ref\": \"#/definitions/Turn\"\n   }\n },\n \"$schema\": \"http://json-schema.org/draft-07/schema#\"\n}\n```\n</details>",
       "type": "object",
       "properties": {
         "threadId": {
@@ -7893,7 +6550,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/$defs/CommandAction3"
+            "$ref": "#/$defs/CommandAction2"
           }
         },
         "cwd": {
@@ -7975,7 +6632,7 @@
         "turnId"
       ]
     },
-    "CommandAction3": {
+    "CommandAction2": {
       "description": "`CommandAction`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"oneOf\": [\n   {\n     \"title\": \"ReadCommandAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"command\",\n       \"name\",\n       \"path\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"command\": {\n         \"type\": \"string\"\n       },\n       \"name\": {\n         \"type\": \"string\"\n       },\n       \"path\": {\n         \"$ref\": \"#/definitions/AbsolutePathBuf\"\n       },\n       \"type\": {\n         \"title\": \"ReadCommandActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"read\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"ListFilesCommandAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"command\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"command\": {\n         \"type\": \"string\"\n       },\n       \"path\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"type\": {\n         \"title\": \"ListFilesCommandActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"listFiles\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"SearchCommandAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"command\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"command\": {\n         \"type\": \"string\"\n       },\n       \"path\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"query\": {\n         \"oneOf\": [\n           {\n             \"type\": \"string\"\n           },\n           {\n             \"type\": \"null\"\n           }\n         ]\n       },\n       \"type\": {\n         \"title\": \"SearchCommandActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"search\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"UnknownCommandAction\",\n     \"type\": \"object\",\n     \"required\": [\n       \"command\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"command\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"UnknownCommandActionType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"unknown\"\n         ]\n       }\n     }\n   }\n ]\n}\n```\n</details>",
       "oneOf": [
         {
@@ -11043,6 +9700,9 @@
             "text": {
               "type": "string"
             },
+            "presentation": {
+              "$ref": "#/$defs/AgentSurfaceInstructionPresentation"
+            },
             "kind": {
               "type": "string",
               "const": "instruction"
@@ -11051,7 +9711,8 @@
           "required": [
             "kind",
             "channel",
-            "text"
+            "text",
+            "presentation"
           ]
         },
         {
@@ -11065,6 +9726,9 @@
             },
             "input_schema": true,
             "output_schema": true,
+            "protocol_projector": {
+              "$ref": "#/$defs/ToolProtocolProjector"
+            },
             "kind": {
               "type": "string",
               "const": "tool"
@@ -11074,7 +9738,8 @@
             "kind",
             "name",
             "description",
-            "input_schema"
+            "input_schema",
+            "protocol_projector"
           ]
         },
         {
@@ -11143,6 +9808,565 @@
           "required": [
             "kind",
             "requirement"
+          ]
+        }
+      ]
+    },
+    "AgentSurfaceInstructionPresentation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "system_guidelines"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "identity"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "assignment_context"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "environment"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "user_context"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "manifest": {
+              "$ref": "#/$defs/AgentCapabilityManifest"
+            },
+            "kind": {
+              "type": "string",
+              "const": "capability_manifest"
+            }
+          },
+          "required": [
+            "kind",
+            "manifest"
+          ]
+        }
+      ]
+    },
+    "AgentCapabilityManifest": {
+      "type": "object",
+      "properties": {
+        "tool_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tool_clusters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "included_tool_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "excluded_tool_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mcp_servers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentCapabilityMcpServer"
+          }
+        },
+        "companion_agents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentCapabilityCompanionAgent"
+          }
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentCapabilityChannel"
+          }
+        },
+        "vfs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentCapabilityVfs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentCapabilitySkill"
+          }
+        },
+        "skill_diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentCapabilityDiagnostic"
+          }
+        },
+        "memory_sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentCapabilityMemorySource"
+          }
+        },
+        "memory_diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentCapabilityDiagnostic"
+          }
+        },
+        "workspace_module": {
+          "$ref": "#/$defs/AgentCapabilityWorkspaceModule"
+        }
+      },
+      "required": [
+        "tool_capabilities",
+        "tool_clusters",
+        "included_tool_paths",
+        "excluded_tool_paths",
+        "mcp_servers",
+        "companion_agents",
+        "channels",
+        "skills",
+        "skill_diagnostics",
+        "memory_sources",
+        "memory_diagnostics",
+        "workspace_module"
+      ]
+    },
+    "AgentCapabilityMcpServer": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "uses_relay": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tool_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "reason_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "uses_relay",
+        "status"
+      ]
+    },
+    "AgentCapabilityCompanionAgent": {
+      "type": "object",
+      "properties": {
+        "agent_key": {
+          "type": "string"
+        },
+        "executor": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_key",
+        "executor",
+        "display_name"
+      ]
+    },
+    "AgentCapabilityChannel": {
+      "type": "object",
+      "properties": {
+        "channel_ref": {
+          "type": "string"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "readiness": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "channel_ref",
+        "aliases",
+        "operations",
+        "readiness"
+      ]
+    },
+    "AgentCapabilityVfs": {
+      "type": "object",
+      "properties": {
+        "default_mount": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mounts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentCapabilityMount"
+          }
+        }
+      },
+      "required": [
+        "mounts"
+      ]
+    },
+    "AgentCapabilityMount": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "root_ref": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "display_name",
+        "root_ref",
+        "capabilities"
+      ]
+    },
+    "AgentCapabilitySkill": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "capability_key": {
+          "type": "string"
+        },
+        "provider_key": {
+          "type": "string"
+        },
+        "local_name": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "file_path": {
+          "type": "string"
+        },
+        "base_dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exposure": {
+          "type": "string"
+        },
+        "disable_model_invocation": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "capability_key",
+        "provider_key",
+        "local_name",
+        "description",
+        "file_path",
+        "exposure",
+        "disable_model_invocation"
+      ]
+    },
+    "AgentCapabilityDiagnostic": {
+      "type": "object",
+      "properties": {
+        "provider_key": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "source_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider_key",
+        "code",
+        "message"
+      ]
+    },
+    "AgentCapabilityMemorySource": {
+      "type": "object",
+      "properties": {
+        "provider_key": {
+          "type": "string"
+        },
+        "source_key": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "source_uri": {
+          "type": "string"
+        },
+        "index_uri": {
+          "type": "string"
+        },
+        "mount_id": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "index_status": {
+          "type": "string"
+        },
+        "trust_level": {
+          "type": "string"
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider_key",
+        "source_key",
+        "display_name",
+        "source_uri",
+        "index_uri",
+        "mount_id",
+        "scope",
+        "index_status",
+        "trust_level"
+      ]
+    },
+    "AgentCapabilityWorkspaceModule": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "allowed_module_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "mode",
+        "allowed_module_ids"
+      ]
+    },
+    "ToolProtocolProjector": {
+      "description": "工具 owner 声明的 canonical conversation presentation family。\n\n该字段随工具定义穿过 Product surface、Complete Agent binding 与 Agent native history；\npresentation adapter 只消费此声明，不从运行时工具名反推卡片类型。",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "family": {
+              "type": "string",
+              "const": "command"
+            }
+          },
+          "required": [
+            "family"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "family": {
+              "type": "string",
+              "const": "file_change"
+            }
+          },
+          "required": [
+            "family"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "family": {
+              "type": "string",
+              "const": "fs_read"
+            }
+          },
+          "required": [
+            "family"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "family": {
+              "type": "string",
+              "const": "fs_grep"
+            }
+          },
+          "required": [
+            "family"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "family": {
+              "type": "string",
+              "const": "fs_glob"
+            }
+          },
+          "required": [
+            "family"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "server_key": {
+              "type": "string"
+            },
+            "family": {
+              "type": "string",
+              "const": "mcp"
+            }
+          },
+          "required": [
+            "family",
+            "server_key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "namespace": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "family": {
+              "type": "string",
+              "const": "dynamic"
+            }
+          },
+          "required": [
+            "family"
           ]
         }
       ]

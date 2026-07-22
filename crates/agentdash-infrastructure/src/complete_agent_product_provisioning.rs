@@ -3,6 +3,12 @@ use std::{
     sync::Arc,
 };
 
+use agentdash_agent_protocol::{
+    AgentCapabilityChannel, AgentCapabilityCompanionAgent, AgentCapabilityDiagnostic,
+    AgentCapabilityManifest, AgentCapabilityMcpServer, AgentCapabilityMemorySource,
+    AgentCapabilityMount, AgentCapabilitySkill, AgentCapabilityVfs, AgentCapabilityWorkspaceModule,
+    AgentSurfaceInstructionPresentation,
+};
 use agentdash_agent_runtime::{
     ManagedRuntimeDispatchContext, ManagedRuntimeLifecyclePort, PlatformToolBroker,
     RuntimeToolDefinition, map_initial_context_package,
@@ -645,6 +651,16 @@ async fn compile_product_surface(
     let vfs = decode_optional::<Vfs>("vfs", &facts.vfs)?;
     let mcp_servers =
         decode_optional::<Vec<RuntimeMcpServer>>("mcp", &facts.mcp)?.unwrap_or_default();
+    if capability_state.vfs.active.as_ref() != vfs.as_ref() {
+        return Err(invalid(
+            "AgentFrame capability VFS does not match its same-revision VFS projection",
+        ));
+    }
+    if capability_state.tool.mcp_servers != mcp_servers {
+        return Err(invalid(
+            "AgentFrame capability MCP state does not match its same-revision MCP projection",
+        ));
+    }
     let context =
         decode_optional::<AgentContextSourceSnapshot>("context_source", &facts.context_source)?;
     let hook_plan = decode_optional::<AgentFrameHookPlan>("hook_plan", &facts.hook_plan)?;
@@ -705,13 +721,12 @@ async fn compile_product_surface(
             AgentSurfaceContributionPayload::Instruction {
                 channel: "system".to_owned(),
                 text: prompt.to_owned(),
+                presentation: AgentSurfaceInstructionPresentation::SystemGuidelines,
             },
         )?);
     }
     requirements.extend(instruction_requirements(context.as_ref())?);
-    requirements.extend(skill_instruction_requirements(&capability_state)?);
-    requirements.extend(memory_instruction_requirements(&capability_state)?);
-    requirements.extend(mcp_instruction_requirements(&mcp_servers)?);
+    requirements.push(capability_manifest_requirement(&capability_state)?);
     requirements.extend(workspace_requirements(vfs.as_ref())?);
     requirements.extend(tool_requirements(
         broker.definitions(),
@@ -744,117 +759,364 @@ async fn compile_product_surface(
     })
 }
 
-fn skill_instruction_requirements(
-    capability_state: &CapabilityState,
-) -> Result<Vec<AgentSurfaceRequirement>, AgentRunProductRuntimeProvisioningError> {
-    let visible = capability_state
+fn capability_manifest_requirement(
+    state: &CapabilityState,
+) -> Result<AgentSurfaceRequirement, AgentRunProductRuntimeProvisioningError> {
+    let manifest = capability_manifest(state)?;
+    surface_requirement(
+        "instruction:capability:manifest".to_owned(),
+        true,
+        SemanticFidelity::Exact,
+        BTreeSet::from([AgentSurfaceRoute::ImmutableDelivery]),
+        AgentSurfaceSemanticFacet::Instruction,
+        AgentSurfaceContributionPayload::Instruction {
+            channel: "capabilities".to_owned(),
+            text: render_capability_manifest(&manifest),
+            presentation: AgentSurfaceInstructionPresentation::CapabilityManifest { manifest },
+        },
+    )
+}
+
+fn capability_manifest(
+    state: &CapabilityState,
+) -> Result<AgentCapabilityManifest, AgentRunProductRuntimeProvisioningError> {
+    let mcp_servers = state
+        .tool
+        .mcp_servers
+        .iter()
+        .map(|server| {
+            let (status, tool_count, reason_code, message) = match &server.readiness {
+                agentdash_platform_spi::RuntimeMcpSourceReadiness::Pending => {
+                    ("pending", None, None, None)
+                }
+                agentdash_platform_spi::RuntimeMcpSourceReadiness::Ready { tool_count } => (
+                    "ready",
+                    Some(u32::try_from(*tool_count).map_err(|_| {
+                        invalid("MCP tool count exceeds the Complete Agent protocol boundary")
+                    })?),
+                    None,
+                    None,
+                ),
+                agentdash_platform_spi::RuntimeMcpSourceReadiness::Unavailable {
+                    reason_code,
+                    message,
+                } => (
+                    "unavailable",
+                    None,
+                    Some(reason_code.clone()),
+                    Some(message.clone()),
+                ),
+            };
+            Ok(AgentCapabilityMcpServer {
+                name: server.name.clone(),
+                uses_relay: server.uses_relay,
+                status: status.to_owned(),
+                tool_count,
+                reason_code,
+                message,
+            })
+        })
+        .collect::<Result<Vec<_>, AgentRunProductRuntimeProvisioningError>>()?;
+    let companion_agents = state
+        .companion
+        .agents
+        .iter()
+        .map(|agent| AgentCapabilityCompanionAgent {
+            agent_key: agent.name.clone(),
+            executor: agent.executor.clone(),
+            display_name: agent.display_name.clone(),
+        })
+        .collect();
+    let channels = state
+        .channel
+        .visible_channels
+        .iter()
+        .map(|channel| {
+            Ok(AgentCapabilityChannel {
+                channel_ref: format!(
+                    "{}:{}",
+                    channel.channel_ref.owner.stable_key(),
+                    channel.channel_ref.channel_id
+                ),
+                aliases: channel.aliases.clone(),
+                operations: channel
+                    .operations
+                    .iter()
+                    .map(wire_name)
+                    .collect::<Result<Vec<_>, _>>()?,
+                readiness: wire_name(&channel.readiness)?,
+            })
+        })
+        .collect::<Result<Vec<_>, AgentRunProductRuntimeProvisioningError>>()?;
+    let vfs = state
+        .vfs
+        .active
+        .as_ref()
+        .map(|vfs| {
+            Ok(AgentCapabilityVfs {
+                default_mount: vfs.default_mount_id.clone(),
+                mounts: vfs
+                    .mounts
+                    .iter()
+                    .map(|mount| {
+                        Ok(AgentCapabilityMount {
+                            id: mount.id.clone(),
+                            display_name: mount.display_name.clone(),
+                            root_ref: mount.root_ref.clone(),
+                            capabilities: mount
+                                .capabilities
+                                .iter()
+                                .map(wire_name)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, AgentRunProductRuntimeProvisioningError>>()?,
+            })
+        })
+        .transpose()?;
+    let skills = state
         .skill
         .skills
         .iter()
-        .filter(|skill| skill.exposure.is_default_exposed() && !skill.disable_model_invocation)
-        .collect::<Vec<_>>();
-    if visible.is_empty() {
-        return Ok(Vec::new());
-    }
-    let text = format!(
-        "## Available Skills\nUse a matching skill by reading its `SKILL.md` from the declared VFS path before acting.\n{}",
-        visible
+        .map(|skill| {
+            Ok(AgentCapabilitySkill {
+                name: skill.name.clone(),
+                capability_key: skill.capability_key.clone(),
+                provider_key: skill.provider_key.clone(),
+                local_name: skill.local_name.clone(),
+                display_name: skill.display_name.clone(),
+                description: skill.description.clone(),
+                file_path: skill.file_path.clone(),
+                base_dir: skill.base_dir.clone(),
+                exposure: wire_name(&skill.exposure)?,
+                disable_model_invocation: skill.disable_model_invocation,
+            })
+        })
+        .collect::<Result<Vec<_>, AgentRunProductRuntimeProvisioningError>>()?;
+    let memory_sources = state
+        .memory
+        .inventory
+        .clusters
+        .iter()
+        .flat_map(|cluster| cluster.sources.iter())
+        .map(|source| {
+            Ok(AgentCapabilityMemorySource {
+                provider_key: source.provider_key.clone(),
+                source_key: source.source_key.clone(),
+                display_name: source.display_name.clone(),
+                source_uri: source.source_uri.clone(),
+                index_uri: source.index_uri.clone(),
+                mount_id: source.mount_id.clone(),
+                scope: wire_name(&source.scope)?,
+                index_status: wire_name(&source.index_status)?,
+                trust_level: wire_name(&source.trust_level)?,
+                summary: source.summary.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, AgentRunProductRuntimeProvisioningError>>()?;
+    let skill_diagnostics = state
+        .skill
+        .diagnostics
+        .iter()
+        .map(|diagnostic| AgentCapabilityDiagnostic {
+            provider_key: diagnostic.provider_key.clone(),
+            code: diagnostic.code.clone(),
+            message: diagnostic.message.clone(),
+            source_key: diagnostic.local_name.clone(),
+            uri: diagnostic.file_path.clone(),
+        })
+        .collect();
+    let memory_diagnostics = state
+        .memory
+        .inventory
+        .diagnostics
+        .iter()
+        .map(|diagnostic| AgentCapabilityDiagnostic {
+            provider_key: diagnostic.provider_key.clone(),
+            code: diagnostic.code.clone(),
+            message: diagnostic.message.clone(),
+            source_key: diagnostic.source_key.clone(),
+            uri: diagnostic.uri.clone(),
+        })
+        .collect();
+    Ok(AgentCapabilityManifest {
+        tool_capabilities: state.capability_keys().into_iter().collect(),
+        tool_clusters: state
+            .tool
+            .enabled_clusters
             .iter()
-            .map(|skill| {
-                format!(
+            .map(wire_name)
+            .collect::<Result<Vec<_>, _>>()?,
+        included_tool_paths: state.included_tool_paths().into_iter().collect(),
+        excluded_tool_paths: state.excluded_tool_paths().into_iter().collect(),
+        mcp_servers,
+        companion_agents,
+        channels,
+        vfs,
+        skills,
+        skill_diagnostics,
+        memory_sources,
+        memory_diagnostics,
+        workspace_module: AgentCapabilityWorkspaceModule {
+            mode: wire_name(&state.workspace_module.mode)?,
+            allowed_module_ids: state.workspace_module.allowed_module_ids.clone(),
+        },
+    })
+}
+
+fn wire_name(
+    value: &impl serde::Serialize,
+) -> Result<String, AgentRunProductRuntimeProvisioningError> {
+    serde_json::to_value(value)
+        .map_err(|error| invalid(error.to_string()))?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| invalid("capability enum did not serialize to a wire name"))
+}
+
+fn render_capability_manifest(manifest: &AgentCapabilityManifest) -> String {
+    let mut lines = vec![
+        "## Agent Capability Surface".to_owned(),
+        "This manifest is the complete capability input accepted for this Agent surface."
+            .to_owned(),
+    ];
+    lines.push(format!(
+        "### Tool Capabilities\n{}",
+        render_list(&manifest.tool_capabilities)
+    ));
+    lines.push(format!(
+        "### Tool Clusters\n{}",
+        render_list(&manifest.tool_clusters)
+    ));
+    if !manifest.mcp_servers.is_empty() {
+        lines.push(format!(
+            "### MCP Servers\n{}",
+            manifest
+                .mcp_servers
+                .iter()
+                .map(|server| format!("- `{}` ({})", server.name, server.status))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if let Some(vfs) = &manifest.vfs {
+        lines.push(format!(
+            "### VFS Mounts\n{}",
+            vfs.mounts
+                .iter()
+                .map(|mount| format!(
+                    "- `{}`: `{}` [{}]{}",
+                    mount.id,
+                    mount.root_ref,
+                    mount.capabilities.join(", "),
+                    (vfs.default_mount.as_deref() == Some(mount.id.as_str()))
+                        .then_some(" (default)")
+                        .unwrap_or_default()
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    let model_skills = manifest
+        .skills
+        .iter()
+        .filter(|skill| skill.exposure == "default_exposed" && !skill.disable_model_invocation)
+        .collect::<Vec<_>>();
+    if !model_skills.is_empty() {
+        lines.push(format!(
+            "### Available Skills\nRead the matching `SKILL.md` before acting.\n{}",
+            model_skills
+                .iter()
+                .map(|skill| format!(
                     "- `{}`: {} (path: `{}`)",
                     skill.display_name.as_deref().unwrap_or(&skill.name),
                     skill.description,
                     skill.file_path
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    );
-    surface_requirement(
-        "instruction:capability:skills".to_owned(),
-        true,
-        SemanticFidelity::Exact,
-        BTreeSet::from([AgentSurfaceRoute::ImmutableDelivery]),
-        AgentSurfaceSemanticFacet::Instruction,
-        AgentSurfaceContributionPayload::Instruction {
-            channel: "skills".to_owned(),
-            text,
-        },
-    )
-    .map(|requirement| vec![requirement])
-}
-
-fn memory_instruction_requirements(
-    capability_state: &CapabilityState,
-) -> Result<Vec<AgentSurfaceRequirement>, AgentRunProductRuntimeProvisioningError> {
-    let clusters = &capability_state.memory.inventory.clusters;
-    if clusters.is_empty() {
-        return Ok(Vec::new());
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
     }
-    let mut lines = vec![
-        "## Memory Sources".to_owned(),
-        "Use the declared VFS source/index URIs when memory context is relevant.".to_owned(),
-    ];
-    for cluster in clusters {
-        lines.push(format!("### {}", cluster.display_name));
-        if let Some(summary) = cluster.model_summary.as_deref() {
-            lines.push(summary.to_owned());
-        }
-        lines.extend(cluster.sources.iter().map(|source| {
+    if !manifest.skill_diagnostics.is_empty() {
+        lines.push(format!(
+            "### Skill Discovery Diagnostics\n{}",
+            manifest
+                .skill_diagnostics
+                .iter()
+                .map(|diagnostic| format!(
+                    "- `{}` / `{}`: {}",
+                    diagnostic.provider_key, diagnostic.code, diagnostic.message
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if !manifest.memory_sources.is_empty() {
+        lines.push(format!(
+            "### Memory Sources\n{}",
+            manifest
+                .memory_sources
+                .iter()
+                .map(|source| format!(
+                    "- `{}`: `{}` (index: `{}`)",
+                    source.display_name, source.source_uri, source.index_uri
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if !manifest.companion_agents.is_empty() {
+        lines.push(format!(
+            "### Companion Agents\n{}",
+            manifest
+                .companion_agents
+                .iter()
+                .map(|agent| format!("- `{}` ({})", agent.display_name, agent.executor))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if !manifest.channels.is_empty() {
+        lines.push(format!(
+            "### Channels\n{}",
+            manifest
+                .channels
+                .iter()
+                .map(|channel| format!(
+                    "- `{}` [{}] ({})",
+                    channel.channel_ref,
+                    channel.operations.join(", "),
+                    channel.readiness
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    lines.push(format!(
+        "### Workspace Modules\n- visibility: `{}`{}",
+        manifest.workspace_module.mode,
+        if manifest.workspace_module.allowed_module_ids.is_empty() {
+            String::new()
+        } else {
             format!(
-                "- `{}`: source `{}`, index `{}`{}",
-                source.display_name,
-                source.source_uri,
-                source.index_uri,
-                source
-                    .summary
-                    .as_deref()
-                    .map(|summary| format!(" — {summary}"))
-                    .unwrap_or_default()
+                "\n- allowed: {}",
+                manifest.workspace_module.allowed_module_ids.join(", ")
             )
-        }));
-    }
-    surface_requirement(
-        "instruction:capability:memory".to_owned(),
-        true,
-        SemanticFidelity::Exact,
-        BTreeSet::from([AgentSurfaceRoute::ImmutableDelivery]),
-        AgentSurfaceSemanticFacet::Instruction,
-        AgentSurfaceContributionPayload::Instruction {
-            channel: "memory".to_owned(),
-            text: lines.join("\n"),
-        },
-    )
-    .map(|requirement| vec![requirement])
+        }
+    ));
+    lines.join("\n\n")
 }
 
-fn mcp_instruction_requirements(
-    servers: &[RuntimeMcpServer],
-) -> Result<Vec<AgentSurfaceRequirement>, AgentRunProductRuntimeProvisioningError> {
-    if servers.is_empty() {
-        return Ok(Vec::new());
-    }
-    let text = format!(
-        "## MCP Servers\nThe following MCP servers are configured for this Agent surface. Callable tools, when discovered, are exposed separately through the tool surface.\n{}",
-        servers
+fn render_list(values: &[String]) -> String {
+    if values.is_empty() {
+        "- none".to_owned()
+    } else {
+        values
             .iter()
-            .map(|server| format!("- `{}`", server.name))
+            .map(|value| format!("- `{value}`"))
             .collect::<Vec<_>>()
             .join("\n")
-    );
-    surface_requirement(
-        "instruction:capability:mcp".to_owned(),
-        true,
-        SemanticFidelity::Exact,
-        BTreeSet::from([AgentSurfaceRoute::ImmutableDelivery]),
-        AgentSurfaceSemanticFacet::Instruction,
-        AgentSurfaceContributionPayload::Instruction {
-            channel: "mcp".to_owned(),
-            text,
-        },
-    )
-    .map(|requirement| vec![requirement])
+    }
 }
 
 fn instruction_requirements(
@@ -871,6 +1133,7 @@ fn instruction_requirements(
             let payload = AgentSurfaceContributionPayload::Instruction {
                 channel: fragment.slot.clone(),
                 text: fragment.content.clone(),
+                presentation: instruction_presentation(&fragment.slot),
             };
             surface_requirement(
                 format!("instruction:{}:{}", fragment.order, fragment.label),
@@ -882,6 +1145,18 @@ fn instruction_requirements(
             )
         })
         .collect()
+}
+
+fn instruction_presentation(slot: &str) -> AgentSurfaceInstructionPresentation {
+    match slot {
+        "persona" | "agent_identity" => AgentSurfaceInstructionPresentation::Identity,
+        "workspace" | "vfs" | "runtime_policy" => AgentSurfaceInstructionPresentation::Environment,
+        "constraint" | "constraints" | "instruction" | "instruction_append" => {
+            AgentSurfaceInstructionPresentation::SystemGuidelines
+        }
+        "user_context" => AgentSurfaceInstructionPresentation::UserContext,
+        _ => AgentSurfaceInstructionPresentation::AssignmentContext,
+    }
 }
 
 fn workspace_requirements(
@@ -924,6 +1199,7 @@ fn tool_requirements(
                 description: definition.description,
                 input_schema: definition.parameters_schema,
                 output_schema: None,
+                protocol_projector: definition.protocol_projector,
             };
             surface_requirement(
                 key,
@@ -1353,16 +1629,6 @@ mod tests {
                 exposure: agentdash_platform_spi::SkillContextExposure::DefaultExposed,
                 disable_model_invocation: false,
             });
-        let skill = skill_instruction_requirements(&capability).unwrap();
-        assert_eq!(skill.len(), 1);
-        assert!(matches!(
-            &skill[0].payload,
-            AgentSurfaceContributionPayload::Instruction { channel, text }
-                if channel == "skills"
-                    && text.contains("Canvas")
-                    && text.contains("lifecycle://skills/canvas-system/SKILL.md")
-        ));
-
         let servers = vec![RuntimeMcpServer::new(
             "agentdash-workflow-tools".to_owned(),
             agentdash_platform_spi::McpTransportConfig::Http {
@@ -1371,12 +1637,20 @@ mod tests {
             },
             false,
         )];
-        let mcp = mcp_instruction_requirements(&servers).unwrap();
-        assert_eq!(mcp.len(), 1);
+        capability.tool.mcp_servers = servers;
+        let capability = capability_manifest_requirement(&capability).unwrap();
         assert!(matches!(
-            &mcp[0].payload,
-            AgentSurfaceContributionPayload::Instruction { channel, text }
-                if channel == "mcp" && text.contains("agentdash-workflow-tools")
+            &capability.payload,
+            AgentSurfaceContributionPayload::Instruction {
+                channel,
+                text,
+                presentation: AgentSurfaceInstructionPresentation::CapabilityManifest { manifest },
+            } if channel == "capabilities"
+                && text.contains("Canvas")
+                && text.contains("lifecycle://skills/canvas-system/SKILL.md")
+                && text.contains("agentdash-workflow-tools")
+                && manifest.skills.len() == 1
+                && manifest.mcp_servers.len() == 1
         ));
 
         let dynamic = tool_requirements(
@@ -1386,6 +1660,9 @@ mod tests {
                 )
                 .unwrap(),
                 description: "Get lifecycle".to_owned(),
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Mcp {
+                    server_key: "agentdash-workflow-tools".to_owned(),
+                },
                 parameters_schema: serde_json::json!({"type": "object"}),
                 permission: agentdash_agent_runtime::RuntimeToolPermission::ProductRead,
                 effect: agentdash_agent_runtime::RuntimeToolEffect::ReadOnly,

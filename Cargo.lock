@@ -58,6 +58,7 @@ name = "agentdash-agent"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-core",
+ "agentdash-agent-protocol",
  "agentdash-diagnostics",
  "anyhow",
  "async-trait",
@@ -595,6 +596,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "agentdash-agent",
+ "agentdash-agent-protocol",
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-host",
@@ -688,6 +690,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "thiserror 2.0.18",
  "tokio",
 ]
 

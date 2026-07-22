@@ -35,6 +35,7 @@ pub(crate) struct SkillFrontmatter {
 /// skill 诊断信息（验证错误或冲突警告，不阻断加载）
 #[derive(Debug, Clone)]
 pub struct SkillDiagnostic {
+    pub code: &'static str,
     pub name: String,
     pub message: String,
     pub file_path: PathBuf,

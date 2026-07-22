@@ -4726,153 +4726,12 @@ export type ToolRequestUserInputQuestion = { header: string, id: string, isOther
 export type TraceInfo = { turnId: string | null, entryIndex: number | null, };
 
 /**
- *`Turn`
- *
- * <details><summary>JSON schema</summary>
- *
- * ```json
- *{
- *  "type": "object",
- *  "required": [
- *    "id",
- *    "items",
- *    "status"
- *  ],
- *  "properties": {
- *    "completedAt": {
- *      "description": "Unix timestamp (in seconds) when the turn completed.",
- *      "oneOf": [
- *        {
- *          "description": "Unix timestamp (in seconds) when the turn completed.",
- *          "type": "integer",
- *          "format": "int64"
- *        },
- *        {
- *          "type": "null"
- *        }
- *      ]
- *    },
- *    "durationMs": {
- *      "description": "Duration between turn start and completion in milliseconds, if known.",
- *      "oneOf": [
- *        {
- *          "description": "Duration between turn start and completion in milliseconds, if known.",
- *          "type": "integer",
- *          "format": "int64"
- *        },
- *        {
- *          "type": "null"
- *        }
- *      ]
- *    },
- *    "error": {
- *      "description": "Only populated when the Turn's status is failed.",
- *      "anyOf": [
- *        {
- *          "$ref": "#/definitions/TurnError"
- *        },
- *        {
- *          "type": "null"
- *        }
- *      ]
- *    },
- *    "id": {
- *      "description": "Identifier for this turn. Codex-generated turn IDs are UUIDv7.",
- *      "type": "string"
- *    },
- *    "items": {
- *      "description": "Thread items currently included in this turn payload.",
- *      "type": "array",
- *      "items": {
- *        "$ref": "#/definitions/ThreadItem"
- *      }
- *    },
- *    "itemsView": {
- *      "description": "Describes how much of `items` has been loaded for this turn.",
- *      "default": "full",
- *      "allOf": [
- *        {
- *          "$ref": "#/definitions/TurnItemsView"
- *        }
- *      ]
- *    },
- *    "startedAt": {
- *      "description": "Unix timestamp (in seconds) when the turn started.",
- *      "oneOf": [
- *        {
- *          "description": "Unix timestamp (in seconds) when the turn started.",
- *          "type": "integer",
- *          "format": "int64"
- *        },
- *        {
- *          "type": "null"
- *        }
- *      ]
- *    },
- *    "status": {
- *      "$ref": "#/definitions/TurnStatus"
- *    }
- *  }
- *}
- * ```
- * </details>
+ * AgentDash canonical turn. A turn is only an ordered container around the
+ * canonical AgentDash thread-item stream; it must not narrow native items back
+ * to one connector's protocol vocabulary.
  */
-export type Turn = {
-/**
- *Unix timestamp (in seconds) when the turn completed.
- */
-completedAt?: number | null,
-/**
- *Duration between turn start and completion in milliseconds, if known.
- */
-durationMs?: number | null,
-/**
- *Only populated when the Turn's status is failed.
- */
-error?: TurnError | null,
-/**
- *Identifier for this turn. Codex-generated turn IDs are UUIDv7.
- */
-id: string,
-/**
- *Thread items currently included in this turn payload.
- */
-items: Array<ThreadItem>,
-/**
- *Describes how much of `items` has been loaded for this turn.
- */
-itemsView: TurnItemsView,
-/**
- *Unix timestamp (in seconds) when the turn started.
- */
-startedAt?: number | null, status: TurnStatus, };
+export type Turn = { id: string, items: Array<AgentDashThreadItem>, itemsView: TurnItemsView, status: TurnStatus, startedAt?: number | null, completedAt?: number | null, durationMs?: number | null, error?: TurnError | null, };
 
-/**
- *`TurnCompletedNotification`
- *
- * <details><summary>JSON schema</summary>
- *
- * ```json
- *{
- *  "title": "TurnCompletedNotification",
- *  "type": "object",
- *  "required": [
- *    "threadId",
- *    "turn"
- *  ],
- *  "properties": {
- *    "threadId": {
- *      "type": "string"
- *    },
- *    "turn": {
- *      "$ref": "#/definitions/Turn"
- *    }
- *  },
- *  "$schema": "http://json-schema.org/draft-07/schema#"
- *}
- * ```
- * </details>
- */
 export type TurnCompletedNotification = { threadId: string, turn: Turn, };
 
 /**
@@ -5108,32 +4967,6 @@ export type TurnPlanStepStatus = "pending" | "inProgress" | "completed";
  */
 export type TurnPlanUpdatedNotification = { explanation?: string | null, plan: Array<TurnPlanStep>, threadId: string, turnId: string, };
 
-/**
- *`TurnStartedNotification`
- *
- * <details><summary>JSON schema</summary>
- *
- * ```json
- *{
- *  "title": "TurnStartedNotification",
- *  "type": "object",
- *  "required": [
- *    "threadId",
- *    "turn"
- *  ],
- *  "properties": {
- *    "threadId": {
- *      "type": "string"
- *    },
- *    "turn": {
- *      "$ref": "#/definitions/Turn"
- *    }
- *  },
- *  "$schema": "http://json-schema.org/draft-07/schema#"
- *}
- * ```
- * </details>
- */
 export type TurnStartedNotification = { threadId: string, turn: Turn, };
 
 /**

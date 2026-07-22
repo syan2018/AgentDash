@@ -6,6 +6,7 @@ use agentdash_agent_core::{
     CoreToolCallbacks, CoreToolResult, FinishReason, ProviderEvent, ProviderEventStream,
     ProviderRequest, run_agent_loop,
 };
+use agentdash_agent_protocol::ToolProtocolProjector;
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -44,6 +45,7 @@ pub struct DashToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    pub protocol_projector: ToolProtocolProjector,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -316,7 +318,16 @@ impl DashCoreTurn {
         callbacks: &dyn DashExecutionCallbacks,
         cancel: DashCancellation,
     ) -> Result<DashCoreTurnResult, DashCoreError> {
-        let provider = ProviderAdapter(provider);
+        let tool_protocol_projectors = self
+            .context
+            .tools
+            .iter()
+            .map(|tool| (tool.name.clone(), tool.protocol_projector.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let provider = ProviderAdapter {
+            inner: provider,
+            tool_protocol_projectors: tool_protocol_projectors.clone(),
+        };
         let tools = ToolAdapter {
             inner: tools,
             turn_id: self.turn_id.clone(),
@@ -339,74 +350,7 @@ impl DashCoreTurn {
         .await
         .map_err(dash_error)?;
         let output = dash_output(core_output);
-        let mut history = Vec::new();
-        let mut tool_items = BTreeMap::new();
-        let transcript_len = output.transcript_delta.len();
-        for (index, message) in output.transcript_delta.iter().enumerate() {
-            let is_final_assistant = index + 1 == transcript_len
-                && message.role == DashMessageRole::Assistant
-                && message.tool_calls.is_empty();
-            if is_final_assistant {
-                continue;
-            }
-            if message.role == DashMessageRole::Assistant {
-                if !message.content.is_empty() {
-                    let item_id = AgentItemId::new(format!(
-                        "{}:provider-round:{index}:assistant",
-                        self.turn_id.0
-                    ));
-                    history.extend(assistant_history(
-                        &self.turn_id,
-                        item_id,
-                        &message.content,
-                        index,
-                    ));
-                }
-                for call in &message.tool_calls {
-                    let item_id = execution_tool_item_id(&self.turn_id, &call.call_id);
-                    tool_items.insert(call.call_id.clone(), item_id.clone());
-                    history.push(HistoryContribution {
-                        entry_id: transcript_entry_id(&self.turn_id, index, &call.call_id, "start"),
-                        payload: HistoryPayload::ItemStarted {
-                            turn_id: self.turn_id.clone(),
-                            item_id: item_id.clone(),
-                            kind: super::ItemKind::ToolCall,
-                        },
-                    });
-                    history.push(HistoryContribution {
-                        entry_id: transcript_entry_id(&self.turn_id, index, &call.call_id, "call"),
-                        payload: HistoryPayload::ToolCall {
-                            turn_id: self.turn_id.clone(),
-                            item_id,
-                            call_id: call.call_id.clone(),
-                            name: call.name.clone(),
-                            arguments: call.arguments.to_string(),
-                        },
-                    });
-                }
-            } else if message.role == DashMessageRole::Tool
-                && let Some(call_id) = message.tool_call_id.as_deref()
-                && let Some(item_id) = tool_items.get(call_id).cloned()
-            {
-                history.push(HistoryContribution {
-                    entry_id: transcript_entry_id(&self.turn_id, index, call_id, "result"),
-                    payload: HistoryPayload::ToolResult {
-                        turn_id: self.turn_id.clone(),
-                        item_id: item_id.clone(),
-                        content: message.content.clone(),
-                        is_error: message.is_error,
-                    },
-                });
-                history.push(HistoryContribution {
-                    entry_id: transcript_entry_id(&self.turn_id, index, call_id, "complete"),
-                    payload: HistoryPayload::ItemCompleted {
-                        turn_id: self.turn_id.clone(),
-                        item_id,
-                    },
-                });
-            }
-        }
-        history.extend([
+        let history = vec![
             HistoryContribution {
                 entry_id: self.output_started_entry_id,
                 payload: HistoryPayload::ItemStarted {
@@ -436,7 +380,7 @@ impl DashCoreTurn {
                     turn_id: self.turn_id,
                 },
             },
-        ]);
+        ];
         Ok(DashCoreTurnResult {
             core_output: output,
             history,
@@ -448,58 +392,16 @@ pub fn execution_tool_item_id(turn_id: &AgentTurnId, call_id: &str) -> AgentItem
     AgentItemId::new(format!("{}:tool:{call_id}", turn_id.0))
 }
 
-fn transcript_entry_id(
-    turn_id: &AgentTurnId,
-    index: usize,
-    coordinate: &str,
-    stage: &str,
-) -> HistoryEntryId {
-    HistoryEntryId::new(format!(
-        "{}:transcript:{index}:{coordinate}:{stage}",
-        turn_id.0
-    ))
+struct ProviderAdapter<'a> {
+    inner: &'a dyn DashProvider,
+    tool_protocol_projectors: BTreeMap<String, ToolProtocolProjector>,
 }
-
-fn assistant_history(
-    turn_id: &AgentTurnId,
-    item_id: AgentItemId,
-    content: &str,
-    index: usize,
-) -> [HistoryContribution; 3] {
-    [
-        HistoryContribution {
-            entry_id: transcript_entry_id(turn_id, index, &item_id.0, "start"),
-            payload: HistoryPayload::ItemStarted {
-                turn_id: turn_id.clone(),
-                item_id: item_id.clone(),
-                kind: super::ItemKind::AssistantMessage,
-            },
-        },
-        HistoryContribution {
-            entry_id: transcript_entry_id(turn_id, index, &item_id.0, "output"),
-            payload: HistoryPayload::AgentOutput {
-                turn_id: turn_id.clone(),
-                item_id: Some(item_id.clone()),
-                content: content.to_owned(),
-            },
-        },
-        HistoryContribution {
-            entry_id: transcript_entry_id(turn_id, index, &item_id.0, "complete"),
-            payload: HistoryPayload::ItemCompleted {
-                turn_id: turn_id.clone(),
-                item_id,
-            },
-        },
-    ]
-}
-
-struct ProviderAdapter<'a>(&'a dyn DashProvider);
 
 #[async_trait]
 impl CoreProvider for ProviderAdapter<'_> {
     async fn stream(&self, request: ProviderRequest) -> Result<ProviderEventStream, CoreError> {
         let stream = self
-            .0
+            .inner
             .stream(DashProviderRequest {
                 system_prompt: request.system_prompt,
                 messages: request.messages.into_iter().map(dash_message).collect(),
@@ -507,6 +409,11 @@ impl CoreProvider for ProviderAdapter<'_> {
                     .tools
                     .into_iter()
                     .map(|tool| DashToolDefinition {
+                        protocol_projector: self
+                            .tool_protocol_projectors
+                            .get(&tool.name)
+                            .cloned()
+                            .expect("Dash Core tool must retain its accepted protocol projector"),
                         name: tool.name,
                         description: tool.description,
                         input_schema: tool.input_schema,

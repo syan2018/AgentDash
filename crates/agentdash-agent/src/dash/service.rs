@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
@@ -9,10 +12,11 @@ use super::{
     AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentItemId, AgentTurnId, CommandId,
     CommandOutcome, CompactionId, CompactionMode, ContextRevision, DashAgentChange,
     DashAgentCommit, DashAgentStore, DashCancellation, DashCommand, DashCommandKind,
-    DashCoreContext, DashCoreError, DashCoreTurn, DashExecutionCallbacks, DashExecutionInspection,
-    DashMessage, DashMessageRole, DashProvider, DashSurface, DashToolCall, DashToolCallbacks,
-    EffectId, EffectOutcome, EffectSettlement, ForkCutoff, HistoryContribution, HistoryEntryId,
-    HistoryPayload, InitialContextInstallation, InteractionId, SessionStatus, StoreError,
+    DashCoreContext, DashCoreError, DashCoreEvent, DashCoreTurn, DashExecutionCallbacks,
+    DashExecutionEvent, DashExecutionInspection, DashFinishReason, DashMessage, DashMessageRole,
+    DashProvider, DashSurface, DashToolCall, DashToolCallbacks, DashToolResult, EffectId,
+    EffectOutcome, EffectSettlement, ForkCutoff, HistoryContribution, HistoryEntryId,
+    HistoryPayload, InitialContextInstallation, InteractionId, ItemKind, SessionStatus, StoreError,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,6 +186,98 @@ pub struct DashExecutionDependencies {
     pub conversation_namer: Arc<dyn DashConversationNamer>,
 }
 
+type DashToolInvocationKey = (String, String);
+
+struct RoutableDashToolCallbacks {
+    current: tokio::sync::RwLock<Arc<dyn DashToolCallbacks>>,
+    admitted: tokio::sync::Mutex<HashMap<DashToolInvocationKey, Arc<dyn DashToolCallbacks>>>,
+}
+
+impl RoutableDashToolCallbacks {
+    fn new(current: Arc<dyn DashToolCallbacks>) -> Self {
+        Self {
+            current: tokio::sync::RwLock::new(current),
+            admitted: tokio::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    async fn replace(&self, replacement: Arc<dyn DashToolCallbacks>) {
+        *self.current.write().await = replacement;
+    }
+
+    async fn current(&self) -> Arc<dyn DashToolCallbacks> {
+        self.current.read().await.clone()
+    }
+
+    async fn clear_turn(&self, turn_id: &AgentTurnId) {
+        self.admitted
+            .lock()
+            .await
+            .retain(|(admitted_turn_id, _), _| admitted_turn_id != &turn_id.0);
+    }
+
+    fn key(turn_id: &AgentTurnId, call_id: &str) -> DashToolInvocationKey {
+        (turn_id.0.clone(), call_id.to_owned())
+    }
+}
+
+#[async_trait]
+impl DashToolCallbacks for RoutableDashToolCallbacks {
+    async fn before_tool(
+        &self,
+        turn_id: &AgentTurnId,
+        call: DashToolCall,
+    ) -> Result<super::DashBeforeToolDecision, DashCoreError> {
+        let admitted = self.current().await;
+        match admitted.before_tool(turn_id, call).await? {
+            super::DashBeforeToolDecision::Invoke { call } => {
+                self.admitted
+                    .lock()
+                    .await
+                    .insert(Self::key(turn_id, &call.call_id), admitted);
+                Ok(super::DashBeforeToolDecision::Invoke { call })
+            }
+            decision @ super::DashBeforeToolDecision::Deny { .. } => Ok(decision),
+        }
+    }
+
+    async fn invoke(
+        &self,
+        turn_id: &AgentTurnId,
+        call: DashToolCall,
+    ) -> Result<DashToolResult, DashCoreError> {
+        let key = Self::key(turn_id, &call.call_id);
+        let admitted = self
+            .admitted
+            .lock()
+            .await
+            .get(&key)
+            .cloned()
+            .unwrap_or(self.current().await);
+        let result = admitted.invoke(turn_id, call).await;
+        if result.is_err() {
+            self.admitted.lock().await.remove(&key);
+        }
+        result
+    }
+
+    async fn after_tool(
+        &self,
+        turn_id: &AgentTurnId,
+        call: &DashToolCall,
+        result: DashToolResult,
+    ) -> Result<DashToolResult, DashCoreError> {
+        let key = Self::key(turn_id, &call.call_id);
+        let admitted = self
+            .admitted
+            .lock()
+            .await
+            .remove(&key)
+            .unwrap_or(self.current().await);
+        admitted.after_tool(turn_id, call, result).await
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DashHistoryCommit {
     pub history: AgentHistory,
@@ -234,7 +330,240 @@ pub trait DashAgentRepositoryStore: Send + Sync {
 pub struct DashAgentService {
     repository: Arc<dyn DashAgentRepository>,
     execution: Arc<tokio::sync::RwLock<DashExecutionDependencies>>,
+    tool_callbacks: Arc<RoutableDashToolCallbacks>,
     cancellation: Arc<tokio::sync::Mutex<Option<(AgentTurnId, DashCancellation)>>>,
+}
+
+#[derive(Default)]
+struct PendingProviderRound {
+    assistant_text: String,
+    tool_calls: Vec<DashToolCall>,
+}
+
+struct DurableDashExecutionCallbacks {
+    service: DashAgentService,
+    downstream: Arc<dyn DashExecutionCallbacks>,
+    tool_projectors: BTreeMap<String, agentdash_agent_protocol::ToolProtocolProjector>,
+    rounds: tokio::sync::Mutex<BTreeMap<u32, PendingProviderRound>>,
+}
+
+impl DurableDashExecutionCallbacks {
+    fn new(
+        service: DashAgentService,
+        downstream: Arc<dyn DashExecutionCallbacks>,
+        context: &DashCoreContext,
+    ) -> Self {
+        Self {
+            service,
+            downstream,
+            tool_projectors: context
+                .tools
+                .iter()
+                .map(|tool| (tool.name.clone(), tool.protocol_projector.clone()))
+                .collect(),
+            rounds: tokio::sync::Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    async fn commit_history(&self, history: Vec<HistoryContribution>) -> Result<(), DashCoreError> {
+        if history.is_empty() {
+            return Ok(());
+        }
+        self.service
+            .update_store(|store| {
+                store.commit(DashAgentCommit {
+                    expected_head: store.history().head().cloned(),
+                    command_settlement: None,
+                    effect_settlements: Vec::new(),
+                    history,
+                    enqueue_commands: Vec::new(),
+                })?;
+                Ok(())
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| DashCoreError::Callback {
+                message: error.to_string(),
+            })
+    }
+
+    async fn commit_provider_round(
+        &self,
+        turn_id: &AgentTurnId,
+        round: u32,
+        finish_reason: DashFinishReason,
+    ) -> Result<(), DashCoreError> {
+        let pending = self.rounds.lock().await.remove(&round).unwrap_or_default();
+        if finish_reason == DashFinishReason::Stop && pending.tool_calls.is_empty() {
+            return Ok(());
+        }
+        let mut history = Vec::new();
+        if !pending.assistant_text.is_empty() {
+            history.extend(provider_round_assistant_history(
+                turn_id,
+                round,
+                pending.assistant_text,
+            ));
+        }
+        for call in pending.tool_calls {
+            let item_id = super::execution_tool_item_id(turn_id, &call.call_id);
+            let projector = self
+                .tool_projectors
+                .get(&call.name)
+                .cloned()
+                .ok_or_else(|| DashCoreError::Callback {
+                    message: format!(
+                        "executed Dash tool `{}` has no accepted protocol projector",
+                        call.name
+                    ),
+                })?;
+            history.extend([
+                HistoryContribution {
+                    entry_id: provider_round_entry_id(turn_id, round, &call.call_id, "start"),
+                    payload: HistoryPayload::ItemStarted {
+                        turn_id: turn_id.clone(),
+                        item_id: item_id.clone(),
+                        kind: ItemKind::ToolCall,
+                    },
+                },
+                HistoryContribution {
+                    entry_id: provider_round_entry_id(turn_id, round, &call.call_id, "call"),
+                    payload: HistoryPayload::ToolCall {
+                        turn_id: turn_id.clone(),
+                        item_id,
+                        call_id: call.call_id,
+                        name: call.name,
+                        arguments: call.arguments.to_string(),
+                        protocol_projector: projector,
+                    },
+                },
+            ]);
+        }
+        self.commit_history(history).await
+    }
+
+    async fn commit_tool_result(
+        &self,
+        turn_id: &AgentTurnId,
+        round: u32,
+        call: &DashToolCall,
+        result: &DashToolResult,
+    ) -> Result<(), DashCoreError> {
+        let item_id = super::execution_tool_item_id(turn_id, &call.call_id);
+        self.commit_history(vec![
+            HistoryContribution {
+                entry_id: provider_round_entry_id(turn_id, round, &call.call_id, "result"),
+                payload: HistoryPayload::ToolResult {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    content: result.content.clone(),
+                    is_error: result.is_error,
+                },
+            },
+            HistoryContribution {
+                entry_id: provider_round_entry_id(turn_id, round, &call.call_id, "complete"),
+                payload: HistoryPayload::ItemCompleted {
+                    turn_id: turn_id.clone(),
+                    item_id,
+                },
+            },
+        ])
+        .await
+    }
+}
+
+#[async_trait]
+impl DashExecutionCallbacks for DurableDashExecutionCallbacks {
+    async fn emit(&self, execution: DashExecutionEvent) -> Result<(), DashCoreError> {
+        match &execution.event {
+            DashCoreEvent::ProviderRoundStarted { round } => {
+                self.rounds
+                    .lock()
+                    .await
+                    .insert(*round, PendingProviderRound::default());
+            }
+            DashCoreEvent::TextDelta { round, delta } => {
+                self.rounds
+                    .lock()
+                    .await
+                    .entry(*round)
+                    .or_default()
+                    .assistant_text
+                    .push_str(delta);
+            }
+            DashCoreEvent::ToolCallRequested { round, call } => {
+                self.rounds
+                    .lock()
+                    .await
+                    .entry(*round)
+                    .or_default()
+                    .tool_calls
+                    .push(call.clone());
+            }
+            DashCoreEvent::ProviderRoundCompleted {
+                round,
+                finish_reason,
+            } => {
+                self.commit_provider_round(&execution.turn_id, *round, *finish_reason)
+                    .await?;
+            }
+            DashCoreEvent::ToolCallCompleted {
+                round,
+                call,
+                result,
+            } => {
+                self.commit_tool_result(&execution.turn_id, *round, call, result)
+                    .await?;
+            }
+            DashCoreEvent::ReasoningDelta { .. } => {}
+        }
+        self.downstream.emit(execution).await
+    }
+}
+
+fn provider_round_entry_id(
+    turn_id: &AgentTurnId,
+    round: u32,
+    coordinate: &str,
+    stage: &str,
+) -> HistoryEntryId {
+    HistoryEntryId::new(format!(
+        "{}:provider-round:{round}:{coordinate}:{stage}",
+        turn_id.0
+    ))
+}
+
+fn provider_round_assistant_history(
+    turn_id: &AgentTurnId,
+    round: u32,
+    content: String,
+) -> Vec<HistoryContribution> {
+    let item_id = AgentItemId::new(format!("{}:provider-round:{round}:assistant", turn_id.0));
+    vec![
+        HistoryContribution {
+            entry_id: provider_round_entry_id(turn_id, round, &item_id.0, "start"),
+            payload: HistoryPayload::ItemStarted {
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+                kind: ItemKind::AssistantMessage,
+            },
+        },
+        HistoryContribution {
+            entry_id: provider_round_entry_id(turn_id, round, &item_id.0, "output"),
+            payload: HistoryPayload::AgentOutput {
+                turn_id: turn_id.clone(),
+                item_id: Some(item_id.clone()),
+                content,
+            },
+        },
+        HistoryContribution {
+            entry_id: provider_round_entry_id(turn_id, round, &item_id.0, "complete"),
+            payload: HistoryPayload::ItemCompleted {
+                turn_id: turn_id.clone(),
+                item_id,
+            },
+        },
+    ]
 }
 
 impl DashAgentService {
@@ -275,11 +604,14 @@ impl DashAgentService {
 
     pub fn open_with_repository(
         repository: Arc<dyn DashAgentRepository>,
-        execution: DashExecutionDependencies,
+        mut execution: DashExecutionDependencies,
     ) -> Self {
+        let tool_callbacks = Arc::new(RoutableDashToolCallbacks::new(execution.tools));
+        execution.tools = tool_callbacks.clone();
         Self {
             repository,
             execution: Arc::new(tokio::sync::RwLock::new(execution)),
+            tool_callbacks,
             cancellation: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
@@ -312,7 +644,7 @@ impl DashAgentService {
     }
 
     pub async fn replace_tool_callbacks(&self, tools: Arc<dyn DashToolCallbacks>) {
-        self.execution.write().await.tools = tools;
+        self.tool_callbacks.replace(tools).await;
     }
 
     async fn execution_dependencies(&self) -> DashExecutionDependencies {
@@ -631,6 +963,8 @@ impl DashAgentService {
 
         let context = self.materialize_context(&turn_id).await?;
         let execution = self.execution_dependencies().await;
+        let callbacks =
+            DurableDashExecutionCallbacks::new(self.clone(), execution.callbacks.clone(), &context);
         let result = DashCoreTurn {
             turn_id: turn_id.clone(),
             input: content.clone(),
@@ -648,10 +982,11 @@ impl DashAgentService {
         .run(
             execution.provider.as_ref(),
             execution.tools.as_ref(),
-            execution.callbacks.as_ref(),
+            &callbacks,
             cancellation,
         )
         .await;
+        self.tool_callbacks.clear_turn(&turn_id).await;
 
         let receipt = match result {
             Ok(result) => {
@@ -973,15 +1308,21 @@ impl DashAgentService {
             ));
         }
         let execution = self.execution_dependencies().await;
+        let continuation_context = self
+            .materialize_context(&AgentTurnId::new(format!(
+                "turn:{}:C",
+                request.command_id.0
+            )))
+            .await?;
+        let callbacks = DurableDashExecutionCallbacks::new(
+            self.clone(),
+            execution.callbacks.clone(),
+            &continuation_context,
+        );
         let continuation = DashCoreTurn {
             turn_id: continuation_turn_id.clone(),
             input: content,
-            context: self
-                .materialize_context(&AgentTurnId::new(format!(
-                    "turn:{}:C",
-                    request.command_id.0
-                )))
-                .await?,
+            context: continuation_context,
             output_item_id: AgentItemId::new(format!("{prefix}:C-assistant")),
             output_started_entry_id: HistoryEntryId::new(format!("{prefix}:C-assistant-started")),
             output_entry_id: HistoryEntryId::new(format!("{prefix}:C-assistant-output")),
@@ -993,10 +1334,11 @@ impl DashAgentService {
         .run(
             execution.provider.as_ref(),
             execution.tools.as_ref(),
-            execution.callbacks.as_ref(),
+            &callbacks,
             continuation_cancellation,
         )
         .await;
+        self.tool_callbacks.clear_turn(&continuation_turn_id).await;
         let (_, receipt) = self
             .update_repository(|repository| match continuation {
                 Ok(continuation) => {

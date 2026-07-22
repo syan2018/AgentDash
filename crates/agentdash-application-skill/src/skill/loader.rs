@@ -75,6 +75,7 @@ pub fn load_skills_from_local_dirs(
             let key = skill_md.to_string_lossy().to_string();
             if let Some(existing) = name_map.get(&name) {
                 result.diagnostics.push(SkillDiagnostic {
+                    code: "skill_conflict",
                     name: name.clone(),
                     message: format!(
                         "skill \"{}\" 与 {} 冲突（plugin 路径），忽略 {}",
@@ -118,7 +119,24 @@ pub async fn load_skills_from_vfs(
     let mut result = LoadSkillsResult::default();
     let mut name_map: HashMap<String, String> = HashMap::new();
 
-    for file in discover_builtin_skill_files(service, vfs, identity).await {
+    let discovery = discover_mount_files(service, vfs, BUILTIN_SKILL_RULES, identity).await;
+    result
+        .diagnostics
+        .extend(
+            discovery
+                .diagnostics
+                .into_iter()
+                .map(|diagnostic| SkillDiagnostic {
+                    code: "vfs_discovery_scan",
+                    name: diagnostic.rule_key,
+                    message: diagnostic.message,
+                    file_path: PathBuf::from(format!(
+                        "{}://{}",
+                        diagnostic.mount_id, diagnostic.path
+                    )),
+                }),
+        );
+    for file in discovery.files {
         let (fm, _body) = parse_skill_file(&file.content);
         let fm = fm.unwrap_or_default();
 
@@ -155,6 +173,7 @@ pub async fn load_skills_from_vfs(
         let key = format!("{}://{}", file.mount_id, skill_md_path);
         if let Some(existing) = name_map.get(&name) {
             result.diagnostics.push(SkillDiagnostic {
+                code: "skill_conflict",
                 name: name.clone(),
                 message: format!("skill \"{}\" 与 {} 冲突，忽略 {}", name, existing, key),
                 file_path: PathBuf::from(&key),
@@ -182,35 +201,6 @@ pub async fn load_skills_from_vfs(
     result
 }
 
-#[derive(Debug)]
-struct DiscoveredSkillFile {
-    mount_id: String,
-    path: String,
-    content: String,
-}
-
-/// 复用共享 mount 扫描器发现 builtin SKILL.md。
-///
-/// mount policy / list / read / size-limit / 空内容过滤都由
-/// `agentdash-application-vfs::discover_mount_files` + `BUILTIN_SKILL_RULES` 提供，
-/// skill crate 只做 `DiscoveredMountFile -> DiscoveredSkillFile` 的 adapter 转换。
-async fn discover_builtin_skill_files(
-    service: &VfsService,
-    vfs: &Vfs,
-    identity: Option<&AuthIdentity>,
-) -> Vec<DiscoveredSkillFile> {
-    discover_mount_files(service, vfs, BUILTIN_SKILL_RULES, identity)
-        .await
-        .files
-        .into_iter()
-        .map(|file| DiscoveredSkillFile {
-            mount_id: file.mount_id,
-            path: file.path,
-            content: file.content,
-        })
-        .collect()
-}
-
 fn validate_and_collect(
     name: &str,
     parent_dir_name: &str,
@@ -221,6 +211,7 @@ fn validate_and_collect(
 
     if name != parent_dir_name {
         diags.push(SkillDiagnostic {
+            code: "skill_file_invalid",
             name: name.to_string(),
             message: format!("name \"{name}\" 与父目录名 \"{parent_dir_name}\" 不一致"),
             file_path: PathBuf::from(path),
@@ -228,6 +219,7 @@ fn validate_and_collect(
     }
     if name.len() > MAX_NAME_LENGTH {
         diags.push(SkillDiagnostic {
+            code: "skill_file_invalid",
             name: name.to_string(),
             message: format!(
                 "name 超过 {MAX_NAME_LENGTH} 字符（当前 {} 字符）",
@@ -241,6 +233,7 @@ fn validate_and_collect(
         .all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-'))
     {
         diags.push(SkillDiagnostic {
+            code: "skill_file_invalid",
             name: name.to_string(),
             message: "name 只能包含小写字母、数字和连字符".to_string(),
             file_path: PathBuf::from(path),
@@ -248,6 +241,7 @@ fn validate_and_collect(
     }
     match fm.description.as_deref() {
         None | Some("") => diags.push(SkillDiagnostic {
+            code: "skill_file_invalid",
             name: name.to_string(),
             message: "description 为必填项".to_string(),
             file_path: PathBuf::from(path),

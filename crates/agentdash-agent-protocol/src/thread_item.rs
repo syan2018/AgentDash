@@ -13,6 +13,23 @@ pub use codex::{
     McpToolCallStatus, PatchApplyStatus, ThreadItem as CodexThreadItem,
 };
 
+/// 工具 owner 声明的 canonical conversation presentation family。
+///
+/// 该字段随工具定义穿过 Product surface、Complete Agent binding 与 Agent native history；
+/// presentation adapter 只消费此声明，不从运行时工具名反推卡片类型。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "family", rename_all = "snake_case")]
+#[ts(tag = "family", export_to = "agentdash/")]
+pub enum ToolProtocolProjector {
+    Command,
+    FileChange,
+    FsRead,
+    FsGrep,
+    FsGlob,
+    Mcp { server_key: String },
+    Dynamic { namespace: Option<String> },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(untagged)]
 #[ts(export_to = "agentdash/")]

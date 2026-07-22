@@ -9,6 +9,7 @@
 use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::VecDeque;
 
+use agentdash_platform_spi::platform::mount::MountError;
 use agentdash_platform_spi::{AuthIdentity, MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule};
 use agentdash_platform_spi::{Mount, MountCapability, Vfs};
 
@@ -166,7 +167,15 @@ pub async fn discover_mount_files(
 
             // 一级子目录扫描
             if rule.scan_children && has_list {
-                let children = list_root_children(service, vfs, &mount.id, identity).await;
+                let children = list_root_children(
+                    service,
+                    vfs,
+                    &mount.id,
+                    rule.key,
+                    identity,
+                    &mut result.diagnostics,
+                )
+                .await;
                 for child_dir in &children {
                     for file_name in rule.file_names {
                         let path = format!("{child_dir}/{file_name}");
@@ -179,8 +188,16 @@ pub async fn discover_mount_files(
             // 前缀目录扫描（skill 模式：prefix/*/file_name）
             if !rule.scan_prefixes.is_empty() && has_list {
                 for prefix in rule.scan_prefixes {
-                    let children =
-                        list_children_at(service, vfs, &mount.id, prefix, identity).await;
+                    let children = list_children_at(
+                        service,
+                        vfs,
+                        &mount.id,
+                        prefix,
+                        rule.key,
+                        identity,
+                        &mut result.diagnostics,
+                    )
+                    .await;
                     for child_dir in &children {
                         for file_name in rule.file_names {
                             let path = format!("{child_dir}/{file_name}");
@@ -341,12 +358,22 @@ pub async fn discover_dynamic_mount_files(
                         &prefix,
                         rule.max_depth.unwrap_or(8),
                         max_files.saturating_sub(emitted_for_rule),
+                        &rule_key,
                         identity,
+                        &mut result.diagnostics,
                     )
                     .await
                 } else {
-                    let children =
-                        list_children_at(service, vfs, &mount.id, &prefix, identity).await;
+                    let children = list_children_at(
+                        service,
+                        vfs,
+                        &mount.id,
+                        &prefix,
+                        &rule_key,
+                        identity,
+                        &mut result.diagnostics,
+                    )
+                    .await;
                     children
                         .into_iter()
                         .flat_map(|child_dir| {
@@ -470,7 +497,16 @@ async fn try_read_dynamic_file(
         .await
     {
         Ok(r) => r,
-        Err(_) => return,
+        Err(MountError::NotFound(_)) => return,
+        Err(error) => {
+            result.diagnostics.push(MountFileDiscoveryDiagnostic {
+                rule_key: rule_key.to_string(),
+                mount_id: mount_id.to_string(),
+                path: path.to_string(),
+                message: format!("discovery read failed: {error}"),
+            });
+            return;
+        }
     };
 
     let content_len = read.content.len() as u64;
@@ -503,7 +539,9 @@ async fn list_recursive_files(
     root_path: &str,
     max_depth: usize,
     max_files: usize,
+    rule_key: &str,
     identity: Option<&AuthIdentity>,
+    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
 ) -> Vec<String> {
     if max_files == 0 {
         return Vec::new();
@@ -515,7 +553,19 @@ async fn list_recursive_files(
         if depth > max_depth {
             continue;
         }
-        let entries = list_entries_at(service, vfs, mount_id, &path, identity).await;
+        let entries = match list_entries_at(service, vfs, mount_id, &path, identity).await {
+            Ok(entries) => entries,
+            Err(MountError::NotFound(_)) => continue,
+            Err(error) => {
+                diagnostics.push(MountFileDiscoveryDiagnostic {
+                    rule_key: rule_key.to_string(),
+                    mount_id: mount_id.to_string(),
+                    path: path.clone(),
+                    message: format!("discovery list failed: {error}"),
+                });
+                continue;
+            }
+        };
         for entry in entries {
             if entry.is_dir {
                 if depth < max_depth {
@@ -559,7 +609,16 @@ async fn try_read_file(
         .await
     {
         Ok(r) => r,
-        Err(_) => return, // 文件不存在或不可读，静默跳过
+        Err(MountError::NotFound(_)) => return,
+        Err(error) => {
+            result.diagnostics.push(MountFileDiscoveryDiagnostic {
+                rule_key: rule.key.to_string(),
+                mount_id: mount_id.to_string(),
+                path: path.to_string(),
+                message: format!("discovery read failed: {error}"),
+            });
+            return;
+        }
     };
 
     let content_len = read.content.len() as u64;
@@ -594,7 +653,7 @@ async fn list_entries_at(
     mount_id: &str,
     dir_path: &str,
     identity: Option<&AuthIdentity>,
-) -> Vec<RuntimeFileEntry> {
+) -> Result<Vec<RuntimeFileEntry>, MountError> {
     let list_result = service
         .list_for_discovery(
             vfs,
@@ -609,10 +668,7 @@ async fn list_entries_at(
         )
         .await;
 
-    match list_result {
-        Ok(r) => r.entries,
-        Err(_) => Vec::new(),
-    }
+    list_result.map(|result| result.entries)
 }
 
 /// 列出指定目录下的一级子目录路径。
@@ -621,10 +677,24 @@ async fn list_children_at(
     vfs: &Vfs,
     mount_id: &str,
     dir_path: &str,
+    rule_key: &str,
     identity: Option<&AuthIdentity>,
+    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
 ) -> Vec<String> {
-    list_entries_at(service, vfs, mount_id, dir_path, identity)
-        .await
+    let entries = match list_entries_at(service, vfs, mount_id, dir_path, identity).await {
+        Ok(entries) => entries,
+        Err(MountError::NotFound(_)) => return Vec::new(),
+        Err(error) => {
+            diagnostics.push(MountFileDiscoveryDiagnostic {
+                rule_key: rule_key.to_string(),
+                mount_id: mount_id.to_string(),
+                path: dir_path.to_string(),
+                message: format!("discovery list failed: {error}"),
+            });
+            return Vec::new();
+        }
+    };
+    entries
         .into_iter()
         .filter(|e| e.is_dir)
         .map(|e| e.path)
@@ -636,9 +706,11 @@ async fn list_root_children(
     service: &VfsService,
     vfs: &Vfs,
     mount_id: &str,
+    rule_key: &str,
     identity: Option<&AuthIdentity>,
+    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
 ) -> Vec<String> {
-    list_children_at(service, vfs, mount_id, ".", identity).await
+    list_children_at(service, vfs, mount_id, ".", rule_key, identity, diagnostics).await
 }
 
 #[cfg(test)]
@@ -918,6 +990,29 @@ mod tests {
         assert!(result.files.is_empty());
         assert_eq!(result.diagnostics.len(), 1);
         assert!(result.diagnostics[0].message.contains("文件过大"));
+    }
+
+    #[tokio::test]
+    async fn builtin_skill_scan_does_not_collapse_unavailable_provider_into_empty_inventory() {
+        let service = VfsService::new(Arc::new(MountProviderRegistry::new()));
+        let vfs = Vfs {
+            mounts: vec![mount(PROVIDER_INLINE_FS, serde_json::Value::Null)],
+            default_mount_id: Some(PROVIDER_INLINE_FS.to_owned()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        let result = discover_mount_files(&service, &vfs, BUILTIN_SKILL_RULES, None).await;
+
+        assert!(result.files.is_empty());
+        assert_eq!(result.diagnostics.len(), 2);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.message.contains("provider not registered"))
+        );
     }
 
     #[tokio::test]

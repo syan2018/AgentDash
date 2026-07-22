@@ -1263,6 +1263,8 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         payload: AgentSurfaceContributionPayload::Instruction {
             channel: channel.to_owned(),
             text: text.to_owned(),
+            presentation:
+                agentdash_agent_protocol::AgentSurfaceInstructionPresentation::AssignmentContext,
         },
         payload_digest: AgentPayloadDigest::new(format!("sha256:{key}")).unwrap(),
     };
@@ -1409,6 +1411,7 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
             description: "read".into(),
             input_schema: serde_json::json!({"type": "object"}),
             output_schema: None,
+            protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FsRead,
         },
         payload_digest: AgentPayloadDigest::new("sha256:tool-read").unwrap(),
     };
@@ -1561,6 +1564,7 @@ async fn surface_projection_reports_tool_changes_instead_of_replaying_full_schem
             description: description.to_owned(),
             input_schema: serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}}),
             output_schema: None,
+            protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FsRead,
         },
         payload_digest: AgentPayloadDigest::new(format!("sha256:{name}:{description}")).unwrap(),
     };
@@ -1892,6 +1896,7 @@ fn hook_execution_surface() -> BoundAgentSurface {
                     description: "read".into(),
                     input_schema: serde_json::json!({"type": "object"}),
                     output_schema: None,
+                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FsRead,
                 },
                 payload_digest: AgentPayloadDigest::new("sha256:hook-tool").unwrap(),
             },
@@ -1933,6 +1938,7 @@ fn generation_surface(revision: u64) -> BoundAgentSurface {
                 description: "read".into(),
                 input_schema: serde_json::json!({"type": "object"}),
                 output_schema: None,
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FsRead,
             },
             payload_digest: AgentPayloadDigest::new(format!("sha256:generation-tool-{revision}"))
                 .unwrap(),
@@ -2803,7 +2809,6 @@ async fn provider_failed_and_lost_are_terminal_and_inspectable() {
             .expect("terminal turn")
             .error
             .as_ref()
-            .and_then(Option::as_ref)
             .expect("terminal Agent snapshot must retain the Dash failure");
         assert!(
             failure

@@ -414,6 +414,9 @@ fn desired_surface() -> AgentSurfaceSnapshot {
                 description: "Echo".to_owned(),
                 input_schema: json!({"type": "object"}),
                 output_schema: Some(json!({"type": "object"})),
+                protocol_projector: agentdash_agent_runtime::ToolProtocolProjector::Dynamic {
+                    namespace: Some("fixture".to_owned()),
+                },
             },
             payload_digest: AgentPayloadDigest::new("tool-payload").unwrap(),
         }],

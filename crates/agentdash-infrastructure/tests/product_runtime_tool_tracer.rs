@@ -496,6 +496,9 @@ fn desired_tool_surface(tool_names: &[&str]) -> AgentSurfaceSnapshot {
                     description: format!("{name} tracer"),
                     input_schema: json!({"type": "object"}),
                     output_schema: Some(json!({"type": "object"})),
+                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
+                        namespace: Some("tracer".to_owned()),
+                    },
                 },
                 payload_digest: AgentPayloadDigest::new(format!("{name}-payload"))
                     .expect("payload digest"),

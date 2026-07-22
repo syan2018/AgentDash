@@ -271,6 +271,18 @@ impl LifecycleMountProvider {
             .entries);
         }
 
+        let requested_root = base_path.split('/').next().unwrap_or_default();
+        if !requested_root.is_empty()
+            && !matches!(
+                requested_root,
+                "state" | "execution-log" | "session" | "agent-runs" | "node" | "orchestration"
+            )
+        {
+            return Err(MountError::NotFound(format!(
+                "Lifecycle path 不存在: {base_path}"
+            )));
+        }
+
         let run = self.load_run(mount).await?;
         let mut entries = lifecycle_root_entries(lifecycle_mount_has_skill_asset_projection(mount));
         if mount.metadata.get("agent_id").is_none() {
@@ -942,6 +954,53 @@ mod tests {
                 .any(|entry| entry.path == "session/messages")
         );
         assert!(filtered.iter().any(|entry| entry.path == "session/meta"));
+    }
+
+    #[tokio::test]
+    async fn unrelated_discovery_path_does_not_require_agent_history_binding() {
+        let project_id = Uuid::new_v4();
+        let run = LifecycleRun::new_plain(project_id);
+        let agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
+        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
+        run_repo.create(&run).await.expect("seed run");
+        let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
+        agent_repo.create(&agent).await.expect("seed agent");
+        let provider = LifecycleMountProvider::new(
+            run_repo,
+            agent_repo,
+            Arc::new(MemoryInlineFileRepository::default()),
+            Arc::new(MemorySkillAssetRepository::default()),
+            Arc::new(super::super::history_projection::DeferredLifecycleHistoryQuery::default()),
+        );
+        let mount = Mount {
+            id: "lifecycle".to_string(),
+            provider: PROVIDER_LIFECYCLE_VFS.to_string(),
+            backend_id: String::new(),
+            root_ref: format!("lifecycle://run/{}/agent/{}", run.id, agent.id),
+            capabilities: Vec::new(),
+            default_write: false,
+            display_name: "Lifecycle".to_string(),
+            metadata: serde_json::json!({
+                "run_id": run.id,
+                "agent_id": agent.id,
+                "scope": "agent_run_history",
+            }),
+        };
+
+        let error = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: ".agents/skills".to_string(),
+                    pattern: None,
+                    recursive: true,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect_err("unrelated discovery path must be absent");
+
+        assert!(matches!(error, MountError::NotFound(_)));
     }
 
     #[tokio::test]

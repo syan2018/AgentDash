@@ -8,24 +8,22 @@ pub fn canvas_runtime_mount_access(
     canvas: &Canvas,
     identity: Option<&AuthIdentity>,
 ) -> Option<CanvasMountAccess> {
+    canvas_runtime_mount_access_for_user(canvas, identity.map(|identity| identity.user_id.as_str()))
+}
+
+pub fn canvas_runtime_mount_access_for_user(
+    canvas: &Canvas,
+    user_id: Option<&str>,
+) -> Option<CanvasMountAccess> {
     if canvas.scope == CanvasScope::Project {
         return Some(CanvasMountAccess::read_only());
     }
 
-    let identity = identity?;
-    let current_user = ProjectAuthorizationContext::new_with_subjects(
-        identity.user_id.clone(),
-        vec![identity.subject.clone()],
-        identity
-            .groups
-            .iter()
-            .map(|group| group.group_id.clone())
-            .collect(),
-        identity.is_admin,
-    );
+    let user_id = user_id?;
+    let current_user = ProjectAuthorizationContext::new(user_id.to_owned(), Vec::new(), false);
     let project_access = ProjectAuthorization {
         role: None,
-        via_admin_bypass: identity.is_admin,
+        via_admin_bypass: false,
         via_template_visibility: false,
     };
     let access = canvas_access_projection(canvas, &current_user, &project_access);
@@ -71,6 +69,11 @@ mod tests {
             .expect("owner personal canvas should be exposed");
 
         assert!(access.runtime_write_allowed);
+        assert!(
+            canvas_runtime_mount_access_for_user(&canvas, Some("alice"))
+                .expect("owner access from canonical user id")
+                .runtime_write_allowed
+        );
     }
 
     #[test]

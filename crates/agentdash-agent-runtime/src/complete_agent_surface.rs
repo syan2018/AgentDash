@@ -150,6 +150,9 @@ mod tests {
                 description: "Search".to_owned(),
                 input_schema: json!({"type": "object"}),
                 output_schema: None,
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
+                    namespace: Some("fixture".to_owned()),
+                },
             },
             payload_digest: AgentPayloadDigest::new("sha256:tool").expect("payload digest"),
         }
@@ -347,6 +350,7 @@ mod tests {
                 AgentSurfaceContributionPayload::Instruction {
                     channel: "system".to_owned(),
                     text: "instruction".to_owned(),
+                    presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
                 },
                 AgentSurfaceRoute::ImmutableDelivery,
             ),
@@ -358,6 +362,9 @@ mod tests {
                     description: "Search".to_owned(),
                     input_schema: json!({"type": "object"}),
                     output_schema: None,
+                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
+                        namespace: Some("fixture".to_owned()),
+                    },
                 },
                 AgentSurfaceRoute::AgentNativeCallback,
             ),
@@ -444,6 +451,7 @@ mod tests {
                 AgentSurfaceContributionPayload::Instruction {
                     channel: "system".to_owned(),
                     text: "instruction".to_owned(),
+                    presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
                 },
                 AgentSurfaceRoute::ImmutableDelivery,
             ),

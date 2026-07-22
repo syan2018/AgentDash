@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use agentdash_agent_runtime::{
     RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation,
-    RuntimeToolPermission,
+    RuntimeToolPermission, ToolProtocolProjector,
 };
 use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
 use agentdash_platform_spi::{
@@ -287,6 +287,9 @@ fn runtime_definition(
         )?,
         description: description.trim().to_owned(),
         parameters_schema: sanitize_tool_schema(parameters_schema),
+        protocol_projector: ToolProtocolProjector::Mcp {
+            server_key: server_name.to_owned(),
+        },
         permission: RuntimeToolPermission::ProductWrite,
         effect: RuntimeToolEffect::ProductMutation,
     })

@@ -268,6 +268,28 @@ pub(super) async fn materialize_frame_context_discovery(
     })
     .await;
 
+    let blocking_skill_discovery = discovery
+        .session_capabilities
+        .skill_diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.provider_key == "workspace" && diagnostic.code == "vfs_discovery_scan"
+        })
+        .map(|diagnostic| {
+            format!(
+                "{}: {}",
+                diagnostic.file_path.as_deref().unwrap_or("workspace://"),
+                diagnostic.message
+            )
+        })
+        .collect::<Vec<_>>();
+    if !blocking_skill_discovery.is_empty() {
+        return Err(construction_rejected(format!(
+            "AgentFrame workspace Skill discovery did not complete: {}",
+            blocking_skill_discovery.join("; ")
+        )));
+    }
+
     normalize_capability_state_dimensions(
         &mut capability_state,
         Some(vfs.clone()),

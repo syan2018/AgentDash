@@ -11,7 +11,7 @@ use agentdash_agent::dash::{
     DashExecutionDependencies, DashExecutionEvent, DashFinishReason, DashProvider,
     DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashPublicCommand,
     DashReceiptState, DashServiceError, DashSurface, DashSurfaceInstruction, DashTerminalOutcome,
-    DashToolCall, DashToolCallbacks, DashToolResult, EffectId, HistoryPayload,
+    DashToolCall, DashToolCallbacks, DashToolDefinition, DashToolResult, EffectId, HistoryPayload,
     InitialContextContribution, InitialContextInstallation, InitialContextMode,
     NoopDashConversationNamer, NoopDashHistoryCallbacks,
 };
@@ -106,6 +106,284 @@ impl DashToolCallbacks for NoTools {
             retryable: false,
         })
     }
+}
+
+struct SurfaceChangingProvider;
+
+#[async_trait]
+impl DashProvider for SurfaceChangingProvider {
+    async fn stream(
+        &self,
+        request: DashProviderRequest,
+    ) -> Result<DashProviderEventStream, DashCoreError> {
+        let events = match request.round {
+            1 => vec![
+                Ok(DashProviderEvent::ToolCall {
+                    call: DashToolCall {
+                        call_id: "create-canvas".into(),
+                        name: "workspace_module_operate".into(),
+                        arguments: serde_json::json!({"operation": "canvas.create"}),
+                    },
+                }),
+                Ok(DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::ToolCalls,
+                    input_tokens: 1,
+                    output_tokens: 1,
+                }),
+            ],
+            2 => vec![
+                Ok(DashProviderEvent::ToolCall {
+                    call: DashToolCall {
+                        call_id: "edit-canvas".into(),
+                        name: "fs_apply_patch".into(),
+                        arguments: serde_json::json!({"mount": "canvas:cvs-demo"}),
+                    },
+                }),
+                Ok(DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::ToolCalls,
+                    input_tokens: 1,
+                    output_tokens: 1,
+                }),
+            ],
+            _ => vec![
+                Ok(DashProviderEvent::TextDelta {
+                    delta: "done".into(),
+                }),
+                Ok(DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::Stop,
+                    input_tokens: 1,
+                    output_tokens: 1,
+                }),
+            ],
+        };
+        Ok(Box::pin(stream::iter(events)))
+    }
+}
+
+struct RoundLimitProvider;
+
+#[async_trait]
+impl DashProvider for RoundLimitProvider {
+    async fn stream(
+        &self,
+        request: DashProviderRequest,
+    ) -> Result<DashProviderEventStream, DashCoreError> {
+        Ok(Box::pin(stream::iter([
+            Ok(DashProviderEvent::ToolCall {
+                call: DashToolCall {
+                    call_id: format!("call-{}", request.round),
+                    name: "inspect_capability".into(),
+                    arguments: serde_json::json!({"round": request.round}),
+                },
+            }),
+            Ok(DashProviderEvent::Completed {
+                finish_reason: DashFinishReason::ToolCalls,
+                input_tokens: 1,
+                output_tokens: 1,
+            }),
+        ])))
+    }
+}
+
+struct BlockingToolCallbacks {
+    calls: tokio::sync::Mutex<Vec<String>>,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+impl BlockingToolCallbacks {
+    fn new() -> Self {
+        Self {
+            calls: tokio::sync::Mutex::new(Vec::new()),
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl DashToolCallbacks for BlockingToolCallbacks {
+    async fn invoke(
+        &self,
+        _: &AgentTurnId,
+        call: DashToolCall,
+    ) -> Result<DashToolResult, DashCoreError> {
+        self.calls.lock().await.push(call.call_id.clone());
+        if call.call_id == "create-canvas" {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        Ok(DashToolResult {
+            call_id: call.call_id,
+            content: "ok".into(),
+            is_error: false,
+        })
+    }
+}
+
+#[derive(Default)]
+struct RecordingToolCallbacks {
+    calls: tokio::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl DashToolCallbacks for RecordingToolCallbacks {
+    async fn invoke(
+        &self,
+        _: &AgentTurnId,
+        call: DashToolCall,
+    ) -> Result<DashToolResult, DashCoreError> {
+        self.calls.lock().await.push(call.call_id.clone());
+        Ok(DashToolResult {
+            call_id: call.call_id,
+            content: "ok".into(),
+            is_error: false,
+        })
+    }
+}
+
+#[tokio::test]
+async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
+    let original = Arc::new(BlockingToolCallbacks::new());
+    let replacement = Arc::new(RecordingToolCallbacks::default());
+    let service = create_service(
+        AgentHistory::empty(
+            AgentSessionId::new("surface-change-session"),
+            BranchId::new("surface-change-branch"),
+        ),
+        DashExecutionDependencies {
+            provider: Arc::new(SurfaceChangingProvider),
+            tools: original.clone(),
+            callbacks: Arc::new(NoCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: Arc::new(NoCompaction),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
+        },
+    )
+    .await;
+    service
+        .apply_surface(DashSurface {
+            revision: 1,
+            digest: "canvas-surface".into(),
+            instructions: Vec::new(),
+            tools: vec![
+                DashToolDefinition {
+                    name: "workspace_module_operate".into(),
+                    description: "Operate a workspace module".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
+                        namespace: Some("workspace_module".into()),
+                    },
+                },
+                DashToolDefinition {
+                    name: "fs_apply_patch".into(),
+                    description: "Apply a file patch".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FileChange,
+                },
+            ],
+        })
+        .await
+        .unwrap();
+
+    let executing = tokio::spawn({
+        let service = service.clone();
+        async move {
+            service
+                .execute(DashCommandRequest {
+                    command_id: CommandId::new("surface-change-command"),
+                    effect_id: EffectId::new("surface-change-effect"),
+                    command: DashPublicCommand::SubmitInput {
+                        content: "create and edit a canvas".into(),
+                    },
+                })
+                .await
+        }
+    });
+
+    original.entered.notified().await;
+    service.replace_tool_callbacks(replacement.clone()).await;
+    original.release.notify_one();
+    executing.await.unwrap().unwrap();
+
+    assert_eq!(
+        original.calls.lock().await.as_slice(),
+        ["create-canvas"],
+        "the accepted invocation must finish on its admitted callback route"
+    );
+    assert_eq!(
+        replacement.calls.lock().await.as_slice(),
+        ["edit-canvas"],
+        "the next invocation in the same turn must observe the newly applied surface route"
+    );
+}
+
+#[tokio::test]
+async fn failed_turn_retains_each_completed_tool_call_in_native_history() {
+    let service = create_service(
+        AgentHistory::empty(
+            AgentSessionId::new("failed-tool-history-session"),
+            BranchId::new("failed-tool-history-branch"),
+        ),
+        DashExecutionDependencies {
+            provider: Arc::new(RoundLimitProvider),
+            tools: Arc::new(RecordingToolCallbacks::default()),
+            callbacks: Arc::new(NoCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: Arc::new(NoCompaction),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
+        },
+    )
+    .await;
+    service
+        .apply_surface(DashSurface {
+            revision: 1,
+            digest: "round-limit-surface".into(),
+            instructions: Vec::new(),
+            tools: vec![DashToolDefinition {
+                name: "inspect_capability".into(),
+                description: "Inspect a capability".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
+                    namespace: Some("capability".into()),
+                },
+            }],
+        })
+        .await
+        .unwrap();
+
+    let receipt = service
+        .execute(DashCommandRequest {
+            command_id: CommandId::new("round-limit-command"),
+            effect_id: EffectId::new("round-limit-effect"),
+            command: DashPublicCommand::SubmitInput {
+                content: "keep completed tool evidence".into(),
+            },
+        })
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        receipt.state,
+        DashReceiptState::Terminal(DashTerminalOutcome::Failed)
+    ));
+    let history = service.history().await.unwrap();
+    assert_eq!(
+        history
+            .entries()
+            .iter()
+            .filter(|entry| matches!(entry.payload, HistoryPayload::ToolCall { .. }))
+            .count(),
+        8
+    );
+    assert_eq!(
+        history
+            .entries()
+            .iter()
+            .filter(|entry| matches!(entry.payload, HistoryPayload::ToolResult { .. }))
+            .count(),
+        8
+    );
 }
 
 struct NoCallbacks;
@@ -327,6 +605,8 @@ async fn repository_reopen_preserves_surface_inspect_and_idempotency_without_pro
                 key: "instruction:test:persisted".into(),
                 channel: "system".into(),
                 text: "persisted instructions".into(),
+                presentation:
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
             }],
             tools: vec![],
         })

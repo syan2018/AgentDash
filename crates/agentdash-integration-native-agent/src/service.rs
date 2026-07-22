@@ -18,7 +18,7 @@ use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
     CanonicalConversationRecord, ItemCompletedNotification, ItemStartedNotification,
-    PresentationDurability, SourceInfo, TraceInfo,
+    PresentationDurability, SourceInfo, ToolProtocolProjector, TraceInfo,
 };
 use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentCapabilityProfile, AgentChange, AgentChangePage,
@@ -54,6 +54,7 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use crate::DashAgentCoreToolCallbacks;
+use crate::tool_presentation::{ToolPresentationResult, project_tool_item};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DashCompleteSourceMetadata {
@@ -374,6 +375,9 @@ impl DashAgentCompleteService {
         service: &DashAgentService,
         metadata: &DashCompleteSourceMetadata,
     ) -> Result<(), AgentServiceError> {
+        self.live_channel_for_source(source)
+            .await
+            .replace_tool_projectors(metadata.callback_surface.as_ref());
         match (
             &metadata.applied_surface,
             &metadata.callback_surface,
@@ -1358,20 +1362,24 @@ fn dash_surface_from_bound(
             agentdash_agent_service_api::AgentSurfaceContributionPayload::Instruction {
                 channel,
                 text,
+                presentation,
             } => instructions.push(DashSurfaceInstruction {
                 key: contribution.key.clone(),
                 channel: channel.clone(),
                 text: text.clone(),
+                presentation: presentation.clone(),
             }),
             agentdash_agent_service_api::AgentSurfaceContributionPayload::Tool {
                 name,
                 description,
                 input_schema,
+                protocol_projector,
                 ..
             } => tools.push(DashToolDefinition {
                 name: name.to_string(),
                 description: description.clone(),
                 input_schema: input_schema.clone(),
+                protocol_projector: protocol_projector.clone(),
             }),
             agentdash_agent_service_api::AgentSurfaceContributionPayload::Workspace {
                 requirement,
@@ -1379,6 +1387,8 @@ fn dash_surface_from_bound(
                 key: contribution.key.clone(),
                 channel: "workspace".to_owned(),
                 text: format!("## Workspace\n- requirement: `{requirement}`"),
+                presentation:
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::Environment,
             }),
             agentdash_agent_service_api::AgentSurfaceContributionPayload::ContextRequirement {
                 requirement,
@@ -1386,6 +1396,8 @@ fn dash_surface_from_bound(
                 key: contribution.key.clone(),
                 channel: "constraint".to_owned(),
                 text: requirement.clone(),
+                presentation:
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
             }),
             agentdash_agent_service_api::AgentSurfaceContributionPayload::Hook { .. } => {}
         }
@@ -1635,6 +1647,7 @@ const DASH_COMPLETE_LIVE_EVENT_CAPACITY: usize = 1024;
 struct DashCompleteLiveChannel {
     sender: tokio::sync::broadcast::Sender<AgentLiveEvent>,
     sequence: Arc<tokio::sync::Mutex<u64>>,
+    tool_projectors: Arc<std::sync::RwLock<BTreeMap<String, ToolProtocolProjector>>>,
 }
 
 impl DashCompleteLiveChannel {
@@ -1643,7 +1656,35 @@ impl DashCompleteLiveChannel {
         Self {
             sender,
             sequence: Arc::new(tokio::sync::Mutex::new(0)),
+            tool_projectors: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
         }
+    }
+
+    fn replace_tool_projectors(&self, surface: Option<&BoundAgentSurface>) {
+        let projectors = surface
+            .into_iter()
+            .flat_map(|surface| surface.contributions.iter())
+            .filter_map(|contribution| match &contribution.payload {
+                agentdash_agent_service_api::AgentSurfaceContributionPayload::Tool {
+                    name,
+                    protocol_projector,
+                    ..
+                } => Some((name.to_string(), protocol_projector.clone())),
+                _ => None,
+            })
+            .collect();
+        *self
+            .tool_projectors
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = projectors;
+    }
+
+    fn tool_projector(&self, tool_name: &str) -> Option<ToolProtocolProjector> {
+        self.tool_projectors
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(tool_name)
+            .cloned()
     }
 
     async fn publish(
@@ -1677,7 +1718,8 @@ impl DashExecutionCallbacks for DashCompleteLiveCallbacks {
         &self,
         event: DashExecutionEvent,
     ) -> Result<(), agentdash_agent::dash::DashCoreError> {
-        let Some(canonical_event) = canonical_live_event(&self.source, &event)? else {
+        let Some(canonical_event) = canonical_live_event(&self.source, &self.live_channel, &event)?
+        else {
             return Ok(());
         };
         let sequence = {
@@ -1751,6 +1793,7 @@ impl DashHistoryCallbacks for DashCompleteLiveCallbacks {
 
 fn canonical_live_event(
     source: &AgentSourceCoordinate,
+    live_channel: &DashCompleteLiveChannel,
     execution: &DashExecutionEvent,
 ) -> Result<Option<BackboneEvent>, agentdash_agent::dash::DashCoreError> {
     let thread_id = source.as_str();
@@ -1777,7 +1820,12 @@ fn canonical_live_event(
             .map_err(live_callback_error)?,
         ),
         DashCoreEvent::ToolCallRequested { call, .. } => {
-            let item = live_tool_item(&execution.turn_id, call, None)?;
+            let item = live_tool_item(
+                &execution.turn_id,
+                call,
+                live_channel.tool_projector(&call.name).as_ref(),
+                None,
+            )?;
             BackboneEvent::ItemStarted(ItemStartedNotification {
                 item,
                 thread_id: thread_id.to_owned(),
@@ -1786,7 +1834,12 @@ fn canonical_live_event(
             })
         }
         DashCoreEvent::ToolCallCompleted { call, result, .. } => {
-            let item = live_tool_item(&execution.turn_id, call, Some(result))?;
+            let item = live_tool_item(
+                &execution.turn_id,
+                call,
+                live_channel.tool_projector(&call.name).as_ref(),
+                Some(result),
+            )?;
             BackboneEvent::ItemCompleted(ItemCompletedNotification {
                 item,
                 thread_id: thread_id.to_owned(),
@@ -1801,22 +1854,28 @@ fn canonical_live_event(
 fn live_tool_item(
     turn_id: &DashTurnId,
     call: &agentdash_agent::dash::DashToolCall,
+    projector: Option<&ToolProtocolProjector>,
     result: Option<&agentdash_agent::dash::DashToolResult>,
 ) -> Result<agentdash_agent_protocol::AgentDashThreadItem, agentdash_agent::dash::DashCoreError> {
     let item_id = agentdash_agent::dash::execution_tool_item_id(turn_id, &call.call_id);
-    serde_json::from_value::<codex::ThreadItem>(serde_json::json!({
-        "type": "dynamicToolCall",
-        "id": item_id.0,
-        "tool": call.name,
-        "arguments": call.arguments,
-        "status": result.map_or("inProgress", |value| if value.is_error { "failed" } else { "completed" }),
-        "contentItems": result.map(|value| vec![serde_json::json!({
-            "type": "inputText",
-            "text": value.content,
-        })]),
-        "success": result.map(|value| !value.is_error),
-    }))
-    .map(Into::into)
+    let projector = projector.ok_or_else(|| agentdash_agent::dash::DashCoreError::Callback {
+        message: format!(
+            "accepted tool `{}` has no owner-declared protocol projector",
+            call.name
+        ),
+    })?;
+    project_tool_item(
+        &item_id.0,
+        &call.name,
+        call.arguments.clone(),
+        projector,
+        result.is_none(),
+        result.is_some_and(|result| result.is_error),
+        result.map(|result| ToolPresentationResult {
+            content: &result.content,
+            is_error: result.is_error,
+        }),
+    )
     .map_err(live_callback_error)
 }
 

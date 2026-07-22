@@ -8,6 +8,7 @@ use agentdash_agent_runtime::{
     RuntimeTaskExecutionScope, RuntimeTaskGrantedOperation, RuntimeToolDefinition,
     RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation, RuntimeToolPermission,
     RuntimeToolResourceGrant, RuntimeVfsGrantedOperation, RuntimeVfsPathGrant,
+    ToolProtocolProjector,
 };
 use agentdash_agent_runtime_contract::{
     RuntimeItemId, RuntimeSourceRef, RuntimeTurnId, SurfaceRevision,
@@ -139,6 +140,9 @@ impl RuntimeToolExecutor for ProductCommandRuntimeTool {
             name: AgentToolName::new(name).expect("static Product runtime tool name"),
             description: description.to_owned(),
             parameters_schema: self.service.parameters_schema(),
+            protocol_projector: ToolProtocolProjector::Dynamic {
+                namespace: Some("agentdash".to_owned()),
+            },
             permission,
             effect,
         }
@@ -257,7 +261,7 @@ fn product_tool_definition(
 }
 
 macro_rules! vfs_executor {
-    ($name:ident, $tool_name:literal, $kind:expr, $description:literal, $permission:expr, $effect:expr) => {
+    ($name:ident, $tool_name:literal, $kind:expr, $description:literal, $projector:expr, $permission:expr, $effect:expr) => {
         pub struct $name {
             service: Arc<AppliedVfsRuntimeToolService>,
         }
@@ -275,6 +279,7 @@ macro_rules! vfs_executor {
                     name: AgentToolName::new($tool_name).expect("static runtime tool name"),
                     description: $description.to_owned(),
                     parameters_schema: AppliedVfsRuntimeToolService::parameters_schema($kind),
+                    protocol_projector: $projector,
                     permission: $permission,
                     effect: $effect,
                 }
@@ -292,6 +297,9 @@ vfs_executor!(
     "mounts_list",
     AppliedVfsToolKind::MountsList,
     "List VFS mounts granted by the applied AgentRun resource surface.",
+    ToolProtocolProjector::Dynamic {
+        namespace: Some("vfs".to_owned())
+    },
     RuntimeToolPermission::VfsRead,
     RuntimeToolEffect::ReadOnly
 );
@@ -300,6 +308,7 @@ vfs_executor!(
     "fs_read",
     AppliedVfsToolKind::Read,
     "Read a file through the applied AgentRun VFS surface.",
+    ToolProtocolProjector::FsRead,
     RuntimeToolPermission::VfsRead,
     RuntimeToolEffect::ReadOnly
 );
@@ -308,6 +317,7 @@ vfs_executor!(
     "fs_glob",
     AppliedVfsToolKind::Glob,
     "List files matching a glob through the applied AgentRun VFS surface.",
+    ToolProtocolProjector::FsGlob,
     RuntimeToolPermission::VfsRead,
     RuntimeToolEffect::ReadOnly
 );
@@ -316,6 +326,7 @@ vfs_executor!(
     "fs_grep",
     AppliedVfsToolKind::Grep,
     "Search file contents through the applied AgentRun VFS surface.",
+    ToolProtocolProjector::FsGrep,
     RuntimeToolPermission::VfsRead,
     RuntimeToolEffect::ReadOnly
 );
@@ -324,6 +335,7 @@ vfs_executor!(
     "fs_apply_patch",
     AppliedVfsToolKind::ApplyPatch,
     "Apply a patch through the applied AgentRun VFS surface.",
+    ToolProtocolProjector::FileChange,
     RuntimeToolPermission::VfsWrite,
     RuntimeToolEffect::VfsMutation
 );
@@ -332,6 +344,7 @@ vfs_executor!(
     "shell_exec",
     AppliedVfsToolKind::ShellExec,
     "Execute or continue a shell command through the applied AgentRun VFS surface.",
+    ToolProtocolProjector::Command,
     RuntimeToolPermission::ProcessExecute,
     RuntimeToolEffect::LocalProcess
 );
@@ -363,6 +376,9 @@ impl RuntimeToolExecutor for RuntimeTaskReadTool {
             name: AgentToolName::new("task_read").expect("static runtime tool name"),
             description: "Read the granted Product Task scope.".to_owned(),
             parameters_schema: self.service.parameters_schema(RuntimeTaskToolKind::Read),
+            protocol_projector: ToolProtocolProjector::Dynamic {
+                namespace: Some("task".to_owned()),
+            },
             permission: RuntimeToolPermission::ProductRead,
             effect: RuntimeToolEffect::ReadOnly,
         }
@@ -380,6 +396,9 @@ impl RuntimeToolExecutor for RuntimeTaskWriteTool {
             name: AgentToolName::new("task_write").expect("static runtime tool name"),
             description: "Mutate the granted Product Task scope.".to_owned(),
             parameters_schema: self.service.parameters_schema(RuntimeTaskToolKind::Write),
+            protocol_projector: ToolProtocolProjector::Dynamic {
+                namespace: Some("task".to_owned()),
+            },
             permission: RuntimeToolPermission::ProductWrite,
             effect: RuntimeToolEffect::ProductMutation,
         }
@@ -440,6 +459,9 @@ impl RuntimeToolExecutor for WorkspaceModulePresentRuntimeTool {
                     "diagnostics": {}
                 }
             }),
+            protocol_projector: ToolProtocolProjector::Dynamic {
+                namespace: Some("workspace_module".to_owned()),
+            },
             permission: RuntimeToolPermission::ProductWrite,
             effect: RuntimeToolEffect::ProductMutation,
         }
@@ -804,6 +826,9 @@ mod tests {
                     "type": "object",
                     "owner": "workspace_module_present"
                 }),
+                protocol_projector: ToolProtocolProjector::Dynamic {
+                    namespace: Some("workspace_module".to_owned()),
+                },
                 permission: RuntimeToolPermission::ProductWrite,
                 effect: RuntimeToolEffect::ProductMutation,
             }

@@ -247,8 +247,37 @@ impl FrameConstructionService {
             .capability_state
             .skill
             .skills = discovery.session_capabilities.skills.clone();
+        envelope
+            .runtime
+            .launch_surface
+            .capability_state
+            .skill
+            .diagnostics = discovery.session_capabilities.skill_diagnostics.clone();
+        envelope
+            .runtime
+            .launch_surface
+            .capability_state
+            .skill
+            .cluster_meta = discovery
+            .session_capabilities
+            .skill_clusters
+            .iter()
+            .map(|cluster| agentdash_platform_spi::SkillClusterMeta {
+                provider_key: cluster.provider_key.clone(),
+                display_name: cluster.display_name.clone(),
+                model_summary: cluster.model_summary.clone(),
+            })
+            .collect();
         if let Some(state) = envelope.runtime.surface_draft.capability_state.as_mut() {
             state.skill.skills = discovery.session_capabilities.skills.clone();
+            state.skill.diagnostics = discovery.session_capabilities.skill_diagnostics.clone();
+            state.skill.cluster_meta = envelope
+                .runtime
+                .launch_surface
+                .capability_state
+                .skill
+                .cluster_meta
+                .clone();
         }
 
         // memory inventory 同步到 launch capability state 的 memory 维度，
@@ -708,7 +737,7 @@ mod existing_surface_discovery_tests {
             files: HashMap::from([
                 ("AGENTS.md".to_owned(), "使用中文交流".to_owned()),
                 (
-                    "skills/review/SKILL.md".to_owned(),
+                    ".agents/skills/review/SKILL.md".to_owned(),
                     "---\nname: review\ndescription: Review changes carefully.\n---\n# Review"
                         .to_owned(),
                 ),
@@ -727,13 +756,10 @@ mod existing_surface_discovery_tests {
         .expect("materialize discovery into immutable Product frame");
 
         let capability = frame.typed_capability_state().expect("capability state");
-        assert!(
-            capability
-                .skill
-                .skills
-                .iter()
-                .any(|skill| skill.name == "review" && skill.file_path.ends_with("SKILL.md"))
-        );
+        assert!(capability.skill.skills.iter().any(|skill| {
+            skill.name == "review"
+                && skill.file_path == "workspace://.agents/skills/review/SKILL.md"
+        }));
         let context = frame.context_source_snapshot().expect("context source");
         assert!(context.fragments.iter().any(|fragment| {
             fragment.source == "vfs_guideline:workspace://AGENTS.md"

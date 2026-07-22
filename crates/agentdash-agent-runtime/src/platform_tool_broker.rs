@@ -36,6 +36,7 @@ pub struct RuntimeToolDefinition {
     pub name: AgentToolName,
     pub description: String,
     pub parameters_schema: Value,
+    pub protocol_projector: agentdash_agent_protocol::ToolProtocolProjector,
     pub permission: RuntimeToolPermission,
     pub effect: RuntimeToolEffect,
 }
@@ -420,6 +421,9 @@ mod tests {
                     "type": "object",
                     "additionalProperties": false
                 }),
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
+                    namespace: Some("vfs".to_owned()),
+                },
                 permission: RuntimeToolPermission::VfsRead,
                 effect: RuntimeToolEffect::ReadOnly,
             }
@@ -441,6 +445,9 @@ mod tests {
                 name: AgentToolName::new("mcp_docs_search").unwrap(),
                 description: "Search docs".into(),
                 parameters_schema: serde_json::json!({"type": "object"}),
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Mcp {
+                    server_key: "docs".to_owned(),
+                },
                 permission: RuntimeToolPermission::ProductWrite,
                 effect: RuntimeToolEffect::ProductMutation,
             }

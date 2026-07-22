@@ -6,15 +6,21 @@ use agentdash_agent::dash::{
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
-    AgentDashThreadItem, BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
+    AgentCapabilityManifest, AgentDashThreadItem, AgentSurfaceInstructionPresentation,
+    BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
     CanonicalConversationRecord, ContextAgentConsumption, ContextAgentConsumptionMode,
     ContextConnectorProfile, ContextDeliveryChannel, ContextDeliveryMetadata,
     ContextDeliveryStatus, ContextFrame, ContextFrameChanged, ContextFrameKind,
     ContextFrameSection, ContextFrameSource, ContextMessageRole, ItemCompletedNotification,
     ItemStartedNotification, ItemUpdatedNotification, PlatformEvent, PresentationDurability,
-    RuntimeContextFragmentEntry, RuntimeToolSchemaEntry, SourceInfo, TraceInfo, UserInputSource,
-    UserInputSubmissionKind, UserInputSubmittedNotification,
+    RuntimeCompanionAgentEntry, RuntimeContextFragmentEntry, RuntimeMemoryDiagnosticEntry,
+    RuntimeMemoryInventoryMode, RuntimeMemorySourceEntry, RuntimeSkillEntry,
+    RuntimeToolSchemaEntry, SkillContextExposure, SourceInfo, TraceInfo, Turn,
+    TurnCompletedNotification, TurnStartedNotification, UserInputSource, UserInputSubmissionKind,
+    UserInputSubmittedNotification,
 };
+
+use crate::tool_presentation::{ToolPresentationResult, project_tool_item};
 
 pub(crate) fn history_records(
     history: &AgentHistory,
@@ -59,7 +65,7 @@ pub(crate) fn entry_records(
                 entry,
                 previous_state.and_then(|state| state.surface.as_ref()),
                 surface,
-            ));
+            )?);
         }
         HistoryPayload::SurfaceRevoked { surface } => {
             events.push(surface_revoked_event(entry, surface));
@@ -89,12 +95,10 @@ pub(crate) fn entry_records(
             ));
         }
         HistoryPayload::TurnStarted { turn_id } => {
-            events.push(BackboneEvent::TurnStarted(serde_json::from_value(
-                serde_json::json!({
-                    "threadId": session_id,
-                    "turn": turn_json(state, turn_id, None)?,
-                }),
-            )?));
+            events.push(BackboneEvent::TurnStarted(TurnStartedNotification {
+                thread_id: session_id.to_owned(),
+                turn: turn(state, turn_id, None)?,
+            }));
         }
         HistoryPayload::ItemStarted {
             turn_id, item_id, ..
@@ -178,20 +182,16 @@ pub(crate) fn entry_records(
             }));
         }
         HistoryPayload::TurnCompleted { turn_id } | HistoryPayload::TurnInterrupted { turn_id } => {
-            events.push(BackboneEvent::TurnCompleted(serde_json::from_value(
-                serde_json::json!({
-                    "threadId": session_id,
-                    "turn": turn_json(state, turn_id, None)?,
-                }),
-            )?));
+            events.push(BackboneEvent::TurnCompleted(TurnCompletedNotification {
+                thread_id: session_id.to_owned(),
+                turn: turn(state, turn_id, None)?,
+            }));
         }
         HistoryPayload::TurnFailed { turn_id, error, .. } => {
-            events.push(BackboneEvent::TurnCompleted(serde_json::from_value(
-                serde_json::json!({
-                    "threadId": session_id,
-                    "turn": turn_json(state, turn_id, Some(error))?,
-                }),
-            )?));
+            events.push(BackboneEvent::TurnCompleted(TurnCompletedNotification {
+                thread_id: session_id.to_owned(),
+                turn: turn(state, turn_id, Some(error))?,
+            }));
         }
         HistoryPayload::InteractionRequested { .. }
         | HistoryPayload::InteractionResolved { .. }
@@ -296,7 +296,7 @@ fn surface_events(
     entry: &AgentHistoryEntry,
     previous: Option<&agentdash_agent::dash::DashSurface>,
     surface: &agentdash_agent::dash::DashSurface,
-) -> Vec<BackboneEvent> {
+) -> Result<Vec<BackboneEvent>, serde_json::Error> {
     let mut events = Vec::new();
     let previous_instructions = previous
         .into_iter()
@@ -348,24 +348,30 @@ fn surface_events(
             content: instruction.text.clone(),
             context_usage_kind: Some("agent_surface".to_owned()),
         };
-        let sections = if kind == ContextFrameKind::Identity {
-            vec![ContextFrameSection::Identity {
+        let sections = match &instruction.presentation {
+            AgentSurfaceInstructionPresentation::CapabilityManifest { manifest } => {
+                let previous_manifest = previous_instructions
+                    .get(instruction.key.as_str())
+                    .and_then(|instruction| match &instruction.presentation {
+                        AgentSurfaceInstructionPresentation::CapabilityManifest { manifest } => {
+                            Some(manifest)
+                        }
+                        _ => None,
+                    });
+                capability_manifest_sections(previous_manifest, manifest)?
+            }
+            AgentSurfaceInstructionPresentation::Identity => {
+                vec![ContextFrameSection::Identity {
+                    title: title.to_owned(),
+                    summary: instruction.key.clone(),
+                    fragments: vec![fragment],
+                }]
+            }
+            _ => vec![ContextFrameSection::AssignmentContext {
                 title: title.to_owned(),
                 summary: instruction.key.clone(),
                 fragments: vec![fragment],
-            }]
-        } else if kind == ContextFrameKind::CapabilityStateDelta {
-            vec![ContextFrameSection::SystemNotice {
-                title: title.to_owned(),
-                summary: instruction.key.clone(),
-                body: Some(instruction.text.clone()),
-            }]
-        } else {
-            vec![ContextFrameSection::AssignmentContext {
-                title: title.to_owned(),
-                summary: instruction.key.clone(),
-                fragments: vec![fragment],
-            }]
+            }],
         };
         events.push(BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(
             Box::new(ContextFrameChanged {
@@ -529,7 +535,7 @@ fn surface_events(
             }),
         )));
     }
-    events
+    Ok(events)
 }
 
 fn runtime_tool_schema_entry(
@@ -586,56 +592,378 @@ fn render_tool_surface_delta(
     sections.join("\n\n")
 }
 
+fn capability_manifest_sections(
+    previous: Option<&AgentCapabilityManifest>,
+    current: &AgentCapabilityManifest,
+) -> Result<Vec<ContextFrameSection>, serde_json::Error> {
+    let before_capabilities = previous
+        .map(|manifest| manifest.tool_capabilities.iter().cloned().collect())
+        .unwrap_or_default();
+    let after_capabilities = current.tool_capabilities.iter().cloned().collect();
+    let before_excluded = previous
+        .map(|manifest| manifest.excluded_tool_paths.iter().cloned().collect())
+        .unwrap_or_default();
+    let after_excluded = current.excluded_tool_paths.iter().cloned().collect();
+    let before_included = previous
+        .map(|manifest| manifest.included_tool_paths.iter().cloned().collect())
+        .unwrap_or_default();
+    let after_included = current.included_tool_paths.iter().cloned().collect();
+    let before_mcp = previous
+        .map(|manifest| {
+            manifest
+                .mcp_servers
+                .iter()
+                .map(|server| (server.name.clone(), server))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let after_mcp = current
+        .mcp_servers
+        .iter()
+        .map(|server| (server.name.clone(), server))
+        .collect::<BTreeMap<_, _>>();
+    let before_mounts = previous
+        .and_then(|manifest| manifest.vfs.as_ref())
+        .map(|vfs| {
+            vfs.mounts
+                .iter()
+                .map(|mount| (mount.id.clone(), mount))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let after_mounts = current
+        .vfs
+        .as_ref()
+        .map(|vfs| {
+            vfs.mounts
+                .iter()
+                .map(|mount| (mount.id.clone(), mount))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let before_skills = previous
+        .map(|manifest| {
+            manifest
+                .skills
+                .iter()
+                .map(|skill| (capability_skill_key(skill), skill))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let after_skills = current
+        .skills
+        .iter()
+        .map(|skill| (capability_skill_key(skill), skill))
+        .collect::<BTreeMap<_, _>>();
+    let before_memory = previous
+        .map(|manifest| {
+            manifest
+                .memory_sources
+                .iter()
+                .map(|source| (capability_memory_key(source), source))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let after_memory = current
+        .memory_sources
+        .iter()
+        .map(|source| (capability_memory_key(source), source))
+        .collect::<BTreeMap<_, _>>();
+    let before_companions = previous
+        .map(|manifest| {
+            manifest
+                .companion_agents
+                .iter()
+                .map(|agent| (agent.agent_key.clone(), agent))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let after_companions = current
+        .companion_agents
+        .iter()
+        .map(|agent| (agent.agent_key.clone(), agent))
+        .collect::<BTreeMap<_, _>>();
+    let skill_entry = |skill: &agentdash_agent_protocol::AgentCapabilitySkill| {
+        Ok(RuntimeSkillEntry {
+            name: skill.name.clone(),
+            capability_key: skill.capability_key.clone(),
+            provider_key: skill.provider_key.clone(),
+            local_name: skill.local_name.clone(),
+            display_name: skill.display_name.clone(),
+            description: skill.description.clone(),
+            file_path: skill.file_path.clone(),
+            base_dir: skill.base_dir.clone(),
+            exposure: match skill.exposure.as_str() {
+                "default_exposed" => SkillContextExposure::DefaultExposed,
+                "explicit_only" => SkillContextExposure::ExplicitOnly,
+                other => {
+                    return Err(serde_json::Error::io(std::io::Error::other(format!(
+                        "accepted capability manifest contains invalid skill exposure `{other}`"
+                    ))));
+                }
+            },
+            disable_model_invocation: skill.disable_model_invocation,
+            context_usage_kind: Some("agent_surface".to_owned()),
+        })
+    };
+    let memory_entry =
+        |source: &agentdash_agent_protocol::AgentCapabilityMemorySource| RuntimeMemorySourceEntry {
+            provider_key: source.provider_key.clone(),
+            source_key: source.source_key.clone(),
+            display_name: source.display_name.clone(),
+            source_uri: source.source_uri.clone(),
+            index_uri: source.index_uri.clone(),
+            mount_id: source.mount_id.clone(),
+            scope: source.scope.clone(),
+            index_status: source.index_status.clone(),
+            trust_level: source.trust_level.clone(),
+            revision: String::new(),
+            summary: source.summary.clone(),
+            context_usage_kind: Some("agent_surface".to_owned()),
+        };
+    let companion_entry = |agent: &agentdash_agent_protocol::AgentCapabilityCompanionAgent| {
+        RuntimeCompanionAgentEntry {
+            agent_key: agent.agent_key.clone(),
+            executor: agent.executor.clone(),
+            display_name: agent.display_name.clone(),
+            context_usage_kind: Some("agent_surface".to_owned()),
+        }
+    };
+    let sections = vec![
+        ContextFrameSection::CapabilityKeyDelta {
+            added_capabilities: set_added(&before_capabilities, &after_capabilities),
+            removed_capabilities: set_added(&after_capabilities, &before_capabilities),
+            effective_capabilities: current.tool_capabilities.clone(),
+        },
+        ContextFrameSection::ToolPathDelta {
+            blocked_tool_paths: set_added(&before_excluded, &after_excluded),
+            unblocked_tool_paths: set_added(&after_excluded, &before_excluded),
+            whitelisted_tool_paths: set_added(&before_included, &after_included),
+            removed_whitelist_paths: set_added(&after_included, &before_included),
+        },
+        ContextFrameSection::McpServerDelta {
+            added_mcp_servers: map_added(&before_mcp, &after_mcp),
+            removed_mcp_servers: map_added(&after_mcp, &before_mcp),
+            changed_mcp_servers: map_changed(&before_mcp, &after_mcp),
+        },
+        ContextFrameSection::VfsDelta {
+            vfs_mounts_added: map_added(&before_mounts, &after_mounts),
+            vfs_mounts_removed: map_added(&after_mounts, &before_mounts),
+            default_mount_before: previous
+                .and_then(|manifest| manifest.vfs.as_ref())
+                .and_then(|vfs| vfs.default_mount.clone()),
+            default_mount_after: current
+                .vfs
+                .as_ref()
+                .and_then(|vfs| vfs.default_mount.clone()),
+        },
+        ContextFrameSection::SkillDelta {
+            added_skills: map_added_values(&before_skills, &after_skills)
+                .into_iter()
+                .map(skill_entry)
+                .collect::<Result<Vec<_>, _>>()?,
+            removed_skills: map_added_values(&after_skills, &before_skills)
+                .into_iter()
+                .map(skill_entry)
+                .collect::<Result<Vec<_>, _>>()?,
+            changed_skills: map_changed_values(&before_skills, &after_skills)
+                .into_iter()
+                .map(skill_entry)
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        ContextFrameSection::SystemNotice {
+            title: "Skill Discovery".to_owned(),
+            summary: if current.skill_diagnostics.is_empty() {
+                "Discovery completed without diagnostics".to_owned()
+            } else {
+                format!("{} discovery diagnostics", current.skill_diagnostics.len())
+            },
+            body: (!current.skill_diagnostics.is_empty()).then(|| {
+                current
+                    .skill_diagnostics
+                    .iter()
+                    .map(|diagnostic| {
+                        format!(
+                            "- `{}` / `{}`: {}",
+                            diagnostic.provider_key, diagnostic.code, diagnostic.message
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }),
+        },
+        ContextFrameSection::MemoryInventory {
+            title: "Memory Inventory".to_owned(),
+            summary: format!("{} memory sources", current.memory_sources.len()),
+            mode: if previous.is_some() {
+                RuntimeMemoryInventoryMode::Delta
+            } else {
+                RuntimeMemoryInventoryMode::Snapshot
+            },
+            sources: current.memory_sources.iter().map(memory_entry).collect(),
+            diagnostics: current
+                .memory_diagnostics
+                .iter()
+                .map(|diagnostic| RuntimeMemoryDiagnosticEntry {
+                    provider_key: diagnostic.provider_key.clone(),
+                    code: diagnostic.code.clone(),
+                    message: diagnostic.message.clone(),
+                    source_key: diagnostic.source_key.clone(),
+                    uri: diagnostic.uri.clone(),
+                    context_usage_kind: Some("agent_surface".to_owned()),
+                })
+                .collect(),
+            added_sources: map_added_values(&before_memory, &after_memory)
+                .into_iter()
+                .map(memory_entry)
+                .collect(),
+            removed_sources: map_added_values(&after_memory, &before_memory)
+                .into_iter()
+                .map(memory_entry)
+                .collect(),
+            changed_sources: map_changed_values(&before_memory, &after_memory)
+                .into_iter()
+                .map(memory_entry)
+                .collect(),
+        },
+        ContextFrameSection::CompanionAgentRosterDelta {
+            added_agents: map_added_values(&before_companions, &after_companions)
+                .into_iter()
+                .map(companion_entry)
+                .collect(),
+            removed_agent_keys: map_added(&after_companions, &before_companions),
+            changed_agents: map_changed_values(&before_companions, &after_companions)
+                .into_iter()
+                .map(companion_entry)
+                .collect(),
+            effective_agents: current
+                .companion_agents
+                .iter()
+                .map(companion_entry)
+                .collect(),
+        },
+        ContextFrameSection::SystemNotice {
+            title: "Channels".to_owned(),
+            summary: format!("{} visible channels", current.channels.len()),
+            body: Some(
+                current
+                    .channels
+                    .iter()
+                    .map(|channel| {
+                        format!(
+                            "- `{}` [{}] ({})",
+                            channel.channel_ref,
+                            channel.operations.join(", "),
+                            channel.readiness
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+        },
+        ContextFrameSection::SystemNotice {
+            title: "Workspace Modules".to_owned(),
+            summary: format!("visibility: {}", current.workspace_module.mode),
+            body: Some(if current.workspace_module.allowed_module_ids.is_empty() {
+                "No module-id allowlist is applied.".to_owned()
+            } else {
+                current.workspace_module.allowed_module_ids.join("\n")
+            }),
+        },
+    ];
+    Ok(sections)
+}
+
+fn capability_skill_key(skill: &agentdash_agent_protocol::AgentCapabilitySkill) -> String {
+    if skill.capability_key.is_empty() {
+        skill.name.clone()
+    } else {
+        skill.capability_key.clone()
+    }
+}
+
+fn capability_memory_key(source: &agentdash_agent_protocol::AgentCapabilityMemorySource) -> String {
+    format!("{}:{}", source.provider_key, source.source_key)
+}
+
+fn map_added<K: Ord + Clone, V>(before: &BTreeMap<K, V>, after: &BTreeMap<K, V>) -> Vec<K> {
+    after
+        .keys()
+        .filter(|key| !before.contains_key(*key))
+        .cloned()
+        .collect()
+}
+
+fn set_added<K: Ord + Clone>(
+    before: &std::collections::BTreeSet<K>,
+    after: &std::collections::BTreeSet<K>,
+) -> Vec<K> {
+    after.difference(before).cloned().collect()
+}
+
+fn map_changed<K: Ord + Clone, V: PartialEq>(
+    before: &BTreeMap<K, V>,
+    after: &BTreeMap<K, V>,
+) -> Vec<K> {
+    after
+        .iter()
+        .filter(|(key, value)| before.get(*key).is_some_and(|before| before != *value))
+        .map(|(key, _)| key.clone())
+        .collect()
+}
+
+fn map_added_values<'a, K: Ord, V>(
+    before: &BTreeMap<K, &'a V>,
+    after: &BTreeMap<K, &'a V>,
+) -> Vec<&'a V> {
+    after
+        .iter()
+        .filter(|(key, _)| !before.contains_key(*key))
+        .map(|(_, value)| *value)
+        .collect()
+}
+
+fn map_changed_values<'a, K: Ord, V: PartialEq>(
+    before: &BTreeMap<K, &'a V>,
+    after: &BTreeMap<K, &'a V>,
+) -> Vec<&'a V> {
+    after
+        .iter()
+        .filter(|(key, value)| before.get(*key).is_some_and(|before| before != *value))
+        .map(|(_, value)| *value)
+        .collect()
+}
+
 fn surface_instruction_presentation(
     instruction: &agentdash_agent::dash::DashSurfaceInstruction,
 ) -> (ContextFrameKind, ContextMessageRole, &'static str) {
-    if instruction
-        .key
-        .starts_with("instruction:execution-profile:")
-    {
-        return (
+    match &instruction.presentation {
+        AgentSurfaceInstructionPresentation::SystemGuidelines => (
             ContextFrameKind::SystemGuidelines,
             ContextMessageRole::System,
             "System Guidelines",
-        );
-    }
-    match instruction.channel.as_str() {
-        "persona" | "agent_identity" => (
+        ),
+        AgentSurfaceInstructionPresentation::Identity => (
             ContextFrameKind::Identity,
             ContextMessageRole::System,
             "Agent Identity",
         ),
-        "workspace" | "vfs" | "runtime_policy" => (
+        AgentSurfaceInstructionPresentation::Environment => (
             ContextFrameKind::Environment,
             ContextMessageRole::Context,
             "Runtime Environment",
         ),
-        "constraint" | "constraints" | "instruction" | "instruction_append" => (
-            ContextFrameKind::SystemGuidelines,
-            ContextMessageRole::Developer,
-            "System Guidelines",
-        ),
-        "memory" | "codebase" | "references" => (
-            ContextFrameKind::MemoryContext,
-            ContextMessageRole::Context,
-            "Memory Context",
-        ),
-        "skills" => (
+        AgentSurfaceInstructionPresentation::CapabilityManifest { .. } => (
             ContextFrameKind::CapabilityStateDelta,
             ContextMessageRole::Context,
-            "Available Skills",
+            "Capability Surface",
         ),
-        "mcp" => (
-            ContextFrameKind::CapabilityStateDelta,
-            ContextMessageRole::Context,
-            "MCP Servers",
-        ),
-        "user_context" => (
+        AgentSurfaceInstructionPresentation::UserContext => (
             ContextFrameKind::UserContext,
             ContextMessageRole::User,
             "User Context",
         ),
-        _ => (
+        AgentSurfaceInstructionPresentation::AssignmentContext => (
             ContextFrameKind::AssignmentContext,
             ContextMessageRole::Context,
             "Assignment Context",
@@ -701,23 +1029,27 @@ fn item(
             call_id: _,
             name,
             arguments,
+            protocol_projector,
             result,
-        } => serde_json::json!({
-            "type": "dynamicToolCall",
-            "id": item_id.0,
-            "tool": name,
-            "arguments": serde_json::from_str::<serde_json::Value>(arguments)
-                .unwrap_or_else(|_| serde_json::Value::String(arguments.clone())),
-            "status": result.as_ref().map_or_else(
-                || status(item.status),
-                |result| if result.is_error { "failed" } else { status(item.status) },
-            ),
-            "contentItems": result.as_ref().map(|result| vec![serde_json::json!({
-                "type": "inputText",
-                "text": result.content,
-            })]),
-            "success": result.as_ref().map(|result| !result.is_error),
-        }),
+        } => {
+            let arguments = serde_json::from_str::<serde_json::Value>(arguments)?;
+            return project_tool_item(
+                &item_id.0,
+                name,
+                arguments,
+                protocol_projector,
+                item.status == ActivityStatus::Active,
+                matches!(
+                    item.status,
+                    ActivityStatus::Failed | ActivityStatus::Lost | ActivityStatus::Interrupted
+                ),
+                result.as_ref().map(|result| ToolPresentationResult {
+                    content: &result.content,
+                    is_error: result.is_error,
+                }),
+            )
+            .map_err(|error| serde_json::Error::io(std::io::Error::other(error)));
+        }
         ItemDetails::Interaction { prompt } => serde_json::json!({
             "type": "dynamicToolCall",
             "id": item_id.0,
@@ -747,11 +1079,11 @@ fn item(
     serde_json::from_value::<codex::ThreadItem>(value).map(Into::into)
 }
 
-fn turn_json(
+fn turn(
     state: &AgentHistoryState,
     turn_id: &agentdash_agent::dash::AgentTurnId,
     failure: Option<&agentdash_agent::dash::DashExecutionFailure>,
-) -> Result<serde_json::Value, serde_json::Error> {
+) -> Result<Turn, serde_json::Error> {
     let turn = state.turns.get(turn_id).expect("folded turn must exist");
     let items = state
         .items
@@ -759,24 +1091,24 @@ fn turn_json(
         .filter(|(_, item_state)| item_state.turn_id == *turn_id)
         .map(|(item_id, _)| item(state, item_id))
         .collect::<Result<Vec<_>, _>>()?;
-    let error = failure.map(|failure| {
-        serde_json::json!({
-            "message": failure.message,
-            "additionalDetails": format!(
-                "code={}; retryable={}",
-                failure.code, failure.retryable
-            ),
-        })
+    let error = failure.map(|failure| codex::TurnError {
+        message: failure.message.clone(),
+        codex_error_info: None,
+        additional_details: Some(Some(format!(
+            "code={}; retryable={}",
+            failure.code, failure.retryable
+        ))),
     });
-    Ok(serde_json::json!({
-        "id": turn_id.0,
-        "items": items,
-        "status": turn_status(turn.status),
-        "startedAt": null,
-        "completedAt": null,
-        "durationMs": null,
-        "error": error,
-    }))
+    Ok(Turn {
+        id: turn_id.0.clone(),
+        items,
+        items_view: codex::TurnItemsView::Full,
+        status: turn_status(turn.status),
+        started_at: None,
+        completed_at: None,
+        duration_ms: None,
+        error,
+    })
 }
 
 fn status(status: ActivityStatus) -> &'static str {
@@ -787,12 +1119,12 @@ fn status(status: ActivityStatus) -> &'static str {
     }
 }
 
-fn turn_status(status: ActivityStatus) -> &'static str {
+fn turn_status(status: ActivityStatus) -> codex::TurnStatus {
     match status {
-        ActivityStatus::Active => "inProgress",
-        ActivityStatus::Completed => "completed",
-        ActivityStatus::Failed | ActivityStatus::Lost => "failed",
-        ActivityStatus::Interrupted => "interrupted",
+        ActivityStatus::Active => codex::TurnStatus::InProgress,
+        ActivityStatus::Completed => codex::TurnStatus::Completed,
+        ActivityStatus::Failed | ActivityStatus::Lost => codex::TurnStatus::Failed,
+        ActivityStatus::Interrupted => codex::TurnStatus::Interrupted,
     }
 }
 
@@ -819,5 +1151,221 @@ fn turn_id(payload: &HistoryPayload) -> Option<&str> {
         | HistoryPayload::InputAccepted { .. }
         | HistoryPayload::InteractionResolved { .. }
         | HistoryPayload::Closed => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_agent::dash::{
+        AgentSessionId, AgentTurnId, BranchId, DashSurface, DashToolDefinition,
+        HistoryContribution, HistoryEntryId, ItemKind,
+    };
+    use agentdash_agent_protocol::{
+        AgentCapabilityChannel, AgentCapabilityCompanionAgent, AgentCapabilityDiagnostic,
+        AgentCapabilityMcpServer, AgentCapabilityMemorySource, AgentCapabilityMount,
+        AgentCapabilitySkill, AgentCapabilityVfs, AgentCapabilityWorkspaceModule,
+    };
+
+    #[test]
+    fn accepted_capability_manifest_projects_the_complete_platform_basket() {
+        let mut manifest = AgentCapabilityManifest {
+            tool_capabilities: vec!["task::write".to_owned()],
+            tool_clusters: vec!["task".to_owned()],
+            included_tool_paths: vec!["task::write::task_write".to_owned()],
+            excluded_tool_paths: vec![],
+            mcp_servers: vec![AgentCapabilityMcpServer {
+                name: "docs".to_owned(),
+                uses_relay: false,
+                status: "ready".to_owned(),
+                tool_count: Some(2),
+                reason_code: None,
+                message: None,
+            }],
+            companion_agents: vec![AgentCapabilityCompanionAgent {
+                agent_key: "reviewer".to_owned(),
+                executor: "dash".to_owned(),
+                display_name: "Reviewer".to_owned(),
+            }],
+            channels: vec![AgentCapabilityChannel {
+                channel_ref: "project:1:2".to_owned(),
+                aliases: vec!["review".to_owned()],
+                operations: vec!["read".to_owned(), "reply".to_owned()],
+                readiness: "ready".to_owned(),
+            }],
+            vfs: Some(AgentCapabilityVfs {
+                default_mount: Some("main".to_owned()),
+                mounts: vec![AgentCapabilityMount {
+                    id: "main".to_owned(),
+                    display_name: "Workspace".to_owned(),
+                    root_ref: "relay://workspace".to_owned(),
+                    capabilities: vec!["read".to_owned(), "write".to_owned()],
+                }],
+            }),
+            skills: vec![AgentCapabilitySkill {
+                name: "review".to_owned(),
+                capability_key: "workspace/review".to_owned(),
+                provider_key: "workspace".to_owned(),
+                local_name: "review".to_owned(),
+                display_name: Some("Review".to_owned()),
+                description: "Review changes".to_owned(),
+                file_path: "main://.agents/skills/review/SKILL.md".to_owned(),
+                base_dir: Some("main://.agents/skills/review".to_owned()),
+                exposure: "default_exposed".to_owned(),
+                disable_model_invocation: false,
+            }],
+            skill_diagnostics: vec![AgentCapabilityDiagnostic {
+                provider_key: "workspace".to_owned(),
+                code: "fixture".to_owned(),
+                message: "diagnostic".to_owned(),
+                source_key: None,
+                uri: None,
+            }],
+            memory_sources: vec![AgentCapabilityMemorySource {
+                provider_key: "project".to_owned(),
+                source_key: "memory".to_owned(),
+                display_name: "Project memory".to_owned(),
+                source_uri: "main://MEMORY.md".to_owned(),
+                index_uri: "main://memory/index.json".to_owned(),
+                mount_id: "main".to_owned(),
+                scope: "project".to_owned(),
+                index_status: "ready".to_owned(),
+                trust_level: "first_party".to_owned(),
+                summary: None,
+            }],
+            memory_diagnostics: vec![],
+            workspace_module: AgentCapabilityWorkspaceModule {
+                mode: "all".to_owned(),
+                allowed_module_ids: vec![],
+            },
+        };
+
+        let sections = capability_manifest_sections(None, &manifest).expect("project manifest");
+
+        assert!(sections.iter().any(|section| matches!(
+            section,
+            ContextFrameSection::CapabilityKeyDelta { effective_capabilities, .. }
+                if effective_capabilities == &["task::write"]
+        )));
+        assert!(sections.iter().any(|section| matches!(
+            section,
+            ContextFrameSection::McpServerDelta { added_mcp_servers, .. }
+                if added_mcp_servers == &["docs"]
+        )));
+        assert!(sections.iter().any(|section| matches!(
+            section,
+            ContextFrameSection::VfsDelta { vfs_mounts_added, .. }
+                if vfs_mounts_added == &["main"]
+        )));
+        assert!(sections.iter().any(|section| matches!(
+            section,
+            ContextFrameSection::SkillDelta { added_skills, .. }
+                if added_skills.iter().any(|skill| skill.capability_key == "workspace/review")
+        )));
+        assert!(sections.iter().any(|section| matches!(
+            section,
+            ContextFrameSection::MemoryInventory { sources, .. } if sources.len() == 1
+        )));
+        assert!(sections.iter().any(|section| matches!(
+            section,
+            ContextFrameSection::CompanionAgentRosterDelta { effective_agents, .. }
+                if effective_agents.len() == 1
+        )));
+        assert!(sections.iter().any(|section| matches!(
+            section,
+            ContextFrameSection::SystemNotice { title, .. } if title == "Channels"
+        )));
+        assert!(sections.iter().any(|section| matches!(
+            section,
+            ContextFrameSection::SystemNotice { title, .. } if title == "Workspace Modules"
+        )));
+
+        manifest.memory_sources.clear();
+        manifest.memory_diagnostics.clear();
+        let empty_memory_sections =
+            capability_manifest_sections(None, &manifest).expect("empty memory inventory");
+        assert!(empty_memory_sections.iter().any(|section| matches!(
+            section,
+            ContextFrameSection::MemoryInventory { sources, diagnostics, .. }
+                if sources.is_empty() && diagnostics.is_empty()
+        )));
+    }
+
+    #[test]
+    fn historical_tool_item_retains_its_accepted_projector_after_surface_revoke() {
+        let surface = DashSurface {
+            revision: 1,
+            digest: "surface-1".to_owned(),
+            instructions: Vec::new(),
+            tools: vec![DashToolDefinition {
+                name: "read_document".to_owned(),
+                description: "Read a document".to_owned(),
+                input_schema: serde_json::json!({"type": "object"}),
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FsRead,
+            }],
+        };
+        let turn_id = AgentTurnId::new("turn-1");
+        let item_id = AgentItemId::new("item-1");
+        let mut history =
+            AgentHistory::empty(AgentSessionId::new("session-1"), BranchId::new("branch-1"));
+        let contributions = vec![
+            HistoryPayload::SurfaceApplied {
+                surface: surface.clone(),
+            },
+            HistoryPayload::TurnStarted {
+                turn_id: turn_id.clone(),
+            },
+            HistoryPayload::ItemStarted {
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+                kind: ItemKind::ToolCall,
+            },
+            HistoryPayload::ToolCall {
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+                call_id: "call-1".to_owned(),
+                name: "read_document".to_owned(),
+                arguments: r#"{"path":"README.md"}"#.to_owned(),
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FsRead,
+            },
+            HistoryPayload::ToolResult {
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+                content: "contents".to_owned(),
+                is_error: false,
+            },
+            HistoryPayload::ItemCompleted {
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+            },
+            HistoryPayload::TurnCompleted { turn_id },
+            HistoryPayload::SurfaceRevoked { surface },
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, payload)| HistoryContribution {
+            entry_id: HistoryEntryId::new(format!("entry-{}", index + 1)),
+            payload,
+        })
+        .collect();
+        history.append_batch(contributions).expect("valid history");
+
+        let state = history.state().expect("folded history");
+        assert!(state.surface.is_none());
+        let projected = item(&state, &item_id).expect("historical tool projection");
+        assert_eq!(serde_json::to_value(projected).unwrap()["type"], "fsRead");
+
+        let records = history_records(&history)
+            .expect("canonical turn container must retain AgentDash-native items");
+        let completed_turn = records
+            .iter()
+            .find_map(|record| match &record.presentation.envelope.event {
+                BackboneEvent::TurnCompleted(notification) => Some(&notification.turn),
+                _ => None,
+            })
+            .expect("completed turn");
+        assert!(completed_turn.items.iter().any(|item| {
+            serde_json::to_value(item).is_ok_and(|value| value["type"] == "fsRead")
+        }));
     }
 }

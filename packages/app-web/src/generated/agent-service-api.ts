@@ -21,13 +21,41 @@ export type AgentServiceU64 = string & { readonly __agent_service_u64: "canonica
  */
 export type AgentServiceApiSchema = { descriptor: AgentServiceDescriptor, create: CreateAgentCommand, resume: ResumeAgentCommand, fork: ForkAgentCommand, execute: AgentCommandEnvelope, receipt: AgentCommandReceipt, fork_receipt: ForkAgentReceipt, create_evidence: AgentCreateEvidence, read: AgentReadQuery, snapshot: AgentSnapshot, changes: AgentChangesQuery, change_page: AgentChangePage, live_event: AgentLiveEvent, inspection: AgentEffectInspection, applied_effect_outcome: AgentAppliedEffectOutcome, desired_surface: AgentSurfaceSnapshot, surface_contribution_kind: AgentSurfaceContributionKind, offer: AgentRuntimeOffer, bound_surface: BoundAgentSurface, applied_surface: AppliedAgentSurface, apply_surface: ApplyBoundAgentSurface, revoke_surface: RevokeBoundAgentSurface, tool_invocation: AgentToolInvocation, tool_result: AgentToolResult, hook_invocation: AgentHookInvocation, hook_decision: AgentHookDecision, error: AgentServiceError, };
 
+/**
+ * 工具 owner 声明的 canonical conversation presentation family。
+ *
+ * 该字段随工具定义穿过 Product surface、Complete Agent binding 与 Agent native history；
+ * presentation adapter 只消费此声明，不从运行时工具名反推卡片类型。
+ */
+export type ToolProtocolProjector = { "family": "command" } | { "family": "file_change" } | { "family": "fs_read" } | { "family": "fs_grep" } | { "family": "fs_glob" } | { "family": "mcp", server_key: string, } | { "family": "dynamic", namespace: string | null, };
+
 export type AgentAppliedEffectOutcome = { "kind": "create", receipt: AppliedAgentCommandReceipt, } | { "kind": "resume", receipt: AppliedAgentCommandReceipt, } | { "kind": "fork", receipt: AppliedForkAgentReceipt, } | { "kind": "command", receipt: AppliedAgentCommandReceipt, } | { "kind": "surface_apply", receipt: AppliedAgentSurfaceReceipt, } | { "kind": "surface_revoke", receipt: AppliedAgentCommandReceipt, };
 
 export type AgentBindingGeneration = AgentServiceU64;
 
 export type AgentCallbackRouteId = string;
 
+export type AgentCapabilityChannel = { channel_ref: string, aliases: Array<string>, operations: Array<string>, readiness: string, };
+
+export type AgentCapabilityCompanionAgent = { agent_key: string, executor: string, display_name: string, };
+
+export type AgentCapabilityDiagnostic = { provider_key: string, code: string, message: string, source_key: string | null, uri: string | null, };
+
+export type AgentCapabilityManifest = { tool_capabilities: Array<string>, tool_clusters: Array<string>, included_tool_paths: Array<string>, excluded_tool_paths: Array<string>, mcp_servers: Array<AgentCapabilityMcpServer>, companion_agents: Array<AgentCapabilityCompanionAgent>, channels: Array<AgentCapabilityChannel>, vfs: AgentCapabilityVfs | null, skills: Array<AgentCapabilitySkill>, skill_diagnostics: Array<AgentCapabilityDiagnostic>, memory_sources: Array<AgentCapabilityMemorySource>, memory_diagnostics: Array<AgentCapabilityDiagnostic>, workspace_module: AgentCapabilityWorkspaceModule, };
+
+export type AgentCapabilityMcpServer = { name: string, uses_relay: boolean, status: string, tool_count: number | null, reason_code: string | null, message: string | null, };
+
+export type AgentCapabilityMemorySource = { provider_key: string, source_key: string, display_name: string, source_uri: string, index_uri: string, mount_id: string, scope: string, index_status: string, trust_level: string, summary: string | null, };
+
+export type AgentCapabilityMount = { id: string, display_name: string, root_ref: string, capabilities: Array<string>, };
+
 export type AgentCapabilityProfile = { lifecycle: Array<AgentLifecycleCapability>, commands: Array<AgentCommandCapability>, fork: AgentForkCapability, compaction: { [key in AgentCompactionMode]?: SemanticFidelity }, source_changes: AgentSourceChangeLevel, initial_context: InitialContextProfile, surface: AgentSurfaceProfile, inspect_effects: SemanticFidelity, };
+
+export type AgentCapabilitySkill = { name: string, capability_key: string, provider_key: string, local_name: string, display_name: string | null, description: string, file_path: string, base_dir: string | null, exposure: string, disable_model_invocation: boolean, };
+
+export type AgentCapabilityVfs = { default_mount: string | null, mounts: Array<AgentCapabilityMount>, };
+
+export type AgentCapabilityWorkspaceModule = { mode: string, allowed_module_ids: Array<string>, };
 
 export type AgentChange = { cursor: AgentSourceCursor, source_revision: AgentSourceRevision | null, occurred_at_ms: AgentServiceU64, payload: AgentChangePayload, };
 
@@ -173,9 +201,11 @@ export type AgentSurfaceCapabilityFacet = { semantics: AgentSurfaceSemanticFacet
 
 export type AgentSurfaceContributionKind = "instruction" | "tool" | "hook" | "workspace" | "context_requirement";
 
-export type AgentSurfaceContributionPayload = { "kind": "instruction", channel: string, text: string, } | { "kind": "tool", name: AgentToolName, description: string, input_schema: JsonValue, output_schema: JsonValue | null, } | { "kind": "hook", definition_id: AgentHookDefinitionId, point: AgentHookPoint, timing: AgentHookTiming, actions: Array<AgentHookAction>, deadline_ms: AgentServiceU64, } | { "kind": "workspace", requirement: string, } | { "kind": "context_requirement", requirement: string, };
+export type AgentSurfaceContributionPayload = { "kind": "instruction", channel: string, text: string, presentation: AgentSurfaceInstructionPresentation, } | { "kind": "tool", name: AgentToolName, description: string, input_schema: JsonValue, output_schema: JsonValue | null, protocol_projector: ToolProtocolProjector, } | { "kind": "hook", definition_id: AgentHookDefinitionId, point: AgentHookPoint, timing: AgentHookTiming, actions: Array<AgentHookAction>, deadline_ms: AgentServiceU64, } | { "kind": "workspace", requirement: string, } | { "kind": "context_requirement", requirement: string, };
 
 export type AgentSurfaceDigest = string;
+
+export type AgentSurfaceInstructionPresentation = { "kind": "system_guidelines" } | { "kind": "identity" } | { "kind": "assignment_context" } | { "kind": "environment" } | { "kind": "user_context" } | { "kind": "capability_manifest", manifest: AgentCapabilityManifest, };
 
 export type AgentSurfaceProfile = { facets: Array<AgentSurfaceCapabilityFacet>, };
 

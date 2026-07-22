@@ -8,6 +8,7 @@ use crate::backbone::item::{
     ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification,
 };
 use crate::backbone::platform::PlatformEvent;
+use crate::backbone::turn::{TurnCompletedNotification, TurnStartedNotification};
 use crate::backbone::usage::ThreadTokenUsageUpdatedNotification;
 use crate::backbone::user_input::UserInputSubmittedNotification;
 
@@ -44,8 +45,8 @@ pub enum BackboneEvent {
     ServerRequestResolved(codex::ServerRequestResolvedNotification),
 
     // ── Turn 生命周期 ──
-    TurnStarted(codex::TurnStartedNotification),
-    TurnCompleted(codex::TurnCompletedNotification),
+    TurnStarted(TurnStartedNotification),
+    TurnCompleted(TurnCompletedNotification),
     TurnDiffUpdated(codex::TurnDiffUpdatedNotification),
 
     // ── 用户输入（Codex UserInput + AgentDash submission 标注）──

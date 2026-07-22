@@ -13,7 +13,8 @@ use agentdash_application_ports::agent_frame_materialization::{
 use agentdash_domain::canvas::{Canvas, CanvasDataBinding};
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_workspace_module::canvas::{
-    CanvasMountAccess, append_canvas_mount, upsert_canvas_runtime_data_binding,
+    CanvasMountAccess, append_canvas_mount, canvas_runtime_mount_access_for_user,
+    upsert_canvas_runtime_data_binding,
 };
 use async_trait::async_trait;
 
@@ -164,19 +165,30 @@ impl ProductAgentRunRuntimeSurfaceUpdateService {
             | RuntimeSurfaceChange::CanvasVisibilityRequested {
                 canvas_mount_id, ..
             } => {
+                let (project_id, created_by_user_id) = self.agent_run_context(request).await?;
                 let canvas = self
                     .repos
                     .canvas_repo
-                    .get_by_mount_id(self.project_id(request).await?, canvas_mount_id.as_str())
+                    .get_by_mount_id(project_id, canvas_mount_id.as_str())
                     .await
                     .map_err(surface_rejected)?
                     .ok_or_else(|| {
                         surface_rejected(format!("Canvas `{canvas_mount_id}` does not exist"))
                     })?;
+                let access = canvas_runtime_mount_access_for_user(
+                    &canvas,
+                    Some(created_by_user_id.as_str()),
+                )
+                .ok_or_else(|| {
+                    surface_rejected(format!(
+                        "Canvas `{canvas_mount_id}` is not visible to the AgentRun product identity"
+                    ))
+                })?;
                 apply_canvas_change(
                     current,
                     &mut candidate,
                     &canvas,
+                    access,
                     match &request.change {
                         RuntimeSurfaceChange::CanvasBindingChanged { binding, .. } => {
                             Some(binding.clone())
@@ -214,10 +226,10 @@ impl ProductAgentRunRuntimeSurfaceUpdateService {
         Ok(candidate)
     }
 
-    async fn project_id(
+    async fn agent_run_context(
         &self,
         request: &RuntimeSurfaceUpdateRequest,
-    ) -> Result<uuid::Uuid, AgentRunFrameSurfaceError> {
+    ) -> Result<(uuid::Uuid, String), AgentRunFrameSurfaceError> {
         let run = self
             .repos
             .lifecycle_run_repo
@@ -237,7 +249,7 @@ impl ProductAgentRunRuntimeSurfaceUpdateService {
                 "Lifecycle AgentRun facts do not match the Runtime surface target",
             ));
         }
-        Ok(run.project_id)
+        Ok((run.project_id, agent.created_by_user_id))
     }
 }
 
@@ -265,12 +277,13 @@ fn apply_canvas_change(
     current: &AgentFrame,
     candidate: &mut AgentFrame,
     canvas: &Canvas,
+    access: CanvasMountAccess,
     binding: Option<CanvasDataBinding>,
 ) -> Result<(), AgentRunFrameSurfaceError> {
     let mut vfs = current
         .typed_vfs()
         .ok_or_else(|| surface_rejected("current AgentFrame has no typed VFS surface"))?;
-    append_canvas_mount(&mut vfs, canvas, CanvasMountAccess::read_only());
+    append_canvas_mount(&mut vfs, canvas, access);
     if let Some(binding) = binding {
         upsert_canvas_runtime_data_binding(&mut vfs, canvas, binding).map_err(surface_rejected)?;
     }
@@ -355,7 +368,14 @@ mod tests {
         let binding =
             CanvasDataBinding::new("metrics".to_owned(), "workspace://metrics.json".to_owned());
 
-        apply_canvas_change(&current, &mut candidate, &canvas, Some(binding.clone())).unwrap();
+        apply_canvas_change(
+            &current,
+            &mut candidate,
+            &canvas,
+            CanvasMountAccess::writable(),
+            Some(binding.clone()),
+        )
+        .unwrap();
 
         let vfs = candidate.typed_vfs().expect("candidate VFS");
         let canvas_mount = vfs
@@ -367,6 +387,7 @@ mod tests {
             canvas_mount_runtime_data_bindings(canvas_mount),
             vec![binding]
         );
+        assert!(canvas_mount.supports(MountCapability::Write));
         assert_eq!(
             candidate
                 .typed_capability_state()

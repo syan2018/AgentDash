@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { acknowledgeWorkspacePresentation } from "../../../services/agentRunProductProjections";
 import type { ExecutorConfig } from "../../../services/executor";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import { subscribeProjectEvents } from "../../../stores/eventStore";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import type {
@@ -13,10 +13,8 @@ import type {
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import {
   connectAgentRunTerminalFeed,
-  connectWorkspacePresentationFeed,
   projectAgentRunTerminalChanges,
   projectAgentRunTerminalSnapshot,
-  WorkspacePresentationPendingConsumer,
 } from "../../agent-run-product-projections";
 import type {
   AgentRunWorkspaceState,
@@ -24,9 +22,9 @@ import type {
 import { isWorkspaceModulePresentationCurrent } from "../../workspace-module/model/presentation";
 import {
   planAgentRunMessageSent,
+  planAgentRunLiveEvent,
   planAgentRunProjectEvent,
   planAgentRunWorkspaceModuleOpened,
-  planWorkspaceModulePresentationIntent,
   resolveAgentRunSubmitCommand,
   type AgentRunControlPlaneEffectPlan,
   type AgentRunWorkspacePanelTarget,
@@ -77,6 +75,7 @@ interface UseAgentRunWorkspaceControlPlaneResult {
   refreshAgentRunWorkspaceState: () => Promise<unknown>;
   refreshAgentRunHookRuntime: () => Promise<unknown>;
   handleMessageSent: () => void;
+  handleAgentRunLiveEvent: (event: BackboneEvent) => void;
   handleWorkspaceModuleOpened: () => void;
 }
 
@@ -366,6 +365,10 @@ export function useAgentRunWorkspaceControlPlane({
     applyControlPlaneEffectPlan(planAgentRunMessageSent());
   }, [applyControlPlaneEffectPlan]);
 
+  const handleAgentRunLiveEvent = useCallback((event: BackboneEvent) => {
+    applyControlPlaneEffectPlan(planAgentRunLiveEvent(event).effects);
+  }, [applyControlPlaneEffectPlan]);
+
   useEffect(() => {
     if (!currentRunId || !currentAgentId) return;
     return subscribeProjectEvents((event) => {
@@ -385,39 +388,14 @@ export function useAgentRunWorkspaceControlPlane({
   useEffect(() => {
     if (!currentRunId || !currentAgentId) return;
     const target = { runId: currentRunId, agentId: currentAgentId };
-    const pendingPresentationConsumer = new WorkspacePresentationPendingConsumer({
-      fulfill: (intent) =>
-        new Promise<void>((resolve, reject) => {
-          const plan = planWorkspaceModulePresentationIntent(intent);
-          if (!plan.openWorkspacePanel) {
-            reject(new Error("Workspace presentation intent 缺少可打开的 typed target"));
-            return;
-          }
-          applyControlPlaneEffectPlan(plan, resolve, reject);
-        }),
-      acknowledge: (intentId, observedChangeSequence) =>
-        acknowledgeWorkspacePresentation(target, intentId, observedChangeSequence),
-      scheduleRetry: (callback) => window.setTimeout(callback, 500),
-      cancelRetry: (handle) => window.clearTimeout(handle as number),
-      onError: (error) => {
-        console.error("Workspace presentation pending intent retry", error);
-      },
-    });
-    const workspacePresentationFeed = connectWorkspacePresentationFeed(target, {
-      onSnapshot: (snapshot) => pendingPresentationConsumer.consumeSnapshot(snapshot),
-      onChanges: (changes) => pendingPresentationConsumer.consumeChanges(changes),
-    });
     const terminalFeed = connectAgentRunTerminalFeed(target, {
       onSnapshot: projectAgentRunTerminalSnapshot,
       onChanges: projectAgentRunTerminalChanges,
     });
     return () => {
-      workspacePresentationFeed.close();
       terminalFeed.close();
-      pendingPresentationConsumer.close();
     };
   }, [
-    applyControlPlaneEffectPlan,
     currentAgentId,
     currentRunId,
   ]);
@@ -433,6 +411,7 @@ export function useAgentRunWorkspaceControlPlane({
     refreshAgentRunWorkspaceState,
     refreshAgentRunHookRuntime,
     handleMessageSent,
+    handleAgentRunLiveEvent,
     handleWorkspaceModuleOpened,
   };
 }

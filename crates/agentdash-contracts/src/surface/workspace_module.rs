@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+pub use agentdash_agent_protocol::WorkspaceModulePresentation;
+
 /// Module 的来源类别。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -222,20 +224,4 @@ pub struct WorkspaceModulePresentRequest {
     pub turn_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
-}
-
-/// canonical workspace module presentation payload。
-///
-/// Agent tool event、tool result details 与 HTTP user-open response 共用该形状。
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
-pub struct WorkspaceModulePresentation {
-    pub module_id: String,
-    pub view_key: String,
-    pub renderer_kind: String,
-    pub presentation_uri: String,
-    pub title: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payload: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub diagnostics: Option<Value>,
 }

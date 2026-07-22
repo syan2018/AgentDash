@@ -26,6 +26,6 @@
     ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/",
     ".trellis/tasks/07-20-database-persistence-boundary-cleanup/"
   ],
-  "notes": "任务保持进行中，待用户在接力设备确认后再归档。能力信息由AgentFrame CapabilityState单向编译为accepted structured manifest，工具projector随ToolCall进入native history；accepted工具定义同时派生provider机器schema与模型可读摘要，typed工具结果同时派生transcript与AgentDash专属Card。0109/0110已在开发库执行到schema 110，真实浏览器验证ContextFrame、实时READ、刷新后历史和canonical会话流均从同一Agent history恢复。",
+  "notes": "任务保持进行中，待用户确认后再归档。能力信息由AgentFrame CapabilityState单向编译为accepted structured manifest，工具projector随ToolCall进入native history；typed工具结果同时派生transcript、AgentDash专属Card与平台事件。开发库已执行到schema 111并删除Workspace Module presentation五张投影表；浏览器验证展示事件经canonical live record在turn完成前打开Canvas，刷新后历史只恢复审计而不重放命令。",
   "meta": {}
 }

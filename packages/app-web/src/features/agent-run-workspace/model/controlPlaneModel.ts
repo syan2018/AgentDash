@@ -5,8 +5,7 @@ import type {
   ControlPlaneProjectionChanged,
   ProjectEventStreamEnvelope,
 } from "../../../generated/project-contracts";
-import type { WorkspaceModulePresentation } from "../../../generated/workspace-module-contracts";
-import type { WorkspaceModulePresentationIntent } from "../../../generated/agent-run-product-projection-contracts";
+import type { WorkspaceModulePresentation } from "../../../generated/backbone-protocol";
 import { workspaceModulePresentationTabTarget } from "../../workspace-module/model/presentation";
 import type {
   AgentRunConversationCommand,
@@ -37,7 +36,6 @@ export interface AgentRunControlPlaneEffectPlan {
 
 export interface AgentRunLiveEventPlan {
   effects: AgentRunControlPlaneEffectPlan;
-  refreshTaskPlan: boolean;
 }
 
 export type AgentRunSubmitCommandResolution =
@@ -116,7 +114,7 @@ function projectionRefreshReason(change: ControlPlaneProjectionChanged): string 
   return "control_plane:" + change.projection + ":" + change.reason;
 }
 
-function planWorkspaceModulePresentationPayload(
+export function planWorkspaceModulePresentationPayload(
   data: WorkspaceModulePresentation | null,
 ): AgentRunControlPlaneEffectPlan {
   if (!data) return {};
@@ -134,12 +132,6 @@ function planWorkspaceModulePresentationPayload(
       },
     },
   };
-}
-
-export function planWorkspaceModulePresentationIntent(
-  intent: WorkspaceModulePresentationIntent,
-): AgentRunControlPlaneEffectPlan {
-  return planWorkspaceModulePresentationPayload(intent.presentation);
 }
 
 function planControlPlaneProjectionChanged(
@@ -227,10 +219,19 @@ function planAgentRunEventEffects(
       refreshAgentRunListReason: "thread_name_updated",
     };
   }
+  if (isTaskPlanMutation(event)) {
+    return {
+      refreshWorkspaceState: true,
+      hookRuntimeRefresh: { reason: "task_plan_changed", immediate: true },
+    };
+  }
   if (event.type !== "platform") {
     return {};
   }
 
+  if (event.payload.kind === "workspace_module_presentation_requested") {
+    return planWorkspaceModulePresentationPayload(event.payload.data);
+  }
   if (event.payload.kind === "context_frame_changed") {
     return {
       refreshWorkspaceState: true,
@@ -258,6 +259,5 @@ export function planAgentRunLiveEvent(
 ): AgentRunLiveEventPlan {
   return {
     effects: planAgentRunEventEffects(event),
-    refreshTaskPlan: isTurnTerminal(event) || isTaskPlanMutation(event),
   };
 }

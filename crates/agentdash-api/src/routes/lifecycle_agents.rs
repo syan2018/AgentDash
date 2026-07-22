@@ -22,10 +22,6 @@ use agentdash_contracts::agent_run_product_projection as product_projection_cont
 use agentdash_contracts::session::SessionMessageRefDto;
 use agentdash_contracts::workflow::{AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto};
 use agentdash_domain::agent_run_target::AgentRunTarget;
-use agentdash_workspace_module::workspace_module::presentation_protocol::{
-    WorkspaceModulePresentationAcknowledgeRequest, WorkspaceModulePresentationChangeSequence,
-    WorkspaceModulePresentationIntentId,
-};
 use axum::{
     Json,
     body::{Body, Bytes},
@@ -92,18 +88,6 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/cancel",
             axum::routing::post(cancel_agent_run),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/workspace-presentations/snapshot",
-            axum::routing::get(get_workspace_presentation_snapshot),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/workspace-presentations/changes",
-            axum::routing::get(get_workspace_presentation_changes),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/workspace-presentations/{intent_id}/ack",
-            axum::routing::post(acknowledge_workspace_presentation),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/snapshot",
@@ -767,88 +751,6 @@ async fn execute_managed_runtime_command(
         .map_err(agent_run_product_command_error)
 }
 
-async fn get_workspace_presentation_snapshot(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<product_projection_contract::WorkspaceModulePresentationSnapshot>, ApiError> {
-    let target = authorize_agent_run_target(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    state
-        .services
-        .agent_run_product_projection
-        .workspace_presentation_snapshot(&target)
-        .await
-        .map(product_projection_contract::WorkspaceModulePresentationSnapshot::from)
-        .map(Json)
-        .map_err(agent_run_product_projection_error)
-}
-
-async fn get_workspace_presentation_changes(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Query(query): Query<ProductProjectionChangesQuery>,
-) -> Result<Json<product_projection_contract::WorkspaceModulePresentationChangePage>, ApiError> {
-    let target = authorize_agent_run_target(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    state
-        .services
-        .agent_run_product_projection
-        .workspace_presentation_changes(
-            &target,
-            query.after.map(WorkspaceModulePresentationChangeSequence),
-            product_projection_limit(query.limit)?,
-        )
-        .await
-        .map(product_projection_contract::WorkspaceModulePresentationChangePage::from)
-        .map(Json)
-        .map_err(agent_run_product_projection_error)
-}
-
-async fn acknowledge_workspace_presentation(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, intent_id)): Path<(String, String, String)>,
-    Json(body): Json<product_projection_contract::WorkspaceModulePresentationAcknowledgeRequest>,
-) -> Result<Json<product_projection_contract::WorkspaceModulePresentationChange>, ApiError> {
-    let target = authorize_agent_run_target(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    state
-        .services
-        .agent_run_product_projection
-        .acknowledge_workspace_presentation(WorkspaceModulePresentationAcknowledgeRequest {
-            target,
-            intent_id: WorkspaceModulePresentationIntentId::new(intent_id)
-                .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-            observed_change_sequence: WorkspaceModulePresentationChangeSequence(
-                body.observed_change_sequence,
-            ),
-        })
-        .await
-        .map(product_projection_contract::WorkspaceModulePresentationChange::from)
-        .map(Json)
-        .map_err(agent_run_product_projection_error)
-}
-
 async fn get_agent_run_terminal_snapshot(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -949,7 +851,6 @@ fn agent_run_product_projection_error(error: AgentRunProductProjectionError) -> 
         }
         AgentRunProductProjectionError::Binding(message)
         | AgentRunProductProjectionError::Runtime(message)
-        | AgentRunProductProjectionError::Workspace(message)
         | AgentRunProductProjectionError::Terminal(message) => ApiError::Internal(message),
         AgentRunProductProjectionError::TargetMismatch => ApiError::Internal(error.to_string()),
     }

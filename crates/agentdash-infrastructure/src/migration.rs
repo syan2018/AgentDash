@@ -32,11 +32,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "routines",
     "runner_registration_tokens",
     "runtime_health",
-    "workspace_module_presentation_head",
-    "workspace_module_presentation_intent",
-    "workspace_module_presentation_change",
-    "workspace_module_presentation_ack",
-    "workspace_module_presentation_outbox",
     "agent_run_terminal_projection_head",
     "agent_run_terminal_projection",
     "agent_run_terminal_projection_change",
@@ -58,6 +53,11 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
 ];
 
 const RETIRED_POSTGRES_TABLES: &[&str] = &[
+    "workspace_module_presentation_head",
+    "workspace_module_presentation_intent",
+    "workspace_module_presentation_change",
+    "workspace_module_presentation_ack",
+    "workspace_module_presentation_outbox",
     "dash_agent_session",
     "agent_run_mailbox_messages",
     "agent_run_mailbox_states",

@@ -611,11 +611,6 @@ mod tests {
         MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
         MemoryLifecycleSubjectAssociationRepository,
     };
-    use agentdash_workspace_module::workspace_module::presentation_protocol::{
-        WorkspaceModulePresentationAcknowledgeRequest, WorkspaceModulePresentationChange,
-        WorkspaceModulePresentationChangePage, WorkspaceModulePresentationChangeSequence,
-        WorkspaceModulePresentationSnapshot,
-    };
     use tokio::sync::Mutex;
 
     use super::*;
@@ -673,29 +668,6 @@ mod tests {
             AgentRunProductProjectionError,
         > {
             Err(AgentRunProductProjectionError::Runtime("unused".into()))
-        }
-
-        async fn workspace_presentation_snapshot(
-            &self,
-            _target: &AgentRunTarget,
-        ) -> Result<WorkspaceModulePresentationSnapshot, AgentRunProductProjectionError> {
-            Err(AgentRunProductProjectionError::Workspace("unused".into()))
-        }
-
-        async fn workspace_presentation_changes(
-            &self,
-            _target: &AgentRunTarget,
-            _after: Option<WorkspaceModulePresentationChangeSequence>,
-            _limit: usize,
-        ) -> Result<WorkspaceModulePresentationChangePage, AgentRunProductProjectionError> {
-            Err(AgentRunProductProjectionError::Workspace("unused".into()))
-        }
-
-        async fn acknowledge_workspace_presentation(
-            &self,
-            _request: WorkspaceModulePresentationAcknowledgeRequest,
-        ) -> Result<WorkspaceModulePresentationChange, AgentRunProductProjectionError> {
-            Err(AgentRunProductProjectionError::Workspace("unused".into()))
         }
 
         async fn terminal_snapshot(

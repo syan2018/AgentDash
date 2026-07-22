@@ -1,7 +1,6 @@
 use std::{
     collections::BTreeSet,
     sync::{Arc, OnceLock},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use agentdash_agent_runtime::{
@@ -9,9 +8,6 @@ use agentdash_agent_runtime::{
     RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation, RuntimeToolPermission,
     RuntimeToolResourceGrant, RuntimeVfsGrantedOperation, RuntimeVfsPathGrant,
     ToolProtocolProjector,
-};
-use agentdash_agent_runtime_contract::{
-    RuntimeItemId, RuntimeSourceRef, RuntimeTurnId, SurfaceRevision,
 };
 use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
 use agentdash_application_agentrun::runtime_task_tools::{
@@ -28,11 +24,6 @@ use agentdash_application_vfs::{
     AppliedVfsToolSurface,
 };
 use agentdash_contracts::workspace_module::WorkspaceModulePresentation;
-use agentdash_workspace_module::workspace_module::presentation_protocol::{
-    WorkspaceModulePresentationActor, WorkspaceModulePresentationActorKind,
-    WorkspaceModulePresentationCause, WorkspaceModulePresentationCommand,
-    WorkspaceModulePresentationCommandPort, WorkspaceModulePresentationEffectId,
-};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -414,20 +405,11 @@ impl RuntimeToolExecutor for RuntimeTaskWriteTool {
     }
 }
 
-pub struct WorkspaceModulePresentRuntimeTool {
-    product_bindings: Arc<crate::PostgresAgentRunProductRuntimeBindingRepository>,
-    presentations: Arc<dyn WorkspaceModulePresentationCommandPort>,
-}
+pub struct WorkspaceModulePresentRuntimeTool;
 
 impl WorkspaceModulePresentRuntimeTool {
-    pub fn new(
-        product_bindings: Arc<crate::PostgresAgentRunProductRuntimeBindingRepository>,
-        presentations: Arc<dyn WorkspaceModulePresentationCommandPort>,
-    ) -> Self {
-        Self {
-            product_bindings,
-            presentations,
-        }
+    pub const fn new() -> Self {
+        Self
     }
 }
 
@@ -437,7 +419,7 @@ impl RuntimeToolExecutor for WorkspaceModulePresentRuntimeTool {
         RuntimeToolDefinition {
             name: AgentToolName::new("workspace_module_present").expect("static runtime tool name"),
             description:
-                "Present a typed Workspace Module view through the Product-owned projection."
+                "Request presentation of a typed Workspace Module view in the current AgentRun."
                     .to_owned(),
             parameters_schema: serde_json::json!({
                 "type": "object",
@@ -462,8 +444,8 @@ impl RuntimeToolExecutor for WorkspaceModulePresentRuntimeTool {
             protocol_projector: ToolProtocolProjector::Dynamic {
                 namespace: Some("workspace_module".to_owned()),
             },
-            permission: RuntimeToolPermission::ProductWrite,
-            effect: RuntimeToolEffect::ProductMutation,
+            permission: RuntimeToolPermission::ProductRead,
+            effect: RuntimeToolEffect::ReadOnly,
         }
     }
 
@@ -487,97 +469,19 @@ impl RuntimeToolExecutor for WorkspaceModulePresentRuntimeTool {
                     );
                 }
             };
-        let Some(item_id) = invocation.context.item_id.as_ref() else {
-            return rejected(
-                "missing_runtime_tool_item",
-                "Workspace Module presentation requires the Complete Agent tool item identity",
-            );
-        };
-        let binding = match self
-            .product_bindings
-            .load_product_binding_by_runtime_thread(&invocation.context.runtime_thread_id)
-            .await
-        {
-            Ok(Some(binding)) => binding,
-            Ok(None) => {
-                return rejected(
-                    "missing_product_binding",
-                    "Runtime thread has no Product target binding",
-                );
-            }
-            Err(error) => {
-                return AgentToolResult::Failed {
-                    code: "product_binding_query_failed".to_owned(),
-                    message: error,
-                };
-            }
-        };
-        if binding.target.run_id.to_string() != invocation.grant.target.run_id
-            || binding.target.agent_id.to_string() != invocation.grant.target.agent_id
-            || binding.runtime_thread_id != invocation.context.runtime_thread_id
-        {
-            return rejected(
-                "stale_product_binding",
-                "Runtime callback coordinates differ from the Product target binding",
-            );
-        }
-        let effect_id =
-            match WorkspaceModulePresentationEffectId::new(invocation.context.effect_id.as_str()) {
-                Ok(value) => value,
-                Err(error) => {
-                    return rejected("invalid_workspace_presentation_effect", error.to_string());
-                }
-            };
-        let runtime_turn_id = match RuntimeTurnId::new(invocation.context.turn_id.as_str()) {
-            Ok(value) => value,
-            Err(error) => return rejected("invalid_runtime_turn", error.to_string()),
-        };
-        let runtime_item_id = match RuntimeItemId::new(item_id.as_str()) {
-            Ok(value) => value,
-            Err(error) => return rejected("invalid_runtime_item", error.to_string()),
-        };
-        let command = WorkspaceModulePresentationCommand {
-            effect_id,
-            target: binding.target,
-            actor: WorkspaceModulePresentationActor {
-                kind: WorkspaceModulePresentationActorKind::AgentTool,
-                actor_id: invocation.context.service_instance_id.to_string(),
-            },
-            cause: WorkspaceModulePresentationCause {
-                runtime_thread_id: binding.runtime_thread_id,
-                runtime_operation_id: None,
-                runtime_turn_id,
-                runtime_item_id,
-            },
-            source_ref: match RuntimeSourceRef::new(invocation.context.source.to_string()) {
-                Ok(value) => value,
-                Err(error) => return rejected("invalid_runtime_source", error.to_string()),
-            },
-            surface_revision: SurfaceRevision(invocation.context.applied_surface_revision.0),
-            presentation,
-            committed_at_ms: now_ms(),
-        };
-        match self.presentations.present(command).await {
-            Ok(change) => AgentToolResult::Completed {
-                output: serde_json::json!({
-                    "intent_id": change.intent.intent_id,
-                    "change_sequence": change.sequence.0,
-                    "presentation": change.intent.presentation,
-                }),
-            },
-            Err(error) => AgentToolResult::Failed {
-                code: "workspace_module_presentation_commit_failed".to_owned(),
-                message: error.to_string(),
-            },
+        AgentToolResult::Completed {
+            output: serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!("Workspace Module `{}` presentation requested", presentation.title),
+                }],
+                "is_error": false,
+                "details": {
+                    "workspace_module_presentation": presentation,
+                },
+            }),
         }
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0)
 }
 
 async fn execute_vfs(

@@ -20,9 +20,7 @@ use agentdash_contracts::agent_run_interaction::{
     AgentRunToolCallApprovalResponse, AgentRunToolCallRejectionResponse, BackendSelectionModeDto,
     BackendSelectionRequestDto,
 };
-use agentdash_contracts::agent_run_product_projection::{
-    AgentRunProductProjectionContractSchema, WorkspaceModulePresentationAcknowledgeRequest,
-};
+use agentdash_contracts::agent_run_product_projection::AgentRunProductProjectionContractSchema;
 use agentdash_contracts::auth::{
     AuthGroup, AuthMode, AuthStartRequest, AuthStartResponse, CurrentUser, DirectoryGroup,
     DirectoryGroupResolveResponse, DirectoryGroupSearchResponse, DirectoryResolveRequest,
@@ -816,7 +814,6 @@ fn main() {
         check,
         |dir| {
             export_all::<AgentRunProductProjectionContractSchema>(dir);
-            export_all::<WorkspaceModulePresentationAcknowledgeRequest>(dir);
         },
     );
 
@@ -1364,7 +1361,6 @@ mod tests {
 
         let exported = write_domain_dedup(&out, &runtime_upstream, false, None, |dir| {
             export_all::<AgentRunProductProjectionContractSchema>(dir);
-            export_all::<WorkspaceModulePresentationAcknowledgeRequest>(dir);
         });
 
         let generated = fs::read_to_string(out).expect("product contract");

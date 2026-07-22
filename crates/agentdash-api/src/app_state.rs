@@ -4,6 +4,12 @@ use anyhow::Result;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 
+use crate::integrations::{builtin_integrations, collect_integration_registration};
+use crate::relay::{
+    PinnedRuntimeWireDeploymentCatalog, RelayAgentRunTerminalProjectionProducer,
+    RelayAgentRunTerminalSourceReconcile, RuntimeWireCompleteAgentAdmission,
+    registry::BackendRegistry, runtime_wire::CloudRuntimeWirePlacementRegistry,
+};
 use agentdash_agent_runtime::{PlatformToolBroker, RuntimeToolExecutor};
 use agentdash_agent_runtime_host::{
     CompleteAgentHostError, CompleteAgentLiveCatalog, CompleteAgentLiveCatalogError,
@@ -87,8 +93,8 @@ use agentdash_infrastructure::{
     DeferredProductRuntimeToolService, PinnedCompleteAgentVerificationCatalog,
     PostgresAgentRunForkGraphStore, PostgresAgentRunProductRuntimeBindingRepository,
     PostgresAgentRunTerminalProjectionStore, PostgresWorkflowExecutorEffectRepository,
-    PostgresWorkflowRecoveryRepository, PostgresWorkspaceModulePresentationStore,
-    ProcessShellTerminalRegistry, ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
+    PostgresWorkflowRecoveryRepository, ProcessShellTerminalRegistry,
+    ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
     ProductionCompleteAgentServiceSelector, WorkspaceModulePresentRuntimeTool,
     final_runtime_tool_catalog, product_runtime_tool_catalog,
 };
@@ -97,16 +103,6 @@ use agentdash_integration_api::{
     MemoryDiscoveryProvider, SkillDiscoveryProvider,
 };
 use agentdash_platform_spi::extension_package::ExtensionPackageArtifactStorage;
-use agentdash_workspace_module::workspace_module::presentation_protocol::{
-    WorkspaceModulePresentationCommandPort, WorkspaceModulePresentationCommandService,
-};
-
-use crate::integrations::{builtin_integrations, collect_integration_registration};
-use crate::relay::{
-    PinnedRuntimeWireDeploymentCatalog, RelayAgentRunTerminalProjectionProducer,
-    RelayAgentRunTerminalSourceReconcile, RuntimeWireCompleteAgentAdmission,
-    registry::BackendRegistry, runtime_wire::CloudRuntimeWirePlacementRegistry,
-};
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
 const PROJECT_CONTROL_PLANE_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -201,7 +197,6 @@ pub struct ServiceSet {
     pub shell_terminal_registry: Arc<ProcessShellTerminalRegistry>,
     pub lifecycle_run_views: Arc<dyn LifecycleRunViewQueryPort>,
     pub lifecycle_orchestrator: Arc<LifecycleOrchestrator>,
-    pub workspace_module_presentations: Arc<PostgresWorkspaceModulePresentationStore>,
     pub terminal_projections: Arc<PostgresAgentRunTerminalProjectionStore>,
     pub terminal_source_reconcile: Arc<dyn AgentRunTerminalSourceReconcilePort>,
     pub terminal_projection_producer: Arc<RelayAgentRunTerminalProjectionProducer>,
@@ -320,14 +315,6 @@ impl AppState {
             vfs_service: vfs_service.clone(),
             applied_resource_surfaces: product_resource_surfaces.clone(),
         }));
-        let workspace_module_presentations =
-            Arc::new(PostgresWorkspaceModulePresentationStore::new(pool.clone()));
-        let workspace_module_presentation_commands: Arc<
-            dyn WorkspaceModulePresentationCommandPort,
-        > = Arc::new(WorkspaceModulePresentationCommandService::new(
-            workspace_module_presentations.clone(),
-            workspace_module_presentations.clone(),
-        ));
         let shell_terminal_registry = Arc::new(ProcessShellTerminalRegistry::default());
         let wait_activity_service = Arc::new(WaitActivityService::from_repositories(
             repos.lifecycle_agent_repo.clone(),
@@ -378,10 +365,7 @@ impl AppState {
         );
         let runtime_task_tools = Arc::new(ApplicationRuntimeTaskToolService::new(repos.clone()));
         let workspace_module_present_tool: Arc<dyn RuntimeToolExecutor> =
-            Arc::new(WorkspaceModulePresentRuntimeTool::new(
-                runtime_product_bindings.clone(),
-                workspace_module_presentation_commands,
-            ));
+            Arc::new(WorkspaceModulePresentRuntimeTool::new());
         let mut runtime_tool_catalog: Vec<Arc<dyn RuntimeToolExecutor>> =
             final_runtime_tool_catalog(
                 applied_vfs_tools,
@@ -509,7 +493,6 @@ impl AppState {
                 complete_agent.live_catalog.clone(),
                 product_runtime_provisioner.clone(),
                 runtime_product_bindings.clone(),
-                workspace_module_presentations,
             )
             .map_err(anyhow::Error::msg)?,
         );
@@ -790,7 +773,6 @@ impl AppState {
                 shell_terminal_registry,
                 lifecycle_run_views,
                 lifecycle_orchestrator,
-                workspace_module_presentations: product.workspace_presentations.clone(),
                 terminal_projections: product.terminals.clone(),
                 terminal_source_reconcile,
                 terminal_projection_producer,

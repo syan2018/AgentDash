@@ -20,6 +20,9 @@ export function extractPlatformEventType(event: BackboneEvent): string | null {
   if (platform.kind === "provider_attempt_status") return "provider_attempt_status";
   if (platform.kind === "session_rewound") return "session_rewound";
   if (platform.kind === "context_frame_changed") return "context_frame";
+  if (platform.kind === "workspace_module_presentation_requested") {
+    return "workspace_module_presentation_requested";
+  }
   if (platform.kind === "session_meta_update") {
     return platform.data.key;
   }
@@ -58,6 +61,10 @@ export function extractPlatformEventData(event: BackboneEvent): Record<string, u
     return platform.data.frame;
   }
 
+  if (platform.kind === "workspace_module_presentation_requested" && isRecord(platform.data)) {
+    return platform.data;
+  }
+
   if (platform.kind === "session_meta_update") {
     const value = platform.data.value;
     if (isRecord(value)) return value;
@@ -87,6 +94,10 @@ export function extractPlatformEventMessage(event: BackboneEvent): string | null
 
   if (platform.kind === "context_frame_changed") {
     return platform.data.frame.rendered_text;
+  }
+
+  if (platform.kind === "workspace_module_presentation_requested") {
+    return `请求展示 ${platform.data.title}`;
   }
 
   if (platform.kind === "session_meta_update") {

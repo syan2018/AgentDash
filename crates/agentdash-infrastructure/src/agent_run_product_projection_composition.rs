@@ -11,7 +11,6 @@ use sqlx::PgPool;
 
 use crate::{
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
-    PostgresWorkspaceModulePresentationStore,
 };
 
 /// Product shell plus direct concrete-Agent presentation/command composition.
@@ -20,7 +19,6 @@ pub struct AgentRunProductProjectionComposition {
     pub commands: Arc<AgentRunProductCommandFacade>,
     pub agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
     pub runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
-    pub workspace_presentations: Arc<PostgresWorkspaceModulePresentationStore>,
     pub terminals: Arc<PostgresAgentRunTerminalProjectionStore>,
 }
 
@@ -64,7 +62,6 @@ impl AgentRunProductProjectionComposition {
         live_agents: SharedCompleteAgentLiveCatalog,
         provisioner: Arc<crate::CompleteAgentProductRuntimeProvisioner>,
         runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
-        workspace_presentations: Arc<PostgresWorkspaceModulePresentationStore>,
     ) -> Result<Self, String> {
         let terminals = Arc::new(PostgresAgentRunTerminalProjectionStore::new(pool));
         let agents: Arc<dyn AgentRunCompleteAgentResolverPort> =
@@ -80,8 +77,6 @@ impl AgentRunProductProjectionComposition {
             Arc::new(AgentRunProductProjectionGateway::new(
                 runtime_bindings.clone(),
                 agents.clone(),
-                workspace_presentations.clone(),
-                workspace_presentations.clone(),
                 terminals.clone(),
             ));
         Ok(Self {
@@ -89,7 +84,6 @@ impl AgentRunProductProjectionComposition {
             commands,
             agents,
             runtime_bindings,
-            workspace_presentations,
             terminals,
         })
     }

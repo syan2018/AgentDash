@@ -151,7 +151,7 @@ pub use agent_run_fork_graph_store::PostgresAgentRunForkGraphStore;
 pub use agent_run_lineage_repository::PostgresAgentRunLineageRepository;
 pub use agent_run_product_projection_repository::{
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
-    PostgresWorkspaceModulePresentationStore, product_runtime_binding_digest,
+    product_runtime_binding_digest,
 };
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;

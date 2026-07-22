@@ -46,14 +46,15 @@ interface RuntimePresentationCoordinate {
   baseline: boolean;
 }
 
-function presentationCoordinates(
+export function presentationCoordinates(
   records: readonly CanonicalConversationRecord[],
+  baselinePresentationIds: ReadonlySet<string>,
 ): Map<string, RuntimePresentationCoordinate> {
   const coordinates = new Map<string, RuntimePresentationCoordinate>();
   for (const record of records) {
     coordinates.set(record.presentation_id, {
       runtimeSequence: null,
-      baseline: record.presentation.durability === "durable",
+      baseline: baselinePresentationIds.has(record.presentation_id),
     });
   }
   return coordinates;
@@ -108,8 +109,8 @@ export function useSessionStream({
   const records =
     feed.snapshot?.conversation_history ?? EMPTY_CONVERSATION_HISTORY;
   const coordinates = useMemo(
-    () => presentationCoordinates(records),
-    [records],
+    () => presentationCoordinates(records, feed.baselinePresentationIds),
+    [feed.baselinePresentationIds, records],
   );
   const events = useMemo(
     () =>

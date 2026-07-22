@@ -201,3 +201,19 @@ CAPABILITY frame，随后`READ -> EDIT -> READ`成功把`cvs-capability-tracer:/
 恢复；新用户输入先进入canonical feed，随后出现执行中状态与Read工具项。`fs_read`实时卡展示目标
 路径、8行正文与行号，最终返回`READ_UI_OK`；整页重载后用户消息、工具项、Agent输出和ContextFrame
 保持一致。
+
+## Workspace Module 展示与 live baseline 收口
+
+- [x] 删除Workspace Module presentation head/intent/change/ack/outbox仓储、Product projection端口、
+  HTTP snapshot/change/ack路由及前端500ms轮询consumer；0111正向迁移删除五张表。
+- [x] `workspace_module_present`收口为`ProductRead/ReadOnly`工具，成功ToolResult以typed details携带
+  presentation；Native Adapter从同一已提交结果派生canonical平台展示事件。
+- [x] SessionChatView只按sequence派发一条完整live event流，AgentRun control plane统一处理
+  ContextFrame、标题、turn、Task与Workspace Module展示副作用。
+- [x] hydration baseline改为仅由`onBaseline`确认的presentation id集合；当前连接追加的durable
+  history保持live，重新读取的历史只恢复审计展示而不重放面板命令。
+- [x] 当前开发库迁移到schema 111，系统表确认`workspace_module_presentation_%`剩余0张。
+- [x] 真实浏览器AgentRun验证：展示事件在提交后约32.6秒到达，Canvas面板约34.6秒打开，最终回复
+  约44.4秒到达；面板在turn仍处于执行中时已经可用。切换到资源浏览并整页重载后仍保持资源浏览，
+  historical展示record未自动重放。
+- [ ] 用户完成本轮验收后再生成最终closeout并归档任务。

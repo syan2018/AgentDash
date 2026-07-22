@@ -1,11 +1,9 @@
 use agentdash_agent_runtime_contract::{
     ManagedRuntimeContentBlock, ManagedRuntimeInteractionResponse, ManagedRuntimeOperationReceipt,
-    ManagedRuntimeSourceBindingEvidence, RuntimeInteractionId, RuntimeSourceRef,
+    ManagedRuntimeSourceBindingEvidence, RuntimeInteractionId,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-
-use crate::workspace_module::WorkspaceModulePresentation;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct AgentRunProjectionTarget {
@@ -34,116 +32,6 @@ pub enum AgentRunProductRuntimeCommand {
 pub struct AgentRunProductRuntimeCommandRequest {
     pub client_command_id: String,
     pub command: AgentRunProductRuntimeCommand,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct WorkspaceModulePresentationCause {
-    pub runtime_thread_id: String,
-    pub runtime_operation_id: Option<String>,
-    pub runtime_turn_id: String,
-    pub runtime_item_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct WorkspaceModulePresentationCurrentnessFence {
-    pub runtime_thread_id: String,
-    pub source_ref: RuntimeSourceRef,
-    pub surface_revision: u64,
-    pub module_id: String,
-    pub view_key: String,
-    pub renderer_kind: String,
-    pub presentation_uri: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceModulePresentationActorKind {
-    AgentTool,
-    User,
-    System,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct WorkspaceModulePresentationActor {
-    pub kind: WorkspaceModulePresentationActorKind,
-    pub actor_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-pub struct WorkspaceModulePresentationIntent {
-    pub intent_id: String,
-    pub effect_id: String,
-    pub target: AgentRunProjectionTarget,
-    pub actor: WorkspaceModulePresentationActor,
-    pub cause: WorkspaceModulePresentationCause,
-    pub currentness_fence: WorkspaceModulePresentationCurrentnessFence,
-    pub presentation_digest: String,
-    pub presentation: WorkspaceModulePresentation,
-    pub committed_at_ms: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceModulePresentationIntentStatus {
-    Pending,
-    Fulfilled,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct WorkspaceModulePresentationAcknowledgement {
-    pub ack_id: String,
-    pub target: AgentRunProjectionTarget,
-    pub intent_id: String,
-    pub effect_id: String,
-    pub acknowledged_change_sequence: u64,
-    pub fulfilled_at_ms: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-pub struct WorkspaceModulePresentationChange {
-    pub change_id: String,
-    pub target: AgentRunProjectionTarget,
-    pub sequence: u64,
-    pub revision: u64,
-    pub status: WorkspaceModulePresentationIntentStatus,
-    pub intent: WorkspaceModulePresentationIntent,
-    pub acknowledgement: Option<WorkspaceModulePresentationAcknowledgement>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-pub struct WorkspaceModulePresentationSnapshot {
-    pub target: AgentRunProjectionTarget,
-    pub revision: u64,
-    pub latest_change_sequence: u64,
-    pub captured_at_ms: u64,
-    pub pending_intents: Vec<WorkspaceModulePresentationPendingIntent>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-pub struct WorkspaceModulePresentationPendingIntent {
-    pub change_sequence: u64,
-    pub intent: WorkspaceModulePresentationIntent,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct WorkspaceModulePresentationChangeGap {
-    pub requested_after: Option<u64>,
-    pub earliest_available: u64,
-    pub latest_available: u64,
-    pub snapshot_revision: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-pub struct WorkspaceModulePresentationChangePage {
-    pub target: AgentRunProjectionTarget,
-    pub changes: Vec<WorkspaceModulePresentationChange>,
-    pub next: u64,
-    pub gap: Option<WorkspaceModulePresentationChangeGap>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct WorkspaceModulePresentationAcknowledgeRequest {
-    pub observed_change_sequence: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -339,8 +227,6 @@ pub struct AgentRunTerminalChangePage {
 pub struct AgentRunProductProjectionContractSchema {
     pub runtime_command: AgentRunProductRuntimeCommandRequest,
     pub runtime_command_receipt: ManagedRuntimeOperationReceipt,
-    pub workspace_snapshot: WorkspaceModulePresentationSnapshot,
-    pub workspace_change_page: WorkspaceModulePresentationChangePage,
     pub terminal_snapshot: AgentRunTerminalSnapshot,
     pub terminal_change_page: AgentRunTerminalChangePage,
 }

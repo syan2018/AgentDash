@@ -75,13 +75,6 @@ export type WorkspaceModulePresentRequest = { module_id: string, view_key: strin
 turn_id?: string | null, payload?: JsonValue | null, };
 
 /**
- * canonical workspace module presentation payload。
- *
- * Agent tool event、tool result details 与 HTTP user-open response 共用该形状。
- */
-export type WorkspaceModulePresentation = { module_id: string, view_key: string, renderer_kind: string, presentation_uri: string, title: string, payload?: JsonValue | null, diagnostics?: JsonValue | null, };
-
-/**
  * Module 状态 + 不可用原因。
  */
 export type WorkspaceModuleStatus = { kind: WorkspaceModuleStatusKind, reason?: string | null, };

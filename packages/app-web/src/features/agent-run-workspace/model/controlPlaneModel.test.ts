@@ -188,7 +188,6 @@ describe("AgentRun control-plane model", () => {
         refreshWorkspaceState: true,
         refreshAgentRunListReason: "thread_name_updated",
       },
-      refreshTaskPlan: false,
     });
   });
 
@@ -205,11 +204,10 @@ describe("AgentRun control-plane model", () => {
         refreshWorkspaceState: true,
         refreshAgentRunListReason: "thread_name_updated",
       },
-      refreshTaskPlan: false,
     });
   });
 
-  it("coalesces turn terminal workspace and task refresh behind one live-event plan", () => {
+  it("refreshes terminal state through the same live-event plan", () => {
     const plan = planAgentRunLiveEvent({
       type: "platform",
       payload: {
@@ -228,7 +226,41 @@ describe("AgentRun control-plane model", () => {
         refreshWorkspaceState: true,
         refreshAgentRunListReason: "turn_ended",
       },
-      refreshTaskPlan: true,
+    });
+  });
+
+  it("opens the exact Workspace Module from the canonical presentation event", () => {
+    const plan = planAgentRunLiveEvent({
+      type: "platform",
+      payload: {
+        kind: "workspace_module_presentation_requested",
+        data: {
+          module_id: "canvas:cvs-live",
+          view_key: "default",
+          renderer_kind: "canvas",
+          presentation_uri: "canvas://cvs-live",
+          title: "Live Canvas",
+        },
+      },
+    });
+
+    expect(plan.effects).toEqual({
+      refreshWorkspaceState: true,
+      openWorkspacePanel: {
+        afterWorkspaceRefresh: true,
+        presentation: {
+          module_id: "canvas:cvs-live",
+          view_key: "default",
+          renderer_kind: "canvas",
+          presentation_uri: "canvas://cvs-live",
+          title: "Live Canvas",
+        },
+        target: {
+          typeId: "canvas",
+          uri: "canvas://cvs-live",
+          options: { refreshContent: false },
+        },
+      },
     });
   });
 

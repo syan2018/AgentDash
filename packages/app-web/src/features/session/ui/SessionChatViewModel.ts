@@ -30,6 +30,23 @@ export function liveSideEffectCursor(
   return Math.max(previous ?? historyReplayBoundarySeq, historyReplayBoundarySeq);
 }
 
+export function dispatchLiveSessionEvents(
+  rawEvents: SessionEventEnvelope[],
+  previous: number | null,
+  historyReplayBoundarySeq: number,
+  dispatch: (event: BackboneEvent) => void,
+): number {
+  let lastSeenSeq = liveSideEffectCursor(previous, historyReplayBoundarySeq);
+  const liveEvents = rawEvents
+    .filter((event) => event.event_seq > lastSeenSeq)
+    .sort((left, right) => left.event_seq - right.event_seq);
+  for (const event of liveEvents) {
+    dispatch(event.notification.event);
+    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+  }
+  return lastSeenSeq;
+}
+
 export function resolveSessionInitialSubmit(input: {
   initialSubmit?: SessionChatInitialSubmit;
   isConnected: boolean;
@@ -175,69 +192,6 @@ export function collectRenderableSystemEvents(
 }
 
 export const collectNewSystemEvents = collectRenderableSystemEvents;
-
-export function collectAllPlatformEvents(
-  rawEvents: SessionEventEnvelope[],
-  afterSeq: number,
-): {
-  items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }>;
-  lastSeenSeq: number;
-} {
-  const items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }> = [];
-  let lastSeenSeq = afterSeq;
-
-  for (const event of rawEvents) {
-    if (event.event_seq <= afterSeq) {
-      continue;
-    }
-    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-    const bbEvent = event.notification.event;
-    if (bbEvent.type !== "platform") {
-      continue;
-    }
-    const eventType = extractPlatformEventType(bbEvent);
-    if (!eventType) {
-      continue;
-    }
-    items.push({
-      eventSeq: event.event_seq,
-      eventType,
-      event: bbEvent,
-    });
-  }
-
-  return { items, lastSeenSeq };
-}
-
-export function collectTurnLifecycleEvents(
-  rawEvents: SessionEventEnvelope[],
-  afterSeq: number,
-): {
-  items: Array<{ eventSeq: number; eventType: SessionTurnLifecycleEventType; event: BackboneEvent }>;
-  lastSeenSeq: number;
-} {
-  const items: Array<{ eventSeq: number; eventType: SessionTurnLifecycleEventType; event: BackboneEvent }> = [];
-  let lastSeenSeq = afterSeq;
-
-  for (const event of rawEvents) {
-    if (event.event_seq <= afterSeq) {
-      continue;
-    }
-    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-    const bbEvent = event.notification.event;
-    const eventType = extractTurnLifecycleEventType(bbEvent);
-    if (!eventType) {
-      continue;
-    }
-    items.push({
-      eventSeq: event.event_seq,
-      eventType,
-      event: bbEvent,
-    });
-  }
-
-  return { items, lastSeenSeq };
-}
 
 function isCompactionSummaryFrame(event: BackboneEvent): boolean {
   return extractContextFrameValue(event)?.kind === "compaction_summary";

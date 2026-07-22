@@ -27,18 +27,9 @@ use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
     ProductRuntimeToolService,
 };
-use agentdash_infrastructure::{
-    PostgresAgentRunProductRuntimeBindingRepository, WorkspaceModulePresentRuntimeTool,
-    product_runtime_tool_catalog,
-};
-use agentdash_workspace_module::workspace_module::presentation_protocol::{
-    WorkspaceModulePresentationChange, WorkspaceModulePresentationCommand,
-    WorkspaceModulePresentationCommandError, WorkspaceModulePresentationCommandPort,
-    WorkspaceModulePresentationStoreError,
-};
+use agentdash_infrastructure::{WorkspaceModulePresentRuntimeTool, product_runtime_tool_catalog};
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use sqlx::postgres::PgPoolOptions;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -141,21 +132,6 @@ impl CompleteAgentHookHandler for AllowHookHandler {
         _callback: ResolvedCompleteAgentHookCallback,
     ) -> Result<AgentHookDecision, AgentHostCallbackError> {
         Ok(AgentHookDecision::Allow)
-    }
-}
-
-struct RejectingPresentationPort;
-
-#[async_trait]
-impl WorkspaceModulePresentationCommandPort for RejectingPresentationPort {
-    async fn present(
-        &self,
-        _command: WorkspaceModulePresentationCommand,
-    ) -> Result<WorkspaceModulePresentationChange, WorkspaceModulePresentationCommandError> {
-        Err(
-            WorkspaceModulePresentationStoreError::Persistence("definition-only tracer".to_owned())
-                .into(),
-        )
     }
 }
 
@@ -263,13 +239,7 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
         invoke_service.clone(),
     ];
     let mut executors = product_runtime_tool_catalog(services);
-    let pool = PgPoolOptions::new()
-        .connect_lazy("postgres://agentdash:agentdash@127.0.0.1/agentdash")
-        .expect("lazy PostgreSQL pool");
-    executors.push(Arc::new(WorkspaceModulePresentRuntimeTool::new(
-        Arc::new(PostgresAgentRunProductRuntimeBindingRepository::new(pool)),
-        Arc::new(RejectingPresentationPort),
-    )));
+    executors.push(Arc::new(WorkspaceModulePresentRuntimeTool::new()));
     let broker = Arc::new(
         PlatformToolBroker::new(executors, product_authorizer())
             .expect("final Product tool broker"),
@@ -303,8 +273,8 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
     assert_workspace_definition(
         &definitions,
         "workspace_module_present",
-        RuntimeToolPermission::ProductWrite,
-        RuntimeToolEffect::ProductMutation,
+        RuntimeToolPermission::ProductRead,
+        RuntimeToolEffect::ReadOnly,
     );
 
     let handler = RuntimePlatformToolHandler::new(broker);
@@ -362,6 +332,32 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
             .expect("Workspace callback handler");
         assert!(matches!(result, AgentToolResult::Completed { .. }));
     }
+
+    let presentation = handler
+        .invoke(ResolvedCompleteAgentToolCallback {
+            context: resolved_callback_context(),
+            invocation: callback_call(
+                "workspace_module_present",
+                "workspace-present-effect",
+                "workspace-present-callback",
+                json!({
+                    "module_id": "canvas:tracer",
+                    "view_key": "default",
+                    "renderer_kind": "canvas",
+                    "presentation_uri": "canvas://tracer",
+                    "title": "Tracer",
+                }),
+            ),
+        })
+        .await
+        .expect("Workspace presentation callback");
+    let AgentToolResult::Completed { output } = presentation else {
+        panic!("Workspace presentation must complete");
+    };
+    assert_eq!(
+        output["details"]["workspace_module_presentation"]["presentation_uri"],
+        "canvas://tracer"
+    );
 
     assert_eq!(list_service.calls.load(Ordering::SeqCst), 1);
     assert_eq!(describe_service.calls.load(Ordering::SeqCst), 1);

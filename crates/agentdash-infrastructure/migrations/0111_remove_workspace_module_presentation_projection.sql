@@ -1,0 +1,5 @@
+DROP TABLE workspace_module_presentation_outbox;
+DROP TABLE workspace_module_presentation_ack;
+DROP TABLE workspace_module_presentation_change;
+DROP TABLE workspace_module_presentation_intent;
+DROP TABLE workspace_module_presentation_head;

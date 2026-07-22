@@ -68,7 +68,6 @@ pub use persistence::postgres::PostgresUserDirectoryRepository;
 pub use persistence::postgres::PostgresWorkflowExecutorEffectRepository;
 pub use persistence::postgres::PostgresWorkflowRecoveryRepository;
 pub use persistence::postgres::PostgresWorkflowRepository;
-pub use persistence::postgres::PostgresWorkspaceModulePresentationStore;
 pub use persistence::postgres::PostgresWorkspaceRepository;
 pub use persistence::postgres::product_runtime_binding_digest;
 pub use production_complete_agent_selection::{

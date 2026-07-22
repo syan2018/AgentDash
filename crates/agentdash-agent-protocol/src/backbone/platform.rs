@@ -4,12 +4,31 @@ use ts_rs::TS;
 
 use super::context_frame::ContextFrameChanged;
 
+/// 当前 AgentRun 请求展示的 Workspace Module 视图。
+///
+/// 该 payload 随 concrete Agent 的工具结果进入 canonical history。历史读取只恢复审计展示，
+/// 只有当前连接收到的 live record 才会执行命令式面板切换。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct WorkspaceModulePresentation {
+    pub module_id: String,
+    pub view_key: String,
+    pub renderer_kind: String,
+    pub presentation_uri: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<serde_json::Value>,
+}
+
 /// 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum PlatformEvent {
     /// Materialized platform context presentation changed.
     ContextFrameChanged(Box<ContextFrameChanged>),
+    /// Agent 工具已请求当前观察者展示一个 Workspace Module 视图。
+    WorkspaceModulePresentationRequested(Box<WorkspaceModulePresentation>),
     /// Hook 运行时追踪条目。
     HookTrace(Box<HookTracePayload>),
 

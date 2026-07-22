@@ -1,4 +1,3 @@
-pub mod presentation_protocol;
 pub mod visibility;
 
 use agentdash_application_extension_gateway::{

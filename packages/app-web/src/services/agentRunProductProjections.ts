@@ -1,14 +1,10 @@
 import { api } from "../api/client";
-import { isWorkspaceModulePresentation } from "../features/workspace-module/model/presentation";
 import type {
   AgentRunProjectionTarget,
   AgentRunTerminalChangePage,
   AgentRunTerminalOwnerFence,
   AgentRunTerminalProjection,
   AgentRunTerminalSnapshot,
-  WorkspaceModulePresentationChangePage,
-  WorkspaceModulePresentationIntent,
-  WorkspaceModulePresentationSnapshot,
 } from "../generated/agent-run-product-projection-contracts";
 import {
   agentRunScopedPath,
@@ -46,34 +42,6 @@ function isOwnerFence(value: unknown): value is AgentRunTerminalOwnerFence {
     && typeof value.runtime_thread_id === "string"
     && isSourceBinding(value.source_binding)
     && typeof value.backend_id === "string";
-}
-
-function isPresentationIntent(value: unknown): value is WorkspaceModulePresentationIntent {
-  if (!isRecord(value) || !isRecord(value.cause) || !isRecord(value.currentness_fence)) {
-    return false;
-  }
-  return typeof value.intent_id === "string"
-    && typeof value.effect_id === "string"
-    && isProjectionTarget(value.target)
-    && isRecord(value.actor)
-    && ["agent_tool", "user", "system"].includes(String(value.actor.kind))
-    && typeof value.actor.actor_id === "string"
-    && typeof value.cause.runtime_thread_id === "string"
-    && (value.cause.runtime_operation_id === null
-      || value.cause.runtime_operation_id === undefined
-      || typeof value.cause.runtime_operation_id === "string")
-    && typeof value.cause.runtime_turn_id === "string"
-    && typeof value.cause.runtime_item_id === "string"
-    && typeof value.currentness_fence.runtime_thread_id === "string"
-    && isSourceBinding(value.currentness_fence.source_binding)
-    && isNonNegativeInteger(value.currentness_fence.surface_revision)
-    && typeof value.currentness_fence.module_id === "string"
-    && typeof value.currentness_fence.view_key === "string"
-    && typeof value.currentness_fence.renderer_kind === "string"
-    && typeof value.currentness_fence.presentation_uri === "string"
-    && typeof value.presentation_digest === "string"
-    && isWorkspaceModulePresentation(value.presentation)
-    && isNonNegativeInteger(value.committed_at_ms);
 }
 
 function isTerminalChangeOrigin(value: unknown): boolean {
@@ -143,62 +111,6 @@ function isTerminalDelta(value: unknown): boolean {
   }
 }
 
-export function isWorkspaceModulePresentationSnapshot(
-  value: unknown,
-): value is WorkspaceModulePresentationSnapshot {
-  return isRecord(value)
-    && isProjectionTarget(value.target)
-    && isNonNegativeInteger(value.revision)
-    && isNonNegativeInteger(value.latest_change_sequence)
-    && isNonNegativeInteger(value.captured_at_ms)
-    && Array.isArray(value.pending_intents)
-    && value.pending_intents.every((pending) =>
-      isRecord(pending)
-      && isNonNegativeInteger(pending.change_sequence)
-      && isPresentationIntent(pending.intent)
-    );
-}
-
-export function isWorkspaceModulePresentationChangePage(
-  value: unknown,
-): value is WorkspaceModulePresentationChangePage {
-  return isRecord(value)
-    && isProjectionTarget(value.target)
-    && isNonNegativeInteger(value.next)
-    && Array.isArray(value.changes)
-    && value.changes.every(isWorkspaceModulePresentationChange)
-    && (value.gap === null
-      || value.gap === undefined
-      || (isRecord(value.gap)
-        && isNonNegativeInteger(value.gap.earliest_available)
-        && isNonNegativeInteger(value.gap.latest_available)
-        && isNonNegativeInteger(value.gap.snapshot_revision)));
-}
-
-function isWorkspaceModulePresentationChange(
-  change: unknown,
-): change is WorkspaceModulePresentationChangePage["changes"][number] {
-  return isRecord(change)
-    && typeof change.change_id === "string"
-    && isProjectionTarget(change.target)
-    && isNonNegativeInteger(change.sequence)
-    && isNonNegativeInteger(change.revision)
-    && (change.status === "pending" || change.status === "fulfilled")
-    && isPresentationIntent(change.intent)
-    && (
-      (change.status === "pending" && (change.acknowledgement === null
-        || change.acknowledgement === undefined))
-      || (change.status === "fulfilled"
-        && isRecord(change.acknowledgement)
-        && typeof change.acknowledgement.ack_id === "string"
-        && isProjectionTarget(change.acknowledgement.target)
-        && typeof change.acknowledgement.intent_id === "string"
-        && typeof change.acknowledgement.effect_id === "string"
-        && isNonNegativeInteger(change.acknowledgement.acknowledged_change_sequence)
-        && isNonNegativeInteger(change.acknowledgement.fulfilled_at_ms))
-    );
-}
-
 export function isAgentRunTerminalSnapshot(value: unknown): value is AgentRunTerminalSnapshot {
   return isRecord(value)
     && isProjectionTarget(value.target)
@@ -238,49 +150,6 @@ function changePath(route: string, after?: bigint, limit = 256): string {
   const params = new URLSearchParams({ limit: String(limit) });
   if (after !== undefined) params.set("after", String(after));
   return `${route}?${params.toString()}`;
-}
-
-export async function fetchWorkspacePresentationSnapshot(
-  target: AgentRunRuntimeTarget,
-): Promise<WorkspaceModulePresentationSnapshot> {
-  const value = await api.get<unknown>(
-    agentRunScopedPath(target, "/workspace-presentations/snapshot"),
-  );
-  if (!isWorkspaceModulePresentationSnapshot(value)) {
-    throw new Error("Workspace presentation snapshot 响应不符合 Product contract");
-  }
-  return value;
-}
-
-export async function fetchWorkspacePresentationChanges(
-  target: AgentRunRuntimeTarget,
-  after?: bigint,
-): Promise<WorkspaceModulePresentationChangePage> {
-  const value = await api.get<unknown>(
-    agentRunScopedPath(target, changePath("/workspace-presentations/changes", after)),
-  );
-  if (!isWorkspaceModulePresentationChangePage(value)) {
-    throw new Error("Workspace presentation change page 响应不符合 Product contract");
-  }
-  return value;
-}
-
-export async function acknowledgeWorkspacePresentation(
-  target: AgentRunRuntimeTarget,
-  intentId: string,
-  observedChangeSequence: bigint,
-): Promise<WorkspaceModulePresentationChangePage["changes"][number]> {
-  const value = await api.post<unknown>(
-    agentRunScopedPath(
-      target,
-      `/workspace-presentations/${encodeURIComponent(intentId)}/ack`,
-    ),
-    { observed_change_sequence: Number(observedChangeSequence) },
-  );
-  if (!isWorkspaceModulePresentationChange(value)) {
-    throw new Error("Workspace presentation acknowledgement 响应不符合 Product contract");
-  }
-  return value;
 }
 
 export async function fetchAgentRunTerminalSnapshot(

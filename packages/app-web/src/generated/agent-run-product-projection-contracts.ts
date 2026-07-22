@@ -2,9 +2,8 @@
 // Do not edit manually.
 
 import type { ManagedRuntimeContentBlock, ManagedRuntimeInteractionResponse, ManagedRuntimeOperationReceipt, ManagedRuntimeSourceBindingEvidence, RuntimeInteractionId, RuntimeSourceRef } from "./agent-runtime-contracts";
-import type { WorkspaceModulePresentation } from "./workspace-module-contracts";
 
-export type AgentRunProductProjectionContractSchema = { runtime_command: AgentRunProductRuntimeCommandRequest, runtime_command_receipt: ManagedRuntimeOperationReceipt, workspace_snapshot: WorkspaceModulePresentationSnapshot, workspace_change_page: WorkspaceModulePresentationChangePage, terminal_snapshot: AgentRunTerminalSnapshot, terminal_change_page: AgentRunTerminalChangePage, };
+export type AgentRunProductProjectionContractSchema = { runtime_command: AgentRunProductRuntimeCommandRequest, runtime_command_receipt: ManagedRuntimeOperationReceipt, terminal_snapshot: AgentRunTerminalSnapshot, terminal_change_page: AgentRunTerminalChangePage, };
 
 export type AgentRunProductRuntimeCommand = { "kind": "resume" } | { "kind": "submit_input", content: Array<ManagedRuntimeContentBlock>, } | { "kind": "interrupt" } | { "kind": "request_compaction" } | { "kind": "rebind" } | { "kind": "resolve_interaction", interaction_id: RuntimeInteractionId, response: ManagedRuntimeInteractionResponse, } | { "kind": "close" };
 
@@ -79,29 +78,3 @@ export type RuntimePayloadDigest = string;
 export type RuntimeThreadId = string;
 
 export type RuntimeTurnId = string;
-
-export type WorkspaceModulePresentationAcknowledgeRequest = { observed_change_sequence: bigint, };
-
-export type WorkspaceModulePresentationAcknowledgement = { ack_id: string, target: AgentRunProjectionTarget, intent_id: string, effect_id: string, acknowledged_change_sequence: bigint, fulfilled_at_ms: bigint, };
-
-export type WorkspaceModulePresentationActor = { kind: WorkspaceModulePresentationActorKind, actor_id: string, };
-
-export type WorkspaceModulePresentationActorKind = "agent_tool" | "user" | "system";
-
-export type WorkspaceModulePresentationCause = { runtime_thread_id: string, runtime_operation_id: string | null, runtime_turn_id: string, runtime_item_id: string, };
-
-export type WorkspaceModulePresentationChange = { change_id: string, target: AgentRunProjectionTarget, sequence: bigint, revision: bigint, status: WorkspaceModulePresentationIntentStatus, intent: WorkspaceModulePresentationIntent, acknowledgement: WorkspaceModulePresentationAcknowledgement | null, };
-
-export type WorkspaceModulePresentationChangeGap = { requested_after: bigint | null, earliest_available: bigint, latest_available: bigint, snapshot_revision: bigint, };
-
-export type WorkspaceModulePresentationChangePage = { target: AgentRunProjectionTarget, changes: Array<WorkspaceModulePresentationChange>, next: bigint, gap: WorkspaceModulePresentationChangeGap | null, };
-
-export type WorkspaceModulePresentationCurrentnessFence = { runtime_thread_id: string, source_ref: RuntimeSourceRef, surface_revision: bigint, module_id: string, view_key: string, renderer_kind: string, presentation_uri: string, };
-
-export type WorkspaceModulePresentationIntent = { intent_id: string, effect_id: string, target: AgentRunProjectionTarget, actor: WorkspaceModulePresentationActor, cause: WorkspaceModulePresentationCause, currentness_fence: WorkspaceModulePresentationCurrentnessFence, presentation_digest: string, presentation: WorkspaceModulePresentation, committed_at_ms: bigint, };
-
-export type WorkspaceModulePresentationIntentStatus = "pending" | "fulfilled";
-
-export type WorkspaceModulePresentationPendingIntent = { change_sequence: bigint, intent: WorkspaceModulePresentationIntent, };
-
-export type WorkspaceModulePresentationSnapshot = { target: AgentRunProjectionTarget, revision: bigint, latest_change_sequence: bigint, captured_at_ms: bigint, pending_intents: Array<WorkspaceModulePresentationPendingIntent>, };

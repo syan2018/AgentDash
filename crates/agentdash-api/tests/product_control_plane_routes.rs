@@ -48,8 +48,6 @@ fn product_control_plane_routes_expose_runtime_backed_capabilities() {
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/snapshot",
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/live",
             "/agent-runs/{run_id}/agents/{agent_id}/workspace",
-            "/agent-runs/{run_id}/agents/{agent_id}/workspace-presentations/snapshot",
-            "/agent-runs/{run_id}/agents/{agent_id}/workspace-presentations/changes",
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/snapshot",
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/changes",
         ],

@@ -17,6 +17,7 @@ export interface UseManagedRuntimeFeedOptions {
 
 export interface UseManagedRuntimeFeedResult {
   snapshot: ManagedRuntimeSnapshot | null;
+  baselinePresentationIds: ReadonlySet<string>;
   boundTargetKey: string | null;
   lifecycle: ManagedRuntimeFeedLifecycle;
   isLoading: boolean;
@@ -31,6 +32,9 @@ export function useManagedRuntimeFeed({
   enabled,
 }: UseManagedRuntimeFeedOptions): UseManagedRuntimeFeedResult {
   const [snapshot, setSnapshot] = useState<ManagedRuntimeSnapshot | null>(null);
+  const [baselinePresentationIds, setBaselinePresentationIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [boundTargetKey, setBoundTargetKey] = useState<string | null>(null);
   const [lifecycle, setLifecycle] =
     useState<ManagedRuntimeFeedLifecycle>("closed");
@@ -48,6 +52,7 @@ export function useManagedRuntimeFeed({
   const connect = useCallback(() => {
     close();
     setSnapshot(null);
+    setBaselinePresentationIds(new Set());
     if (!enabled || !agentRunTarget) {
       setIsLoading(false);
       return;
@@ -60,6 +65,9 @@ export function useManagedRuntimeFeed({
     const connection = connectManagedRuntimeFeed(agentRunTarget, {
       onBaseline: (loaded) => {
         setSnapshot(loaded);
+        setBaselinePresentationIds(new Set(
+          loaded.conversation_history.map((record) => record.presentation_id),
+        ));
         setBoundTargetKey(
           `${agentRunTarget.runId}:${agentRunTarget.agentId}`,
         );
@@ -99,6 +107,7 @@ export function useManagedRuntimeFeed({
 
   return {
     snapshot,
+    baselinePresentationIds,
     boundTargetKey,
     lifecycle,
     isLoading,

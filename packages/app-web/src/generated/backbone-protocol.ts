@@ -3043,7 +3043,7 @@ export type PlanDeltaNotification = { delta: string, itemId: string, threadId: s
 /**
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
-export type PlatformEvent = { "kind": "context_frame_changed", "data": ContextFrameChanged } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "runtime_terminal_diagnostic", "data": RuntimeTerminalDiagnostic } | { "kind": "session_rewound", "data": SessionRewound };
+export type PlatformEvent = { "kind": "context_frame_changed", "data": ContextFrameChanged } | { "kind": "workspace_module_presentation_requested", "data": WorkspaceModulePresentation } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "runtime_terminal_diagnostic", "data": RuntimeTerminalDiagnostic } | { "kind": "session_rewound", "data": SessionRewound };
 
 /**
  * Presentation durability is explicit producer evidence and is never inferred
@@ -5328,3 +5328,11 @@ threadId?: string | null, };
  * </details>
  */
 export type WebSearchAction = { "type": "search", queries?: Array<string> | null, query?: string | null, } | { "type": "openPage", url?: string | null, } | { "type": "findInPage", pattern?: string | null, url?: string | null, } | { "type": "other" };
+
+/**
+ * 当前 AgentRun 请求展示的 Workspace Module 视图。
+ *
+ * 该 payload 随 concrete Agent 的工具结果进入 canonical history。历史读取只恢复审计展示，
+ * 只有当前连接收到的 live record 才会执行命令式面板切换。
+ */
+export type WorkspaceModulePresentation = { module_id: string, view_key: string, renderer_kind: string, presentation_uri: string, title: string, payload?: JsonValue | null, diagnostics?: JsonValue | null, };

@@ -357,7 +357,6 @@ fn map_projection_error(error: AgentRunProductProjectionError) -> AgentRunProduc
         }
         AgentRunProductProjectionError::Binding(message)
         | AgentRunProductProjectionError::Runtime(message)
-        | AgentRunProductProjectionError::Workspace(message)
         | AgentRunProductProjectionError::Terminal(message) => {
             AgentRunProductForkError::Projection(message)
         }

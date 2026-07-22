@@ -397,11 +397,6 @@ mod tests {
         MemoryAgentLineageRepository, MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
         MemoryLifecycleSubjectAssociationRepository, MemoryProjectAgentRepository,
     };
-    use agentdash_workspace_module::workspace_module::presentation_protocol::{
-        WorkspaceModulePresentationAcknowledgeRequest, WorkspaceModulePresentationChange,
-        WorkspaceModulePresentationChangePage, WorkspaceModulePresentationChangeSequence,
-        WorkspaceModulePresentationSnapshot,
-    };
     use async_trait::async_trait;
     use chrono::{Duration, Utc};
 
@@ -467,29 +462,6 @@ mod tests {
             _: &AgentRunTarget,
         ) -> Result<Box<dyn AgentLiveEventStream>, AgentRunProductProjectionError> {
             Err(AgentRunProductProjectionError::Runtime("unused".into()))
-        }
-
-        async fn workspace_presentation_snapshot(
-            &self,
-            _: &AgentRunTarget,
-        ) -> Result<WorkspaceModulePresentationSnapshot, AgentRunProductProjectionError> {
-            Err(AgentRunProductProjectionError::Workspace("unused".into()))
-        }
-
-        async fn workspace_presentation_changes(
-            &self,
-            _: &AgentRunTarget,
-            _: Option<WorkspaceModulePresentationChangeSequence>,
-            _: usize,
-        ) -> Result<WorkspaceModulePresentationChangePage, AgentRunProductProjectionError> {
-            Err(AgentRunProductProjectionError::Workspace("unused".into()))
-        }
-
-        async fn acknowledge_workspace_presentation(
-            &self,
-            _: WorkspaceModulePresentationAcknowledgeRequest,
-        ) -> Result<WorkspaceModulePresentationChange, AgentRunProductProjectionError> {
-            Err(AgentRunProductProjectionError::Workspace("unused".into()))
         }
 
         async fn terminal_snapshot(

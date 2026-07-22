@@ -1,7 +1,7 @@
 import type { JsonValue } from "../../../generated/common-contracts";
+import type { WorkspaceModulePresentation } from "../../../generated/backbone-protocol";
 import type {
   WorkspaceModuleDescriptor,
-  WorkspaceModulePresentation,
 } from "../../../generated/workspace-module-contracts";
 
 export interface WorkspaceModuleTabTarget {

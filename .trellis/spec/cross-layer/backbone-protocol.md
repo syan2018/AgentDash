@@ -58,6 +58,9 @@ type AgentLiveEvent = {
   provider round、`payload.kind`、独立 `turn_id/item_id` 等平行 telemetry 形态。
 - `presentation_id` 是同一 presentation 在 baseline/live 合并时的稳定 identity；收到相同 id 时
   替换记录，收到新 id 时追加。不得派生 `agent-turn:`、`agent-item:` 或 renderer-local tool id。
+- hydration baseline由transport的`onBaseline`时刻一次性确定；随后收到的durable record仍属于live
+  lane。只有重新读取authoritative snapshot时才更新baseline集合，因此历史恢复不触发命令式副作用，
+  已提交的实时记录仍能驱动当前观察者。
 - `TurnStarted`/`TurnCompleted` 是运行状态的唯一边界。第一个 message/tool/item 输出不结束 turn；
   只有对应 `TurnCompleted` 才移除 active turn。
 - `ItemStarted`/`ItemUpdated`/`ItemCompleted` 的 `AgentDashThreadItem` discriminant 决定 UI 形态。
@@ -79,6 +82,9 @@ type AgentLiveEvent = {
   Snapshot-only Agent 不需要平台 durable change journal。
 - PTY terminal、Canvas、Workspace Module 与 AgentFrame 是独立资源事实；即使它们引用 Agent
   coordinate，也不能完成、恢复或改写 Agent conversation。
+- Workspace Module展示由成功ToolResult中的typed marker投影为
+  `Platform(WorkspaceModulePresentationRequested)`。该record在history中承担审计，只有baseline之后的
+  live record执行面板切换；Workspace Module descriptor仍是资源存在性与view信息的唯一事实。
 - RuntimeWire 透明承载 Driver command/response 与 reverse HostPort frame，不转换为 Product
   Backbone event 或第二套 conversation DTO。
 
@@ -100,6 +106,8 @@ type AgentLiveEvent = {
 | 多个ContextFrame拥有相同phase/order/time | 以稳定frame id确定顺序，snapshot与live merge后顺序一致 |
 | tool delta带完整parameters schema | schema保留为structured contract；默认UI只呈现参数字段计数，不展开原始JSON |
 | fsRead结果同时包含typed正文与details | Read Card显示路径、行数和逐行正文；重载后使用同一内容，不展示executor envelope |
+| durable展示record在初始snapshot中 | 渲染审计记录，不自动切换面板 |
+| durable展示record在当前连接中到达 | 刷新Workspace descriptor后打开typed target，turn继续运行 |
 
 ## 5. Good / Base / Bad Cases
 
@@ -124,6 +132,8 @@ type AgentLiveEvent = {
   为第二份 tail。
 - transport test 断言当前 `{source,sequence,record}` 通过、旧 telemetry payload 被拒绝。
 - frontend projection test 断言相同 `presentation_id` 替换、新 id 追加。
+- frontend hydration测试断言初始durable records属于baseline，而同一连接追加的durable record属于live；
+  浏览器tracer断言展示面板早于`TurnCompleted`打开，重载后不重放命令。
 - liveness test 断言 `TurnStarted + first output` 仍 active，加入 `TurnCompleted` 后才 inactive。
 - ordering test断言用户输入与`TurnStarted`先于第一个ephemeral output；ContextFrame test断言直接
   消费`Platform(ContextFrameChanged)`并保留typed frame。

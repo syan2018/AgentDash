@@ -6,12 +6,6 @@ use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentLiveEventStream, AgentReadQuery, CompleteAgentService,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
-use agentdash_workspace_module::workspace_module::presentation_protocol::{
-    WorkspaceModulePresentationAcknowledgePort, WorkspaceModulePresentationAcknowledgeRequest,
-    WorkspaceModulePresentationChange, WorkspaceModulePresentationChangePage,
-    WorkspaceModulePresentationChangeSequence, WorkspaceModulePresentationRepository,
-    WorkspaceModulePresentationSnapshot,
-};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -122,8 +116,6 @@ pub trait AgentRunProductRuntimeBindingStore:
 pub struct AgentRunProductProjectionGateway {
     runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
-    workspace_presentations: Arc<dyn WorkspaceModulePresentationRepository>,
-    workspace_presentation_acknowledgements: Arc<dyn WorkspaceModulePresentationAcknowledgePort>,
     terminals: Arc<dyn AgentRunTerminalProjectionRepository>,
 }
 
@@ -139,17 +131,11 @@ impl AgentRunProductProjectionGateway {
     pub fn new(
         runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
         agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
-        workspace_presentations: Arc<dyn WorkspaceModulePresentationRepository>,
-        workspace_presentation_acknowledgements: Arc<
-            dyn WorkspaceModulePresentationAcknowledgePort,
-        >,
         terminals: Arc<dyn AgentRunTerminalProjectionRepository>,
     ) -> Self {
         Self {
             runtime_bindings,
             agents,
-            workspace_presentations,
-            workspace_presentation_acknowledgements,
             terminals,
         }
     }
@@ -260,54 +246,6 @@ impl AgentRunProductProjectionGateway {
             .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))
     }
 
-    pub async fn workspace_presentation_snapshot(
-        &self,
-        target: &AgentRunTarget,
-    ) -> Result<WorkspaceModulePresentationSnapshot, AgentRunProductProjectionError> {
-        let snapshot = self
-            .workspace_presentations
-            .load_snapshot(target)
-            .await
-            .map_err(|error| AgentRunProductProjectionError::Workspace(error.to_string()))?;
-        if snapshot.target != *target {
-            return Err(AgentRunProductProjectionError::TargetMismatch);
-        }
-        Ok(snapshot)
-    }
-
-    pub async fn workspace_presentation_changes(
-        &self,
-        target: &AgentRunTarget,
-        after: Option<WorkspaceModulePresentationChangeSequence>,
-        limit: usize,
-    ) -> Result<WorkspaceModulePresentationChangePage, AgentRunProductProjectionError> {
-        let page = self
-            .workspace_presentations
-            .load_changes(target, after, limit)
-            .await
-            .map_err(|error| AgentRunProductProjectionError::Workspace(error.to_string()))?;
-        if page.target != *target || page.changes.iter().any(|change| change.target != *target) {
-            return Err(AgentRunProductProjectionError::TargetMismatch);
-        }
-        Ok(page)
-    }
-
-    pub async fn acknowledge_workspace_presentation(
-        &self,
-        request: WorkspaceModulePresentationAcknowledgeRequest,
-    ) -> Result<WorkspaceModulePresentationChange, AgentRunProductProjectionError> {
-        let target = request.target.clone();
-        let change = self
-            .workspace_presentation_acknowledgements
-            .acknowledge(request)
-            .await
-            .map_err(|error| AgentRunProductProjectionError::Workspace(error.to_string()))?;
-        if change.target != target || change.intent.target != target {
-            return Err(AgentRunProductProjectionError::TargetMismatch);
-        }
-        Ok(change)
-    }
-
     pub async fn terminal_snapshot(
         &self,
         target: &AgentRunTarget,
@@ -374,20 +312,6 @@ pub trait AgentRunProductProjectionQueryPort: Send + Sync {
         &self,
         target: &AgentRunTarget,
     ) -> Result<Box<dyn AgentLiveEventStream>, AgentRunProductProjectionError>;
-    async fn workspace_presentation_snapshot(
-        &self,
-        target: &AgentRunTarget,
-    ) -> Result<WorkspaceModulePresentationSnapshot, AgentRunProductProjectionError>;
-    async fn workspace_presentation_changes(
-        &self,
-        target: &AgentRunTarget,
-        after: Option<WorkspaceModulePresentationChangeSequence>,
-        limit: usize,
-    ) -> Result<WorkspaceModulePresentationChangePage, AgentRunProductProjectionError>;
-    async fn acknowledge_workspace_presentation(
-        &self,
-        request: WorkspaceModulePresentationAcknowledgeRequest,
-    ) -> Result<WorkspaceModulePresentationChange, AgentRunProductProjectionError>;
     async fn terminal_snapshot(
         &self,
         target: &AgentRunTarget,
@@ -430,30 +354,6 @@ impl AgentRunProductProjectionQueryPort for AgentRunProductProjectionGateway {
         AgentRunProductProjectionGateway::runtime_live_events(self, target).await
     }
 
-    async fn workspace_presentation_snapshot(
-        &self,
-        target: &AgentRunTarget,
-    ) -> Result<WorkspaceModulePresentationSnapshot, AgentRunProductProjectionError> {
-        AgentRunProductProjectionGateway::workspace_presentation_snapshot(self, target).await
-    }
-
-    async fn workspace_presentation_changes(
-        &self,
-        target: &AgentRunTarget,
-        after: Option<WorkspaceModulePresentationChangeSequence>,
-        limit: usize,
-    ) -> Result<WorkspaceModulePresentationChangePage, AgentRunProductProjectionError> {
-        AgentRunProductProjectionGateway::workspace_presentation_changes(self, target, after, limit)
-            .await
-    }
-
-    async fn acknowledge_workspace_presentation(
-        &self,
-        request: WorkspaceModulePresentationAcknowledgeRequest,
-    ) -> Result<WorkspaceModulePresentationChange, AgentRunProductProjectionError> {
-        AgentRunProductProjectionGateway::acknowledge_workspace_presentation(self, request).await
-    }
-
     async fn terminal_snapshot(
         &self,
         target: &AgentRunTarget,
@@ -481,8 +381,6 @@ pub enum AgentRunProductProjectionError {
     Runtime(String),
     #[error("Product projection returned a different AgentRun target")]
     TargetMismatch,
-    #[error("Workspace Module presentation projection load failed: {0}")]
-    Workspace(String),
     #[error("AgentRun terminal projection load failed: {0}")]
     Terminal(String),
 }

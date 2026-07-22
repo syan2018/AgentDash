@@ -17,6 +17,7 @@ pub use backbone::platform::{
     HookTraceCompletion, HookTraceData, HookTraceDiagnostic, HookTraceInjection, HookTracePayload,
     HookTraceSeverity, HookTraceTrigger, PlatformEvent, ProviderAttemptPhase,
     ProviderAttemptStatus, RuntimeTerminalDiagnostic, SessionRewindReason, SessionRewound,
+    WorkspaceModulePresentation,
 };
 pub use backbone::turn::{Turn, TurnCompletedNotification, TurnStartedNotification};
 pub use backbone::usage::{

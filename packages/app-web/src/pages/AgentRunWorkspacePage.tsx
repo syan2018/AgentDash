@@ -453,6 +453,7 @@ export function AgentRunWorkspacePage({
     chatModel: controlPlaneChatModel,
     chatIntents: controlPlaneChatIntents,
     handleMessageSent,
+    handleAgentRunLiveEvent,
     handleWorkspaceModuleOpened,
   } = useAgentRunWorkspaceControlPlane({
     currentRunId,
@@ -718,6 +719,7 @@ export function AgentRunWorkspacePage({
                 initialSubmit={routeState?.initial_submit}
                 onInitialSubmitConsumed={handleInitialSubmitConsumed}
                 onMessageSent={handleMessageSent}
+                onLiveEvent={handleAgentRunLiveEvent}
                 inputPrefix={chatInputPrefix}
                 inputToolbarSlot={backendSelectionBar}
                 openWorkspacePanel={({ typeId, uri, options }) => {

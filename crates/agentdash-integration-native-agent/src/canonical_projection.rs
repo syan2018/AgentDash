@@ -17,7 +17,7 @@ use agentdash_agent_protocol::{
     RuntimeMemoryInventoryMode, RuntimeMemorySourceEntry, RuntimeSkillEntry,
     RuntimeToolSchemaEntry, SkillContextExposure, SourceInfo, TraceInfo, Turn,
     TurnCompletedNotification, TurnStartedNotification, UserInputSource, UserInputSubmissionKind,
-    UserInputSubmittedNotification,
+    UserInputSubmittedNotification, WorkspaceModulePresentation,
 };
 
 use crate::tool_presentation::{ToolPresentationResult, project_tool_item};
@@ -131,8 +131,15 @@ pub(crate) fn entry_records(
         }
         | HistoryPayload::ToolCall {
             turn_id, item_id, ..
+        } => {
+            events.push(BackboneEvent::ItemUpdated(ItemUpdatedNotification {
+                item: item(state, item_id)?,
+                thread_id: session_id.to_owned(),
+                turn_id: turn_id.0.clone(),
+                updated_at_ms: 0,
+            }));
         }
-        | HistoryPayload::ToolResult {
+        HistoryPayload::ToolResult {
             turn_id, item_id, ..
         } => {
             events.push(BackboneEvent::ItemUpdated(ItemUpdatedNotification {
@@ -141,6 +148,11 @@ pub(crate) fn entry_records(
                 turn_id: turn_id.0.clone(),
                 updated_at_ms: 0,
             }));
+            if let Some(presentation) = workspace_module_presentation(state, item_id)? {
+                events.push(BackboneEvent::Platform(
+                    PlatformEvent::WorkspaceModulePresentationRequested(Box::new(presentation)),
+                ));
+            }
         }
         HistoryPayload::ItemCompleted { turn_id, item_id } => {
             events.push(BackboneEvent::ItemCompleted(ItemCompletedNotification {
@@ -223,6 +235,31 @@ pub(crate) fn entry_records(
             )
         })
         .collect())
+}
+
+fn workspace_module_presentation(
+    state: &AgentHistoryState,
+    item_id: &AgentItemId,
+) -> Result<Option<WorkspaceModulePresentation>, serde_json::Error> {
+    let item = state.items.get(item_id).expect("folded item must exist");
+    let ItemDetails::ToolActivity {
+        result: Some(result),
+        ..
+    } = &item.details
+    else {
+        return Ok(None);
+    };
+    if result.is_error {
+        return Ok(None);
+    }
+    let Some(value) = result
+        .details
+        .as_ref()
+        .and_then(|details| details.get("workspace_module_presentation"))
+    else {
+        return Ok(None);
+    };
+    serde_json::from_value(value.clone()).map(Some)
 }
 
 fn initial_context_events(
@@ -1381,5 +1418,84 @@ mod tests {
         assert!(completed_turn.items.iter().any(|item| {
             serde_json::to_value(item).is_ok_and(|value| value["type"] == "fsRead")
         }));
+    }
+
+    #[test]
+    fn workspace_module_presentation_is_projected_from_committed_tool_result() {
+        let projector = agentdash_agent_protocol::ToolProtocolProjector::Dynamic {
+            namespace: Some("workspace_module".to_owned()),
+        };
+        let surface = DashSurface {
+            revision: 1,
+            digest: "surface-1".to_owned(),
+            instructions: Vec::new(),
+            tools: vec![DashToolDefinition {
+                name: "workspace_module_present".to_owned(),
+                description: "Present a Workspace Module".to_owned(),
+                input_schema: serde_json::json!({"type": "object"}),
+                protocol_projector: projector.clone(),
+            }],
+        };
+        let turn_id = AgentTurnId::new("turn-1");
+        let item_id = AgentItemId::new("item-1");
+        let presentation = serde_json::json!({
+            "module_id": "canvas:cvs-live",
+            "view_key": "default",
+            "renderer_kind": "canvas",
+            "presentation_uri": "canvas://cvs-live",
+            "title": "Live Canvas",
+        });
+        let mut history =
+            AgentHistory::empty(AgentSessionId::new("session-1"), BranchId::new("branch-1"));
+        let contributions = vec![
+            HistoryPayload::SurfaceApplied { surface },
+            HistoryPayload::TurnStarted {
+                turn_id: turn_id.clone(),
+            },
+            HistoryPayload::ItemStarted {
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+                kind: ItemKind::ToolCall,
+            },
+            HistoryPayload::ToolCall {
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+                call_id: "call-1".to_owned(),
+                name: "workspace_module_present".to_owned(),
+                arguments: presentation.to_string(),
+                protocol_projector: projector,
+            },
+            HistoryPayload::ToolResult {
+                turn_id,
+                item_id,
+                content: vec![agentdash_agent::ContentPart::text("presentation requested")],
+                is_error: false,
+                details: Some(serde_json::json!({
+                    "workspace_module_presentation": presentation,
+                })),
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, payload)| HistoryContribution {
+            entry_id: HistoryEntryId::new(format!("entry-{}", index + 1)),
+            payload,
+        })
+        .collect();
+        history.append_batch(contributions).expect("valid history");
+
+        let records = history_records(&history).expect("canonical presentation records");
+        let event = records.iter().find_map(|record| {
+            let BackboneEvent::Platform(PlatformEvent::WorkspaceModulePresentationRequested(
+                presentation,
+            )) = &record.presentation.envelope.event
+            else {
+                return None;
+            };
+            Some(presentation)
+        });
+        let event = event.expect("typed presentation event");
+        assert_eq!(event.module_id, "canvas:cvs-live");
+        assert_eq!(event.presentation_uri, "canvas://cvs-live");
     }
 }

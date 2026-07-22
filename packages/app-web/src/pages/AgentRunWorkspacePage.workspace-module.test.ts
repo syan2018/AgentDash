@@ -9,8 +9,8 @@ import {
 } from "./AgentRunWorkspacePage.conversationCommandState";
 import type {
   WorkspaceModuleDescriptor,
-  WorkspaceModulePresentation,
 } from "../generated/workspace-module-contracts";
+import type { WorkspaceModulePresentation } from "../generated/backbone-protocol";
 import type {
   AgentRunOwnershipView,
   ConversationCommandView,

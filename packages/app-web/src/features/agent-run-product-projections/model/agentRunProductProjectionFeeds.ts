@@ -1,15 +1,11 @@
 import {
   fetchAgentRunTerminalChanges,
   fetchAgentRunTerminalSnapshot,
-  fetchWorkspacePresentationChanges,
-  fetchWorkspacePresentationSnapshot,
 } from "../../../services/agentRunProductProjections";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type {
   AgentRunTerminalChange,
   AgentRunTerminalSnapshot,
-  WorkspaceModulePresentationChange,
-  WorkspaceModulePresentationSnapshot,
 } from "../../../generated/agent-run-product-projection-contracts";
 import {
   connectProductProjectionFeed,
@@ -25,21 +21,6 @@ function schedule(callback: () => void): ReturnType<typeof setTimeout> {
 
 function cancel(handle: unknown): void {
   clearTimeout(handle as ReturnType<typeof setTimeout>);
-}
-
-export function connectWorkspacePresentationFeed(
-  target: AgentRunRuntimeTarget,
-  observer: ProductProjectionFeedObserver<
-    WorkspaceModulePresentationSnapshot,
-    WorkspaceModulePresentationChange
-  >,
-): ProductProjectionFeedConnection {
-  return connectProductProjectionFeed(target, observer, {
-    fetchSnapshot: fetchWorkspacePresentationSnapshot,
-    fetchChanges: fetchWorkspacePresentationChanges,
-    schedule,
-    cancel,
-  });
 }
 
 export function connectAgentRunTerminalFeed(

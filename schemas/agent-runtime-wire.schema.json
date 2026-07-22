@@ -8936,6 +8936,23 @@
           ]
         },
         {
+          "description": "Agent 工具已请求当前观察者展示一个 Workspace Module 视图。",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "workspace_module_presentation_requested"
+            },
+            "data": {
+              "$ref": "#/$defs/WorkspaceModulePresentation"
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
           "description": "Hook 运行时追踪条目。",
           "type": "object",
           "properties": {
@@ -10334,6 +10351,36 @@
       "required": [
         "path",
         "content"
+      ]
+    },
+    "WorkspaceModulePresentation": {
+      "description": "当前 AgentRun 请求展示的 Workspace Module 视图。\n\n该 payload 随 concrete Agent 的工具结果进入 canonical history。历史读取只恢复审计展示，\n只有当前连接收到的 live record 才会执行命令式面板切换。",
+      "type": "object",
+      "properties": {
+        "module_id": {
+          "type": "string"
+        },
+        "view_key": {
+          "type": "string"
+        },
+        "renderer_kind": {
+          "type": "string"
+        },
+        "presentation_uri": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "payload": true,
+        "diagnostics": true
+      },
+      "required": [
+        "module_id",
+        "view_key",
+        "renderer_kind",
+        "presentation_uri",
+        "title"
       ]
     },
     "HookTracePayload": {

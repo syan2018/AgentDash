@@ -2,8 +2,8 @@ import { api } from "../api/client";
 import type {
   WorkspaceModuleDescriptor,
   WorkspaceModulePresentRequest,
-  WorkspaceModulePresentation,
 } from "../generated/workspace-module-contracts";
+import type { WorkspaceModulePresentation } from "../generated/backbone-protocol";
 
 /**
  * 拉取项目层 WorkspaceModule 合并认知（Canvas + Extension 贡献）。

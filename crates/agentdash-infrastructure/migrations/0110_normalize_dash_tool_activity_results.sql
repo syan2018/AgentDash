@@ -1,6 +1,7 @@
--- Dash source document同时保存native history与折叠后的item snapshot，因此所有位置的工具结果都使用
--- 同一种canonical typed content形态。迁移一次性解码既有callback envelope，让history replay与
--- AgentDash Card投影消费相同的文本/图片内容项。
+-- Dash source documents retain both the native history and its folded item snapshots. Tool
+-- results therefore need one canonical typed content shape in every occurrence. Older callback
+-- envelopes are decoded once during migration so history replay and AgentDash card projection
+-- consume the same text/image parts.
 
 CREATE FUNCTION pg_temp.try_parse_dash_tool_result(value text)
 RETURNS jsonb

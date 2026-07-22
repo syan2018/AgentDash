@@ -1,5 +1,6 @@
--- Dash 保存从 Host callback 接纳的精确 typed tool content。文本与图片保持结构化后，provider
--- transcript 与 AgentDash ThreadItem 可读取同一份 Agent-owned 结果，用户正文不再承载序列化 envelope。
+-- Dash persists the exact typed tool content accepted from Host callbacks. Keeping text and image
+-- parts structured lets provider transcript projection and AgentDash ThreadItem presentation read
+-- the same source-owned result without serializing the callback envelope into user-visible text.
 
 CREATE FUNCTION pg_temp.migrate_dash_typed_tool_result(value jsonb)
 RETURNS jsonb

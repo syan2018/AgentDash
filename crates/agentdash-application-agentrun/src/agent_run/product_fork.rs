@@ -360,6 +360,9 @@ fn map_projection_error(error: AgentRunProductProjectionError) -> AgentRunProduc
         | AgentRunProductProjectionError::Terminal(message) => {
             AgentRunProductForkError::Projection(message)
         }
+        AgentRunProductProjectionError::Agent(error) => {
+            AgentRunProductForkError::Projection(error.to_string())
+        }
     }
 }
 

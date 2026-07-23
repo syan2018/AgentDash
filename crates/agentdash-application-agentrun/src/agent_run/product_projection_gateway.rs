@@ -4,7 +4,7 @@ use agentdash_agent_runtime::project_authoritative_agent_snapshot;
 use agentdash_agent_runtime_contract::{ManagedRuntimeSnapshot, RuntimeThreadId};
 use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentLifecycleStatus, AgentLiveEventStream, AgentObservation,
-    AgentObservationQuery, AgentReadQuery, AgentSnapshotRevision, AgentTurnId,
+    AgentObservationQuery, AgentReadQuery, AgentServiceError, AgentSnapshotRevision, AgentTurnId,
     AgentTurnObservation, CompleteAgentService,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -186,7 +186,7 @@ impl AgentRunProductProjectionGateway {
                 at_revision: None,
             })
             .await
-            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
+            .map_err(AgentRunProductProjectionError::Agent)?;
         project_authoritative_agent_snapshot(binding.runtime_thread_id, snapshot)
             .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))
     }
@@ -243,7 +243,7 @@ impl AgentRunProductProjectionGateway {
                 source: binding.agent.source.clone(),
             })
             .await
-            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
+            .map_err(AgentRunProductProjectionError::Agent)?;
         if observation.source != binding.agent.source {
             return Err(AgentRunProductProjectionError::TargetMismatch);
         }
@@ -275,6 +275,7 @@ impl AgentRunProductProjectionGateway {
         match self.runtime_snapshot(target).await {
             Ok(snapshot) => Ok(Some(snapshot)),
             Err(AgentRunProductProjectionError::Runtime(_))
+            | Err(AgentRunProductProjectionError::Agent(_))
             | Err(AgentRunProductProjectionError::TargetNotBound) => Ok(None),
             Err(error) => Err(error),
         }
@@ -294,7 +295,7 @@ impl AgentRunProductProjectionGateway {
             .service
             .live_events(binding.agent.source)
             .await
-            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))
+            .map_err(AgentRunProductProjectionError::Agent)
     }
 
     pub async fn terminal_snapshot(
@@ -499,6 +500,8 @@ pub enum AgentRunProductProjectionError {
     TargetNotBound,
     #[error("Managed Runtime projection load failed: {0}")]
     Runtime(String),
+    #[error("Managed Runtime Agent service failed: {0}")]
+    Agent(AgentServiceError),
     #[error("Product projection returned a different AgentRun target")]
     TargetMismatch,
     #[error("AgentRun terminal projection load failed: {0}")]

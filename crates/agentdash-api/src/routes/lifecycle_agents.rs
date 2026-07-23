@@ -831,6 +831,21 @@ fn agent_run_product_projection_error(error: AgentRunProductProjectionError) -> 
         AgentRunProductProjectionError::Binding(message)
         | AgentRunProductProjectionError::Runtime(message)
         | AgentRunProductProjectionError::Terminal(message) => ApiError::Internal(message),
+        AgentRunProductProjectionError::Agent(source) => match source.code {
+            AgentServiceErrorCode::InvalidArgument | AgentServiceErrorCode::Unsupported => {
+                ApiError::BadRequest(source.to_string())
+            }
+            AgentServiceErrorCode::NotFound => ApiError::NotFound(source.to_string()),
+            AgentServiceErrorCode::Conflict | AgentServiceErrorCode::StaleBindingGeneration => {
+                ApiError::Conflict(source.to_string())
+            }
+            AgentServiceErrorCode::Unavailable | AgentServiceErrorCode::DeadlineExceeded => {
+                ApiError::ServiceUnavailable(source.to_string())
+            }
+            AgentServiceErrorCode::ProtocolViolation | AgentServiceErrorCode::Internal => {
+                ApiError::Internal(source.to_string())
+            }
+        },
         AgentRunProductProjectionError::TargetMismatch => ApiError::Internal(error.to_string()),
     }
 }
@@ -870,9 +885,22 @@ fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_service_api::AgentInputContent;
+    use agentdash_agent_service_api::{AgentInputContent, AgentServiceError};
 
     use super::*;
+
+    #[test]
+    fn missing_bound_agent_source_is_not_reported_as_http_500() {
+        let mapped = agent_run_product_projection_error(AgentRunProductProjectionError::Agent(
+            AgentServiceError::new(
+                AgentServiceErrorCode::NotFound,
+                "Dash source fixture-source was not found",
+                false,
+            ),
+        ));
+
+        assert!(matches!(mapped, ApiError::NotFound(_)));
+    }
 
     fn fork_submit(
         client_command_id: &str,

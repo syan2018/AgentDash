@@ -56,8 +56,10 @@ export function connectManagedRuntimeFeed(
   let transport: ManagedRuntimeFeedTransport | null = null;
   let currentSnapshot: ManagedRuntimeSnapshot | null = null;
   let reloadInFlight: Promise<void> | null = null;
-  let liveEventsDuringReload: AgentLiveEvent[] = [];
+  let bufferedLiveEvents: AgentLiveEvent[] = [];
   let terminalReloadQueued = false;
+  let reconnectPending = false;
+  let baselinePublished = false;
 
   const reportReloadError = (error: unknown): void => {
     if (!closed) {
@@ -67,73 +69,89 @@ export function connectManagedRuntimeFeed(
     }
   };
 
-  const reloadAuthoritativeSnapshot = (): Promise<void> => {
+  const applyBufferedEvents = (): void => {
+    if (closed || reconnectPending || reloadInFlight || !currentSnapshot) return;
+    const events = bufferedLiveEvents;
+    bufferedLiveEvents = [];
+    const converged = events.reduce(applyAgentLiveEvent, currentSnapshot);
+    if (converged !== currentSnapshot) {
+      currentSnapshot = converged;
+      observer.onProjection(converged);
+    }
+  };
+
+  const reloadAuthoritativeSnapshot = (publishBaseline = false): Promise<void> => {
     if (reloadInFlight) return reloadInFlight;
     reloadInFlight = dependencies
       .fetchSnapshot(agentRunTarget)
       .then((snapshot) => {
         if (closed) return;
-        const events = liveEventsDuringReload;
-        liveEventsDuringReload = [];
+        const events = bufferedLiveEvents;
+        bufferedLiveEvents = [];
+        currentSnapshot = snapshot;
+        if (publishBaseline && !baselinePublished) {
+          baselinePublished = true;
+          observer.onBaseline(snapshot);
+        }
         const converged = events.reduce(applyAgentLiveEvent, snapshot);
         currentSnapshot = converged;
-        observer.onProjection(converged);
+        if (!publishBaseline || converged !== snapshot) {
+          observer.onProjection(converged);
+        }
       })
       .finally(() => {
-        liveEventsDuringReload = [];
         reloadInFlight = null;
-        if (terminalReloadQueued && !closed) {
+        applyBufferedEvents();
+        if (terminalReloadQueued && !closed && !reconnectPending) {
           terminalReloadQueued = false;
-          void reloadAuthoritativeSnapshot().catch(reportReloadError);
+          void reloadAuthoritativeSnapshot(false).catch(reportReloadError);
         }
       });
     return reloadInFlight;
   };
 
-  const loadBaselineAndSubscribe = async (): Promise<void> => {
-    const loaded = await dependencies.fetchSnapshot(agentRunTarget);
-    if (closed) return;
-
-    currentSnapshot = loaded;
-    observer.onBaseline(loaded);
-    transport = dependencies.createTransport({
-      agentRunTarget,
-      onLifecycleChange: (lifecycle) => {
-        observer.onLifecycleChange(lifecycle);
-        if (lifecycle === "reconnecting") {
-          void reloadAuthoritativeSnapshot().catch((error: unknown) => {
-            if (!closed) {
-              observer.onError(
-                normalizeError(error, "Agent authoritative snapshot reload 失败"),
-              );
-            }
-          });
-        }
-      },
-      onError: observer.onError,
-      onEvent: (event) => {
-        if (reloadInFlight) {
-          liveEventsDuringReload.push(event);
-        }
-        const current = currentSnapshot;
-        if (!current || closed) return;
-        const projected = applyAgentLiveEvent(current, event);
-        if (projected !== current) {
-          currentSnapshot = projected;
-          observer.onProjection(projected);
-        }
-        if (isAuthoritativeSnapshotBoundary(event)) {
-          if (reloadInFlight) {
-            terminalReloadQueued = true;
-          } else {
-            void reloadAuthoritativeSnapshot().catch(reportReloadError);
+  transport = dependencies.createTransport({
+    agentRunTarget,
+    onLifecycleChange: (lifecycle) => {
+      observer.onLifecycleChange(lifecycle);
+      if (lifecycle === "reconnecting") {
+        reconnectPending = true;
+        return;
+      }
+      if (lifecycle === "connected" && reconnectPending) {
+        reconnectPending = false;
+        terminalReloadQueued = false;
+        void reloadAuthoritativeSnapshot(false).catch((error: unknown) => {
+          if (!closed) {
+            observer.onError(
+              normalizeError(error, "Agent authoritative snapshot reload 失败"),
+            );
           }
+        });
+      }
+    },
+    onError: observer.onError,
+    onEvent: (event) => {
+      if (closed) return;
+      if (reloadInFlight || reconnectPending || !currentSnapshot) {
+        bufferedLiveEvents.push(event);
+        if (isAuthoritativeSnapshotBoundary(event)) {
+          terminalReloadQueued = true;
         }
-      },
-    });
-  };
+        return;
+      }
+      const projected = applyAgentLiveEvent(currentSnapshot, event);
+      if (projected !== currentSnapshot) {
+        currentSnapshot = projected;
+        observer.onProjection(projected);
+      }
+      if (isAuthoritativeSnapshotBoundary(event)) {
+        void reloadAuthoritativeSnapshot(false).catch(reportReloadError);
+      }
+    },
+  });
 
-  const ready = loadBaselineAndSubscribe().catch((error: unknown) => {
+  const ready = reloadAuthoritativeSnapshot(true).catch((error: unknown) => {
     if (closed) return;
     observer.onError(normalizeError(error, "Managed Runtime feed 连接失败"));
     observer.onLifecycleChange("reconnecting");
@@ -141,12 +159,13 @@ export function connectManagedRuntimeFeed(
 
   return {
     ready,
-    reload: reloadAuthoritativeSnapshot,
+    reload: () => reloadAuthoritativeSnapshot(false),
     close: () => {
       if (closed) return;
       closed = true;
       terminalReloadQueued = false;
-      liveEventsDuringReload = [];
+      reconnectPending = false;
+      bufferedLiveEvents = [];
       transport?.close();
       transport = null;
       observer.onLifecycleChange("closed");

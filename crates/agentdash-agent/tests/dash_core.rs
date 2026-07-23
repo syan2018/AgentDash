@@ -1,9 +1,8 @@
 use agentdash_agent::dash::{
-    AgentHistory, AgentItemId, AgentSessionId, AgentTurnId, BranchId, DashCancellation,
-    DashCoreContext, DashCoreError, DashCoreTurn, DashExecutionCallbacks, DashExecutionEvent,
-    DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
-    DashProviderRequest, DashToolCall, DashToolCallbacks, DashToolResult, HistoryContribution,
-    HistoryEntryId, HistoryPayload,
+    AgentHistory, AgentSessionId, AgentTurnId, BranchId, DashCancellation, DashCoreContext,
+    DashCoreError, DashCoreTurn, DashExecutionCallbacks, DashExecutionEvent, DashFinishReason,
+    DashProvider, DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashToolCall,
+    DashToolCallbacks, DashToolResult, HistoryContribution, HistoryEntryId, HistoryPayload,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -73,7 +72,6 @@ async fn dash_agent_maps_explicit_core_output_back_into_history() {
             history: vec![],
             tools: vec![],
         },
-        output_item_id: AgentItemId::new("assistant-item"),
         output_started_entry_id: HistoryEntryId::new("turn-output-started"),
         output_entry_id: HistoryEntryId::new("turn-output"),
         output_completed_entry_id: HistoryEntryId::new("turn-output-completed"),

@@ -1,4 +1,4 @@
-use agentdash_agent_runtime_contract::{ManagedRuntimeLifecycleStatus, ManagedRuntimeSnapshot};
+use agentdash_agent_service_api::{AgentLifecycleStatus, AgentObservation};
 use agentdash_application_vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, VfsSurfaceRuntimeProjection,
     build_surface_summary,
@@ -20,7 +20,7 @@ use crate::agent_run::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver,
     AgentRunAppliedResourceSurfaceQueryPort, AgentRunExecutionState, AgentRunOwnershipModel,
     AgentRunProductProjectionQueryPort, AgentRunProductRuntimeBinding,
-    AgentRunProductRuntimeSnapshotObservation, AppliedVfsMount, AppliedVfsOperation,
+    AgentRunProductRuntimeExecutionObservation, AppliedVfsMount, AppliedVfsOperation,
     ConversationModelConfigInput, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, ConversationWaitingItemModel, ValidationSeverityModel,
     resolve_agent_run_display_title,
@@ -78,9 +78,9 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
 
         let runtime = self.runtime_observation(&target).await?;
         let binding = runtime.binding();
-        let runtime_snapshot = runtime.snapshot();
+        let runtime_execution = runtime.observation();
         let runtime_thread_id = binding.map(|binding| binding.runtime_thread_id.to_string());
-        let execution_state = runtime_snapshot
+        let execution_state = runtime_execution
             .map(runtime_execution_state)
             .unwrap_or(AgentRunExecutionState::Idle);
         let workspace_state = derive_workspace_state(&execution_state);
@@ -107,10 +107,12 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         let resource_surface = self
             .resolve_resource_surface(&target, frame.as_ref(), binding.is_some())
             .await?;
-        let resource_surface_coordinate = match (frame.as_ref(), binding, runtime_snapshot) {
-            (Some(frame), Some(binding), Some(snapshot)) => Some(
-                resource_surface_coordinate_model(frame, binding, snapshot, &execution_state),
-            ),
+        let resource_surface_coordinate = match (frame.as_ref(), binding, runtime_execution) {
+            (Some(frame), Some(binding), Some(_)) => Some(resource_surface_coordinate_model(
+                frame,
+                binding,
+                &execution_state,
+            )),
             (Some(frame), _, _) => Some(AgentRunResourceSurfaceCoordinateModel {
                 surface_frame_ref: frame_ref_model(frame),
                 source_anchor: None,
@@ -202,7 +204,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .binding()
             .map(|binding| binding.runtime_thread_id.to_string());
         let execution_state = runtime
-            .snapshot()
+            .observation()
             .map(runtime_execution_state)
             .unwrap_or(AgentRunExecutionState::Idle);
         let workspace_state = derive_workspace_state(&execution_state);
@@ -246,22 +248,22 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         let observation = match self
             .repos
             .product_projection
-            .runtime_snapshot_observation(target)
+            .runtime_execution_observation(target)
             .await
         {
             Ok(observation) => observation,
             Err(_) => return Ok(WorkspaceRuntimeObservation::Absent),
         };
         match observation {
-            AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
+            AgentRunProductRuntimeExecutionObservation::Absent { .. } => {
                 Ok(WorkspaceRuntimeObservation::Absent)
             }
-            AgentRunProductRuntimeSnapshotObservation::Current {
+            AgentRunProductRuntimeExecutionObservation::Current {
                 product_binding,
-                snapshot,
+                observation,
             } => Ok(WorkspaceRuntimeObservation::Current {
                 binding: product_binding,
-                snapshot,
+                observation,
             }),
         }
     }
@@ -370,7 +372,7 @@ enum WorkspaceRuntimeObservation {
     Absent,
     Current {
         binding: AgentRunProductRuntimeBinding,
-        snapshot: ManagedRuntimeSnapshot,
+        observation: AgentObservation,
     },
 }
 
@@ -382,59 +384,64 @@ impl WorkspaceRuntimeObservation {
         }
     }
 
-    fn snapshot(&self) -> Option<&ManagedRuntimeSnapshot> {
+    fn observation(&self) -> Option<&AgentObservation> {
         match self {
             Self::Absent => None,
-            Self::Current { snapshot, .. } => Some(snapshot),
+            Self::Current { observation, .. } => Some(observation),
         }
     }
 }
 
-fn runtime_execution_state(snapshot: &ManagedRuntimeSnapshot) -> AgentRunExecutionState {
-    let active_turn_id = snapshot.active_turn_id().map(str::to_owned);
+fn runtime_execution_state(observation: &AgentObservation) -> AgentRunExecutionState {
+    let active_turn_id = observation
+        .active_turn_id
+        .as_ref()
+        .map(|turn_id| turn_id.as_str().to_owned());
     if active_turn_id.is_some() {
         return AgentRunExecutionState::Running {
             turn_id: active_turn_id,
         };
     }
-    let last_turn =
-        agentdash_agent_protocol::CanonicalConversationView::new(&snapshot.conversation_history)
-            .latest_turn();
-    let last_turn_id = last_turn.map(|turn| turn.id.clone());
-    match snapshot.lifecycle {
-        ManagedRuntimeLifecycleStatus::Provisioning => {
-            AgentRunExecutionState::Running { turn_id: None }
-        }
-        ManagedRuntimeLifecycleStatus::Active => match last_turn.map(|turn| turn.status) {
-            Some(agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::InProgress) => {
-                AgentRunExecutionState::Running {
-                    turn_id: last_turn_id,
-                }
+    let last_turn_id = observation
+        .latest_turn
+        .as_ref()
+        .map(|turn| turn.turn_id.as_str().to_owned());
+    match observation.lifecycle {
+        AgentLifecycleStatus::Creating => AgentRunExecutionState::Running { turn_id: None },
+        AgentLifecycleStatus::Active => {
+            match observation.latest_turn.as_ref().map(|turn| turn.status) {
+                Some(
+                    agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::InProgress,
+                ) => AgentRunExecutionState::Running {
+                    turn_id: last_turn_id.clone(),
+                },
+                _ => AgentRunExecutionState::Idle,
             }
-            _ => AgentRunExecutionState::Idle,
-        },
-        ManagedRuntimeLifecycleStatus::Suspended => AgentRunExecutionState::Interrupted {
-            turn_id: last_turn_id,
+        }
+        AgentLifecycleStatus::Suspended => AgentRunExecutionState::Interrupted {
+            turn_id: last_turn_id.clone(),
             message: Some("Complete Agent 已挂起".to_string()),
         },
-        ManagedRuntimeLifecycleStatus::Closed => match last_turn.map(|turn| turn.status) {
-            Some(agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Failed) => {
-                AgentRunExecutionState::Failed {
-                    turn_id: last_turn_id.unwrap_or_else(|| "closed".to_string()),
-                    message: None,
+        AgentLifecycleStatus::Closed => {
+            match observation.latest_turn.as_ref().map(|turn| turn.status) {
+                Some(agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Failed) => {
+                    AgentRunExecutionState::Failed {
+                        turn_id: last_turn_id.clone().unwrap_or_else(|| "closed".to_string()),
+                        message: None,
+                    }
                 }
-            }
-            Some(agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Interrupted) => {
-                AgentRunExecutionState::Interrupted {
-                    turn_id: last_turn_id,
+                Some(
+                    agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Interrupted,
+                ) => AgentRunExecutionState::Interrupted {
+                    turn_id: last_turn_id.clone(),
                     message: None,
-                }
+                },
+                _ => AgentRunExecutionState::Completed {
+                    turn_id: last_turn_id.clone().unwrap_or_else(|| "closed".to_string()),
+                },
             }
-            _ => AgentRunExecutionState::Completed {
-                turn_id: last_turn_id.unwrap_or_else(|| "closed".to_string()),
-            },
-        },
-        ManagedRuntimeLifecycleStatus::Lost => AgentRunExecutionState::Lost {
+        }
+        AgentLifecycleStatus::Lost => AgentRunExecutionState::Lost {
             turn_id: last_turn_id,
             message: Some("Complete Agent Runtime 已丢失".to_string()),
         },
@@ -600,7 +607,6 @@ fn frame_ref_model(frame: &AgentFrame) -> AgentRunWorkspaceFrameRefModel {
 fn resource_surface_coordinate_model(
     frame: &AgentFrame,
     binding: &AgentRunProductRuntimeBinding,
-    _snapshot: &ManagedRuntimeSnapshot,
     execution_state: &AgentRunExecutionState,
 ) -> AgentRunResourceSurfaceCoordinateModel {
     let observed_at = frame.created_at.to_rfc3339();

@@ -125,8 +125,9 @@ describe("Managed Runtime feed connection", () => {
     },
   };
 
-  it("subscribes after the authoritative snapshot and folds live events as disposable presentation", async () => {
+  it("subscribes before loading the authoritative snapshot and folds buffered live events", async () => {
     const baseline = managedRuntimeTestFixtures.snapshots.started;
+    const pendingBaseline = deferred<ManagedRuntimeSnapshot>();
     const options: ManagedRuntimeFeedTransportOptions[] = [];
     const connectionObserver = observer();
 
@@ -134,16 +135,20 @@ describe("Managed Runtime feed connection", () => {
       { runId: "run-1", agentId: "agent-1" },
       connectionObserver,
       {
-        fetchSnapshot: vi.fn().mockResolvedValue(baseline),
+        fetchSnapshot: vi.fn(() => pendingBaseline.promise),
         createTransport: (value) => {
           options.push(value);
           return { close: vi.fn() };
         },
       },
     );
-    await connection.ready;
 
     options[0]?.onEvent(textDelta);
+    expect(connectionObserver.onBaseline).not.toHaveBeenCalled();
+    pendingBaseline.resolve(baseline);
+    await connection.ready;
+
+    expect(connectionObserver.onBaseline).toHaveBeenCalledWith(baseline);
     expect(connectionObserver.onProjection).toHaveBeenCalledTimes(1);
     expect(connectionObserver.onProjection).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -185,6 +190,9 @@ describe("Managed Runtime feed connection", () => {
 
     transports[0]?.options.onLifecycleChange("reconnecting");
     await Promise.resolve();
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+
+    transports[0]?.options.onLifecycleChange("connected");
     await Promise.resolve();
 
     expect(fetchSnapshot).toHaveBeenCalledTimes(2);

@@ -20,5 +20,5 @@ pub use service::{
     DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
     DashCompleteEffectRecord, DashCompleteRecordedReceipt, DashCompleteSourceMetadata,
     DashCompleteSourceMutation, NativeCompleteAgentIntegration, dash_complete_agent_build_digest,
-    native_complete_agent_registration,
+    dash_complete_agent_observation, native_complete_agent_registration,
 };

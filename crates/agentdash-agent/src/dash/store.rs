@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::{
-    AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentTurnId, CommandId, CommandOutcome,
+    AgentHistory, AgentHistoryEntry, AgentHistoryReplayer, AgentTurnId, CommandId, CommandOutcome,
     CommandStatus, CompactionId, ContextRevision, DashCommand, DashCommandKind, DashLifecycle,
     EffectId, EffectOutcome, HistoryContribution, HistoryEntryId, HistoryError, HistoryPayload,
     LifecycleError,
@@ -57,7 +57,6 @@ pub struct DashAgentChange {
     pub cursor: DashChangeCursor,
     pub head: Option<HistoryEntryId>,
     pub source_digest: String,
-    pub state: AgentHistoryState,
     pub payload: DashAgentChangePayload,
 }
 
@@ -284,42 +283,35 @@ impl DashAgentStore {
             staged.lifecycle.enqueue(command)?;
         }
         let appended = staged.history.append_batch(commit.history)?;
-        for entry in &appended {
-            let previous_state = if entry.sequence == 1 {
-                None
-            } else {
-                Some(staged.history.state_at(entry.sequence - 1)?)
-            };
-            let state = staged.history.state_at(entry.sequence)?;
-            let source_digest = {
-                let mut prefix = staged.history.clone();
-                prefix.truncate_after(entry.sequence)?;
-                prefix.digest()
-            };
+        let first_appended_sequence = appended.first().map(|entry| entry.sequence);
+        let mut replay = AgentHistoryReplayer::new(&staged.history);
+        let mut previous_active_turn = None;
+        for entry in staged.history.entries() {
+            let active_turn = replay.apply(entry)?.active_turn.clone();
+            if first_appended_sequence.is_none_or(|first| entry.sequence < first) {
+                previous_active_turn = active_turn;
+                continue;
+            }
+            let source_digest = replay.source_digest();
             staged.changes.push(DashAgentChange {
                 cursor: DashChangeCursor::new(entry.sequence, 0),
                 head: Some(entry.entry_id.clone()),
                 source_digest: source_digest.clone(),
-                state: state.clone(),
                 payload: DashAgentChangePayload::HistoryEntry {
                     entry: entry.clone(),
                 },
             });
-            if previous_state
-                .as_ref()
-                .and_then(|previous| previous.active_turn.as_ref())
-                != state.active_turn.as_ref()
-            {
+            if previous_active_turn.as_ref() != active_turn.as_ref() {
                 staged.changes.push(DashAgentChange {
                     cursor: DashChangeCursor::new(entry.sequence, 1),
                     head: Some(entry.entry_id.clone()),
                     source_digest,
-                    state: state.clone(),
                     payload: DashAgentChangePayload::ActiveTurnChanged {
-                        active_turn_id: state.active_turn,
+                        active_turn_id: active_turn.clone(),
                     },
                 });
             }
+            previous_active_turn = active_turn;
         }
         *self = staged;
         Ok(appended)

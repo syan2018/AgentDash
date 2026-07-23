@@ -9,15 +9,15 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::{
-    AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentItemId, AgentTurnId, CommandId,
-    CommandOutcome, CompactionId, CompactionMode, ContextRevision, DashAgentChange,
-    DashAgentCommit, DashAgentStore, DashCancellation, DashCommand, DashCommandKind,
-    DashCoreContext, DashCoreError, DashCoreEvent, DashCoreTurn, DashExecutionCallbacks,
-    DashExecutionEvent, DashExecutionInspection, DashFinishReason, DashMessage, DashMessageRole,
-    DashProvider, DashProviderRequest, DashProviderRoundMaterializer, DashProviderRoundSnapshots,
-    DashSurface, DashToolCall, DashToolCallbacks, DashToolDefinition, DashToolResult, EffectId,
-    EffectOutcome, EffectSettlement, ForkCutoff, HistoryContribution, HistoryEntryId,
-    HistoryPayload, InitialContextInstallation, InteractionId, ItemKind, SessionStatus, StoreError,
+    AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentTurnId, CommandId, CommandOutcome,
+    CompactionId, CompactionMode, ContextRevision, DashAgentChange, DashAgentCommit,
+    DashAgentStore, DashCancellation, DashCommand, DashCommandKind, DashCoreContext, DashCoreError,
+    DashCoreEvent, DashCoreTurn, DashExecutionCallbacks, DashExecutionEvent,
+    DashExecutionInspection, DashFinishReason, DashMessage, DashMessageRole, DashProvider,
+    DashProviderRequest, DashProviderRoundMaterializer, DashProviderRoundSnapshots, DashSurface,
+    DashToolCall, DashToolCallbacks, DashToolDefinition, DashToolResult, EffectId, EffectOutcome,
+    EffectSettlement, ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload,
+    InitialContextInstallation, InteractionId, ItemKind, SessionStatus, StoreError,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,6 +107,14 @@ impl DashAgentRepositoryState {
         self.store.history()
     }
 
+    pub fn store(&self) -> &DashAgentStore {
+        &self.store
+    }
+
+    pub fn service_effect_ids(&self) -> impl Iterator<Item = &EffectId> {
+        self.effects.keys()
+    }
+
     pub fn new(store: DashAgentStore) -> Self {
         Self {
             store,
@@ -122,6 +130,12 @@ pub struct DashAgentRead {
     pub history: AgentHistory,
     pub history_digest: String,
     pub surface: Option<DashSurface>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DashAgentChanges {
+    pub changes: Vec<DashAgentChange>,
+    pub history: AgentHistory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -535,7 +549,7 @@ fn provider_round_assistant_history(
     round: u32,
     content: String,
 ) -> Vec<HistoryContribution> {
-    let item_id = AgentItemId::new(format!("{}:provider-round:{round}:assistant", turn_id.0));
+    let item_id = super::execution_assistant_item_id(turn_id, round);
     vec![
         HistoryContribution {
             entry_id: provider_round_entry_id(turn_id, round, &item_id.0, "start"),
@@ -692,9 +706,9 @@ impl DashAgentService {
         &self,
         after: Option<super::DashChangeCursor>,
         limit: usize,
-    ) -> Result<Vec<DashAgentChange>, DashServiceError> {
+    ) -> Result<DashAgentChanges, DashServiceError> {
         let state = self.repository.load().await?;
-        Ok(state
+        let changes = state
             .store
             .changes()
             .iter()
@@ -706,7 +720,11 @@ impl DashAgentService {
             })
             .take(limit)
             .cloned()
-            .collect())
+            .collect();
+        Ok(DashAgentChanges {
+            changes,
+            history: state.store.history().clone(),
+        })
     }
 
     pub async fn history(&self) -> Result<AgentHistory, DashServiceError> {
@@ -970,7 +988,6 @@ impl DashAgentService {
             turn_id: turn_id.clone(),
             input: content.clone(),
             context,
-            output_item_id: AgentItemId::new(format!("{effect_prefix}:assistant")),
             output_started_entry_id: HistoryEntryId::new(format!(
                 "{effect_prefix}:assistant-started"
             )),
@@ -1337,7 +1354,6 @@ impl DashAgentService {
             turn_id: continuation_turn_id.clone(),
             input: content,
             context: continuation_context,
-            output_item_id: AgentItemId::new(format!("{prefix}:C-assistant")),
             output_started_entry_id: HistoryEntryId::new(format!("{prefix}:C-assistant-started")),
             output_entry_id: HistoryEntryId::new(format!("{prefix}:C-assistant-output")),
             output_completed_entry_id: HistoryEntryId::new(format!(

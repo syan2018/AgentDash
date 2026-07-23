@@ -130,6 +130,14 @@ impl Default for DashLifecycle {
 }
 
 impl DashLifecycle {
+    pub fn command_ids(&self) -> impl Iterator<Item = &CommandId> {
+        self.commands.keys()
+    }
+
+    pub fn effect_ids(&self) -> impl Iterator<Item = &EffectId> {
+        self.effects.keys()
+    }
+
     pub fn enqueue(&mut self, command: DashCommand) -> Result<(), LifecycleError> {
         if let Some(existing) = self.commands.get(&command.command_id) {
             return if existing.command == command {

@@ -1,22 +1,22 @@
 use std::sync::Arc;
 
 use agentdash_agent::dash::{
-    AgentSessionId, DashAgentRepository, DashAgentRepositoryState, DashAgentRepositoryStore,
-    DashServiceError,
+    AgentSessionId, DashAgentChange, DashAgentRepository, DashAgentRepositoryState,
+    DashAgentRepositoryStore, DashServiceError,
 };
 use agentdash_agent_service_api::{
-    AgentEffectIdentity, AgentServiceError, AgentServiceErrorCode, AgentSourceCoordinate,
+    AgentEffectIdentity, AgentObservation, AgentServiceError, AgentServiceErrorCode,
+    AgentSourceCoordinate,
 };
 use agentdash_integration_native_agent::{
     DashCompleteAgentStore, DashCompleteAtomicCommit, DashCompleteEffectRecord,
-    DashCompleteSourceMetadata, DashCompleteSourceMutation,
+    DashCompleteSourceMetadata, DashCompleteSourceMutation, dash_complete_agent_observation,
 };
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 struct DashCompleteSourceDocument {
     repository: DashAgentRepositoryState,
     metadata: DashCompleteSourceMetadata,
@@ -112,14 +112,11 @@ impl DashAgentRepository for PostgresDashAgentRepository {
     }
 
     async fn load(&self) -> Result<DashAgentRepositoryState, DashServiceError> {
-        let mut tx = self.pool.begin().await.map_err(dash_database_error)?;
-        let document = lock_source_document(&mut tx, &self.source.0)
+        load_source_repository(&self.pool, &self.source.0)
             .await?
             .ok_or_else(|| DashServiceError::InvalidState {
                 message: format!("Dash source {} was not found", self.source.0),
-            })?;
-        tx.commit().await.map_err(dash_database_error)?;
-        Ok(document.repository)
+            })
     }
 
     async fn compare_and_swap(
@@ -162,12 +159,42 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
         &self,
         source: &AgentSourceCoordinate,
     ) -> Result<Option<DashCompleteSourceMetadata>, AgentServiceError> {
-        let mut tx = self.pool.begin().await.map_err(agent_database_error)?;
-        let document = lock_source_document(&mut tx, source.as_str())
+        load_source_metadata(&self.pool, source.as_str())
             .await
-            .map_err(agent_from_dash_error)?;
-        tx.commit().await.map_err(agent_database_error)?;
-        Ok(document.map(|document| document.metadata))
+            .map_err(agent_from_dash_error)
+    }
+
+    async fn load_observation(
+        &self,
+        source: &AgentSourceCoordinate,
+    ) -> Result<Option<AgentObservation>, AgentServiceError> {
+        let row =
+            sqlx::query("SELECT observation FROM dash_complete_source WHERE source_coordinate=$1")
+                .bind(source.as_str())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(agent_database_error)?;
+        let observation = row
+            .as_ref()
+            .map(|row| {
+                serde_json::from_value::<AgentObservation>(
+                    row.try_get("observation").map_err(agent_database_error)?,
+                )
+                .map_err(|error| {
+                    agent_internal_error(format!("decode Dash source observation: {error}"))
+                })
+            })
+            .transpose()?;
+        if observation
+            .as_ref()
+            .is_some_and(|observation| observation.source != *source)
+        {
+            return Err(agent_internal_error(format!(
+                "Dash source {} observation has a different identity",
+                source.as_str()
+            )));
+        }
+        Ok(observation)
     }
 
     async fn load_effect(
@@ -356,7 +383,7 @@ async fn lock_source_document(
     source: &str,
 ) -> Result<Option<DashCompleteSourceDocument>, DashServiceError> {
     let row = sqlx::query(
-        "SELECT document FROM dash_complete_source \
+        "SELECT repository, metadata FROM dash_complete_source \
          WHERE source_coordinate=$1 FOR UPDATE",
     )
     .bind(source)
@@ -366,15 +393,63 @@ async fn lock_source_document(
     let Some(row) = row else {
         return Ok(None);
     };
-    let document: DashCompleteSourceDocument = serde_json::from_value(
-        row.try_get("document").map_err(dash_database_error)?,
-    )
-    .map_err(|error| DashServiceError::Internal {
-        message: format!("decode Dash source document: {error}"),
-    })?;
+    let document = decode_source_document(&row)?;
     validate_repository_identity(source, &document.repository)?;
     validate_repository_document(&document.repository)?;
     Ok(Some(document))
+}
+
+async fn load_source_repository(
+    pool: &PgPool,
+    source: &str,
+) -> Result<Option<DashAgentRepositoryState>, DashServiceError> {
+    let row = sqlx::query("SELECT repository FROM dash_complete_source WHERE source_coordinate=$1")
+        .bind(source)
+        .fetch_optional(pool)
+        .await
+        .map_err(dash_database_error)?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let repository = decode_json_column(&row, "repository", "Dash repository")?;
+    validate_repository_identity(source, &repository)?;
+    validate_repository_document(&repository)?;
+    Ok(Some(repository))
+}
+
+async fn load_source_metadata(
+    pool: &PgPool,
+    source: &str,
+) -> Result<Option<DashCompleteSourceMetadata>, DashServiceError> {
+    let row = sqlx::query("SELECT metadata FROM dash_complete_source WHERE source_coordinate=$1")
+        .bind(source)
+        .fetch_optional(pool)
+        .await
+        .map_err(dash_database_error)?;
+    row.as_ref()
+        .map(|row| decode_json_column(row, "metadata", "Dash source metadata"))
+        .transpose()
+}
+
+fn decode_source_document(
+    row: &sqlx::postgres::PgRow,
+) -> Result<DashCompleteSourceDocument, DashServiceError> {
+    Ok(DashCompleteSourceDocument {
+        repository: decode_json_column(row, "repository", "Dash repository")?,
+        metadata: decode_json_column(row, "metadata", "Dash source metadata")?,
+    })
+}
+
+fn decode_json_column<T: serde::de::DeserializeOwned>(
+    row: &sqlx::postgres::PgRow,
+    column: &str,
+    label: &str,
+) -> Result<T, DashServiceError> {
+    serde_json::from_value(row.try_get(column).map_err(dash_database_error)?).map_err(|error| {
+        DashServiceError::Internal {
+            message: format!("decode {label}: {error}"),
+        }
+    })
 }
 
 async fn insert_source_document(
@@ -384,12 +459,17 @@ async fn insert_source_document(
 ) -> Result<(), DashServiceError> {
     validate_repository_identity(source, &document.repository)?;
     validate_repository_document(&document.repository)?;
-    sqlx::query("INSERT INTO dash_complete_source(source_coordinate,document) VALUES ($1,$2)")
-        .bind(source)
-        .bind(source_document_json(document)?)
-        .execute(&mut **tx)
-        .await
-        .map_err(dash_database_error)?;
+    sqlx::query(
+        "INSERT INTO dash_complete_source(source_coordinate,repository,metadata,observation) \
+         VALUES ($1,$2,$3,$4)",
+    )
+    .bind(source)
+    .bind(dash_json(&document.repository, "Dash repository")?)
+    .bind(dash_json(&document.metadata, "Dash source metadata")?)
+    .bind(source_observation_json(source, &document.repository)?)
+    .execute(&mut **tx)
+    .await
+    .map_err(dash_database_error)?;
     Ok(())
 }
 
@@ -400,13 +480,17 @@ async fn replace_source_document(
 ) -> Result<(), DashServiceError> {
     validate_repository_identity(source, &replacement.repository)?;
     validate_repository_document(&replacement.repository)?;
-    let result =
-        sqlx::query("UPDATE dash_complete_source SET document=$2 WHERE source_coordinate=$1")
-            .bind(source)
-            .bind(source_document_json(replacement)?)
-            .execute(&mut **tx)
-            .await
-            .map_err(dash_database_error)?;
+    let result = sqlx::query(
+        "UPDATE dash_complete_source SET repository=$2, metadata=$3, observation=$4 \
+         WHERE source_coordinate=$1",
+    )
+    .bind(source)
+    .bind(dash_json(&replacement.repository, "Dash repository")?)
+    .bind(dash_json(&replacement.metadata, "Dash source metadata")?)
+    .bind(source_observation_json(source, &replacement.repository)?)
+    .execute(&mut **tx)
+    .await
+    .map_err(dash_database_error)?;
     if result.rows_affected() != 1 {
         return Err(DashServiceError::Conflict {
             message: format!("Dash source {source} was not found"),
@@ -424,12 +508,29 @@ fn empty_source_metadata() -> DashCompleteSourceMetadata {
     }
 }
 
-fn source_document_json(
-    document: &DashCompleteSourceDocument,
+fn dash_json<T: serde::Serialize>(
+    value: &T,
+    label: &str,
 ) -> Result<serde_json::Value, DashServiceError> {
-    serde_json::to_value(document).map_err(|error| DashServiceError::Internal {
-        message: format!("encode Dash source document: {error}"),
+    serde_json::to_value(value).map_err(|error| DashServiceError::Internal {
+        message: format!("encode {label}: {error}"),
     })
+}
+
+fn source_observation_json(
+    source: &str,
+    repository: &DashAgentRepositoryState,
+) -> Result<Value, DashServiceError> {
+    let source =
+        AgentSourceCoordinate::new(source).map_err(|error| DashServiceError::InvalidState {
+            message: format!("invalid Dash source coordinate: {error}"),
+        })?;
+    let observation = dash_complete_agent_observation(&source, repository).map_err(|error| {
+        DashServiceError::InvalidState {
+            message: format!("derive Dash source observation: {error}"),
+        }
+    })?;
+    dash_json(&observation, "Dash source observation")
 }
 
 fn validate_repository_identity(
@@ -448,9 +549,7 @@ fn validate_repository_identity(
 }
 
 fn validate_repository_document(state: &DashAgentRepositoryState) -> Result<(), DashServiceError> {
-    let document = dash_state_json(state)?;
-    let changes = repository_changes(&document)?;
-    validate_change_sequence(state.history().entries().len(), changes)
+    validate_change_sequence(state.history().entries().len(), state.store().changes())
 }
 
 fn validate_append_only_replacement(
@@ -473,158 +572,90 @@ fn validate_append_only_replacement(
         });
     }
 
-    let expected_document = dash_state_json(expected)?;
-    let replacement_document = dash_state_json(replacement)?;
-    let expected_changes = repository_changes(&expected_document)?;
-    let replacement_changes = repository_changes(&replacement_document)?;
+    let expected_changes = expected.store().changes();
+    let replacement_changes = replacement.store().changes();
     if !replacement_changes.starts_with(expected_changes) {
         return Err(DashServiceError::InvalidState {
             message: format!("Dash source {source} attempted to rewrite durable changes"),
         });
     }
     validate_change_sequence(replacement_history.entries().len(), replacement_changes)?;
-    validate_projection_keys(
+    validate_key_retention(
         source,
-        &expected_document,
-        &replacement_document,
-        "commands",
+        expected.store().lifecycle().command_ids(),
+        replacement.store().lifecycle().command_ids(),
+        "lifecycle commands",
     )?;
-    validate_projection_keys(source, &expected_document, &replacement_document, "effects")?;
-    validate_service_effect_keys(source, &expected_document, &replacement_document)
+    validate_key_retention(
+        source,
+        expected.store().lifecycle().effect_ids(),
+        replacement.store().lifecycle().effect_ids(),
+        "lifecycle effects",
+    )?;
+    validate_key_retention(
+        source,
+        expected.service_effect_ids(),
+        replacement.service_effect_ids(),
+        "service effects",
+    )
 }
 
-fn validate_projection_keys(
+fn validate_key_retention<'a, T: 'a + Eq>(
     source: &str,
-    expected: &Value,
-    replacement: &Value,
-    field: &str,
+    mut expected: impl Iterator<Item = &'a T>,
+    replacement: impl Iterator<Item = &'a T>,
+    label: &str,
 ) -> Result<(), DashServiceError> {
-    let expected = lifecycle_map(expected, field);
-    let replacement = lifecycle_map(replacement, field);
-    if expected.is_some_and(|expected| {
-        !expected
-            .keys()
-            .all(|key| replacement.is_some_and(|replacement| replacement.contains_key(key)))
-    }) {
+    let replacement = replacement.collect::<Vec<_>>();
+    if expected.any(|key| !replacement.contains(&key)) {
         return Err(DashServiceError::InvalidState {
-            message: format!("Dash source {source} attempted to remove lifecycle {field}"),
+            message: format!("Dash source {source} attempted to remove {label}"),
         });
     }
     Ok(())
 }
 
-fn validate_service_effect_keys(
-    source: &str,
-    expected: &Value,
-    replacement: &Value,
+fn validate_change_sequence(
+    history_len: usize,
+    changes: &[DashAgentChange],
 ) -> Result<(), DashServiceError> {
-    let expected = expected.pointer("/effects").and_then(Value::as_object);
-    let replacement = replacement.pointer("/effects").and_then(Value::as_object);
-    if expected.is_some_and(|expected| {
-        !expected
-            .keys()
-            .all(|key| replacement.is_some_and(|replacement| replacement.contains_key(key)))
-    }) {
-        return Err(DashServiceError::InvalidState {
-            message: format!("Dash source {source} attempted to remove service effects"),
-        });
-    }
-    Ok(())
-}
-
-fn validate_change_sequence(history_len: usize, changes: &[Value]) -> Result<(), DashServiceError> {
     let Some(first) = changes.first() else {
         return Ok(());
     };
-    let first_revision = change_revision(first)?;
-    if first_revision == 0 || change_ordinal(first)? != 0 {
+    if first.cursor.revision == 0 || first.cursor.ordinal != 0 {
         return Err(DashServiceError::InvalidState {
             message: "Dash changes must start at a positive revision with ordinal zero".to_owned(),
         });
     }
-    let mut next = (first_revision, 0_u64);
-    for change in changes {
-        let actual = (change_revision(change)?, change_ordinal(change)?);
-        if actual != next {
+    for pair in changes.windows(2) {
+        let current = &pair[0].cursor;
+        let next = &pair[1].cursor;
+        let next_revision = current.revision.checked_add(1);
+        let continuous = match current.ordinal {
+            0 => {
+                (next.revision == current.revision && next.ordinal == 1)
+                    || (Some(next.revision) == next_revision && next.ordinal == 0)
+            }
+            1 => Some(next.revision) == next_revision && next.ordinal == 0,
+            _ => false,
+        };
+        if !continuous {
             return Err(DashServiceError::InvalidState {
                 message: format!(
-                    "Dash change sequence is not continuous: expected {}:{}, found {}:{}",
-                    next.0, next.1, actual.0, actual.1
+                    "Dash change sequence is not continuous between {}:{} and {}:{}",
+                    current.revision, current.ordinal, next.revision, next.ordinal
                 ),
             });
         }
-        next = if actual.1 == 0
-            && changes.iter().any(|candidate| {
-                change_revision(candidate) == Ok(actual.0) && change_ordinal(candidate) == Ok(1)
-            }) {
-            (actual.0, 1)
-        } else {
-            (
-                actual
-                    .0
-                    .checked_add(1)
-                    .ok_or_else(|| DashServiceError::Internal {
-                        message: "Dash change revision is exhausted".to_owned(),
-                    })?,
-                0,
-            )
-        };
     }
     if history_len > 0
-        && changes.last().map(change_revision).transpose()? != Some(history_len as u64)
+        && changes.last().map(|change| change.cursor.revision) != Some(history_len as u64)
     {
         return Err(DashServiceError::InvalidState {
             message: "Dash changes do not cover the history head".to_owned(),
         });
     }
     Ok(())
-}
-
-fn lifecycle_map<'a>(
-    document: &'a Value,
-    field: &str,
-) -> Option<&'a serde_json::Map<String, Value>> {
-    document
-        .pointer(&format!("/store/lifecycle/{field}"))
-        .and_then(Value::as_object)
-}
-
-fn repository_changes(document: &Value) -> Result<&[Value], DashServiceError> {
-    document
-        .pointer("/store/changes")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .ok_or_else(|| DashServiceError::Internal {
-            message: "Dash repository changes are missing".to_owned(),
-        })
-}
-
-fn change_revision(change: &Value) -> Result<u64, DashServiceError> {
-    change
-        .pointer("/cursor/revision")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| DashServiceError::Internal {
-            message: "Dash change revision is missing".to_owned(),
-        })
-}
-
-fn change_ordinal(change: &Value) -> Result<u64, DashServiceError> {
-    change
-        .pointer("/cursor/ordinal")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| DashServiceError::Internal {
-            message: "Dash change ordinal is missing".to_owned(),
-        })
-}
-
-fn dash_state_json(state: &DashAgentRepositoryState) -> Result<Value, DashServiceError> {
-    serde_json::to_value(state).map_err(dash_json_error)
-}
-
-fn dash_json_error(error: serde_json::Error) -> DashServiceError {
-    DashServiceError::Internal {
-        message: format!("encode Dash repository state: {error}"),
-    }
 }
 
 fn dash_database_error(error: sqlx::Error) -> DashServiceError {

@@ -28,8 +28,8 @@ use agentdash_agent_service_api::{
     AgentForkCutoffKind, AgentForkPoint, AgentHookAction, AgentHookBlockingSemantics,
     AgentHookDecision, AgentHookDefinitionId, AgentHookInvocation, AgentHookMutationKind,
     AgentHookPoint, AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbackError,
-    AgentHostCallbacks, AgentIdempotencyKey, AgentInput, AgentInputContent, AgentPayloadDigest,
-    AgentProfileDigest, AgentReadQuery, AgentReceiptState, AgentServiceError,
+    AgentHostCallbacks, AgentIdempotencyKey, AgentInput, AgentInputContent, AgentObservationQuery,
+    AgentPayloadDigest, AgentProfileDigest, AgentReadQuery, AgentReceiptState, AgentServiceError,
     AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshotRevision, AgentSourceCoordinate,
     AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
     AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolInvocation,
@@ -172,6 +172,23 @@ impl DashCompleteAgentStore for RecordingCompleteStore {
         source: &AgentSourceCoordinate,
     ) -> Result<Option<DashCompleteSourceMetadata>, AgentServiceError> {
         Ok(self.durable.read().await.sources.get(source).cloned())
+    }
+
+    async fn load_observation(
+        &self,
+        source: &AgentSourceCoordinate,
+    ) -> Result<Option<agentdash_agent_service_api::AgentObservation>, AgentServiceError> {
+        self.durable
+            .read()
+            .await
+            .repositories
+            .get(source.as_str())
+            .map(|repository| {
+                agentdash_integration_native_agent::dash_complete_agent_observation(
+                    source, repository,
+                )
+            })
+            .transpose()
     }
 
     async fn load_effect(
@@ -3102,7 +3119,7 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
     ));
 
     let mut previous_sequence = turn_started.sequence.0;
-    let text_delta = loop {
+    let (text_delta, live_item_id) = loop {
         let event = tokio::time::timeout(Duration::from_secs(1), live_events.next())
             .await
             .expect("live event should arrive")
@@ -3112,10 +3129,11 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
         assert!(event.sequence.0 > previous_sequence);
         previous_sequence = event.sequence.0;
         if let BackboneEvent::AgentMessageDelta(delta) = event.record.presentation.envelope.event {
-            break delta.delta;
+            break (delta.delta, delta.item_id);
         }
     };
     assert_eq!(text_delta, "fixture answer");
+    assert_eq!(live_item_id, "turn:live-input:provider-round:1:assistant");
 
     let snapshot = service
         .read(AgentReadQuery {
@@ -3128,6 +3146,35 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
         &record.presentation.envelope.event,
         BackboneEvent::TurnCompleted(_)
     )));
+    let durable_item_id = snapshot
+        .conversation_history
+        .iter()
+        .find_map(|record| match &record.presentation.envelope.event {
+            BackboneEvent::ItemCompleted(notification) => match &notification.item {
+                agentdash_agent_protocol::AgentDashThreadItem::Codex(
+                    codex::ThreadItem::AgentMessage { id, .. },
+                ) => Some(id.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("durable assistant message should be projected");
+    assert_eq!(durable_item_id, live_item_id);
+
+    let observation = service
+        .observe(AgentObservationQuery {
+            source: AgentSourceCoordinate::new("dash-live-events").unwrap(),
+        })
+        .await
+        .unwrap();
+    assert!(observation.active_turn_id.is_none());
+    assert_eq!(
+        observation
+            .latest_turn
+            .as_ref()
+            .map(|turn| (turn.turn_id.as_str(), turn.status)),
+        Some(("turn:live-input", codex::TurnStatus::Completed))
+    );
 }
 
 #[tokio::test]

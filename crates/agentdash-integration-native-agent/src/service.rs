@@ -4,14 +4,14 @@ use std::{
 };
 
 use agentdash_agent::dash::{
-    AgentHistory, AgentHistoryState, AgentItemId as DashItemId, AgentSessionId,
-    AgentTurnId as DashTurnId, BranchId, CommandId, CompactionMode, ContextDeliveryFidelity,
-    DashAgentChange, DashAgentChangePayload, DashAgentRepositoryState, DashAgentRepositoryStore,
-    DashAgentService, DashChangeCursor, DashCommandRequest, DashCoreEvent, DashExecutionCallbacks,
-    DashExecutionDependencies, DashExecutionEvent, DashHistoryCallbacks, DashHistoryCommit,
-    DashPublicCommand, DashReceiptState, DashServiceError, DashSurface, DashSurfaceInstruction,
-    DashTerminalOutcome, DashToolDefinition, ForkCutoff, HistoryPayload,
-    InitialContextContribution, InitialContextInstallation, InitialContextMode,
+    AgentHistory, AgentHistoryReplayer, AgentHistoryState, AgentItemId as DashItemId,
+    AgentSessionId, AgentTurnId as DashTurnId, BranchId, CommandId, CompactionMode,
+    ContextDeliveryFidelity, DashAgentChange, DashAgentChangePayload, DashAgentRepositoryState,
+    DashAgentRepositoryStore, DashAgentService, DashChangeCursor, DashCommandRequest,
+    DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
+    DashHistoryCallbacks, DashHistoryCommit, DashPublicCommand, DashReceiptState, DashServiceError,
+    DashSurface, DashSurfaceInstruction, DashTerminalOutcome, DashToolDefinition, ForkCutoff,
+    HistoryPayload, InitialContextContribution, InitialContextInstallation, InitialContextMode,
     InteractionId as DashInteractionId, InteractionState,
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
@@ -30,19 +30,20 @@ use agentdash_agent_service_api::{
     AgentHostCallbacks, AgentInput, AgentInputContent, AgentInteractionRequest,
     AgentInteractionResolution, AgentInteractionSnapshot, AgentInteractionStatus,
     AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveEvent, AgentLiveEventStream,
-    AgentPayloadDigest, AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId,
-    AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
-    AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
-    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
-    AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot, AgentToolDelivery,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, AppliedAgentCommandReceipt,
-    AppliedAgentSurface, AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt,
-    AppliedContributionStatus, AppliedForkAgentReceipt, AppliedInitialContextEvidence,
-    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
-    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
-    InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
-    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentObservation, AgentObservationQuery, AgentPayloadDigest, AgentReadQuery, AgentReceiptState,
+    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
+    AgentServiceInstanceId, AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority,
+    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
+    AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile,
+    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot,
+    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnObservation,
+    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
+    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
+    BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
+    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
+    InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
+    ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, CompleteAgentPlacementRequirement, CompleteAgentRegistrationClaim,
@@ -120,6 +121,11 @@ pub trait DashCompleteAgentStore: Send + Sync {
         source: &AgentSourceCoordinate,
     ) -> Result<Option<DashCompleteSourceMetadata>, AgentServiceError>;
 
+    async fn load_observation(
+        &self,
+        source: &AgentSourceCoordinate,
+    ) -> Result<Option<AgentObservation>, AgentServiceError>;
+
     async fn load_effect(
         &self,
         identity: &AgentEffectIdentity,
@@ -131,6 +137,63 @@ pub trait DashCompleteAgentStore: Send + Sync {
     /// Returning an error is allowed after the durable commit completed; callers recover by
     /// loading the effect identity and validating its typed receipt.
     async fn commit(&self, commit: DashCompleteAtomicCommit) -> Result<(), AgentServiceError>;
+}
+
+pub fn dash_complete_agent_observation(
+    source: &AgentSourceCoordinate,
+    repository: &DashAgentRepositoryState,
+) -> Result<AgentObservation, AgentServiceError> {
+    let state = repository.history().state().map_err(internal)?;
+    let latest_turn = repository
+        .history()
+        .entries()
+        .iter()
+        .rev()
+        .find_map(|entry| {
+            let HistoryPayload::TurnStarted { turn_id } = &entry.payload else {
+                return None;
+            };
+            Some((turn_id, state.turns.get(turn_id)))
+        });
+    Ok(AgentObservation {
+        source: source.clone(),
+        revision: AgentSnapshotRevision(state.entry_count),
+        lifecycle: if state.status == agentdash_agent::dash::SessionStatus::Closed {
+            AgentLifecycleStatus::Closed
+        } else {
+            AgentLifecycleStatus::Active
+        },
+        active_turn_id: state
+            .active_turn
+            .as_ref()
+            .map(|turn_id| {
+                agentdash_agent_service_api::AgentTurnId::new(turn_id.0.clone()).map_err(internal)
+            })
+            .transpose()?,
+        latest_turn: latest_turn
+            .map(|(turn_id, turn)| {
+                Ok(AgentTurnObservation {
+                    turn_id: agentdash_agent_service_api::AgentTurnId::new(turn_id.0.clone())
+                        .map_err(internal)?,
+                    status: match turn.map(|turn| turn.status) {
+                        Some(agentdash_agent::dash::ActivityStatus::Active) => {
+                            codex::TurnStatus::InProgress
+                        }
+                        Some(agentdash_agent::dash::ActivityStatus::Interrupted) => {
+                            codex::TurnStatus::Interrupted
+                        }
+                        Some(
+                            agentdash_agent::dash::ActivityStatus::Failed
+                            | agentdash_agent::dash::ActivityStatus::Lost,
+                        ) => codex::TurnStatus::Failed,
+                        Some(agentdash_agent::dash::ActivityStatus::Completed) | None => {
+                            codex::TurnStatus::Completed
+                        }
+                    },
+                })
+            })
+            .transpose()?,
+    })
 }
 
 /// Complete Agent target lane backed by Dash Agent history.
@@ -781,6 +844,16 @@ impl CompleteAgentService for DashAgentCompleteService {
         })
     }
 
+    async fn observe(
+        &self,
+        query: AgentObservationQuery,
+    ) -> Result<AgentObservation, AgentServiceError> {
+        self.store
+            .load_observation(&query.source)
+            .await?
+            .ok_or_else(|| not_found(format!("Dash source {} was not found", query.source)))
+    }
+
     async fn changes(
         &self,
         query: AgentChangesQuery,
@@ -792,33 +865,34 @@ impl CompleteAgentService for DashAgentCompleteService {
             .map(parse_cursor)
             .transpose()?
             .unwrap_or_else(|| DashChangeCursor::new(0, 0));
-        let changes = service
+        let change_batch = service
             .changes(Some(after), query.limit as usize)
             .await
             .map_err(map_dash_error)?;
-        let history = service.history().await.map_err(map_dash_error)?;
-        let changes = changes
-            .into_iter()
-            .map(|change| {
-                let state_payload = dash_change_payload(&change)?;
+        let history = change_batch.history;
+        let mut selected_changes = change_batch.changes.into_iter().peekable();
+        let mut replay = AgentHistoryReplayer::new(&history);
+        let mut changes = Vec::new();
+        for entry in history.entries() {
+            let state = replay.apply(entry).map_err(internal)?;
+            while selected_changes
+                .peek()
+                .is_some_and(|change| change.cursor.revision == entry.sequence)
+            {
+                let change = selected_changes.next().expect("peeked change exists");
+                let state_payload = dash_change_payload(&change, state)?;
                 let presentation = match &change.payload {
                     DashAgentChangePayload::HistoryEntry { entry } => {
-                        let previous_state = if entry.sequence > 1 {
-                            Some(history.state_at(entry.sequence - 1).map_err(internal)?)
-                        } else {
-                            None
-                        };
                         crate::canonical_projection::entry_records(
                             query.source.as_str(),
                             entry,
-                            previous_state.as_ref(),
-                            &change.state,
+                            state,
                         )
                         .map_err(internal)?
                     }
                     DashAgentChangePayload::ActiveTurnChanged { .. } => Vec::new(),
                 };
-                Ok(AgentChange {
+                changes.push(AgentChange {
                     cursor: AgentSourceCursor::new(change.cursor.encode()).map_err(internal)?,
                     source_revision: Some(
                         AgentSourceRevision::new(format!("history:{}", change.source_digest))
@@ -829,9 +903,12 @@ impl CompleteAgentService for DashAgentCompleteService {
                         state: state_payload.map(Box::new),
                         presentation,
                     },
-                })
-            })
-            .collect::<Result<Vec<_>, AgentServiceError>>()?;
+                });
+            }
+            if selected_changes.peek().is_none() {
+                break;
+            }
+        }
         let next = changes.last().map(|change| change.cursor.clone());
         Ok(AgentChangePage {
             source: query.source,
@@ -1658,10 +1735,11 @@ fn parse_cursor(cursor: &AgentSourceCursor) -> Result<DashChangeCursor, AgentSer
 
 fn dash_change_payload(
     change: &DashAgentChange,
+    state: &agentdash_agent::dash::AgentHistoryState,
 ) -> Result<Option<AgentChangePayload>, AgentServiceError> {
     match &change.payload {
         DashAgentChangePayload::HistoryEntry { entry } => {
-            change_payload(&change.state, &entry.payload, &change.source_digest)
+            change_payload(state, &entry.payload, &change.source_digest)
         }
         DashAgentChangePayload::ActiveTurnChanged { .. } => Ok(None),
     }
@@ -1786,30 +1864,19 @@ impl DashHistoryCallbacks for DashCompleteLiveCallbacks {
         &self,
         commit: DashHistoryCommit,
     ) -> Result<(), agentdash_agent::dash::DashCoreError> {
+        let Some(first_sequence) = commit.entries.first().map(|entry| entry.sequence) else {
+            return Ok(());
+        };
         let mut records = Vec::new();
-        for entry in commit.entries {
-            let previous_state = if entry.sequence > 1 {
-                Some(
-                    commit
-                        .history
-                        .state_at(entry.sequence - 1)
-                        .map_err(live_callback_error)?,
-                )
-            } else {
-                None
-            };
-            let state = commit
-                .history
-                .state_at(entry.sequence)
-                .map_err(live_callback_error)?;
+        let mut replay = AgentHistoryReplayer::new(&commit.history);
+        for entry in commit.history.entries() {
+            let state = replay.apply(entry).map_err(live_callback_error)?;
+            if entry.sequence < first_sequence {
+                continue;
+            }
             records.extend(
-                crate::canonical_projection::entry_records(
-                    self.source.as_str(),
-                    &entry,
-                    previous_state.as_ref(),
-                    &state,
-                )
-                .map_err(live_callback_error)?,
+                crate::canonical_projection::entry_records(self.source.as_str(), entry, state)
+                    .map_err(live_callback_error)?,
             );
         }
         self.live_channel.publish(&self.source, records).await;
@@ -1827,19 +1894,29 @@ fn canonical_live_event(
     let event = match &execution.event {
         DashCoreEvent::ProviderRoundStarted { .. }
         | DashCoreEvent::ProviderRoundCompleted { .. } => return Ok(None),
-        DashCoreEvent::TextDelta { delta, .. } => {
+        DashCoreEvent::TextDelta { round, delta } => {
             BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
                 thread_id: thread_id.to_owned(),
                 turn_id: turn_id.to_owned(),
-                item_id: execution.item_id.0.clone(),
+                item_id: agentdash_agent::dash::execution_assistant_item_id(
+                    &execution.turn_id,
+                    *round,
+                )
+                .0,
                 delta: delta.clone(),
             })
         }
-        DashCoreEvent::ReasoningDelta { delta, .. } => BackboneEvent::ReasoningTextDelta(
+        DashCoreEvent::ReasoningDelta { round, delta } => BackboneEvent::ReasoningTextDelta(
             serde_json::from_value(serde_json::json!({
                 "threadId": thread_id,
                 "turnId": turn_id,
-                "itemId": format!("{}:reasoning", execution.item_id.0),
+                "itemId": format!(
+                    "{}:reasoning",
+                    agentdash_agent::dash::execution_assistant_item_id(
+                        &execution.turn_id,
+                        *round,
+                    ).0
+                ),
                 "contentIndex": 0,
                 "delta": delta,
             }))

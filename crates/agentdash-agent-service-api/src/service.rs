@@ -11,10 +11,10 @@ use crate::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentChangePage, AgentChangesQuery,
     AgentCommandEnvelope, AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection,
     AgentHookAction, AgentHookDefinitionId, AgentHookPoint, AgentHookTiming, AgentIdempotencyKey,
-    AgentInteractionId, AgentItemId, AgentLiveEventStream, AgentReadQuery, AgentServiceDescriptor,
-    AgentSnapshot, AgentSourceCoordinate, AgentToolName, AgentTurnId, AppliedAgentSurfaceReceipt,
-    ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
-    ResumeAgentCommand, RevokeBoundAgentSurface,
+    AgentInteractionId, AgentItemId, AgentLiveEventStream, AgentObservation, AgentObservationQuery,
+    AgentReadQuery, AgentServiceDescriptor, AgentSnapshot, AgentSourceCoordinate, AgentToolName,
+    AgentTurnId, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CreateAgentCommand,
+    ForkAgentCommand, ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
 };
 
 #[derive(
@@ -188,6 +188,21 @@ pub trait CompleteAgentService: Send + Sync {
     ) -> Result<AgentCommandReceipt, AgentServiceError>;
 
     async fn read(&self, query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError>;
+
+    async fn observe(
+        &self,
+        query: AgentObservationQuery,
+    ) -> Result<AgentObservation, AgentServiceError> {
+        let snapshot = self
+            .read(AgentReadQuery {
+                source: query.source,
+                at_revision: None,
+            })
+            .await?;
+        AgentObservation::from_snapshot(&snapshot).map_err(|message| {
+            AgentServiceError::new(AgentServiceErrorCode::Internal, message, false)
+        })
+    }
 
     async fn changes(&self, query: AgentChangesQuery)
     -> Result<AgentChangePage, AgentServiceError>;

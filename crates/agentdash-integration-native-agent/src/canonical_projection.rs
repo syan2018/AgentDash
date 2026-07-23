@@ -1,6 +1,6 @@
 use agentdash_agent::dash::{
-    ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentItemId,
-    HistoryPayload, ItemDetails,
+    ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryReplayer, AgentHistoryState,
+    AgentItemId, HistoryPayload, ItemDetails,
 };
 #[cfg(test)]
 use agentdash_agent_protocol::AgentCapabilityManifest;
@@ -25,25 +25,12 @@ pub(crate) fn history_records(
     history: &AgentHistory,
 ) -> Result<Vec<CanonicalConversationRecord>, serde_json::Error> {
     let mut records = Vec::new();
+    let mut replay = AgentHistoryReplayer::new(history);
     for entry in history.entries() {
-        let previous_state = if entry.sequence > 1 {
-            Some(
-                history
-                    .state_at(entry.sequence - 1)
-                    .expect("validated Dash history prefix must fold"),
-            )
-        } else {
-            None
-        };
-        let state = history
-            .state_at(entry.sequence)
+        let state = replay
+            .apply(entry)
             .expect("validated Dash history prefix must fold");
-        records.extend(entry_records(
-            &history.session_id.0,
-            entry,
-            previous_state.as_ref(),
-            &state,
-        )?);
+        records.extend(entry_records(&history.session_id.0, entry, state)?);
     }
     Ok(records)
 }
@@ -51,7 +38,6 @@ pub(crate) fn history_records(
 pub(crate) fn entry_records(
     session_id: &str,
     entry: &AgentHistoryEntry,
-    _previous_state: Option<&AgentHistoryState>,
     state: &AgentHistoryState,
 ) -> Result<Vec<CanonicalConversationRecord>, serde_json::Error> {
     let mut events = Vec::new();

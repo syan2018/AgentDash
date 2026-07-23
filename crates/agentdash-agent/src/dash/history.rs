@@ -326,17 +326,6 @@ impl AgentHistory {
         fold_history(&prefix)
     }
 
-    pub(crate) fn truncate_after(&mut self, sequence: u64) -> Result<(), HistoryError> {
-        if sequence > self.entries.len() as u64 {
-            return Err(HistoryError::SequenceOutOfRange {
-                requested: sequence,
-                available: self.entries.len() as u64,
-            });
-        }
-        self.entries.truncate(sequence as usize);
-        Ok(())
-    }
-
     pub fn append(
         &mut self,
         contribution: HistoryContribution,
@@ -522,58 +511,86 @@ pub struct AgentHistoryState {
     pub compactions: BTreeMap<CompactionId, CompactionState>,
 }
 
-pub fn fold_history(history: &AgentHistory) -> Result<AgentHistoryState, HistoryError> {
-    let mut state = AgentHistoryState {
-        session_id: history.session_id.clone(),
-        branch_id: history.branch_id.clone(),
-        head: None,
-        entry_count: 0,
-        status: SessionStatus::Open,
-        initial_context: None,
-        surface: None,
-        thread_name: None,
-        accepted_inputs: Vec::new(),
-        active_turn: None,
-        active_compaction: None,
-        turns: BTreeMap::new(),
-        items: BTreeMap::new(),
-        interactions: BTreeMap::new(),
-        compactions: BTreeMap::new(),
-    };
-    let mut ids = BTreeSet::new();
+pub struct AgentHistoryReplayer {
+    state: AgentHistoryState,
+    ids: BTreeSet<HistoryEntryId>,
+    digest: Sha256,
+}
 
-    for (index, entry) in history.entries.iter().enumerate() {
-        let expected_sequence = index as u64 + 1;
+impl AgentHistoryReplayer {
+    pub fn new(history: &AgentHistory) -> Self {
+        Self {
+            state: AgentHistoryState {
+                session_id: history.session_id.clone(),
+                branch_id: history.branch_id.clone(),
+                head: None,
+                entry_count: 0,
+                status: SessionStatus::Open,
+                initial_context: None,
+                surface: None,
+                thread_name: None,
+                accepted_inputs: Vec::new(),
+                active_turn: None,
+                active_compaction: None,
+                turns: BTreeMap::new(),
+                items: BTreeMap::new(),
+                interactions: BTreeMap::new(),
+                compactions: BTreeMap::new(),
+            },
+            ids: BTreeSet::new(),
+            digest: Sha256::new(),
+        }
+    }
+
+    pub fn apply(&mut self, entry: &AgentHistoryEntry) -> Result<&AgentHistoryState, HistoryError> {
+        let expected_sequence = self.state.entry_count + 1;
         if entry.sequence != expected_sequence {
             return Err(HistoryError::SequenceGap {
                 expected: expected_sequence,
                 actual: entry.sequence,
             });
         }
-        if entry.parent_entry_id != state.head {
+        if entry.parent_entry_id != self.state.head {
             return Err(HistoryError::ParentMismatch {
                 entry_id: entry.entry_id.clone(),
-                expected: state.head,
+                expected: self.state.head.clone(),
                 actual: entry.parent_entry_id.clone(),
             });
         }
-        if !ids.insert(entry.entry_id.clone()) {
+        if !self.ids.insert(entry.entry_id.clone()) {
             return Err(HistoryError::DuplicateEntry(entry.entry_id.clone()));
         }
-        if state.status == SessionStatus::Closed {
+        if self.state.status == SessionStatus::Closed {
             return Err(HistoryError::ClosedSessionMutation);
         }
         if let HistoryPayload::CompactionStarted { source_digest, .. } = &entry.payload
-            && source_digest != &digest_entries(&history.entries[..index])
+            && source_digest != &self.source_digest()
         {
             return Err(HistoryError::CompactionSourceDigestMismatch);
         }
 
-        apply_payload(&mut state, &entry.payload)?;
-        state.head = Some(entry.entry_id.clone());
-        state.entry_count = entry.sequence;
+        apply_payload(&mut self.state, &entry.payload)?;
+        self.state.head = Some(entry.entry_id.clone());
+        self.state.entry_count = entry.sequence;
+        update_digest(&mut self.digest, entry);
+        Ok(&self.state)
     }
-    Ok(state)
+
+    pub fn state(&self) -> &AgentHistoryState {
+        &self.state
+    }
+
+    pub fn source_digest(&self) -> String {
+        format!("{:x}", self.digest.clone().finalize())
+    }
+}
+
+pub fn fold_history(history: &AgentHistory) -> Result<AgentHistoryState, HistoryError> {
+    let mut replayer = AgentHistoryReplayer::new(history);
+    for entry in &history.entries {
+        replayer.apply(entry)?;
+    }
+    Ok(replayer.state)
 }
 
 fn apply_payload(
@@ -961,11 +978,15 @@ fn terminalize_turn(
 fn digest_entries(entries: &[AgentHistoryEntry]) -> String {
     let mut hasher = Sha256::new();
     for entry in entries {
-        let bytes = serde_json::to_vec(entry).expect("history entry serialization is infallible");
-        hasher.update((bytes.len() as u64).to_be_bytes());
-        hasher.update(bytes);
+        update_digest(&mut hasher, entry);
     }
     format!("{:x}", hasher.finalize())
+}
+
+fn update_digest(hasher: &mut Sha256, entry: &AgentHistoryEntry) {
+    let bytes = serde_json::to_vec(entry).expect("history entry serialization is infallible");
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

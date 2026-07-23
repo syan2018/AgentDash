@@ -167,7 +167,6 @@ pub enum DashCoreEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DashExecutionEvent {
     pub turn_id: AgentTurnId,
-    pub item_id: AgentItemId,
     pub event: DashCoreEvent,
 }
 
@@ -372,7 +371,6 @@ pub struct DashCoreTurn {
     pub turn_id: AgentTurnId,
     pub input: String,
     pub context: DashCoreContext,
-    pub output_item_id: AgentItemId,
     pub output_started_entry_id: HistoryEntryId,
     pub output_entry_id: HistoryEntryId,
     pub output_completed_entry_id: HistoryEntryId,
@@ -433,7 +431,6 @@ impl DashCoreTurn {
         let callbacks = CallbackAdapter {
             inner: callbacks,
             turn_id: self.turn_id.clone(),
-            item_id: self.output_item_id.clone(),
         };
         let core_output = run_agent_loop(
             CoreInput {
@@ -448,12 +445,13 @@ impl DashCoreTurn {
         .await
         .map_err(dash_error)?;
         let output = dash_output(core_output);
+        let output_item_id = execution_assistant_item_id(&self.turn_id, output.provider_rounds);
         let history = vec![
             HistoryContribution {
                 entry_id: self.output_started_entry_id,
                 payload: HistoryPayload::ItemStarted {
                     turn_id: self.turn_id.clone(),
-                    item_id: self.output_item_id.clone(),
+                    item_id: output_item_id.clone(),
                     kind: super::ItemKind::AssistantMessage,
                 },
             },
@@ -461,7 +459,7 @@ impl DashCoreTurn {
                 entry_id: self.output_entry_id,
                 payload: HistoryPayload::AgentOutput {
                     turn_id: self.turn_id.clone(),
-                    item_id: Some(self.output_item_id.clone()),
+                    item_id: Some(output_item_id.clone()),
                     content: output.assistant_message.content.clone(),
                 },
             },
@@ -469,7 +467,7 @@ impl DashCoreTurn {
                 entry_id: self.output_completed_entry_id,
                 payload: HistoryPayload::ItemCompleted {
                     turn_id: self.turn_id.clone(),
-                    item_id: self.output_item_id,
+                    item_id: output_item_id,
                 },
             },
             HistoryContribution {
@@ -484,6 +482,10 @@ impl DashCoreTurn {
             history,
         })
     }
+}
+
+pub fn execution_assistant_item_id(turn_id: &AgentTurnId, round: u32) -> AgentItemId {
+    AgentItemId::new(format!("{}:provider-round:{round}:assistant", turn_id.0))
 }
 
 pub fn execution_tool_item_id(turn_id: &AgentTurnId, call_id: &str) -> AgentItemId {
@@ -635,7 +637,6 @@ impl CoreToolCallbacks for ToolAdapter<'_> {
 struct CallbackAdapter<'a> {
     inner: &'a dyn DashExecutionCallbacks,
     turn_id: AgentTurnId,
-    item_id: AgentItemId,
 }
 
 #[async_trait]
@@ -644,7 +645,6 @@ impl CoreCallbacks for CallbackAdapter<'_> {
         self.inner
             .emit(DashExecutionEvent {
                 turn_id: self.turn_id.clone(),
-                item_id: self.item_id.clone(),
                 event: dash_event(event),
             })
             .await

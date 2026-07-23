@@ -34,6 +34,12 @@
     "snapshot": {
       "$ref": "#/$defs/AgentSnapshot"
     },
+    "observe": {
+      "$ref": "#/$defs/AgentObservationQuery"
+    },
+    "observation": {
+      "$ref": "#/$defs/AgentObservation"
+    },
     "changes": {
       "$ref": "#/$defs/AgentChangesQuery"
     },
@@ -97,6 +103,8 @@
     "create_evidence",
     "read",
     "snapshot",
+    "observe",
+    "observation",
     "changes",
     "change_page",
     "live_event",
@@ -9164,6 +9172,67 @@
           "minimum": 0
         }
       }
+    },
+    "AgentObservationQuery": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ]
+    },
+    "AgentObservation": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/AgentSnapshotRevision"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/AgentLifecycleStatus"
+        },
+        "active_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "latest_turn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentTurnObservation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "revision",
+        "lifecycle"
+      ]
+    },
+    "AgentTurnObservation": {
+      "type": "object",
+      "properties": {
+        "turn_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/TurnStatus"
+        }
+      },
+      "required": [
+        "turn_id",
+        "status"
+      ]
     },
     "AgentChangesQuery": {
       "type": "object",

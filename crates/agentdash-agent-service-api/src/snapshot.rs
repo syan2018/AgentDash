@@ -129,6 +129,57 @@ pub struct AgentReadQuery {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct AgentObservationQuery {
+    pub source: AgentSourceCoordinate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentTurnObservation {
+    pub turn_id: AgentTurnId,
+    pub status: agentdash_agent_protocol::codex_app_server_protocol::TurnStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentObservation {
+    pub source: AgentSourceCoordinate,
+    pub revision: AgentSnapshotRevision,
+    pub lifecycle: AgentLifecycleStatus,
+    pub active_turn_id: Option<AgentTurnId>,
+    pub latest_turn: Option<AgentTurnObservation>,
+}
+
+impl AgentObservation {
+    pub fn from_snapshot(snapshot: &AgentSnapshot) -> Result<Self, String> {
+        let conversation = snapshot.conversation();
+        let active_turn_id = conversation
+            .active_turn()
+            .map(|turn| AgentTurnId::new(turn.id.clone()))
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let latest_turn = conversation
+            .latest_turn()
+            .map(|turn| -> Result<AgentTurnObservation, String> {
+                Ok(AgentTurnObservation {
+                    turn_id: AgentTurnId::new(turn.id.clone())
+                        .map_err(|error| error.to_string())?,
+                    status: turn.status,
+                })
+            })
+            .transpose()?;
+        Ok(Self {
+            source: snapshot.source.clone(),
+            revision: snapshot.revision,
+            lifecycle: snapshot.lifecycle,
+            active_turn_id,
+            latest_turn,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct AgentChangesQuery {
     pub source: AgentSourceCoordinate,
     pub after: Option<AgentSourceCursor>,

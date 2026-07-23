@@ -1,9 +1,9 @@
 use agentdash_agent::dash::{
-    ActivityStatus, AgentHistory, AgentSessionId, AgentTurnId, BranchId, CommandDependency,
-    CommandId, CommandOutcome, CommandStatus, CompactionId, CompactionMode,
-    ContextDeliveryFidelity, ContextRevision, DashAgentCommit, DashAgentStore, DashCommand,
-    DashCommandKind, DashExecutionConsistency, EffectId, EffectOutcome, EffectSettlement,
-    ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload, InitialContextContribution,
+    AgentHistory, AgentSessionId, AgentTurnId, BranchId, CommandDependency, CommandId,
+    CommandOutcome, CommandStatus, CompactionId, CompactionMode, ContextDeliveryFidelity,
+    ContextRevision, DashAgentCommit, DashAgentStore, DashCommand, DashCommandKind,
+    DashExecutionConsistency, EffectId, EffectOutcome, EffectSettlement, ForkCutoff,
+    HistoryContribution, HistoryEntryId, HistoryPayload, InitialContextContribution,
     InitialContextInstallation, InitialContextMode, accepted_compaction_summary_frame,
 };
 
@@ -611,7 +611,7 @@ fn session_projection_contains_no_command_effect_or_platform_coordination_state(
 }
 
 #[test]
-fn ordered_changes_capture_state_at_each_history_revision() {
+fn ordered_changes_capture_incremental_history_and_active_turn_facts() {
     let mut store = DashAgentStore::new(AgentHistory::empty(
         AgentSessionId::new("change-session"),
         BranchId::new("change-branch"),
@@ -641,22 +641,38 @@ fn ordered_changes_capture_state_at_each_history_revision() {
         })
         .unwrap();
 
-    let history_changes = store
-        .changes()
-        .iter()
-        .filter(|change| change.cursor.ordinal == 0)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        history_changes[0].state.turns[&turn_id].status,
-        ActivityStatus::Active
-    );
-    assert_eq!(
-        history_changes[1].state.turns[&turn_id].status,
-        ActivityStatus::Completed
-    );
+    let changes = store.changes();
+    assert_eq!(changes.len(), 4);
+    assert!(matches!(
+        &changes[0].payload,
+        agentdash_agent::dash::DashAgentChangePayload::HistoryEntry {
+            entry: agentdash_agent::dash::AgentHistoryEntry {
+                payload: HistoryPayload::TurnStarted { turn_id: started },
+                ..
+            }
+        } if started == &turn_id
+    ));
+    assert!(matches!(
+        &changes[1].payload,
+        agentdash_agent::dash::DashAgentChangePayload::ActiveTurnChanged {
+            active_turn_id: Some(active),
+        } if active == &turn_id
+    ));
+    assert!(matches!(
+        &changes[2].payload,
+        agentdash_agent::dash::DashAgentChangePayload::HistoryEntry {
+            entry: agentdash_agent::dash::AgentHistoryEntry {
+                payload: HistoryPayload::TurnCompleted { turn_id: completed },
+                ..
+            }
+        } if completed == &turn_id
+    ));
+    assert!(matches!(
+        &changes[3].payload,
+        agentdash_agent::dash::DashAgentChangePayload::ActiveTurnChanged {
+            active_turn_id: None,
+        }
+    ));
     assert_eq!(store.changes()[1].cursor.encode(), "1:1");
-    assert_ne!(
-        history_changes[0].source_digest,
-        history_changes[1].source_digest
-    );
+    assert_ne!(changes[0].source_digest, changes[2].source_digest);
 }

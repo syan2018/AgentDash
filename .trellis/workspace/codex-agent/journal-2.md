@@ -497,3 +497,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 68: 收复ContextFrame模型输入单一权威
+
+**Date**: 2026-07-23
+**Task**: 收复ContextFrame模型输入单一权威
+**Branch**: `codex/agent-runtime-final-convergence-plan`
+
+### Summary
+
+统一Dash accepted ContextFrame可读投递，贯通完整ToolSchema与typed provenance，按provider round刷新上下文和工具，收束initial context、compaction、canonical、frontend与四类provider wire守卫。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `aae0ba165` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

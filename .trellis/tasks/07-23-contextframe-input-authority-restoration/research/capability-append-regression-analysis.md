@@ -58,3 +58,21 @@
   structured sections、最终provider原文；单独的contains断言不能证明单一权威。
 - **Knowledge Capture**：已更新三份领域spec与cross-layer thinking guide；仓库不存在
   `src/templates/markdown/spec/`，无需模板同步。
+
+## 6. Follow-up Regression: Stable Snapshot 被当作 Canonical Change
+
+真实页面复验发现tool-only surface update除CAP外又发布了identity、environment、guidelines和
+assignment。最小Complete Agent回归证明revision 2只新增一个tool时实际产生8条ContextFrameChanged，
+预期为1条CAP。
+
+- **Root category**：B / D — snapshot与transition的跨层合同未分离，缺少第二次surface projection
+  的纵向测试。
+- **Why previous checks missed it**：测试分别证明provider prompt拥有完整stable context、CAP自身是真
+  delta，却没有证明canonical projector不会把current stable snapshot全量当成delta。
+- **Fix**：`entry_records`显式接收history fold中的previous surface与current entry，而不复制完整
+  turn/item state。非SystemAppend frame按instruction source identity比较，忽略surface级id/cache
+  identity，真实delivery/section/text变化仍发布；CAP继续作为append transition直接发布。
+- **Shared-path proof**：history read、changes replay与durable live callback都在replay apply前捕获
+  previous state，并调用同一个projector。
+- **Prevention**：新增tool-only revision回归，并在Native Adapter、Backbone与cross-layer guide中
+  固化“current snapshot供恢复，previous/current diff供事件”的合同。

@@ -127,6 +127,18 @@ SurfaceRevoked
 stable frames一起物化。最新surface不重放完整工具快照；这既保持delta语义，也让canonical timeline
 中的同一frame序列逐字对应模型输入。
 
+非`SystemAppend` frame保持current-surface snapshot语义，因为任意provider round都必须独立恢复
+完整identity、environment、guidelines和assignment。canonical projector读取相邻history state，
+按instruction source identity比较previous/current frame，并在比较前移除surface级frame id、
+cache key与cache revision；其余delivery metadata、sections和`rendered_text`参与语义相等判断。
+
+```text
+current stable snapshot ───────────────> provider context
+previous stable snapshot + current
+  └─ semantic diff ────────────────────> canonical read / changes / durable live
+current CAP SystemAppend delta ────────> provider append ledger + canonical transition
+```
+
 ## 5. ToolSchema Projection
 
 ### 5.1 One typed source

@@ -874,6 +874,7 @@ impl CompleteAgentService for DashAgentCompleteService {
         let mut replay = AgentHistoryReplayer::new(&history);
         let mut changes = Vec::new();
         for entry in history.entries() {
+            let previous_surface = replay.state().surface.clone();
             let state = replay.apply(entry).map_err(internal)?;
             while selected_changes
                 .peek()
@@ -886,6 +887,7 @@ impl CompleteAgentService for DashAgentCompleteService {
                         crate::canonical_projection::entry_records(
                             query.source.as_str(),
                             entry,
+                            previous_surface.as_ref(),
                             state,
                         )
                         .map_err(internal)?
@@ -1870,13 +1872,19 @@ impl DashHistoryCallbacks for DashCompleteLiveCallbacks {
         let mut records = Vec::new();
         let mut replay = AgentHistoryReplayer::new(&commit.history);
         for entry in commit.history.entries() {
+            let previous_surface = replay.state().surface.clone();
             let state = replay.apply(entry).map_err(live_callback_error)?;
             if entry.sequence < first_sequence {
                 continue;
             }
             records.extend(
-                crate::canonical_projection::entry_records(self.source.as_str(), entry, state)
-                    .map_err(live_callback_error)?,
+                crate::canonical_projection::entry_records(
+                    self.source.as_str(),
+                    entry,
+                    previous_surface.as_ref(),
+                    state,
+                )
+                .map_err(live_callback_error)?,
             );
         }
         self.live_channel.publish(&self.source, records).await;

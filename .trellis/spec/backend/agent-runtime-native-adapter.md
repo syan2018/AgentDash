@@ -128,6 +128,12 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   surface链累积这些append frame，每个provider round重放initial delta与后续真delta；surface
   revoke清空该链。这样平台拥有工具上下文的更新、顺序与撤销语义，connector只接收最终物化文本，
   不拥有native prompt注入策略。
+- `DashSurface.context_frames`中的非`SystemAppend` frame表达当前surface的完整stable context
+  snapshot，provider每轮需要完整消费；canonical projector则比较相邻`SurfaceApplied`事实，只发布
+  新增或语义变化的stable frame。比较时忽略仅由surface revision/digest带来的frame id与cache
+  identity变化，保留delivery order、role、sections和`rendered_text`等真实语义。区分snapshot与
+  transition的原因是模型恢复需要完整当前状态，而timeline/live需要exactly-once变化，二者不能由
+  “直接遍历当前frames”同时满足。
 - Dash provider port在每个逻辑provider round固定一份request snapshot：当前accepted
   stable ContextFrames与active system-append ledger生成system/context文本，当前tools生成structured
   tool contract，并同时固定该round的owner projector。工具结果提交与surface mutation完成后，
@@ -200,6 +206,8 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 | tool从surface消失 | tool name进入`removed_tools` |
 | capability manifest与tool schema同时变化 | 合并为一个`context/system_append` CAP frame |
 | surface revision变化但instruction/tool语义未变 | 不发布伪ContextFrame delta |
+| 只改变tool/capability的surface revision | provider继续消费完整stable snapshot；canonical只发布CAP |
+| stable instruction内容、顺序或delivery语义变化 | canonical发布对应changed ContextFrame |
 | active surface连续热更新 | provider context按history顺序累积initial CAP delta与后续真delta |
 | active surface被revoke | 清空该surface链的append context，后续request不保留失效schema |
 | Product contribution使用Dash intrinsic保留key | side effect与history mutation前typed invalid argument |
@@ -265,7 +273,8 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   ephemeral text/reasoning/tool delta 与 durable terminal；执行后从 read断言同 turn 已终态。
 - surface/context tests断言 native history保存实际instruction、tools与accepted ContextFrames，
   provider prompt逐字包含frame `rendered_text`，snapshot与live逐项发布同一frame，repository root
-  不存在平行surface字段。
+  不存在平行surface字段；连续surface只改变tool时，第二个`SurfaceApplied`的canonical projection
+  只包含CAP frame，不重发unchanged identity/environment/guidelines/assignment snapshot。
 - intrinsic surface测试断言内建`.md`进入provider request与Identity ContextFrame，Product applied
   receipt不认领该contribution，且Product binding digest不同于Dash materialization digest。
 - surface delta tests连续应用三版surface，覆盖tool新增、修改、删除，断言read重放只返回真实

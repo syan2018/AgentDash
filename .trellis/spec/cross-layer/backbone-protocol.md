@@ -84,6 +84,11 @@ type AgentLiveEvent = {
   `capability_state_delta` record，并声明`context/system_append`。因此前端看到的每个CAP record
   对应一次可执行surface transition；首次record是完整初始增量，后续record只展示发生变化的
   section，不把capability清单与工具schema拆成两个独立投递事实。
+- `SurfaceApplied`保存的stable ContextFrames是provider恢复当前模型上下文所需的snapshot；
+  `ContextFrameChanged`是相邻surface之间的canonical transition。projector必须使用previous
+  surface过滤语义未变化的stable frame，不能因为frame id/cache revision随surface更新就把
+  identity、environment、guidelines和assignment重新发布。read、changes与durable live必须调用
+  同一个previous/current投影函数，保证重载与实时观察一致。
 - 断线或进程重启后丢弃 ephemeral lane，并从 Complete Agent `read` 重新获取 durable history。
   Snapshot-only Agent 不需要平台 durable change journal。
 - PTY terminal、Canvas、Workspace Module 与 AgentFrame 是独立资源事实；即使它们引用 Agent
@@ -109,6 +114,7 @@ type AgentLiveEvent = {
 | PTY terminal 退出 | 只更新 terminal resource，不改变 Agent turn |
 | vendor 发送 executor-specific conversation DTO | adapter 边界拒绝或映射为 owned canonical record |
 | tool surface同名定义改变 | `changed_tools`渲染↻；不渲染为第二次新增 |
+| surface只改变tool/capability | timeline只追加CAP；stable context仍进入provider但不重复发布 |
 | 多个ContextFrame拥有相同phase/order/time | 以稳定frame id确定顺序，snapshot与live merge后顺序一致 |
 | tool delta带完整parameters schema | schema保留为structured contract；UI摘要可展开完整嵌套JSON tree |
 | fsRead结果同时包含typed正文与details | Read Card显示路径、行数和逐行正文；重载后使用同一内容，不展示executor envelope |
@@ -145,6 +151,8 @@ type AgentLiveEvent = {
   消费`Platform(ContextFrameChanged)`并保留typed frame。
 - ContextFrame frontend tests覆盖added/removed/changed tool渲染、added/changed完整schema展开，
   以及相同phase/order/time时按frame id稳定排序。
+- Complete Agent projection test连续应用stable instructions相同、tool surface变化的两个revision，
+  断言read/changes/live第二次只发布CAP，同时provider prompt仍含完整stable context。
 - production tracer 覆盖 Product input → tool live items → final assistant → reload durable history，
   并断言页面没有未知工具卡或悬空会话。
 - schema generation 与 TypeScript typecheck 必须证明 Agent service/Runtime wrapper 只引用

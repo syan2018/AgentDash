@@ -27,10 +27,16 @@ pub(crate) fn history_records(
     let mut records = Vec::new();
     let mut replay = AgentHistoryReplayer::new(history);
     for entry in history.entries() {
+        let previous_surface = replay.state().surface.clone();
         let state = replay
             .apply(entry)
             .expect("validated Dash history prefix must fold");
-        records.extend(entry_records(&history.session_id.0, entry, state)?);
+        records.extend(entry_records(
+            &history.session_id.0,
+            entry,
+            previous_surface.as_ref(),
+            state,
+        )?);
     }
     Ok(records)
 }
@@ -38,6 +44,7 @@ pub(crate) fn history_records(
 pub(crate) fn entry_records(
     session_id: &str,
     entry: &AgentHistoryEntry,
+    previous_surface: Option<&agentdash_agent::dash::DashSurface>,
     state: &AgentHistoryState,
 ) -> Result<Vec<CanonicalConversationRecord>, serde_json::Error> {
     let mut events = Vec::new();
@@ -46,7 +53,7 @@ pub(crate) fn entry_records(
             events.extend(accepted_context_events(&installation.context_frames));
         }
         HistoryPayload::SurfaceApplied { surface } => {
-            events.extend(accepted_context_events(&surface.context_frames));
+            events.extend(accepted_surface_context_events(previous_surface, surface));
         }
         HistoryPayload::SurfaceRevoked { surface } => {
             events.push(surface_revoked_event(entry, surface));
@@ -233,6 +240,50 @@ fn accepted_context_events(frames: &[ContextFrame]) -> Vec<BackboneEvent> {
             )))
         })
         .collect()
+}
+
+fn accepted_surface_context_events(
+    previous: Option<&agentdash_agent::dash::DashSurface>,
+    current: &agentdash_agent::dash::DashSurface,
+) -> Vec<BackboneEvent> {
+    let changed_frames = current.context_frames.iter().filter(|frame| {
+        if frame.delivery_metadata.agent_consumption.mode
+            == ContextAgentConsumptionMode::SystemAppend
+        {
+            return true;
+        }
+        let Some(identity) = surface_instruction_identity(frame) else {
+            return true;
+        };
+        !previous
+            .into_iter()
+            .flat_map(|surface| surface.context_frames.iter())
+            .find(|candidate| surface_instruction_identity(candidate) == Some(identity))
+            .is_some_and(|candidate| same_surface_frame_semantics(candidate, frame))
+    });
+    accepted_context_events(&changed_frames.cloned().collect::<Vec<_>>())
+}
+
+fn surface_instruction_identity(frame: &ContextFrame) -> Option<&str> {
+    frame.sections.iter().find_map(|section| match section {
+        ContextFrameSection::Identity { fragments, .. }
+        | ContextFrameSection::AssignmentContext { fragments, .. } => {
+            fragments.first().map(|fragment| fragment.source.as_str())
+        }
+        _ => None,
+    })
+}
+
+fn same_surface_frame_semantics(left: &ContextFrame, right: &ContextFrame) -> bool {
+    let mut left = left.clone();
+    let mut right = right.clone();
+    left.id.clear();
+    right.id.clear();
+    left.delivery_metadata.cache_key = None;
+    right.delivery_metadata.cache_key = None;
+    left.delivery_metadata.cache_revision = None;
+    right.delivery_metadata.cache_revision = None;
+    left == right
 }
 
 fn workspace_module_presentation(

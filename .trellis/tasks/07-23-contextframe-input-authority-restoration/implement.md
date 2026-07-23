@@ -76,6 +76,16 @@
 - [x] 前端Dash CAP fixtures同步为`system_append`并继续直接展示accepted `rendered_text`。
 - [x] 完成focused Rust/frontend验证与重复缺陷复盘；任务随本次修复提交完成后归档。
 
+## Phase 9: Stable Snapshot / Canonical Transition Separation
+
+- [x] 红测复现tool-only revision把8条stable/CAP frames全量发布的问题。
+- [x] canonical projector只接收history fold中的previous surface与current entry，过滤语义未变化的
+  stable frames，不复制完整turn/item state。
+- [x] read、changes与durable live三条路径共用同一previous/current projection。
+- [x] provider继续从current surface读取完整stable snapshot，不因timeline去重丢失模型上下文。
+- [x] Complete Agent focused regression与完整native integration crate测试通过。
+- [ ] 等待真实页面复验后再决定任务归档与finish journal。
+
 ## Primary Files
 
 - `crates/agentdash-agent/src/dash/history.rs`

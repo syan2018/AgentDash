@@ -1384,9 +1384,88 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         .await
         .unwrap();
 
+    let mut live = service.live_events(source.clone()).await.unwrap();
+    service
+        .apply_surface(ApplyBoundAgentSurface {
+            command_id: AgentCommandId::new("command-context-surface-2").unwrap(),
+            effect_id: AgentEffectIdentity::new("effect-context-surface-2").unwrap(),
+            idempotency_key: AgentIdempotencyKey::new("idem-context-surface-2").unwrap(),
+            source: source.clone(),
+            bound_surface: BoundAgentSurface {
+                revision: AgentSurfaceRevision(2),
+                digest: AgentSurfaceDigest::new("context-surface-2").unwrap(),
+                offer_profile_digest: AgentProfileDigest::new("dash-agent-profile-v1").unwrap(),
+                contributions: vec![
+                    instruction(
+                        "instruction:execution-profile:system-prompt",
+                        "system",
+                        "system rules",
+                    ),
+                    instruction("instruction:37:persona_summary", "persona", "persona"),
+                    instruction("instruction:30:workspace_context", "workspace", "workspace"),
+                    instruction("instruction:48:workflow_summary", "workflow", "workflow"),
+                    instruction("instruction:capability:skills", "skills", "skills"),
+                    instruction("instruction:capability:mcp", "mcp", "mcp"),
+                    instruction("instruction:capability:memory", "memory", "memory"),
+                    instruction(
+                        "instruction:55:user_context",
+                        "user_context",
+                        "user context",
+                    ),
+                    BoundAgentSurfaceContribution {
+                        key: "tool:inspect_context".to_owned(),
+                        required: true,
+                        route: AgentSurfaceRoute::AgentNativeCallback,
+                        fidelity: SemanticFidelity::Exact,
+                        semantics: AgentSurfaceSemanticFacet::Tool(AgentToolSemanticFacet {
+                            delivery: AgentToolDelivery::AgentNativeCallback,
+                            invocation: SemanticFidelity::Exact,
+                            update: AgentToolUpdateSemantics::HotUpdate,
+                        }),
+                        payload: AgentSurfaceContributionPayload::Tool {
+                            name: AgentToolName::new("inspect_context").unwrap(),
+                            description: "Inspect context".to_owned(),
+                            input_schema: serde_json::json!({"type": "object"}),
+                            output_schema: None,
+                            provenance: tool_provenance("inspect_context"),
+                            protocol_projector:
+                                agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
+                        },
+                        payload_digest: AgentPayloadDigest::new("sha256:inspect-context").unwrap(),
+                    },
+                ],
+            },
+            callbacks: AgentHostCallbackBinding {
+                route_id: AgentCallbackRouteId::new("callbacks-context-2").unwrap(),
+                binding_generation: AgentBindingGeneration(2),
+                delivery: AgentSurfaceRoute::AgentNativeCallback,
+                default_deadline_ms: 5_000,
+            },
+        })
+        .await
+        .unwrap();
+
+    let revision_two_live = tokio::time::timeout(Duration::from_secs(1), live.next())
+        .await
+        .expect("revision two live ContextFrame")
+        .unwrap()
+        .expect("live stream remains open");
+    assert!(matches!(
+        &revision_two_live.record.presentation.envelope.event,
+        BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
+            if changed.frame.kind == ContextFrameKind::CapabilityStateDelta
+                && changed.frame.delivery_metadata.cache_revision.as_deref() == Some("2")
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), live.next())
+            .await
+            .is_err(),
+        "durable live must not republish unchanged stable ContextFrames"
+    );
+
     let snapshot = service
         .read(AgentReadQuery {
-            source,
+            source: source.clone(),
             at_revision: None,
         })
         .await
@@ -1395,7 +1474,9 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         .conversation_history
         .iter()
         .filter_map(|record| match &record.presentation.envelope.event {
-            BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed)) => {
+            BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
+                if changed.frame.delivery_metadata.cache_revision.as_deref() == Some("1") =>
+            {
                 Some(changed.frame.kind)
             }
             _ => None,
@@ -1413,6 +1494,60 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
             ContextFrameKind::MemoryContext,
             ContextFrameKind::UserContext,
         ]
+    );
+    let revision_two_frames = snapshot
+        .conversation_history
+        .iter()
+        .filter_map(|record| match &record.presentation.envelope.event {
+            BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
+                if changed.frame.delivery_metadata.cache_revision.as_deref() == Some("2") =>
+            {
+                Some(&changed.frame)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        revision_two_frames.len(),
+        1,
+        "a tool-only surface transition must not republish unchanged stable context frames"
+    );
+    assert_eq!(
+        revision_two_frames[0].kind,
+        ContextFrameKind::CapabilityStateDelta
+    );
+    let changes = service
+        .changes(AgentChangesQuery {
+            source,
+            after: None,
+            limit: 100,
+        })
+        .await
+        .unwrap();
+    let revision_two_change_frames = changes
+        .changes
+        .iter()
+        .flat_map(|change| match &change.payload {
+            AgentChangePayload::SourceObservation { presentation, .. } => presentation.as_slice(),
+            _ => &[],
+        })
+        .filter_map(|record| match &record.presentation.envelope.event {
+            BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
+                if changed.frame.delivery_metadata.cache_revision.as_deref() == Some("2") =>
+            {
+                Some(&changed.frame)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        revision_two_change_frames.len(),
+        1,
+        "changes replay must use the same stable-frame delta projection"
+    );
+    assert_eq!(
+        revision_two_change_frames[0].kind,
+        ContextFrameKind::CapabilityStateDelta
     );
 }
 

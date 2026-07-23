@@ -49,6 +49,9 @@
     来自同一个accepted surface revision时，应先在owner边界合并为一个ContextFrame，再由模型输入、
     history和前端共同消费。增量更新还必须验证“initial + 后续delta”的历史恢复；只读取最新snapshot
     会迫使producer重放全量并让delta合同失真。
+21. **把当前snapshot直接当成change event发布**：provider恢复需要完整stable context，canonical
+    timeline只需要相邻事实的真实变化。跨层对象同时服务两者时，必须明确previous/current投影边界，
+    并让read、changes、live共用该比较；仅替换revision或digest不能制造业务变化。
 
 ---
 
@@ -75,6 +78,8 @@
 - [ ] 若工具执行中可能更新catalog/surface，分别列出新调用准入坐标与已accept调用的progress/approval/terminal坐标，并覆盖“发起更新的调用完成 + 更新后的新调用按新revision准入”
 - [ ] 若一次surface transition同时改变capability与ToolSchema，固定单一ContextFrame owner、
   delivery mode、initial/delta/revoke历史语义，并分别断言frame数量、真实变化section和最终模型原文
+- [ ] 若同一accepted对象同时服务“当前snapshot”和“变化事件”，分别定义消费方、比较identity与
+  previous-state来源，并覆盖“仅revision变化不发事件、真实语义变化发事件、snapshot仍可完整恢复”
 - [ ] 若schema被多个进程或数据根消费，列出每个持久实例并验证既有数据库升级，而不只验证空库或Dashboard数据库
 - [ ] 若跨Host/transport重写identity或generation，列出Product、Host binding、attachment/connection与remote target四个owner，并为出站改写、callback反向映射、disconnect retire和restart re-materialization各放一条回归
 

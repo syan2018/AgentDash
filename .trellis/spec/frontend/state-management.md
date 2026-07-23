@@ -59,6 +59,74 @@ Runtime feed生命周期测试还必须覆盖StrictMode的`setup → cleanup →
 Terminal convergence测试必须覆盖ephemeral overlay被committed snapshot替换，以及snapshot请求在途
 收到的后续durable record仍保留在最终projection；连续回合的terminal必须排队完成下一次收敛读取。
 
+## Scenario: Canonical turn refresh ownership
+
+### 1. Scope / Trigger
+
+修改AgentRun composer、canonical live副作用、Workspace查询或Canvas runtime panel时适用。
+
+### 2. Signatures
+
+```ts
+planAgentRunLiveEvent(event: BackboneEvent): {
+  effects: {
+    refreshWorkspaceState?: boolean;
+    refreshAgentRunListReason?: string;
+  };
+};
+```
+
+### 3. Contracts
+
+- canonical `TurnStarted`与`TurnCompleted`分别使Product Workspace失效一次，用于读取当前执行命令和
+  Product shell；普通command promise完成、composer清理和terminal展示metadata不建立平行刷新入口。
+- conversation feed在`TurnCompleted`上自行读取Complete Agent authoritative snapshot。composer
+  command完成只清理本地输入状态，不再次调用feed reload。
+- Workspace Module用户打开只改变tab layout；菜单已经来自current `workspace_modules`，打开动作不反向
+  使同一Workspace失效。Canvas向Agent提交输入后的状态收敛仍沿canonical turn边界完成。
+- Canvas runtime load identity由`run_id + agent_id + project_id + canvas_mount_id`和显式
+  `refreshRevision`组成。父Workspace返回语义相同的新对象时，现有iframe与runtime snapshot保持不变。
+
+### 4. Validation & Error Matrix
+
+| 输入 | Workspace读取 | conversation reload | Canvas iframe |
+| --- | ---: | ---: | --- |
+| `TurnStarted` | 1 | 0 | 保持 |
+| `TurnCompleted` | 1 | 由feed执行1次 | 保持 |
+| terminal `SessionMetaUpdate` | 0 | 0 | 保持 |
+| 等值Workspace/bridge对象重渲染 | 0 | 0 | 保持 |
+| 用户显式点击Canvas刷新 | 0 | 0 | 重载1次 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：执行开始后composer切换到停止语义，终止后直接恢复发送；打开的Canvas不进入loading。
+- Base：标题或resource surface发生独立typed invalidation时Workspace正常重读，Canvas bridge坐标未变
+  因而iframe保持。
+- Bad：command service、composer success、hook别名与terminal各自读取整个Workspace，使终止成为多次
+  页面刷新并重建Canvas。
+
+### 6. Tests Required
+
+- planner测试断言`TurnStarted`与`TurnCompleted`各产生一个Workspace effect，terminal metadata不产生
+  effect。
+- terminal feed测试断言authoritative reload由connection owner执行且并发terminal按顺序收敛。
+- 真实浏览器回归在已打开Canvas的会话发送无工具输入，断言运行期和终止后Canvas loading次数、
+  iframe缺失次数、reconnect状态次数均为0。
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: command完成后从多个观察者重复收敛相同事实。
+await submitComposer(intent);
+await runtimeFeed.refresh();
+refreshAgentRunWorkspace();
+
+// Correct: command只提交输入；canonical边界分别驱动各自owner收敛。
+await submitComposer(intent);
+// TurnStarted -> Product Workspace invalidation
+// TurnCompleted -> Product Workspace invalidation + Agent feed authoritative reload
+```
+
 ## Scenario: Runtime conversation name invalidation
 
 ### 1. Scope / Trigger

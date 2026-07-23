@@ -156,7 +156,6 @@ export function AgentRunWorkspacePage({
   const {
     state: agentRunWorkspaceState,
     refreshWorkspaceState: refreshAgentRunWorkspaceState,
-    refreshHookRuntime: refreshAgentRunHookRuntime,
   } = useAgentRunWorkspaceState({
     runId: currentRunId,
     agentId: currentAgentId,
@@ -195,8 +194,8 @@ export function AgentRunWorkspacePage({
   const hasIdentityBar =
     !isProjectAgentDraft
     && (identityAgentSource !== null || identitySubject !== null || lineageParent !== null || subagentChildCount > 0);
-  const activeHookRuntime = agentRunWorkspaceState.hook_runtime;
   const deliveryRuntimeSurface = agentRunWorkspaceState.runtime_surface;
+  const activeHookRuntime = agentRunWorkspaceState.hook_runtime;
   const sessionContextSnapshot = null;
   const sessionCapabilities = null;
   const taskExecutorSummary = null;
@@ -452,9 +451,7 @@ export function AgentRunWorkspacePage({
   const {
     chatModel: controlPlaneChatModel,
     chatIntents: controlPlaneChatIntents,
-    handleMessageSent,
     handleAgentRunLiveEvent,
-    handleWorkspaceModuleOpened,
   } = useAgentRunWorkspaceControlPlane({
     currentRunId,
     currentAgentId,
@@ -464,7 +461,6 @@ export function AgentRunWorkspacePage({
     isProjectAgentDraft,
     agentRunWorkspaceState,
     refreshAgentRunWorkspaceState,
-    refreshAgentRunHookRuntime,
     traceExecutorHint: traceAgentContext?.executor_hint,
     taskExecutorSummary,
     createProjectAgentRun,
@@ -718,7 +714,6 @@ export function AgentRunWorkspacePage({
                 intents={chatIntents}
                 initialSubmit={routeState?.initial_submit}
                 onInitialSubmitConsumed={handleInitialSubmitConsumed}
-                onMessageSent={handleMessageSent}
                 onLiveEvent={handleAgentRunLiveEvent}
                 inputPrefix={chatInputPrefix}
                 inputToolbarSlot={backendSelectionBar}
@@ -746,7 +741,6 @@ export function AgentRunWorkspacePage({
           <WorkspacePanel
             ref={workspacePanelRef}
             runtimeData={workspaceRuntimeData}
-            onWorkspaceModuleOpened={handleWorkspaceModuleOpened}
           />
         </Panel>
       </Group>

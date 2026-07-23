@@ -31,7 +31,7 @@ registerBuiltinTabTypes();
 
 export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelProps>(
   function WorkspacePanel(props, ref) {
-    const { runtimeData, onWorkspaceModuleOpened } = props;
+    const { runtimeData } = props;
     const { projectId, extensionRuntime } = runtimeData;
     const agentRunRuntimeTarget = runtimeData.agentRunRuntimeTarget ?? null;
     const workspaceKey = agentRunRuntimeTarget
@@ -170,7 +170,6 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
             }
           },
         });
-        onWorkspaceModuleOpened?.();
         return true;
       } catch (error: unknown) {
         setCanvasOpenError(error instanceof Error ? error.message : "Canvas 打开失败。");
@@ -179,7 +178,6 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         setCanvasOpenBusyKey(null);
       }
     }, [
-      onWorkspaceModuleOpened,
       tabLayoutOptions,
       workspaceKey,
     ]);
@@ -212,13 +210,8 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
               project_id: runtimeData.projectId,
             }
           : null,
-        refreshAgentRunWorkspace: onWorkspaceModuleOpened
-          ? async () => {
-              onWorkspaceModuleOpened();
-            }
-          : null,
       };
-    }, [onWorkspaceModuleOpened, runtimeData]);
+    }, [runtimeData]);
 
     // 渲染当前激活 Tab 的内容
     const activeContent = useMemo(() => {

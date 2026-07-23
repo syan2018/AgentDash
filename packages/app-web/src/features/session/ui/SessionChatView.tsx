@@ -61,7 +61,6 @@ function deferStateUpdate(update: () => void): void {
 export function SessionChatView({
   model,
   intents,
-  onMessageSent,
   onLiveEvent,
   headerSlot,
   inputPrefix,
@@ -280,7 +279,6 @@ export function SessionChatView({
     isConnected,
     isLoading,
     error: wsError,
-    refresh,
     reconnect,
     streamingEntryId,
     tokenUsage,
@@ -386,8 +384,6 @@ export function SessionChatView({
 
       execConfig.recordUsage();
       clearInput();
-      await refresh();
-      onMessageSent?.();
     } catch (e) {
       if (isSilentCommandRefreshError(e)) {
         setSendError(null);
@@ -407,8 +403,6 @@ export function SessionChatView({
     executorConfig,
     imageAttach.attachments,
     isSending,
-    onMessageSent,
-    refresh,
   ]);
 
   useEffect(() => {
@@ -431,8 +425,6 @@ export function SessionChatView({
     void commandActionRef.current(submitIntent).then(async () => {
       execConfig.recordUsage();
       clearInput();
-      await refresh();
-      onMessageSent?.();
     }).catch((error) => {
       const prompt = initialSubmit.intent.prompt;
       richInputRef.current?.setValue(prompt);
@@ -452,8 +444,6 @@ export function SessionChatView({
     isConnected,
     isSending,
     onInitialSubmitConsumed,
-    onMessageSent,
-    refresh,
   ]);
 
   const commandById = useCallback((commandId: string | undefined): SessionChatCommandModel | undefined => {

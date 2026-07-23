@@ -104,7 +104,6 @@ export function ExtensionCanvasPanel({ tab }: ExtensionCanvasPanelProps) {
           snapshot={snapshotState.snapshot}
           agentRunBridge={bridge}
           showBridgeUnavailable
-          onAgentRunWorkspaceRefresh={workspaceData.refreshAgentRunWorkspace}
           extensionChannelBridge={(request) =>
             invokeExtensionChannelFromCanvas({
               workspaceData,

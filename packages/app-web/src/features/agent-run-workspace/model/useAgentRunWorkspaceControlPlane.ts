@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { ExecutorConfig } from "../../../services/executor";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
@@ -21,10 +21,8 @@ import type {
 } from "../../workspace-panel/model/useAgentRunWorkspaceState";
 import { isWorkspaceModulePresentationCurrent } from "../../workspace-module/model/presentation";
 import {
-  planAgentRunMessageSent,
   planAgentRunLiveEvent,
   planAgentRunProjectEvent,
-  planAgentRunWorkspaceModuleOpened,
   resolveAgentRunSubmitCommand,
   type AgentRunControlPlaneEffectPlan,
   type AgentRunWorkspacePanelTarget,
@@ -51,7 +49,6 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
   isProjectAgentDraft: boolean;
   agentRunWorkspaceState: AgentRunWorkspaceState;
   refreshAgentRunWorkspaceState: () => Promise<AgentRunWorkspaceView | null>;
-  refreshAgentRunHookRuntime: () => Promise<unknown>;
   traceExecutorHint?: string | null;
   taskExecutorSummary?: TaskSessionExecutorSummary | null;
   createProjectAgentRun: (
@@ -72,17 +69,12 @@ interface UseAgentRunWorkspaceControlPlaneResult {
   workspaceControl: AgentRunWorkspaceView | null;
   chatModel: AgentRunChatModel;
   chatIntents: AgentRunChatViewIntents;
-  refreshAgentRunWorkspaceState: () => Promise<unknown>;
-  refreshAgentRunHookRuntime: () => Promise<unknown>;
-  handleMessageSent: () => void;
   handleAgentRunLiveEvent: (event: BackboneEvent) => void;
-  handleWorkspaceModuleOpened: () => void;
 }
 
 export interface AgentRunControlPlaneEffectExecutor {
   refreshAgentRunWorkspaceState: () => Promise<AgentRunWorkspaceView | null>;
   openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
-  scheduleHookRuntimeRefresh: (reason: string, immediate?: boolean) => void;
   refreshAgentRunList: (reason: string) => void;
   workspacePanelOpened?: () => void;
   workspacePanelOpenFailed?: (error: Error) => void;
@@ -136,12 +128,6 @@ export function applyAgentRunControlPlaneEffectPlan(
     }
   }
 
-  if (plan.hookRuntimeRefresh) {
-    executor.scheduleHookRuntimeRefresh(
-      plan.hookRuntimeRefresh.reason,
-      plan.hookRuntimeRefresh.immediate,
-    );
-  }
   if (plan.refreshAgentRunListReason) {
     executor.refreshAgentRunList(plan.refreshAgentRunListReason);
   }
@@ -156,7 +142,6 @@ export function useAgentRunWorkspaceControlPlane({
   isProjectAgentDraft,
   agentRunWorkspaceState,
   refreshAgentRunWorkspaceState,
-  refreshAgentRunHookRuntime,
   traceExecutorHint,
   taskExecutorSummary = null,
   createProjectAgentRun,
@@ -166,7 +151,6 @@ export function useAgentRunWorkspaceControlPlane({
   openWorkspacePanel,
 }: UseAgentRunWorkspaceControlPlaneOptions): UseAgentRunWorkspaceControlPlaneResult {
   const fetchAndIngestLifecycleRun = useLifecycleStore((state) => state.fetchAndIngestLifecycleRun);
-  const hookRuntimeRefreshTimerRef = useRef<number | null>(null);
   const [explicitExecutorConfigOverrideState, setExplicitExecutorConfigOverrideState] = useState<{
     scopeKey: string | null;
     config: ExecutorConfig | null;
@@ -190,31 +174,6 @@ export function useAgentRunWorkspaceControlPlane({
       config,
     });
   }, [executorOverrideScopeKey]);
-
-  useEffect(() => {
-    return () => {
-      if (hookRuntimeRefreshTimerRef.current) {
-        window.clearTimeout(hookRuntimeRefreshTimerRef.current);
-        hookRuntimeRefreshTimerRef.current = null;
-      }
-    };
-  }, []);
-
-  const scheduleHookRuntimeRefresh = useCallback((_reason: string, immediate = false) => {
-    if (!currentRunId || !currentAgentId) return;
-    if (hookRuntimeRefreshTimerRef.current) {
-      window.clearTimeout(hookRuntimeRefreshTimerRef.current);
-      hookRuntimeRefreshTimerRef.current = null;
-    }
-    if (immediate) {
-      void refreshAgentRunHookRuntime();
-      return;
-    }
-    hookRuntimeRefreshTimerRef.current = window.setTimeout(() => {
-      hookRuntimeRefreshTimerRef.current = null;
-      void refreshAgentRunHookRuntime();
-    }, 180);
-  }, [currentAgentId, currentRunId, refreshAgentRunHookRuntime]);
 
   const executorStateKey = useMemo(() => {
     if (isProjectAgentDraft) {
@@ -278,7 +237,6 @@ export function useAgentRunWorkspaceControlPlane({
     createProjectAgentRun,
     fetchAndIngestLifecycleRun,
     refreshWorkspaceState: refreshAgentRunWorkspaceState,
-    scheduleHookRuntimeRefresh,
     onAgentRunRedirect,
     resolveExecutorConfig: resolveExecutorConfigForConversationCommand,
     isCompleteExecutorConfig,
@@ -298,13 +256,11 @@ export function useAgentRunWorkspaceControlPlane({
       intent.imageAttachments,
       intent.deliveryIntent,
     );
-    refreshAgentRunList("command_submitted");
-  }, [commandState, handleAgentRunCommand, refreshAgentRunList]);
+  }, [commandState, handleAgentRunCommand]);
 
   const cancelAction = useCallback(async () => {
     await handleCancelAgentRun();
-    refreshAgentRunList("agent_run_cancelled");
-  }, [handleCancelAgentRun, refreshAgentRunList]);
+  }, [handleCancelAgentRun]);
 
   const chatModel = useMemo<AgentRunChatModel>(() => ({
     executorHint,
@@ -349,7 +305,6 @@ export function useAgentRunWorkspaceControlPlane({
     applyAgentRunControlPlaneEffectPlan(plan, {
       refreshAgentRunWorkspaceState,
       openWorkspacePanel,
-      scheduleHookRuntimeRefresh,
       refreshAgentRunList,
       workspacePanelOpened,
       workspacePanelOpenFailed,
@@ -358,12 +313,7 @@ export function useAgentRunWorkspaceControlPlane({
     openWorkspacePanel,
     refreshAgentRunList,
     refreshAgentRunWorkspaceState,
-    scheduleHookRuntimeRefresh,
   ]);
-
-  const handleMessageSent = useCallback(() => {
-    applyControlPlaneEffectPlan(planAgentRunMessageSent());
-  }, [applyControlPlaneEffectPlan]);
 
   const handleAgentRunLiveEvent = useCallback((event: BackboneEvent) => {
     applyControlPlaneEffectPlan(planAgentRunLiveEvent(event).effects);
@@ -400,18 +350,10 @@ export function useAgentRunWorkspaceControlPlane({
     currentRunId,
   ]);
 
-  const handleWorkspaceModuleOpened = useCallback(() => {
-    applyControlPlaneEffectPlan(planAgentRunWorkspaceModuleOpened());
-  }, [applyControlPlaneEffectPlan]);
-
   return {
     workspaceControl,
     chatModel,
     chatIntents,
-    refreshAgentRunWorkspaceState,
-    refreshAgentRunHookRuntime,
-    handleMessageSent,
     handleAgentRunLiveEvent,
-    handleWorkspaceModuleOpened,
   };
 }

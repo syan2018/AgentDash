@@ -27,7 +27,6 @@ export interface CanvasRuntimePreviewProps {
   snapshot: CanvasRuntimeSnapshot | null;
   agentRunBridge?: AgentRunCanvasBridgeIdentity | null;
   showBridgeUnavailable?: boolean;
-  onAgentRunWorkspaceRefresh?: (() => Promise<unknown>) | null;
   extensionChannelBridge?: (request: CanvasExtensionChannelRequest) => Promise<unknown>;
 }
 
@@ -174,7 +173,6 @@ export function CanvasRuntimePreview({
   snapshot,
   agentRunBridge = null,
   showBridgeUnavailable = false,
-  onAgentRunWorkspaceRefresh = null,
   extensionChannelBridge,
 }: CanvasRuntimePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -575,7 +573,6 @@ export function CanvasRuntimePreview({
         ok: true,
         result,
       }, source);
-      await onAgentRunWorkspaceRefresh?.();
     } catch (error) {
       sendAgentSubmitResult({
         kind: "canvas-agent-submit-result",
@@ -586,7 +583,7 @@ export function CanvasRuntimePreview({
         error: error instanceof Error ? error.message : "Canvas 请求提交给 Agent 失败",
       }, source);
     }
-  }, [agentRunBridge, onAgentRunWorkspaceRefresh, sendAgentSubmitResult]);
+  }, [agentRunBridge, sendAgentSubmitResult]);
 
   const handleIframeMessage = useCallback((event: MessageEvent<unknown>) => {
     const iframe = iframeRef.current;

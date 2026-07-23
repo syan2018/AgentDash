@@ -46,7 +46,6 @@ export interface WorkspaceRuntimeData {
   workspaceModules: WorkspaceModuleDescriptor[];
   agentRunRuntimeTarget?: AgentRunRuntimeTarget | null;
   agentRunCanvasBridgeBase?: AgentRunCanvasBridgeBase | null;
-  refreshAgentRunWorkspace?: (() => Promise<unknown>) | null;
   lifecycleRun: LifecycleRunView | null;
   lifecycleAgent: AgentRunView | null;
   frameRuntime: AgentFrameRuntimeView | null;

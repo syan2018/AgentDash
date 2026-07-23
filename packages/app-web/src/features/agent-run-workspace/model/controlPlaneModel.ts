@@ -27,10 +27,6 @@ export interface AgentRunWorkspacePanelOpenPlan {
 export interface AgentRunControlPlaneEffectPlan {
   refreshWorkspaceState?: boolean;
   refreshAgentRunListReason?: string;
-  hookRuntimeRefresh?: {
-    reason: string;
-    immediate?: boolean;
-  };
   openWorkspacePanel?: AgentRunWorkspacePanelOpenPlan;
 }
 
@@ -73,14 +69,6 @@ export function resolveAgentRunSubmitCommand(
   return { ok: true, command };
 }
 
-export function planAgentRunMessageSent(): AgentRunControlPlaneEffectPlan {
-  return {
-    refreshWorkspaceState: true,
-    refreshAgentRunListReason: "message_sent",
-    hookRuntimeRefresh: { reason: "message_sent", immediate: true },
-  };
-}
-
 export function planAgentRunProjectEvent(
   event: ProjectEventStreamEnvelope,
   target: { runId: string; agentId: string },
@@ -103,10 +91,10 @@ export function planAgentRunTurnEnded(): AgentRunControlPlaneEffectPlan {
   };
 }
 
-export function planAgentRunWorkspaceModuleOpened(): AgentRunControlPlaneEffectPlan {
+export function planAgentRunTurnStarted(): AgentRunControlPlaneEffectPlan {
   return {
     refreshWorkspaceState: true,
-    hookRuntimeRefresh: { reason: "workspace_module_user_opened" },
+    refreshAgentRunListReason: "turn_started",
   };
 }
 
@@ -155,59 +143,23 @@ function planControlPlaneProjectionChanged(
       plan.refreshWorkspaceState = true;
       break;
     case "hook_runtime":
-      plan.hookRuntimeRefresh = { reason };
       break;
   }
 
-  if (change.reason === "capability_state_changed") {
-    plan.refreshWorkspaceState = true;
-    plan.hookRuntimeRefresh = { reason };
-  }
   if (change.reason === "title_changed") {
     plan.refreshWorkspaceState = true;
-  }
-
-  if (
-    change.reason === "hook_effect_applied" ||
-    change.reason === "hook_auto_resume_queued"
-  ) {
-    plan.hookRuntimeRefresh = { reason };
   }
 
   return plan;
 }
 
-function isTaskPlanMutation(event: BackboneEvent): boolean {
-  if (event.type !== "item_completed") return false;
-  const item = event.payload.item;
-  return item.type === "dynamicToolCall" &&
-    item.tool === "task_write" &&
-    item.status === "completed" &&
-    item.success !== false;
-}
-
-function isTurnTerminal(event: BackboneEvent): boolean {
-  if (event.type === "turn_completed") return true;
-  if (
-    event.type !== "platform" ||
-    event.payload.kind !== "session_meta_update" ||
-    event.payload.data.key !== "turn_terminal"
-  ) {
-    return false;
-  }
-  const value = event.payload.data.value;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  return value.terminal_type === "turn_completed" ||
-    value.terminal_type === "turn_failed" ||
-    value.terminal_type === "turn_interrupted";
-}
-
 function planAgentRunEventEffects(
   event: BackboneEvent,
 ): AgentRunControlPlaneEffectPlan {
-  if (isTurnTerminal(event)) {
+  if (event.type === "turn_started") {
+    return planAgentRunTurnStarted();
+  }
+  if (event.type === "turn_completed") {
     return planAgentRunTurnEnded();
   }
   if (event.type === "thread_name_updated") {
@@ -216,31 +168,12 @@ function planAgentRunEventEffects(
       refreshAgentRunListReason: "thread_name_updated",
     };
   }
-  if (isTaskPlanMutation(event)) {
-    return {
-      refreshWorkspaceState: true,
-      hookRuntimeRefresh: { reason: "task_plan_changed", immediate: true },
-    };
-  }
   if (event.type !== "platform") {
     return {};
   }
 
   if (event.payload.kind === "workspace_module_presentation_requested") {
     return planWorkspaceModulePresentationPayload(event.payload.data);
-  }
-  if (event.payload.kind === "hook_trace") {
-    return {
-      hookRuntimeRefresh: { reason: "hook_event" },
-    };
-  }
-  if (
-    event.payload.kind === "session_meta_update" &&
-    event.payload.data.key === "hook_action_resolved"
-  ) {
-    return {
-      hookRuntimeRefresh: { reason: "hook_action_resolved" },
-    };
   }
   return {};
 }

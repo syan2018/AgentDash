@@ -696,7 +696,6 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
       agent_id: "agent-1",
       project_id: "project-1",
     },
-    refreshAgentRunWorkspace: null,
     runtimeStatus: "ready",
     runtimeError: null,
     extensionRuntime: {

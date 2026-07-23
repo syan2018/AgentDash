@@ -64,7 +64,6 @@ export interface UseAgentRunWorkspaceCommandsOptions {
   createProjectAgentRun: CreateProjectAgentRun;
   fetchAndIngestLifecycleRun: (runId: string) => Promise<unknown>;
   refreshWorkspaceState: () => Promise<unknown>;
-  scheduleHookRuntimeRefresh: (reason: string, immediate?: boolean) => void;
   onAgentRunRedirect: (target: { runId: string; agentId: string }) => void;
   resolveExecutorConfig: ResolveExecutorConfig;
   isCompleteExecutorConfig: IsCompleteExecutorConfig;
@@ -192,7 +191,6 @@ export function useAgentRunWorkspaceCommands(
     createProjectAgentRun,
     fetchAndIngestLifecycleRun,
     refreshWorkspaceState,
-    scheduleHookRuntimeRefresh,
     onAgentRunRedirect,
     resolveExecutorConfig,
     isCompleteExecutorConfig,
@@ -322,8 +320,6 @@ export function useAgentRunWorkspaceCommands(
         onAgentRunRedirect(redirect);
         return;
       }
-      refreshWorkspaceStateSilently();
-      scheduleHookRuntimeRefresh("agent_run_command_submitted", true);
     } catch (error) {
       if (refreshAfterStaleAgentRunCommandError(error)) {
         throw new SilentCommandRefreshError();
@@ -345,9 +341,7 @@ export function useAgentRunWorkspaceCommands(
     onDraftStarted,
     onAgentRunRedirect,
     refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceStateSilently,
     resolveExecutorConfig,
-    scheduleHookRuntimeRefresh,
   ]);
 
   const handleCancelAgentRun = useCallback(async () => {
@@ -364,15 +358,11 @@ export function useAgentRunWorkspaceCommands(
       if (refreshAfterStaleAgentRunCommandError(error)) return;
       throw error;
     }
-    refreshWorkspaceStateSilently();
-    scheduleHookRuntimeRefresh("agent_run_cancelled", true);
   }, [
     chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
     refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceStateSilently,
-    scheduleHookRuntimeRefresh,
   ]);
 
   const handleForkFromMessageRef = useCallback(async (forkPointRef: SessionMessageRefDto) => {

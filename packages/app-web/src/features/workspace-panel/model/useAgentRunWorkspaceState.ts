@@ -197,6 +197,5 @@ export function useAgentRunWorkspaceState({
   return {
     state: activeState,
     refreshWorkspaceState,
-    refreshHookRuntime: refreshWorkspaceState,
   };
 }

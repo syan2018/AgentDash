@@ -276,6 +276,13 @@ CAPABILITY frame，随后`READ -> EDIT -> READ`成功把`cvs-capability-tracer:/
   `refreshing`不再让运行中的停止按钮退化为发送loading状态。
 - [x] Agent-native `ContextFrameChanged`只归约canonical feed，不再为一批materialized frame逐项
   触发Product workspace与hook runtime查询。
-- [x] 保留真正需要current Product projection的message、terminal、title、capability与Workspace
-  Module刷新；frame id不进入Runtime feed target，后台refresh不重建live connection。
-- [x] conversation/control-plane/feed/button状态39项定向测试、受影响文件ESLint与前端typecheck通过。
+- [x] Product Workspace执行态只由canonical `TurnStarted/TurnCompleted`失效；command service、
+  composer success与terminal metadata不再平行触发Workspace/feed reload。
+- [x] 删除前端hook-runtime刷新别名与Workspace Module打开后的反向刷新；Canvas agent input沿同一
+  canonical turn边界收敛。
+- [x] Canvas runtime bridge按`run + agent + project + mount`稳定，等值Workspace重读不再卸载iframe。
+- [x] 保留真正需要current Product projection的canonical turn、title、resource surface与
+  Workspace Module刷新；frame id不进入Runtime feed target，后台refresh不重建live connection。
+- [x] conversation/control-plane/feed/button状态定向测试、受影响文件ESLint与前端typecheck通过。
+- [x] 真实浏览器最小回归在已打开Canvas时执行无工具回合；108次连续采样中Canvas loading、iframe
+  缺失、reconnect与Workspace刷新提示均为0，运行中与终止状态按canonical turn边界切换。

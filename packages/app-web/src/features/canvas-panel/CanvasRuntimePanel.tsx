@@ -20,7 +20,6 @@ export interface CanvasRuntimePanelProps {
   projectId?: string | null;
   agentRunBridge?: AgentRunCanvasBridgeIdentity | null;
   showBridgeUnavailable?: boolean;
-  onAgentRunWorkspaceRefresh?: (() => Promise<unknown>) | null;
   refreshRevision?: number;
   onClose: () => void;
   /** 打开该 Canvas 对应 mount 的资源浏览 Tab */
@@ -35,7 +34,6 @@ export function CanvasRuntimePanel({
   projectId,
   agentRunBridge = null,
   showBridgeUnavailable = false,
-  onAgentRunWorkspaceRefresh = null,
   refreshRevision = 0,
   onClose,
   onBrowseFiles,
@@ -93,7 +91,10 @@ export function CanvasRuntimePanel({
   }, [agentRunBridge, canvasId, canvasMountId, projectId]);
 
   useEffect(() => {
-    void loadCanvasData();
+    const timeoutId = window.setTimeout(() => {
+      void loadCanvasData();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [loadCanvasData, refreshRevision]);
 
   const handleBindingUpsert = useCallback(async (binding: CanvasRuntimeBindingDraft) => {
@@ -226,7 +227,6 @@ export function CanvasRuntimePanel({
             snapshot={snapshot}
             agentRunBridge={agentRunBridge}
             showBridgeUnavailable={showBridgeUnavailable}
-            onAgentRunWorkspaceRefresh={onAgentRunWorkspaceRefresh}
           />
         )}
 

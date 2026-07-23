@@ -19,10 +19,9 @@ import {
 } from "./conversationCommandState";
 import {
   planAgentRunLiveEvent,
-  planAgentRunMessageSent,
   planAgentRunProjectEvent,
   planAgentRunTurnEnded,
-  planAgentRunWorkspaceModuleOpened,
+  planAgentRunTurnStarted,
   resolveAgentRunSubmitCommand,
 } from "./controlPlaneModel";
 
@@ -158,19 +157,14 @@ describe("AgentRun control-plane model", () => {
     });
   });
 
-  it("plans message and manual workspace-module refresh effects", () => {
-    expect(planAgentRunMessageSent()).toEqual({
+  it("uses canonical turn boundaries as the only execution refresh source", () => {
+    expect(planAgentRunTurnStarted()).toEqual({
       refreshWorkspaceState: true,
-      hookRuntimeRefresh: { reason: "message_sent", immediate: true },
-      refreshAgentRunListReason: "message_sent",
+      refreshAgentRunListReason: "turn_started",
     });
     expect(planAgentRunTurnEnded()).toEqual({
       refreshWorkspaceState: true,
       refreshAgentRunListReason: "turn_ended",
-    });
-    expect(planAgentRunWorkspaceModuleOpened()).toEqual({
-      refreshWorkspaceState: true,
-      hookRuntimeRefresh: { reason: "workspace_module_user_opened" },
     });
   });
 
@@ -207,7 +201,7 @@ describe("AgentRun control-plane model", () => {
     });
   });
 
-  it("refreshes terminal state through the same live-event plan", () => {
+  it("keeps terminal display metadata out of control-plane refresh", () => {
     const plan = planAgentRunLiveEvent({
       type: "platform",
       payload: {
@@ -221,11 +215,42 @@ describe("AgentRun control-plane model", () => {
       },
     });
 
-    expect(plan).toEqual({
-      effects: {
-        refreshWorkspaceState: true,
-        refreshAgentRunListReason: "turn_ended",
+    expect(plan).toEqual({ effects: {} });
+  });
+
+  it("refreshes execution state once for each canonical turn boundary", () => {
+    expect(planAgentRunLiveEvent({
+      type: "turn_started",
+      payload: {
+        threadId: "native-thread-1",
+        turn: {
+          id: "turn-1",
+          items: [],
+          itemsView: "full",
+          status: "inProgress",
+          error: null,
+        },
       },
+    }).effects).toEqual({
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "turn_started",
+    });
+
+    expect(planAgentRunLiveEvent({
+      type: "turn_completed",
+      payload: {
+        threadId: "native-thread-1",
+        turn: {
+          id: "turn-1",
+          items: [],
+          itemsView: "full",
+          status: "completed",
+          error: null,
+        },
+      },
+    }).effects).toEqual({
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "turn_ended",
     });
   });
 

@@ -103,9 +103,6 @@ export interface SessionChatViewProps {
 
   // ─── 会话生命周期 ────────────────────────────────────
 
-  /** 消息发送成功后回调（父组件可刷新列表等） */
-  onMessageSent?: () => void;
-
   /** Baseline 之后按 canonical sequence 提交的完整 live event 流。 */
   onLiveEvent?: (event: BackboneEvent) => void;
 

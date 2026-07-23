@@ -150,14 +150,16 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   history 投影 `Platform(ContextFrameChanged)`；Product intent 或 repository metadata 不能直接
   冒充 Agent 已接纳 context。
 - 会话标题是 Dash Agent 从已接纳 user input 与已完成 Agent output 生成的原生展示事实。
-  首个成功回合后，Dash 通过 `DashConversationNamer` 生成非空标题，并以
+  首个具备上述内容的 terminal 回合后，Dash 通过 `DashConversationNamer` 生成非空标题，并以
   `ThreadNameChanged` 提交到同一 source history；`read`、`changes` 与 durable live event
   从该 entry 分别投影 `AgentThreadNameSnapshot`、`AgentChangePayload::ThreadNameChanged` 与
   canonical `ThreadNameUpdated`。Product 消费 Agent snapshot 中的首次有效标题来初始化自己的
   AgentRun 标题；这两个 owner 各自持久化一次的原因是 Dash thread 与 AgentRun 可以独立存在，
   且 AgentRun 标题允许用户独立修改。Product 不持续同步，也不从消息文本推导标题。
-- 标题生成不是回合 terminal 的组成部分：生成失败不能把已经成功提交的 Agent 回合改写成失败；
-  未命名 source 可在后续成功回合再次尝试。history 一旦已有标题，自动命名不再重复调用。
+- 标题生成不是回合 terminal 的组成部分：Succeeded、Failed、Lost、Interrupted 都保留各自原始
+  terminal；只要该回合已有非空 user input 与 Agent output，就在 terminal 提交后尝试命名。
+  Accepted/interaction 尚未终态时不命名；无 Agent output 的失败回合也没有可命名证据。命名失败时，
+  未命名 source 可在后续满足条件的 terminal 回合再次尝试。history 一旦已有标题，自动命名不再重复调用。
 - Core 只拥有 provider-neutral inference/stream/tool loop，不依赖 Product workflow、
   Lifecycle、PostgreSQL repository、Codex DTO 或 Runtime persistence。
 - Tool/Hook 通过 Host callback route调用真实 handler。Dash 在 callback identity 上重试；
@@ -196,8 +198,10 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 | live subscriber lagged | retryable unavailable；重新 read |
 | history commit成功但live通知失败 | commit保持成功；subscriber重新read authoritative history |
 | 命名输入缺少非空user input或Agent output | 不生成标题，不提交history entry |
-| namer返回空标题 | 拒绝标题提交；已成功回合保持成功 |
-| namer/provider失败 | 不提交标题；已成功回合保持成功，后续成功回合可重试 |
+| 回合仍为Accepted或等待interaction | 不调用namer，等待terminal |
+| Failed/Lost/Interrupted terminal且已有Agent output | 尝试首次命名；原terminal保持不变 |
+| namer返回空标题 | 拒绝标题提交；原回合terminal保持不变 |
+| namer/provider失败 | 不提交标题；原回合terminal保持不变，后续满足条件的terminal回合可重试 |
 | history已有标题 | 不调用namer，不重复提交自动标题 |
 | fork cutoff/context digest不匹配 | typed reject；source document不变 |
 | transport在provider terminal前EOF | retryable `stream_disconnected` |
@@ -207,7 +211,7 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 
 - Good：Dash command 原子更新 source document，成功后把同一 committed suffix 发布为 durable
   live record；Core callback只在其间发布partial delta，重连从同一document read得到完整终态。
-- Good：首个成功回合提交 terminal 后，Dash 根据该 source 的原生对话生成标题并追加
+- Good：首个具备非空 user input 与 Agent output 的 terminal 回合提交后，Dash 根据该 source 的原生对话生成标题并追加
   `ThreadNameChanged`；snapshot与live notification来自该 entry，Product据此仅初始化一次
   AgentRun标题，之后两个owner可以独立修改各自标题。
 - Good：Product提交skills/MCP/memory instructions与tool surface，Dash原样保存；Native Adapter从
@@ -216,7 +220,8 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   规则和平台展示的Identity frame来自同一source-owned history entry。
 - Base：live subscriber掉线，Core继续执行并提交 history；新 subscriber先 read再订阅。
 - Base：同一surface幂等重放不产生新的history entry，因此不产生重复ContextFrame。
-- Base：标题生成暂时失败，回合仍保持成功且source保持未命名；下一成功回合可以再次生成。
+- Base：首回合在多轮工具执行后以Failed结束，但已保存Agent output；Dash仍生成会话标题，回合保持Failed。
+- Base：标题生成暂时失败，原回合terminal不变且source保持未命名；下一满足条件的terminal回合可以再次生成。
 - Bad：Dash 同时写 repository JSONB 与 history/effect镜像，再逐次校验相等。镜像没有独立
   owner，只会制造 drift。
 - Bad：Product 从首条用户消息截断标题。该值没有 Agent 接纳与生成的证据，不能作为 AgentRun
@@ -244,8 +249,9 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - surface delta tests连续应用三版surface，覆盖tool新增、修改、删除，断言read重放只返回真实
   变化且`rendered_text`不包含原始JSON schema；context channel矩阵覆盖system、identity、
   workspace、workflow、skills、MCP、memory与user context的typed frame映射。
-- naming test断言成功回合把 accepted user input与最终Agent output交给namer，只提交一次非空
-  `ThreadNameChanged`，且 `read/changes/live` 均投影同一标题；命名失败不改变回合terminal。
+- naming test断言Succeeded与“已有Agent output的Failed”回合都把accepted user input与最终
+  Agent output交给namer，只提交一次非空`ThreadNameChanged`，且`read/changes/live`均投影同一标题；
+  Accepted、interaction与无output失败不命名，命名失败不改变原回合terminal。
 - verification test断言 native registration claim 与 production template 的 build digest 都来自
   `dash_complete_agent_build_digest()`，profile digest 仍由独立字段校验。
 - lag/no-subscriber tests区分临时没有观察者与 callback未装配。
@@ -271,6 +277,18 @@ lifecycle_agent.workspace_title = snapshot.thread_name;
 // Correct: Dash保存原生标题；Product以该证据仅初始化一次自己的AgentRun标题。
 store.commit(HistoryPayload::ThreadNameChanged { thread_name })?;
 lifecycle_agents.initialize_title_from_agent(&target, &thread_name).await?;
+```
+
+```rust
+// Wrong: 只有Succeeded回合才有资格形成会话标题。
+if matches!(receipt.state, DashReceiptState::Terminal(DashTerminalOutcome::Succeeded)) {
+    try_assign_thread_name().await?;
+}
+
+// Correct: terminal只决定何时尝试；是否可命名由已提交的user input + Agent output证据决定。
+if matches!(receipt.state, DashReceiptState::Terminal(_)) {
+    try_assign_thread_name().await?;
+}
 ```
 
 ```rust

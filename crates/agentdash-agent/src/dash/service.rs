@@ -1064,25 +1064,21 @@ impl DashAgentService {
             }
         };
         self.clear_active(&turn_id).await;
-        if matches!(
-            receipt.state,
-            DashReceiptState::Terminal(DashTerminalOutcome::Succeeded)
-        ) {
-            if let Err(error) = self
+        if matches!(receipt.state, DashReceiptState::Terminal(_))
+            && let Err(error) = self
                 .try_assign_thread_name(
                     &turn_id,
                     HistoryEntryId::new(format!("{effect_prefix}:thread-name")),
                 )
                 .await
-            {
-                diag!(
-                    Warn,
-                    Subsystem::AgentRun,
-                    error = %error,
-                    turn_id = ?turn_id,
-                    "Dash conversation naming failed after a successful turn"
-                );
-            }
+        {
+            diag!(
+                Warn,
+                Subsystem::AgentRun,
+                error = %error,
+                turn_id = ?turn_id,
+                "Dash conversation naming failed after a terminal turn"
+            );
         }
         Ok(receipt)
     }

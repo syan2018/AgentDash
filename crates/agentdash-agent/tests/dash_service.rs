@@ -7,13 +7,14 @@ use agentdash_agent::dash::{
     ActivityStatus, AgentHistory, AgentSessionId, AgentTurnId, BranchId, CommandId, CompactionId,
     ContextDeliveryFidelity, ContextRevision, DashAgentRepository, DashAgentRepositoryState,
     DashAgentService, DashCommandRequest, DashCompactionRequest, DashCompactionResult,
-    DashCompactor, DashCoreError, DashExecutionCallbacks, DashExecutionConsistency,
-    DashExecutionDependencies, DashExecutionEvent, DashFinishReason, DashProvider,
-    DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashPublicCommand,
-    DashReceiptState, DashServiceError, DashSurface, DashSurfaceInstruction, DashTerminalOutcome,
-    DashToolCall, DashToolCallbacks, DashToolDefinition, DashToolResult, EffectId, HistoryPayload,
-    InitialContextContribution, InitialContextInstallation, InitialContextMode,
-    NoopDashConversationNamer, NoopDashHistoryCallbacks,
+    DashCompactor, DashConversationNamer, DashConversationNamingRequest, DashCoreError,
+    DashExecutionCallbacks, DashExecutionConsistency, DashExecutionDependencies,
+    DashExecutionEvent, DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
+    DashProviderRequest, DashPublicCommand, DashReceiptState, DashServiceError, DashSurface,
+    DashSurfaceInstruction, DashTerminalOutcome, DashToolCall, DashToolCallbacks,
+    DashToolDefinition, DashToolResult, EffectId, HistoryPayload, InitialContextContribution,
+    InitialContextInstallation, InitialContextMode, NoopDashConversationNamer,
+    NoopDashHistoryCallbacks,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -169,6 +170,9 @@ impl DashProvider for RoundLimitProvider {
         request: DashProviderRequest,
     ) -> Result<DashProviderEventStream, DashCoreError> {
         Ok(Box::pin(stream::iter([
+            Ok(DashProviderEvent::TextDelta {
+                delta: format!("partial answer {}", request.round),
+            }),
             Ok(DashProviderEvent::ToolCall {
                 call: DashToolCall {
                     call_id: format!("call-{}", request.round),
@@ -182,6 +186,21 @@ impl DashProvider for RoundLimitProvider {
                 output_tokens: 1,
             }),
         ])))
+    }
+}
+
+struct FailedTurnConversationNamer;
+
+#[async_trait]
+impl DashConversationNamer for FailedTurnConversationNamer {
+    async fn generate(
+        &self,
+        request: DashConversationNamingRequest,
+    ) -> Result<String, DashServiceError> {
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[0].content, "name the failed conversation");
+        assert!(request.messages[1].content.starts_with("partial answer"));
+        Ok("失败回合会话".to_owned())
     }
 }
 
@@ -381,6 +400,68 @@ async fn failed_turn_retains_each_completed_tool_call_in_native_history() {
             .filter(|entry| matches!(entry.payload, HistoryPayload::ToolResult { .. }))
             .count(),
         8
+    );
+}
+
+#[tokio::test]
+async fn failed_terminal_turn_with_agent_output_still_initializes_thread_name() {
+    let service = create_service(
+        AgentHistory::empty(
+            AgentSessionId::new("failed-turn-naming-session"),
+            BranchId::new("failed-turn-naming-branch"),
+        ),
+        DashExecutionDependencies {
+            provider: Arc::new(RoundLimitProvider),
+            tools: Arc::new(RecordingToolCallbacks::default()),
+            callbacks: Arc::new(NoCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: Arc::new(NoCompaction),
+            conversation_namer: Arc::new(FailedTurnConversationNamer),
+        },
+    )
+    .await;
+    service
+        .apply_surface(DashSurface {
+            revision: 1,
+            digest: "failed-turn-naming-surface".into(),
+            instructions: Vec::new(),
+            tools: vec![DashToolDefinition {
+                name: "inspect_capability".into(),
+                description: "Inspect a capability".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
+            }],
+        })
+        .await
+        .unwrap();
+
+    let receipt = service
+        .execute(DashCommandRequest {
+            command_id: CommandId::new("failed-turn-naming-command"),
+            effect_id: EffectId::new("failed-turn-naming-effect"),
+            command: DashPublicCommand::SubmitInput {
+                content: "name the failed conversation".into(),
+            },
+        })
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        receipt.state,
+        DashReceiptState::Terminal(DashTerminalOutcome::Failed)
+    ));
+    let history = service.history().await.unwrap();
+    assert_eq!(
+        history.state().unwrap().thread_name.as_deref(),
+        Some("失败回合会话")
+    );
+    assert_eq!(
+        history
+            .entries()
+            .iter()
+            .filter(|entry| matches!(entry.payload, HistoryPayload::ThreadNameChanged { .. }))
+            .count(),
+        1
     );
 }
 

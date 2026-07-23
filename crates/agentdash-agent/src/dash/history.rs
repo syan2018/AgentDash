@@ -130,6 +130,7 @@ pub enum HistoryPayload {
     },
     TurnStarted {
         turn_id: AgentTurnId,
+        started_at_ms: u64,
     },
     ItemStarted {
         turn_id: AgentTurnId,
@@ -195,14 +196,17 @@ pub enum HistoryPayload {
     },
     TurnCompleted {
         turn_id: AgentTurnId,
+        completed_at_ms: u64,
     },
     TurnFailed {
         turn_id: AgentTurnId,
         error: DashExecutionFailure,
         lost: bool,
+        completed_at_ms: u64,
     },
     TurnInterrupted {
         turn_id: AgentTurnId,
+        completed_at_ms: u64,
     },
     Closed,
 }
@@ -373,7 +377,10 @@ impl AgentHistory {
                 .position(|entry| {
                     matches!(
                         &entry.payload,
-                        HistoryPayload::TurnCompleted { turn_id: candidate }
+                        HistoryPayload::TurnCompleted {
+                            turn_id: candidate,
+                            ..
+                        }
                             if candidate == turn_id
                     )
                 })
@@ -437,6 +444,8 @@ pub enum ActivityStatus {
 pub struct TurnState {
     pub status: ActivityStatus,
     pub output: Option<String>,
+    pub started_at_ms: u64,
+    pub completed_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -630,7 +639,10 @@ fn apply_payload(
         HistoryPayload::InputAccepted { input_id, .. } => {
             state.accepted_inputs.push(input_id.clone());
         }
-        HistoryPayload::TurnStarted { turn_id } => {
+        HistoryPayload::TurnStarted {
+            turn_id,
+            started_at_ms,
+        } => {
             ensure_idle(state)?;
             if state
                 .turns
@@ -639,6 +651,8 @@ fn apply_payload(
                     TurnState {
                         status: ActivityStatus::Active,
                         output: None,
+                        started_at_ms: *started_at_ms,
+                        completed_at_ms: None,
                     },
                 )
                 .is_some()
@@ -894,13 +908,17 @@ fn apply_payload(
             };
             state.active_compaction = None;
         }
-        HistoryPayload::TurnCompleted { turn_id } => {
-            terminalize_turn(state, turn_id, ActivityStatus::Completed)?;
+        HistoryPayload::TurnCompleted {
+            turn_id,
+            completed_at_ms,
+        } => {
+            terminalize_turn(state, turn_id, ActivityStatus::Completed, *completed_at_ms)?;
         }
         HistoryPayload::TurnFailed {
             turn_id,
             error: _,
             lost,
+            completed_at_ms,
         } => {
             terminalize_turn(
                 state,
@@ -910,10 +928,19 @@ fn apply_payload(
                 } else {
                     ActivityStatus::Failed
                 },
+                *completed_at_ms,
             )?;
         }
-        HistoryPayload::TurnInterrupted { turn_id } => {
-            terminalize_turn(state, turn_id, ActivityStatus::Interrupted)?;
+        HistoryPayload::TurnInterrupted {
+            turn_id,
+            completed_at_ms,
+        } => {
+            terminalize_turn(
+                state,
+                turn_id,
+                ActivityStatus::Interrupted,
+                *completed_at_ms,
+            )?;
         }
         HistoryPayload::Closed => {
             ensure_idle(state)?;
@@ -957,6 +984,7 @@ fn terminalize_turn(
     state: &mut AgentHistoryState,
     turn_id: &AgentTurnId,
     terminal: ActivityStatus,
+    completed_at_ms: u64,
 ) -> Result<(), HistoryError> {
     ensure_active_turn(state, turn_id)?;
     if state
@@ -966,11 +994,9 @@ fn terminalize_turn(
     {
         return Err(HistoryError::TurnHasActiveItems(turn_id.clone()));
     }
-    state
-        .turns
-        .get_mut(turn_id)
-        .expect("active turn exists")
-        .status = terminal;
+    let turn = state.turns.get_mut(turn_id).expect("active turn exists");
+    turn.status = terminal;
+    turn.completed_at_ms = Some(completed_at_ms);
     state.active_turn = None;
     Ok(())
 }

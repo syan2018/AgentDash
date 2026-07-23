@@ -936,6 +936,7 @@ impl DashAgentService {
                             entry_id: HistoryEntryId::new(format!("{effect_prefix}:turn-started")),
                             payload: HistoryPayload::TurnStarted {
                                 turn_id: turn_id.clone(),
+                                started_at_ms: crate::model::message::now_millis(),
                             },
                         },
                     ],
@@ -1205,6 +1206,7 @@ impl DashAgentService {
                             turn_id: overflow_turn_id.clone(),
                             error: DashCoreError::ContextOverflow.failure(),
                             lost: false,
+                            completed_at_ms: crate::model::message::now_millis(),
                         },
                     }],
                     enqueue_commands: vec![compaction_command, continuation_command],
@@ -1318,6 +1320,7 @@ impl DashAgentService {
                     entry_id: HistoryEntryId::new(format!("{prefix}:C-started")),
                     payload: HistoryPayload::TurnStarted {
                         turn_id: continuation_turn_id.clone(),
+                        started_at_ms: crate::model::message::now_millis(),
                     },
                 }],
                 enqueue_commands: vec![],
@@ -1443,6 +1446,7 @@ impl DashAgentService {
                                 turn_id: continuation_turn_id.clone(),
                                 error: error.failure(),
                                 lost,
+                                completed_at_ms: crate::model::message::now_millis(),
                             },
                         }],
                         enqueue_commands: vec![],
@@ -1686,6 +1690,7 @@ impl DashAgentService {
                             )),
                             payload: HistoryPayload::TurnCompleted {
                                 turn_id: active.turn_id.clone(),
+                                completed_at_ms: crate::model::message::now_millis(),
                             },
                         },
                     ],
@@ -1964,6 +1969,7 @@ impl DashAgentService {
                         payload: if interrupted {
                             HistoryPayload::TurnInterrupted {
                                 turn_id: turn_id.clone(),
+                                completed_at_ms: crate::model::message::now_millis(),
                             }
                         } else {
                             HistoryPayload::TurnFailed {
@@ -1972,6 +1978,7 @@ impl DashAgentService {
                                     .clone()
                                     .expect("failed turn requires failure evidence"),
                                 lost,
+                                completed_at_ms: crate::model::message::now_millis(),
                             }
                         },
                     }],
@@ -2090,7 +2097,8 @@ fn conversation_naming_request(
         matches!(
             &entry.payload,
             HistoryPayload::TurnStarted {
-                turn_id: candidate
+                turn_id: candidate,
+                ..
             } if candidate == turn_id
         )
     })?;

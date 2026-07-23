@@ -474,6 +474,7 @@ impl DashCoreTurn {
                 entry_id: self.terminal_entry_id,
                 payload: HistoryPayload::TurnCompleted {
                     turn_id: self.turn_id,
+                    completed_at_ms: crate::model::message::now_millis(),
                 },
             },
         ];

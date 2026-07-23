@@ -17,8 +17,9 @@ use agentdash_agent::dash::{
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
-    CanonicalConversationRecord, ItemCompletedNotification, ItemStartedNotification,
-    PresentationDurability, SourceInfo, ToolProtocolProjector, TraceInfo,
+    CanonicalConversationRecord, ItemCompletedNotification, ItemStartedNotification, PlatformEvent,
+    PresentationDurability, ProviderAttemptPhase, ProviderAttemptStatus, SourceInfo,
+    ToolProtocolProjector, TraceInfo,
 };
 use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentCapabilityProfile, AgentChange, AgentChangePage,
@@ -150,7 +151,7 @@ pub fn dash_complete_agent_observation(
         .iter()
         .rev()
         .find_map(|entry| {
-            let HistoryPayload::TurnStarted { turn_id } = &entry.payload else {
+            let HistoryPayload::TurnStarted { turn_id, .. } = &entry.payload else {
                 return None;
             };
             Some((turn_id, state.turns.get(turn_id)))
@@ -1900,8 +1901,34 @@ fn canonical_live_event(
     let thread_id = source.as_str();
     let turn_id = execution.turn_id.0.as_str();
     let event = match &execution.event {
-        DashCoreEvent::ProviderRoundStarted { .. }
-        | DashCoreEvent::ProviderRoundCompleted { .. } => return Ok(None),
+        DashCoreEvent::ProviderRoundStarted { .. } => BackboneEvent::Platform(
+            PlatformEvent::ProviderAttemptStatus(ProviderAttemptStatus {
+                turn_id: turn_id.to_owned(),
+                phase: ProviderAttemptPhase::ConnectedWaitingFirstDelta,
+                attempt: 1,
+                max_attempts: 1,
+                will_retry: false,
+                delay_ms: None,
+                reason_code: None,
+                message: None,
+                provider: None,
+                model: None,
+            }),
+        ),
+        DashCoreEvent::ProviderRoundCompleted { .. } => BackboneEvent::Platform(
+            PlatformEvent::ProviderAttemptStatus(ProviderAttemptStatus {
+                turn_id: turn_id.to_owned(),
+                phase: ProviderAttemptPhase::Succeeded,
+                attempt: 1,
+                max_attempts: 1,
+                will_retry: false,
+                delay_ms: None,
+                reason_code: None,
+                message: None,
+                provider: None,
+                model: None,
+            }),
+        ),
         DashCoreEvent::TextDelta { round, delta } => {
             BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
                 thread_id: thread_id.to_owned(),

@@ -55,6 +55,7 @@ fn history_with_turn() -> AgentHistory {
                 "entry-turn-start",
                 HistoryPayload::TurnStarted {
                     turn_id: AgentTurnId::new("turn-a"),
+                    started_at_ms: 1_000,
                 },
             ),
             contribution(
@@ -69,6 +70,7 @@ fn history_with_turn() -> AgentHistory {
                 "entry-turn-complete",
                 HistoryPayload::TurnCompleted {
                     turn_id: AgentTurnId::new("turn-a"),
+                    completed_at_ms: 2_000,
                 },
             ),
         ])
@@ -382,6 +384,7 @@ fn replay_property_holds_across_many_history_shapes_and_serialization() {
                         &format!("{seed}-{turn}-start"),
                         HistoryPayload::TurnStarted {
                             turn_id: turn_id.clone(),
+                            started_at_ms: turn as u64 * 1_000,
                         },
                     ),
                     contribution(
@@ -394,7 +397,10 @@ fn replay_property_holds_across_many_history_shapes_and_serialization() {
                     ),
                     contribution(
                         &format!("{seed}-{turn}-complete"),
-                        HistoryPayload::TurnCompleted { turn_id },
+                        HistoryPayload::TurnCompleted {
+                            turn_id,
+                            completed_at_ms: turn as u64 * 1_000 + 500,
+                        },
                     ),
                 ])
                 .unwrap();
@@ -628,12 +634,14 @@ fn ordered_changes_capture_incremental_history_and_active_turn_facts() {
                     "change-start",
                     HistoryPayload::TurnStarted {
                         turn_id: turn_id.clone(),
+                        started_at_ms: 1_000,
                     },
                 ),
                 contribution(
                     "change-completed",
                     HistoryPayload::TurnCompleted {
                         turn_id: turn_id.clone(),
+                        completed_at_ms: 2_000,
                     },
                 ),
             ],
@@ -647,7 +655,10 @@ fn ordered_changes_capture_incremental_history_and_active_turn_facts() {
         &changes[0].payload,
         agentdash_agent::dash::DashAgentChangePayload::HistoryEntry {
             entry: agentdash_agent::dash::AgentHistoryEntry {
-                payload: HistoryPayload::TurnStarted { turn_id: started },
+                payload: HistoryPayload::TurnStarted {
+                    turn_id: started,
+                    ..
+                },
                 ..
             }
         } if started == &turn_id
@@ -662,7 +673,10 @@ fn ordered_changes_capture_incremental_history_and_active_turn_facts() {
         &changes[2].payload,
         agentdash_agent::dash::DashAgentChangePayload::HistoryEntry {
             entry: agentdash_agent::dash::AgentHistoryEntry {
-                payload: HistoryPayload::TurnCompleted { turn_id: completed },
+                payload: HistoryPayload::TurnCompleted {
+                    turn_id: completed,
+                    ..
+                },
                 ..
             }
         } if completed == &turn_id

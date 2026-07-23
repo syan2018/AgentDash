@@ -82,7 +82,7 @@ pub(crate) fn entry_records(
                 ),
             ));
         }
-        HistoryPayload::TurnStarted { turn_id } => {
+        HistoryPayload::TurnStarted { turn_id, .. } => {
             events.push(BackboneEvent::TurnStarted(TurnStartedNotification {
                 thread_id: session_id.to_owned(),
                 turn: turn(state, turn_id, None)?,
@@ -186,7 +186,8 @@ pub(crate) fn entry_records(
                 completed_at_ms: 0,
             }));
         }
-        HistoryPayload::TurnCompleted { turn_id } | HistoryPayload::TurnInterrupted { turn_id } => {
+        HistoryPayload::TurnCompleted { turn_id, .. }
+        | HistoryPayload::TurnInterrupted { turn_id, .. } => {
             events.push(BackboneEvent::TurnCompleted(TurnCompletedNotification {
                 thread_id: session_id.to_owned(),
                 turn: turn(state, turn_id, None)?,
@@ -445,9 +446,13 @@ fn turn(
         items,
         items_view: codex::TurnItemsView::Full,
         status: turn_status(turn.status),
-        started_at: None,
-        completed_at: None,
-        duration_ms: None,
+        started_at: Some((turn.started_at_ms / 1_000) as i64),
+        completed_at: turn
+            .completed_at_ms
+            .map(|completed_at_ms| (completed_at_ms / 1_000) as i64),
+        duration_ms: turn
+            .completed_at_ms
+            .map(|completed_at_ms| completed_at_ms.saturating_sub(turn.started_at_ms) as i64),
         error,
     })
 }
@@ -471,16 +476,16 @@ fn turn_status(status: ActivityStatus) -> codex::TurnStatus {
 
 fn turn_id(payload: &HistoryPayload) -> Option<&str> {
     match payload {
-        HistoryPayload::TurnStarted { turn_id }
+        HistoryPayload::TurnStarted { turn_id, .. }
         | HistoryPayload::ItemStarted { turn_id, .. }
         | HistoryPayload::ItemCompleted { turn_id, .. }
         | HistoryPayload::AgentOutput { turn_id, .. }
         | HistoryPayload::ToolCall { turn_id, .. }
         | HistoryPayload::ToolResult { turn_id, .. }
         | HistoryPayload::InteractionRequested { turn_id, .. }
-        | HistoryPayload::TurnCompleted { turn_id }
+        | HistoryPayload::TurnCompleted { turn_id, .. }
         | HistoryPayload::TurnFailed { turn_id, .. }
-        | HistoryPayload::TurnInterrupted { turn_id } => Some(&turn_id.0),
+        | HistoryPayload::TurnInterrupted { turn_id, .. } => Some(&turn_id.0),
         HistoryPayload::CompactionStarted { compaction_id, .. }
         | HistoryPayload::CompactionApplied { compaction_id, .. }
         | HistoryPayload::CompactionCompleted { compaction_id }
@@ -660,6 +665,7 @@ mod tests {
             },
             HistoryPayload::TurnStarted {
                 turn_id: turn_id.clone(),
+                started_at_ms: 1_000,
             },
             HistoryPayload::ItemStarted {
                 turn_id: turn_id.clone(),
@@ -687,7 +693,10 @@ mod tests {
                 turn_id: turn_id.clone(),
                 item_id: item_id.clone(),
             },
-            HistoryPayload::TurnCompleted { turn_id },
+            HistoryPayload::TurnCompleted {
+                turn_id,
+                completed_at_ms: 2_000,
+            },
             HistoryPayload::SurfaceRevoked { surface },
         ]
         .into_iter()
@@ -718,6 +727,9 @@ mod tests {
                 _ => None,
             })
             .expect("completed turn");
+        assert_eq!(completed_turn.started_at, Some(1));
+        assert_eq!(completed_turn.completed_at, Some(2));
+        assert_eq!(completed_turn.duration_ms, Some(1_000));
         assert!(completed_turn.items.iter().any(|item| {
             serde_json::to_value(item).is_ok_and(|value| value["type"] == "fsRead")
         }));
@@ -757,6 +769,7 @@ mod tests {
             HistoryPayload::SurfaceApplied { surface },
             HistoryPayload::TurnStarted {
                 turn_id: turn_id.clone(),
+                started_at_ms: 1_000,
             },
             HistoryPayload::ItemStarted {
                 turn_id: turn_id.clone(),

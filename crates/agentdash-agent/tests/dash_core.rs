@@ -60,6 +60,7 @@ async fn dash_agent_maps_explicit_core_output_back_into_history() {
             entry_id: HistoryEntryId::new("turn-start"),
             payload: HistoryPayload::TurnStarted {
                 turn_id: turn_id.clone(),
+                started_at_ms: 1_000,
             },
         })
         .unwrap();

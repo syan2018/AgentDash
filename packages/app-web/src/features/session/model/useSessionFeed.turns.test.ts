@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { SessionDisplayEntry, SessionEventEnvelope } from "./types";
-import { segmentByTurn } from "./useSessionFeed";
+import { createInitialStreamState, reduceStreamState } from "./sessionStreamReducer";
+import { mergeThinkingIntoDisplayItems, segmentByTurn } from "./useSessionFeed";
 
 function failedTurnEvent(): SessionEventEnvelope {
   return {
@@ -42,6 +43,54 @@ function failedTurnEvent(): SessionEventEnvelope {
     presentation_id: "turn-1:terminal",
     runtime_change_sequence: null,
     baseline: true,
+  };
+}
+
+function providerStatusEvent(
+  phase: "connected_waiting_first_delta" | "succeeded",
+  eventSeq: number,
+): SessionEventEnvelope {
+  return {
+    session_id: "session-1",
+    event_seq: eventSeq,
+    occurred_at_ms: eventSeq,
+    committed_at_ms: null,
+    session_update_type: "platform",
+    turn_id: "turn-1",
+    entry_index: null,
+    tool_call_id: null,
+    notification: {
+      event: {
+        type: "platform",
+        payload: {
+          kind: "provider_attempt_status",
+          data: {
+            turn_id: "turn-1",
+            phase,
+            attempt: 1,
+            max_attempts: 1,
+            will_retry: false,
+            delay_ms: null,
+            reason_code: null,
+            message: null,
+            provider: null,
+            model: null,
+          },
+        },
+      },
+      sessionId: "session-1",
+      source: {
+        connectorId: "dash-agent",
+        connectorType: "native",
+        executorId: null,
+      },
+      trace: { turnId: "turn-1", entryIndex: null },
+      observedAt: "1970-01-01T00:00:00.000Z",
+    },
+    ephemeral: true,
+    presentation_id: `live:${eventSeq}`,
+    runtime_change_sequence: null,
+    baseline: false,
   };
 }
 
@@ -86,5 +135,49 @@ describe("session turn segmentation", () => {
     const [segment] = segmentByTurn([agentMessage], [], null);
 
     expect(segment?.finalOutput).toBe(agentMessage);
+  });
+
+  it("keeps durable turn timing for the execution-time presentation", () => {
+    const event = failedTurnEvent();
+    if (event.notification.event.type !== "turn_completed") {
+      throw new Error("expected terminal event");
+    }
+    event.notification.event.payload.turn.startedAt = 1_000;
+    event.notification.event.payload.turn.completedAt = 1_003;
+    event.notification.event.payload.turn.durationMs = 2_500;
+
+    const [segment] = segmentByTurn([], [event], null);
+
+    expect(segment).toEqual(expect.objectContaining({
+      startedAtMs: 1_000_000,
+      durationMs: 2_500,
+    }));
+  });
+});
+
+describe("provider waiting thinking state", () => {
+  it("shows thinking before the first delta and clears it when the provider round completes", () => {
+    const waitingState = reduceStreamState(
+      createInitialStreamState([]),
+      [providerStatusEvent("connected_waiting_first_delta", 1)],
+    );
+
+    expect(waitingState.providerWaitingSeqs.get("turn-1")).toBe(1);
+    expect(mergeThinkingIntoDisplayItems([], waitingState.providerWaitingSeqs)).toEqual([
+      expect.objectContaining({
+        type: "aggregated_thinking",
+        turnId: "turn-1",
+        entries: [],
+        isStreamingThinking: true,
+      }),
+    ]);
+
+    const completedState = reduceStreamState(
+      waitingState,
+      [providerStatusEvent("succeeded", 2)],
+    );
+
+    expect(completedState.providerWaitingSeqs.has("turn-1")).toBe(false);
+    expect(mergeThinkingIntoDisplayItems([], completedState.providerWaitingSeqs)).toEqual([]);
   });
 });

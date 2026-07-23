@@ -3277,10 +3277,22 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
         })
         .await
         .unwrap();
-    assert!(snapshot.conversation_history.iter().any(|record| matches!(
-        &record.presentation.envelope.event,
-        BackboneEvent::TurnCompleted(_)
-    )));
+    let completed_turn = snapshot
+        .conversation_history
+        .iter()
+        .find_map(|record| match &record.presentation.envelope.event {
+            BackboneEvent::TurnCompleted(notification) => Some(&notification.turn),
+            _ => None,
+        })
+        .expect("completed turn should be projected");
+    assert!(
+        completed_turn.started_at.is_some(),
+        "durable turn must retain its start time"
+    );
+    assert!(
+        completed_turn.duration_ms.is_some(),
+        "durable turn must retain its execution duration"
+    );
     let durable_item_id = snapshot
         .conversation_history
         .iter()
@@ -3309,6 +3321,56 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
             .as_ref()
             .map(|turn| (turn.turn_id.as_str(), turn.status)),
         Some(("turn:live-input", codex::TurnStatus::Completed))
+    );
+}
+
+#[tokio::test]
+async fn provider_waiting_before_first_delta_is_published_as_live_thinking_state() {
+    let started = Arc::new(Notify::new());
+    let service = Arc::new(service_with_provider(Arc::new(BlockingProvider {
+        started: started.clone(),
+    })));
+    let source = create_source(&service, "dash-provider-waiting").await;
+    let mut live_events = service.live_events(source.clone()).await.unwrap();
+    let execute_service = service.clone();
+    let execute_source = source.clone();
+    let execution = tokio::spawn(async move {
+        execute_service
+            .execute(submit_envelope(
+                execute_source,
+                "provider-waiting-input",
+                "provider-waiting-effect",
+            ))
+            .await
+    });
+    started.notified().await;
+
+    let mut waiting_status = None;
+    for _ in 0..8 {
+        let event = tokio::time::timeout(Duration::from_millis(100), live_events.next())
+            .await
+            .expect("provider waiting event should arrive")
+            .expect("live event stream should remain available")
+            .expect("live event stream should remain open");
+        let value = serde_json::to_value(&event.record.presentation.envelope.event).unwrap();
+        if value.pointer("/type").and_then(serde_json::Value::as_str) == Some("platform")
+            && value
+                .pointer("/payload/kind")
+                .and_then(serde_json::Value::as_str)
+                == Some("provider_attempt_status")
+        {
+            waiting_status = value
+                .pointer("/payload/data/phase")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            break;
+        }
+    }
+    execution.abort();
+
+    assert_eq!(
+        waiting_status.as_deref(),
+        Some("connected_waiting_first_delta")
     );
 }
 

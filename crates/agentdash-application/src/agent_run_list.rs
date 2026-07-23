@@ -4,13 +4,9 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_runtime_contract::ManagedRuntimeLifecycleStatus;
-use agentdash_application_agentrun::agent_run::{
-    AgentRunProductProjectionQueryPort, resolve_agent_run_display_title,
-};
+use agentdash_application_agentrun::agent_run::resolve_agent_run_display_title;
 use agentdash_domain::{
     agent::ProjectAgentRepository,
-    agent_run_target::AgentRunTarget,
     workflow::{
         AgentLineage, AgentLineageRepository, LifecycleAgent, LifecycleAgentRepository,
         LifecycleRun, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
@@ -32,7 +28,6 @@ pub struct ProjectAgentRunListQuery {
     lineage_repo: Arc<dyn AgentLineageRepository>,
     subject_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     project_agent_repo: Arc<dyn ProjectAgentRepository>,
-    product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
 }
 
 #[derive(Clone)]
@@ -42,7 +37,6 @@ pub struct ProjectAgentRunListQueryDeps {
     pub lineage_repo: Arc<dyn AgentLineageRepository>,
     pub subject_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub project_agent_repo: Arc<dyn ProjectAgentRepository>,
-    pub product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
 }
 
 #[derive(Debug, Clone)]
@@ -68,7 +62,6 @@ pub struct AgentRunListEntryModel {
     pub lifecycle_status: String,
     pub last_activity_at: String,
     pub project_agent_label: Option<String>,
-    pub runtime: Option<AgentRunListRuntimeSummaryModel>,
     pub subject: Option<AgentRunListSubjectModel>,
     pub subagent_count: u32,
     pub children: Vec<AgentRunListChildModel>,
@@ -83,15 +76,7 @@ pub struct AgentRunListChildModel {
     pub lifecycle_status: String,
     pub last_activity_at: String,
     pub project_agent_label: Option<String>,
-    pub runtime: Option<AgentRunListRuntimeSummaryModel>,
     pub children: Vec<AgentRunListChildModel>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AgentRunListRuntimeSummaryModel {
-    pub thread_status: ManagedRuntimeLifecycleStatus,
-    pub active_turn_id: Option<String>,
-    pub thread_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -109,7 +94,6 @@ impl ProjectAgentRunListQuery {
             lineage_repo: deps.lineage_repo,
             subject_repo: deps.subject_repo,
             project_agent_repo: deps.project_agent_repo,
-            product_projection: deps.product_projection,
         }
     }
 
@@ -184,7 +168,6 @@ impl ProjectAgentRunListQuery {
                     lifecycle_status: fact.lifecycle_status.clone(),
                     last_activity_at: fact.last_activity_at.clone(),
                     project_agent_label: fact.project_agent_label.clone(),
-                    runtime: fact.runtime.clone(),
                     subject: fact.subject.clone(),
                     subagent_count: projected_descendant_count(&children),
                     children,
@@ -214,24 +197,11 @@ impl ProjectAgentRunListQuery {
         let project_agent_label = agent
             .project_agent_id
             .and_then(|id| project_agents.get(&id).cloned());
-        let runtime_snapshot = self
-            .product_projection
-            .runtime_presentation_snapshot(&AgentRunTarget {
-                run_id: run.id,
-                agent_id: agent.id,
-            })
-            .await
-            .unwrap_or(None);
         let title = resolve_agent_run_display_title(
             agent.workspace_title.as_deref(),
             agent.workspace_title_source.as_deref(),
         )
         .value;
-        let runtime = runtime_snapshot.map(|snapshot| AgentRunListRuntimeSummaryModel {
-            thread_status: snapshot.lifecycle,
-            active_turn_id: snapshot.active_turn_id().map(str::to_owned),
-            thread_name: snapshot.thread_name,
-        });
         let subject = self
             .subject_repo
             .list_by_anchor(run.id, Some(agent.id))
@@ -249,7 +219,6 @@ impl ProjectAgentRunListQuery {
             lifecycle_status: agent.status.clone(),
             last_activity_at: agent.updated_at.to_rfc3339(),
             project_agent_label,
-            runtime,
             subject,
         })
     }
@@ -262,7 +231,6 @@ struct AgentFacts {
     lifecycle_status: String,
     last_activity_at: String,
     project_agent_label: Option<String>,
-    runtime: Option<AgentRunListRuntimeSummaryModel>,
     subject: Option<AgentRunListSubjectModel>,
 }
 
@@ -302,7 +270,6 @@ fn project_children(
                 lifecycle_status: fact.lifecycle_status.clone(),
                 last_activity_at: fact.last_activity_at.clone(),
                 project_agent_label: fact.project_agent_label.clone(),
-                runtime: fact.runtime.clone(),
                 children: nested,
             })
         })
@@ -373,110 +340,13 @@ fn decode_cursor(cursor: &str) -> Option<(i64, Uuid)> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
-    use agentdash_agent_runtime_contract::{
-        ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
-        ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot,
-        ManagedRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
-        SurfaceRevision,
-    };
-    use agentdash_agent_service_api::AgentLiveEventStream;
-    use agentdash_application_agentrun::agent_run::{
-        AgentRunProductProjectionError, AgentRunProductRuntimeBinding,
-        AgentRunProductRuntimeSnapshotObservation, AgentRunTerminalChangePage,
-        AgentRunTerminalChangeSequence, AgentRunTerminalSnapshot, ProductAgentFrameRef,
-        ProductExecutionProfileRef,
-    };
     use agentdash_domain::workflow::AgentSource;
     use agentdash_test_support::workflow::{
         MemoryAgentLineageRepository, MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
         MemoryLifecycleSubjectAssociationRepository, MemoryProjectAgentRepository,
     };
-    use async_trait::async_trait;
     use chrono::{Duration, Utc};
-
-    struct FixtureRuntime {
-        fail_inspect: bool,
-        thread_name: Option<String>,
-    }
-
-    #[async_trait]
-    impl AgentRunProductProjectionQueryPort for FixtureRuntime {
-        async fn runtime_snapshot(
-            &self,
-            _: &AgentRunTarget,
-        ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError> {
-            if self.fail_inspect {
-                return Err(AgentRunProductProjectionError::Runtime(
-                    "fixture projection failure".to_string(),
-                ));
-            }
-            self.thread_name
-                .clone()
-                .map(runtime_snapshot)
-                .ok_or(AgentRunProductProjectionError::TargetNotBound)
-        }
-
-        async fn runtime_snapshot_observation(
-            &self,
-            target: &AgentRunTarget,
-        ) -> Result<AgentRunProductRuntimeSnapshotObservation, AgentRunProductProjectionError>
-        {
-            if self.fail_inspect {
-                return Err(AgentRunProductProjectionError::Runtime(
-                    "fixture projection failure".to_string(),
-                ));
-            }
-            let Some(thread_name) = self.thread_name.clone() else {
-                return Ok(AgentRunProductRuntimeSnapshotObservation::Absent {
-                    requested_target: target.clone(),
-                });
-            };
-            let snapshot = runtime_snapshot(thread_name);
-            let product_binding = runtime_binding(target.clone(), &snapshot);
-            Ok(AgentRunProductRuntimeSnapshotObservation::Current {
-                product_binding,
-                snapshot,
-            })
-        }
-
-        async fn runtime_presentation_snapshot(
-            &self,
-            _: &AgentRunTarget,
-        ) -> Result<Option<ManagedRuntimeSnapshot>, AgentRunProductProjectionError> {
-            if self.fail_inspect {
-                return Err(AgentRunProductProjectionError::Runtime(
-                    "fixture projection failure".to_string(),
-                ));
-            }
-            Ok(self.thread_name.clone().map(runtime_snapshot))
-        }
-
-        async fn runtime_live_events(
-            &self,
-            _: &AgentRunTarget,
-        ) -> Result<Box<dyn AgentLiveEventStream>, AgentRunProductProjectionError> {
-            Err(AgentRunProductProjectionError::Runtime("unused".into()))
-        }
-
-        async fn terminal_snapshot(
-            &self,
-            _: &AgentRunTarget,
-        ) -> Result<AgentRunTerminalSnapshot, AgentRunProductProjectionError> {
-            Err(AgentRunProductProjectionError::Terminal("unused".into()))
-        }
-
-        async fn terminal_changes(
-            &self,
-            _: &AgentRunTarget,
-            _: Option<AgentRunTerminalChangeSequence>,
-            _: usize,
-        ) -> Result<AgentRunTerminalChangePage, AgentRunProductProjectionError> {
-            Err(AgentRunProductProjectionError::Terminal("unused".into()))
-        }
-    }
 
     struct QueryFixture {
         query: ProjectAgentRunListQuery,
@@ -485,14 +355,7 @@ mod tests {
         lineage_repo: Arc<MemoryAgentLineageRepository>,
     }
 
-    fn query_fixture(fail_inspect: bool) -> QueryFixture {
-        query_fixture_with_thread_name(fail_inspect, None)
-    }
-
-    fn query_fixture_with_thread_name(
-        fail_inspect: bool,
-        thread_name: Option<&str>,
-    ) -> QueryFixture {
+    fn query_fixture() -> QueryFixture {
         let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
         let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
         let lineage_repo = Arc::new(MemoryAgentLineageRepository::default());
@@ -502,76 +365,12 @@ mod tests {
             lineage_repo: lineage_repo.clone(),
             subject_repo: Arc::new(MemoryLifecycleSubjectAssociationRepository::default()),
             project_agent_repo: Arc::new(MemoryProjectAgentRepository::default()),
-            product_projection: Arc::new(FixtureRuntime {
-                fail_inspect,
-                thread_name: thread_name.map(str::to_string),
-            }),
         });
         QueryFixture {
             query,
             run_repo,
             agent_repo,
             lineage_repo,
-        }
-    }
-
-    fn source_binding() -> ManagedRuntimeSourceBindingEvidence {
-        ManagedRuntimeSourceBindingEvidence {
-            source_ref: RuntimeSourceRef::new("source-list-title").expect("source ref"),
-            committed_at_revision: RuntimeProjectionRevision(1),
-            applied_surface_revision: SurfaceRevision(1),
-            activated_at_revision: Some(RuntimeProjectionRevision(1)),
-        }
-    }
-
-    fn runtime_binding(
-        target: AgentRunTarget,
-        snapshot: &ManagedRuntimeSnapshot,
-    ) -> AgentRunProductRuntimeBinding {
-        let mut execution_profile = ProductExecutionProfileRef {
-            profile_key: "list-title-profile".to_string(),
-            profile_revision: 1,
-            profile_digest: String::new(),
-            configuration: serde_json::json!({"provider": "fixture"}),
-            credential_scope: None,
-        };
-        execution_profile.refresh_digest();
-        AgentRunProductRuntimeBinding {
-            target: target.clone(),
-            runtime_thread_id: snapshot.thread_id.clone(),
-            agent: agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
-                service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
-                    "fixture-agent",
-                )
-                .unwrap(),
-                source: agentdash_agent_service_api::AgentSourceCoordinate::new("fixture-source")
-                    .unwrap(),
-            },
-            launch_frame: ProductAgentFrameRef {
-                frame_id: Uuid::new_v4(),
-                agent_id: target.agent_id,
-                revision: 1,
-            },
-            execution_profile_digest: execution_profile.profile_digest.clone(),
-            execution_profile,
-        }
-    }
-
-    fn runtime_snapshot(thread_name: String) -> ManagedRuntimeSnapshot {
-        ManagedRuntimeSnapshot {
-            thread_id: "thread-list-title".parse().expect("thread id"),
-            revision: RuntimeProjectionRevision(1),
-            captured_at_ms: 1,
-            lifecycle: ManagedRuntimeLifecycleStatus::Active,
-            thread_name: Some(thread_name),
-            thread_name_source: None,
-            interactions: Vec::new(),
-            conversation_history: Vec::new(),
-            operations: Vec::new(),
-            source_binding: Some(source_binding()),
-            authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
-            fidelity: ManagedRuntimeProjectionFidelity::Exact,
-            command_availability: BTreeMap::new(),
         }
     }
 
@@ -616,7 +415,6 @@ mod tests {
                     lifecycle_status: "completed".to_string(),
                     last_activity_at: "2026-07-10T00:01:00Z".to_string(),
                     project_agent_label: None,
-                    runtime: None,
                     subject: None,
                 },
             ),
@@ -628,7 +426,6 @@ mod tests {
                     lifecycle_status: "running".to_string(),
                     last_activity_at: "2026-07-10T00:02:00Z".to_string(),
                     project_agent_label: None,
-                    runtime: None,
                     subject: None,
                 },
             ),
@@ -664,7 +461,6 @@ mod tests {
                         lifecycle_status: "active".to_string(),
                         last_activity_at: "2026-07-12T00:00:00Z".to_string(),
                         project_agent_label: None,
-                        runtime: None,
                         subject: None,
                     },
                 )
@@ -683,8 +479,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn query_uses_run_activity_keyset_and_keeps_unbound_runtime_optional() {
-        let fixture = query_fixture(false);
+    async fn query_uses_run_activity_keyset() {
+        let fixture = query_fixture();
         let project_id = Uuid::new_v4();
         let mut older_run = LifecycleRun::new_plain(project_id);
         older_run.last_activity_at = Utc::now() - Duration::minutes(2);
@@ -726,7 +522,6 @@ mod tests {
             .expect("first page");
         assert_eq!(first.entries.len(), 1);
         assert_eq!(first.entries[0].run_id, newer_run.id);
-        assert!(first.entries[0].runtime.is_none());
         let cursor = first.next_cursor.expect("next cursor");
 
         let second = fixture
@@ -745,7 +540,7 @@ mod tests {
 
     #[tokio::test]
     async fn query_keeps_uninitialized_product_title_pending() {
-        let fixture = query_fixture_with_thread_name(false, Some("Runtime 会话名"));
+        let fixture = query_fixture();
         let project_id = Uuid::new_v4();
         let run = LifecycleRun::new_plain(project_id);
         let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
@@ -766,18 +561,11 @@ mod tests {
 
         assert_eq!(page.entries.len(), 1);
         assert_eq!(page.entries[0].title, "新会话");
-        assert_eq!(
-            page.entries[0]
-                .runtime
-                .as_ref()
-                .and_then(|runtime| runtime.thread_name.as_deref()),
-            Some("Runtime 会话名")
-        );
     }
 
     #[tokio::test]
-    async fn query_keeps_explicit_workspace_title_above_runtime_name() {
-        let fixture = query_fixture_with_thread_name(false, Some("Runtime 会话名"));
+    async fn query_uses_explicit_product_workspace_title() {
+        let fixture = query_fixture();
         let project_id = Uuid::new_v4();
         let run = LifecycleRun::new_plain(project_id);
         let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
@@ -801,7 +589,7 @@ mod tests {
 
     #[tokio::test]
     async fn query_projects_every_agent_once_when_lineage_contains_a_cycle() {
-        let fixture = query_fixture(false);
+        let fixture = query_fixture();
         let project_id = Uuid::new_v4();
         let run = LifecycleRun::new_plain(project_id);
         let root = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
@@ -850,29 +638,5 @@ mod tests {
         assert_eq!(page.entries[0].children[0].agent_id, child.id);
         assert!(page.entries[0].children[0].children.is_empty());
         assert_eq!(page.entries[0].subagent_count, 1);
-    }
-
-    #[tokio::test]
-    async fn query_keeps_agent_runs_when_optional_runtime_summary_is_unavailable() {
-        let fixture = query_fixture(true);
-        let project_id = Uuid::new_v4();
-        let run = LifecycleRun::new_plain(project_id);
-        let agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
-        fixture.run_repo.create(&run).await.expect("run");
-        fixture.agent_repo.create(&agent).await.expect("agent");
-
-        let page = fixture
-            .query
-            .list(ProjectAgentRunListInput {
-                project_id,
-                limit: None,
-                cursor: None,
-            })
-            .await
-            .expect("Runtime summary failure must not fail the Product list");
-        assert_eq!(page.entries.len(), 1);
-        assert_eq!(page.entries[0].run_id, run.id);
-        assert_eq!(page.entries[0].agent_id, agent.id);
-        assert!(page.entries[0].runtime.is_none());
     }
 }

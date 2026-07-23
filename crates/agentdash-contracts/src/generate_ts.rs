@@ -207,14 +207,14 @@ use agentdash_contracts::workflow::{
     AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse,
     AgentRunCommandPreconditionView, AgentRunLineageRef, AgentRunListChildView,
-    AgentRunListEntryView, AgentRunListRuntimeSummaryView, AgentRunListRuntimeThreadStatus,
-    AgentRunOwnershipView, AgentRunRefDto, AgentRunResourceSurfaceCoordinateView,
-    AgentRunResourceSurfaceSourceAnchorView, AgentRunRuntimeCommandRequest, AgentRunView,
-    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
-    CapabilityScopeDto, ContinueLifecycleRunResponse, ConversationCommandKind,
-    ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandStaleGuardView,
-    ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
+    AgentRunListEntryView, AgentRunOwnershipView, AgentRunRefDto,
+    AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView,
+    AgentRunRuntimeCommandRequest, AgentRunView, AgentRunWorkspaceControlPlaneStatus,
+    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceShell, AgentRunWorkspaceView,
+    CapabilityCatalogEntryDto, CapabilityCatalogResponse, CapabilityScopeDto,
+    ContinueLifecycleRunResponse, ConversationCommandKind, ConversationCommandPlacement,
+    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
+    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
     ConversationWaitingItemView, DefinitionSource, DeleteAgentProcedureResponse,
@@ -896,8 +896,6 @@ fn main() {
             export_all::<SubjectExecutionAttemptView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
-            export_all::<AgentRunListRuntimeSummaryView>(dir);
-            export_all::<AgentRunListRuntimeThreadStatus>(dir);
             export_all::<AgentRunListChildView>(dir);
             export_all::<AgentRunListEntryView>(dir);
             export_all::<ProjectAgentRunListView>(dir);

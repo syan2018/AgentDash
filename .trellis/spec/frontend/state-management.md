@@ -70,10 +70,10 @@ planAgentRunControlPlaneRefresh(event): {
 ### 3. Contracts
 
 - 只有`seq > historyReplayBoundarySeq`的live `thread_name_updated`执行副作用。
-- planner同时刷新当前AgentRun workspace与project AgentRun list；store收到现有
+- planner同时刷新当前AgentRun workspace与Project AgentRun list；store收到
   `agent_run_list/title_changed` product invalidation时也重新查询列表。
-- payload不直接patch shell/list；refetch结果应用后端统一的
-  explicit title > Runtime name > `新会话`规则。
+- payload不直接patch shell/list；refetch结果读取Product-owned
+  `LifecycleAgent.workspace_title`，缺省展示`新会话`。
 
 ### 4. Validation & Error Matrix
 
@@ -82,6 +82,7 @@ planAgentRunControlPlaneRefresh(event): {
 | hydration boundary内名称事件 | 保留会话展示归约；workspace/list refetch次数为0 |
 | live set/replace/clear | workspace与list各进入一次合并后的refresh plan |
 | product `title_changed` invalidation | list store重新查询；不信任事件携带title |
+| 普通Project `StateChanged` | list store不查询；该事件没有声明list projection已变化 |
 | target在异步refresh期间切换 | 旧target结果被currentness fence，不覆盖新workspace |
 
 ### 5. Good / Base / Bad Cases
@@ -94,7 +95,8 @@ planAgentRunControlPlaneRefresh(event): {
 
 - Session dispatcher断言hydration历史事件无副作用、live事件输出名称refresh reason。
 - Control-plane测试断言名称reason同时刷新workspace/list，并与其他reason合并而不重复请求。
-- List store测试断言`title_changed`触发重新查询；target切换测试断言旧响应不能覆盖新target。
+- List store测试断言`title_changed`触发重新查询、普通Project `StateChanged`不查询；
+  target切换测试断言旧响应不能覆盖新target。
 
 ### 7. Wrong vs Correct
 

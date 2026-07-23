@@ -136,20 +136,17 @@ describe("agent-run list state store", () => {
     ).toEqual(["run-old", "run-new"]);
   });
 
-  it("Project 事件触发同一 Project 的 list state refresh", async () => {
+  it("普通 Project StateChanged 不会让 AgentRun list 重复查询", async () => {
     const before = agentRunEntry("run-1", "agent-1", "刷新前", "2026-06-25T01:00:00Z");
-    const after = agentRunEntry("run-2", "agent-2", "刷新后", "2026-06-25T02:00:00Z");
-    mockedFetchProjectAgentRuns
-      .mockResolvedValueOnce(listView([before]))
-      .mockResolvedValueOnce(listView([after]));
+    mockedFetchProjectAgentRuns.mockResolvedValueOnce(listView([before]));
 
     await useAgentRunListStateStore.getState().ensureFirstPage("project-1");
     await invalidateAgentRunListStateForProjectEvent(projectStateChanged("project-1"), "project-1");
 
-    expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(2);
+    expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(1);
     expect(
       useAgentRunListStateStore.getState().byProjectId["project-1"]?.entries[0]?.run_ref.run_id,
-    ).toBe("run-2");
+    ).toBe("run-1");
   });
 
   it("project-scoped AgentRunList projection invalidation 触发列表 refresh", async () => {

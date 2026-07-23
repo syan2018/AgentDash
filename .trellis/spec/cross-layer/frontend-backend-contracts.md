@@ -104,9 +104,10 @@ AgentRunCommandReceipt {
 - AgentRun cutover必须维护route ledger：每个前端service方法都要对应仍注册的HTTP route、application owner、generated contract与至少一个contract test。删除router入口时，必须在同一变更中迁移消费者或删除service/contract；文件级替换router不代表cutover完成。
 - Project AgentRun列表使用generated `ProjectAgentRunListView` /
   `AgentRunListEntryView` / `AgentRunListChildView`。title/activity/subject/lineage来自Product
-  facts；Agent status 是 optional enrichment。
-- Agent resolve/read 失败不能清空 Product list/workspace。前端展示 Product shell 与 typed
-  unavailable，再在 Agent 恢复后重新查询。
+  facts；`lifecycle_status`来自LifecycleAgent。列表contract不包含Agent snapshot、active turn或
+  Runtime thread summary。
+- Agent resolve/read 失败不能清空 Product workspace。Project list不发起Agent resolve/read；
+  前端直接展示Product shell，进入workspace后再建立authoritative snapshot/live lane。
 - context、compaction、interaction 与 tool approval 均通过 Product/Agent facade，最终由
   concrete Agent command/inspection证明；不存在独立 session command 或 vendor DTO 路径。
 - Interaction response使用generated `InteractionResponse` union；approval、user input、MCP elicitation与dynamic tool result共用一个`/respond` route。UI只有在刷新后的Runtime snapshot声明`interaction_respond=available`时才启用对应控件。
@@ -143,9 +144,10 @@ AgentRunCommandReceipt {
 | broadcast Lagged | 输出typed retryable error并断流；浏览器重新读取authoritative snapshot |
 | presentation envelope合法但protected body无法通过generated validator | 拒绝该frame并显式报protocol error；不降级为文本消息或generic tool card |
 | workspace/list route在cutover中移除但service仍存在 | route ledger/contract test失败；同一变更迁移projection或删除consumer |
-| Runtime thread为`active`但没有`active_turn_id` | 列表显示idle/ready，不伪造running |
-| Runtime thread为`suspended` | 列表显示独立paused/suspended状态；不得折叠为turn interrupted或据此生成命令权限 |
-| Runtime thread为`closed` | 使用Lifecycle终态区分completed/failed/cancelled，不恒定显示completed |
+| Project list收到普通`StateChanged` | 不刷新列表；等待`projection=agent_run_list`的typed invalidation |
+| LifecycleAgent为`active` | 列表显示idle/ready；Agent实时turn状态由workspace live lane负责 |
+| LifecycleAgent为`running/suspended/cancelling` | 列表直接映射对应Product lifecycle presentation |
+| LifecycleAgent为`completed/failed/cancelled` | 列表分别显示completed/failed/interrupted |
 
 ### Tests Required
 
@@ -163,7 +165,9 @@ AgentRunCommandReceipt {
 - Stream state测试覆盖target切换、连接lane变化、重复sequence、terminal与Lagged后snapshot
   recovery。
 - Route ledger test至少枚举AgentRun list/workspace/composer/cancel/runtime/context/events/approval的前端consumer与Axum route，防止cutover静默删入口。
-- Project列表测试覆盖service URL、generated DTO消费、status presentation与state分页/失效刷新；真实产品验证覆盖侧栏、完整列表及列表行导航。
+- Project列表测试覆盖service URL、generated DTO消费、Product lifecycle presentation与state分页；
+  失效测试断言只有`agent_run_list` typed projection event刷新，普通`StateChanged`不重复查询；
+  真实产品验证覆盖侧栏、完整列表、列表行导航及列表延迟不随Agent snapshot体积增长。
 - Project Agent create E2E 覆盖 lifecycle facts → Agent create/source association → synchronous
   first input → operation response → live delta → reconnect snapshot。
 - Create-run contract generation test断言 generated TypeScript 只暴露 `model_selection` 与 `backend_selection`，不重新引入可覆盖 executor 的请求字段。

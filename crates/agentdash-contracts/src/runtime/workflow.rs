@@ -1518,28 +1518,6 @@ pub struct AgentRunRuntimeCommandRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunListRuntimeSummaryView {
-    pub thread_status: AgentRunListRuntimeThreadStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub active_turn_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub thread_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRunListRuntimeThreadStatus {
-    Active,
-    Suspended,
-    Desynchronized,
-    Closed,
-    Lost,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct AgentRunListChildView {
     pub run_ref: LifecycleRunRefDto,
     pub agent_ref: AgentRunRefDto,
@@ -1550,9 +1528,6 @@ pub struct AgentRunListChildView {
     #[ts(optional)]
     pub project_agent_label: Option<String>,
     pub source: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub runtime: Option<AgentRunListRuntimeSummaryView>,
     #[serde(default)]
     pub children: Vec<AgentRunListChildView>,
 }
@@ -1569,9 +1544,6 @@ pub struct AgentRunListEntryView {
     #[ts(optional)]
     pub project_agent_label: Option<String>,
     pub source: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub runtime: Option<AgentRunListRuntimeSummaryView>,
     #[serde(default)]
     pub subagent_count: u32,
     #[serde(default)]

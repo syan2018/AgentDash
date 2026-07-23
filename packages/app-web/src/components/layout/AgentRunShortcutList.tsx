@@ -64,11 +64,7 @@ function shortcutEntryFromAgentRun(entry: AgentRunListEntryView): AgentRunShortc
     runId: entry.run_ref.run_id,
     agentId: entry.agent_ref.agent_id,
     workspaceTitle: entry.title.trim() || "AgentRun 加载中...",
-    executionStatus: agentRunListPresentationStatus(
-      entry.runtime?.thread_status,
-      entry.runtime?.active_turn_id,
-      entry.lifecycle_status,
-    ),
+    executionStatus: agentRunListPresentationStatus(entry.lifecycle_status),
     updatedAt: entry.last_activity_at,
     subagentCount: entry.subagent_count ?? 0,
   };

@@ -43,13 +43,9 @@ export type AgentReusePolicy = "create_activity_agent" | "continue_current_agent
 
 export type AgentRunLineageRef = { run_id: string, agent_id: string, source: string, relation_kind: string, display_title: string, subagent_count: number, };
 
-export type AgentRunListChildView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, title: string, lifecycle_status: string, last_activity_at: string, project_agent_label?: string, source: string, runtime?: AgentRunListRuntimeSummaryView, children: Array<AgentRunListChildView>, };
+export type AgentRunListChildView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, title: string, lifecycle_status: string, last_activity_at: string, project_agent_label?: string, source: string, children: Array<AgentRunListChildView>, };
 
-export type AgentRunListEntryView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, title: string, lifecycle_status: string, last_activity_at: string, project_agent_label?: string, source: string, runtime?: AgentRunListRuntimeSummaryView, subagent_count: number, children: Array<AgentRunListChildView>, subject_ref?: SubjectRefDto, subject_label?: string, };
-
-export type AgentRunListRuntimeSummaryView = { thread_status: AgentRunListRuntimeThreadStatus, active_turn_id?: string, thread_name?: string, };
-
-export type AgentRunListRuntimeThreadStatus = "active" | "suspended" | "desynchronized" | "closed" | "lost";
+export type AgentRunListEntryView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, title: string, lifecycle_status: string, last_activity_at: string, project_agent_label?: string, source: string, subagent_count: number, children: Array<AgentRunListChildView>, subject_ref?: SubjectRefDto, subject_label?: string, };
 
 export type AgentRunOwnershipView = { run_created_by_user_id: string, agent_created_by_user_id: string, current_user_controls_run: boolean, };
 

@@ -1,5 +1,3 @@
-import type { AgentRunListRuntimeThreadStatus } from "../../generated/workflow-contracts";
-
 export type AgentRunDeliveryStatus =
   | "idle"
   | "running"
@@ -38,16 +36,14 @@ export function normalizeAgentRunDeliveryStatus(status: string): AgentRunDeliver
 }
 
 export function agentRunListPresentationStatus(
-  runtimeStatus: AgentRunListRuntimeThreadStatus | undefined,
-  activeTurnId: string | undefined,
   lifecycleStatus: string,
 ): AgentRunDeliveryStatus {
-  if (runtimeStatus === "active") return activeTurnId ? "running" : "idle";
-  if (runtimeStatus === "suspended") return "suspended";
-  if (runtimeStatus === "desynchronized") return "lost";
-  if (runtimeStatus === "lost") return "lost";
+  if (lifecycleStatus === "running") return "running";
+  if (lifecycleStatus === "suspended" || lifecycleStatus === "paused") return "suspended";
+  if (lifecycleStatus === "cancelling") return "cancelling";
   if (lifecycleStatus === "completed") return "completed";
   if (lifecycleStatus === "failed") return "failed";
   if (lifecycleStatus === "cancelled") return "interrupted";
+  if (lifecycleStatus === "lost") return "lost";
   return "idle";
 }

@@ -84,9 +84,10 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
 - Companion、Routine、Workflow 与 human response 都调用同一个
   `AgentRunProductInputDeliveryPort`。其 owner-local document可以保存 handoff/operation
   coordinate，但不能建立 mailbox lifecycle。
-- list/workspace/delete 先读取 Product shell。标题只从 `LifecycleAgent.workspace_title` 解析；
-  Agent snapshot 是 optional enrichment，service/source read 失败不得让 Product shell、lineage、
-  title、subject 或删除能力整体失败。
+- list/workspace/delete 先读取 Product shell。标题只从 `LifecycleAgent.workspace_title` 解析。
+  Project AgentRun list 是轻量 Product 文档查询，其 query dependencies、application model 与
+  response contract均不包含 Complete Agent projection；workspace详情可按自身合同组合 Agent
+  snapshot，但不得改变 Product shell 的成立条件。
 - conversation snapshot 每次来自 concrete Agent authoritative read。`waiting_items` 来自
   LifecycleGate 等 Product owner，和 Agent history在 response 组合，不合并为 mailbox。
 - live stream 直接订阅 concrete Agent source 的 process-local events。断线重连重新请求
@@ -110,8 +111,8 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
 | Agent title 为空 | 不初始化 AgentRun title，保持 pending |
 | AgentRun title 已存在 | conditional update 返回 false，保留当前 Product title/source |
 | 首次标题持久化失败 | handoff 返回 typed unavailable；调用者以同一 client id 重试，Agent effect 不重复 |
-| list item 无 association | 返回 Product item，Agent presentation absent |
-| list item Agent read 失败 | 返回 Product item，Agent presentation unavailable |
+| list item 无 association | 返回 Product item；list不解析association |
+| Complete Agent service/source不可用 | list结果与延迟不受影响；workspace Agent enrichment按typed unavailable处理 |
 | binding 指向非 owner AgentFrame | Product document conflict |
 | live stream gap/disconnect | 客户端重读 snapshot |
 | delete Product owner | 删除 Product 局部 document；concrete Agent 按自己的生命周期关闭/删除 |
@@ -122,9 +123,9 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
   完成authoritative history baseline后用标准input handoff投递首条输入，同时收到live delta。
 - Good：Dash 首次命名写入自身 history 后，input handoff 将同名值仅初始化到 LifecycleAgent；用户
   后续重命名只修改 LifecycleAgent，列表与 workspace 不再依赖 Dash service 可用性。
-- Base：Codex/Dash 暂时离线，列表仍展示 AgentRun shell；重新连接后 snapshot enrichment恢复。
-- Bad：List 因 Runtime projection stale 返回错误。List 只需要 Product facts，Agent view是可选
-  enrichment。
+- Base：Codex/Dash 暂时离线，列表仍展示 AgentRun shell；进入workspace时再解析当前Agent状态。
+- Bad：List 为了展示状态逐项读取 Complete Agent snapshot。全量Agent history既不是列表事实，
+  也会让列表延迟随Agent数量和history体积增长。
 - Bad：Companion 把同步输入命名为 mailbox 并保存 queued/claim/settlement。下游 Agent receipt
   已经是唯一接收证据。
 
@@ -135,9 +136,10 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
 - input tests 覆盖 deterministic handoff、accepted receipt、duplicate、payload conflict 与
   unavailable 零持久化。
 - title tests 覆盖首次非空初始化、空标题忽略、已有 Product title 不覆盖、持久化失败后同 client id
-  重试，以及 list/workspace 在 Agent read 失败时仍返回已存标题。
-- list/workspace tests 注入 binding missing、service resolve failure、Agent read failure，
-  断言 Product shell仍返回。
+  重试，以及 list/workspace 始终返回已存标题。
+- list tests 通过 `ProjectAgentRunListQueryDeps` 的编译期依赖面证明没有 Complete Agent projection，
+  并覆盖分页、lineage、subject与Product lifecycle状态；workspace tests单独注入 binding missing、
+  service resolve failure与Agent read failure，断言 Product shell仍返回。
 - conversation tests 覆盖 Agent history + LifecycleGate waiting items，且 contract没有 mailbox。
 - stream tests 覆盖 live delta 和 disconnect → authoritative snapshot。
 - Companion/Routine/Workflow tests 断言统一 input handoff port 与 owner-local receipt。
@@ -157,11 +159,15 @@ Ok(Accepted(receipt.operation_receipt))
 ```
 
 ```rust
-// Wrong: Agent enrichment 失败清空整个列表。
-let runtime = projection.runtime_snapshot(&target).await?;
+// Wrong: Project列表为每个Agent读取完整authoritative snapshot。
+let runtime = projection.runtime_presentation_snapshot(&target).await?;
 
-// Correct: Product item先成立，Agent presentation按可用性补充。
-let runtime = projection.runtime_presentation_snapshot(&target).await.ok().flatten();
+// Correct: Project列表只投影Product-owned列表事实。
+let item = AgentRunListEntryModel {
+    title: lifecycle_agent.workspace_title,
+    lifecycle_status: lifecycle_agent.status,
+    // lineage、subject、activity等Product facts
+};
 ```
 
 ```rust

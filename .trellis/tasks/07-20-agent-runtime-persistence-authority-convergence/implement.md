@@ -257,3 +257,15 @@ CAPABILITY frame，随后`READ -> EDIT -> READ`成功把`cvs-capability-tracer:/
 - [x] Canvas创建失败与Dash执行终态失败写入结构化diagnostics，关联run/agent/project或
   turn/command/effect坐标。
 - [x] Canvas输入/身份/冲突回归、12轮工具链持续执行回归与provider失败history保留回归通过。
+
+## AgentRun 列表 Product 查询边界
+
+- [x] `ProjectAgentRunListQuery`删除Complete Agent projection依赖，列表只组合LifecycleRun、
+  LifecycleAgent、lineage、subject与ProjectAgent等Product-owned facts。
+- [x] 删除`AgentRunListRuntimeSummary` application/HTTP/TypeScript契约；列表状态直接投影
+  `LifecycleAgent.lifecycle_status`，Agent authoritative history只在AgentRun workspace读取。
+- [x] Project list store只响应`projection=agent_run_list`的typed invalidation；普通
+  `StateChanged`不再造成无语义的全列表重复查询。
+- [x] 后端8项列表单测、前端14项状态/失效测试、API check、前端typecheck与契约生成检查通过。
+- [x] 当前开发库37个AgentRun实测：`limit=1/5`为10–13ms，`limit=30`为30–35ms；查询耗时不再
+  随Complete Agent绑定数量与history snapshot体积线性增长。

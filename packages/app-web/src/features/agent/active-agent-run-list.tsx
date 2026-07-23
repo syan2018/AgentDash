@@ -218,11 +218,7 @@ interface AgentRunChildRowProps {
 
 function AgentRunChildRow({ child, depth, selectedAgentId, onOpenAgentRun }: AgentRunChildRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const status = agentRunListPresentationStatus(
-    child.runtime?.thread_status,
-    child.runtime?.active_turn_id,
-    child.lifecycle_status,
-  );
+  const status = agentRunListPresentationStatus(child.lifecycle_status);
   const updatedAt = updatedAtTimestamp(child.last_activity_at);
   const title = child.title.trim() || child.project_agent_label?.trim() || "Companion";
   const isSelected = selectedAgentId === child.agent_ref.agent_id;
@@ -296,11 +292,7 @@ function AgentRunRow({
   onRequestDelete,
 }: AgentRunRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const status = agentRunListPresentationStatus(
-    entry.runtime?.thread_status,
-    entry.runtime?.active_turn_id,
-    entry.lifecycle_status,
-  );
+  const status = agentRunListPresentationStatus(entry.lifecycle_status);
   const updatedAt = updatedAtTimestamp(entry.last_activity_at);
   const title = entry.title.trim() || "AgentRun 加载中...";
   const children = entry.children ?? [];
@@ -496,11 +488,7 @@ export function ActiveAgentRunList({
 
     if (statusFilter !== "all") {
       list = list.filter((entry) =>
-        statusGroupOf(agentRunListPresentationStatus(
-          entry.runtime?.thread_status,
-          entry.runtime?.active_turn_id,
-          entry.lifecycle_status,
-        )) === statusFilter
+        statusGroupOf(agentRunListPresentationStatus(entry.lifecycle_status)) === statusFilter
       );
     }
 

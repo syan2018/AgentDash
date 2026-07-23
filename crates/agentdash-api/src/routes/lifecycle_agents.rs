@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use agentdash_agent_service_api::AgentServiceErrorCode;
 use agentdash_application::agent_run_list::{
-    AgentRunListChildModel, AgentRunListRuntimeSummaryModel, ProjectAgentRunListInput,
-    ProjectAgentRunListQuery, ProjectAgentRunListQueryDeps,
+    AgentRunListChildModel, ProjectAgentRunListInput, ProjectAgentRunListQuery,
+    ProjectAgentRunListQueryDeps,
 };
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductCommand, AgentRunProductCommandError, AgentRunProductCommandRequest,
@@ -465,7 +465,6 @@ async fn get_project_agent_runs(
         lineage_repo: state.repos.agent_lineage_repo.clone(),
         subject_repo: state.repos.lifecycle_subject_association_repo.clone(),
         project_agent_repo: state.repos.project_agent_repo.clone(),
-        product_projection: state.services.agent_run_product_projection.clone(),
     })
     .list(ProjectAgentRunListInput {
         project_id,
@@ -494,7 +493,6 @@ async fn get_project_agent_runs(
                         last_activity_at: entry.last_activity_at,
                         project_agent_label: entry.project_agent_label,
                         source: entry.source,
-                        runtime: entry.runtime.map(runtime_summary_view),
                         subagent_count: entry.subagent_count,
                         children: entry
                             .children
@@ -532,31 +530,11 @@ fn agent_run_child_view(
         last_activity_at: child.last_activity_at,
         project_agent_label: child.project_agent_label,
         source: child.source,
-        runtime: child.runtime.map(runtime_summary_view),
         children: child
             .children
             .into_iter()
             .map(agent_run_child_view)
             .collect(),
-    }
-}
-
-fn runtime_summary_view(
-    runtime: AgentRunListRuntimeSummaryModel,
-) -> agentdash_contracts::workflow::AgentRunListRuntimeSummaryView {
-    use agentdash_agent_runtime_contract::ManagedRuntimeLifecycleStatus as Source;
-    use agentdash_contracts::workflow::AgentRunListRuntimeThreadStatus as Target;
-    let thread_status = match runtime.thread_status {
-        Source::Active => Target::Active,
-        Source::Suspended => Target::Suspended,
-        Source::Provisioning => Target::Desynchronized,
-        Source::Closed => Target::Closed,
-        Source::Lost => Target::Lost,
-    };
-    agentdash_contracts::workflow::AgentRunListRuntimeSummaryView {
-        thread_status,
-        active_turn_id: runtime.active_turn_id,
-        thread_name: runtime.thread_name,
     }
 }
 

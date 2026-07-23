@@ -259,8 +259,10 @@ GET /agent-runs/{run_id}/agents/{agent_id}/workspace
   React effect是否同时执行了source reset。首次成功load以幂等方式填充空boundary；同target
   reconnect保留原值。这个边界把审计事实 hydrate 与 live 命令执行明确分开，也让StrictMode
   取消第一次setup后仍能由下一次成功load完成初始化。
-- `context_frame_changed` 是 current workspace projection 的 canonical invalidation event；
-  页面收到后刷新 workspace state，使 SurfaceAdopt 产生的新 module refs 同步进入列表。
+- `context_frame_changed` 是 concrete Agent 已接纳上下文的canonical presentation，只更新feed；
+  它不声明Product workspace projection发生变化。SurfaceAdopt产生的新module refs由
+  `workspace_module_presentation_requested`的currentness流程或typed Product projection
+  invalidation刷新。
 - live planner 先按 typed payload 与 concrete presentation URI 生成 registry tab target；
   executor 随后等待 workspace refresh，并要求 `module_id + view_key + renderer_kind +
   presentation_uri` 精确匹配当前 ready descriptor 后才打开。request 决定“现在尝试展示”，
@@ -275,7 +277,7 @@ GET /agent-runs/{run_id}/agents/{agent_id}/workspace
 | --- | --- |
 | typed presentation request 位于 `seq <= historyReplayBoundarySeq` | 渲染审计卡片，不执行 workspace refresh、侧栏展开或 tab open |
 | 任意一次性事件位于 hydration 边界内 | 重建 feed/read model 展示，不重复执行页面命令 |
-| 收到 `context_frame_changed` | invalidate/refetch AgentRun workspace，列表从新 `workspace_modules` 原子更新 |
+| 收到 `context_frame_changed` | 归约canonical feed并展示ContextFrame；workspace/hook refresh次数为0 |
 | live `workspace_module_presentation_requested` | 刷新 workspace，校验 current descriptor 后执行 presentation open |
 | `control_plane_projection_changed` | 只按 projection/reason 刷新 read model，不产生 presentation 命令 |
 | runtime ref 存在但 Project Canvas 资产已删除 | `workspace_modules` 不含该 Canvas；菜单不可见，live presentation 校验失败 |
@@ -293,8 +295,8 @@ GET /agent-runs/{run_id}/agents/{agent_id}/workspace
 - Good：history hydration 完成后收到新的 Canvas request，workspace refresh 返回同一 ready
   descriptor，随后打开 `canvas://{mount_id}`，侧栏展开、tab 激活且 renderer 可见。
 - Base：historical request 只恢复成功审计卡片；live presentation 走同一 dispatcher、
-  typed planner、imperative owner 与 scoped store，
-  `context_frame_changed` 走通用 workspace invalidation，不需要单独的 Canvas handler。
+  typed planner、imperative owner 与 scoped store；同批ContextFrame只进入feed，不重复读取
+  Product workspace。
 - Bad：把 request 塞进 projection invalidation，再为历史 presentation 添加例外回放；这会让
   一次性 UI 命令随刷新、重连和组件重挂载重复执行。
 
@@ -306,7 +308,8 @@ GET /agent-runs/{run_id}/agents/{agent_id}/workspace
   同target reconnect不移动既有boundary。
 - typed planner 回归：live presentation 先等待 workspace refresh，再精确匹配 current
   descriptor；空投影不会打开 Canvas。
-- control-plane 回归：`context_frame_changed` 必须刷新 AgentRun workspace。
+- control-plane 回归：`context_frame_changed`不产生workspace/hook refresh effect；
+  `workspace_module_presentation_requested`仍只刷新一次并校验current descriptor。
 - backend visibility 回归：Canvas 只有同时存在 Project asset 与 runtime ref 时进入
   `workspace_modules`。
 - scoped tab store 回归：presentation 先执行、WorkspacePanel 初始化后执行，目标 tab 保持
@@ -417,12 +420,8 @@ if (runtimeSnapshot.command_availability.interaction_respond?.status === "availa
 // Wrong: thread lifecycle直接伪造turn/product状态。
 const status = runtime.thread_status === "active" ? "running" : "completed";
 
-// Correct: active turn与Lifecycle终态共同形成纯展示状态；命令仍只读availability。
-const status = agentRunListPresentationStatus(
-  runtime?.thread_status,
-  runtime?.active_turn_id,
-  entry.lifecycle_status,
-);
+// Correct: Project列表只映射Product lifecycle；Agent实时状态属于workspace live lane。
+const status = agentRunListPresentationStatus(entry.lifecycle_status);
 ```
 
 ## 9. Schema-generated Owned Conversation Protocol

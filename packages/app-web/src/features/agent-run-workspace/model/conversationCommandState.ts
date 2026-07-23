@@ -226,7 +226,10 @@ export function buildAgentRunConversationCommandState(input: {
   workspaceStateStatus: string;
   workspaceStateError: string | null;
 }): AgentRunConversationCommandState {
-  if (input.workspaceStateStatus !== "ready") {
+  const canUseCommittedConversation =
+    input.workspaceStateStatus === "ready"
+    || (input.workspaceStateStatus === "refreshing" && input.conversation != null);
+  if (!canUseCommittedConversation) {
     const reason = input.workspaceStateError ?? "当前 AgentRun 工作台状态正在刷新。";
     return {
       mode: "runtime",

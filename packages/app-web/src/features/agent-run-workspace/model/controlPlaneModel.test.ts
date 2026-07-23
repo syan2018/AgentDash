@@ -229,6 +229,46 @@ describe("AgentRun control-plane model", () => {
     });
   });
 
+  it("keeps Agent-native ContextFrame changes inside the canonical feed lane", () => {
+    const plan = planAgentRunLiveEvent({
+      type: "platform",
+      payload: {
+        kind: "context_frame_changed",
+        data: {
+          frame: {
+            id: "frame-capability-1",
+            kind: "capability_state_delta",
+            source: "runtime_context_update",
+            delivery_status: "applied_before_prompt",
+            delivery_channel: "connector_context",
+            message_role: "system",
+            delivery_metadata: {
+              delivery_phase: "turn_runtime",
+              delivery_order: 1,
+              cache_policy: "turn_ephemeral",
+              model_channel: "system",
+              agent_consumption: {
+                target: "dash-agent",
+                mode: "system_append",
+                reason: "materialized_surface",
+              },
+              frontend_label: "Capability",
+              connector_profile: {
+                profile_id: "dash-agent",
+                declared_consumption_modes: ["system_append"],
+              },
+            },
+            rendered_text: "Capability updated",
+            sections: [],
+            created_at_ms: 1n,
+          },
+        },
+      },
+    });
+
+    expect(plan).toEqual({ effects: {} });
+  });
+
   it("opens the exact Workspace Module from the canonical presentation event", () => {
     const plan = planAgentRunLiveEvent({
       type: "platform",

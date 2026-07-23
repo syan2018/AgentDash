@@ -30,9 +30,16 @@
   用 committed history替换该回合的ephemeral partial；请求在途期间继续到达的canonical live records
   按 `presentation_id` 叠加到新baseline，避免标题等terminal后事实被较早的snapshot响应覆盖；若期间
   又收到后续回合的`TurnCompleted`，连接层在当前请求后再读取一次，保证每个terminal都完成durable收敛。
+- 同target后台refresh继续使用当前committed workspace conversation作为命令与执行状态基线；
+  `refreshing`只描述read请求，不覆盖`conversation.execution.status`或清空当前command set。
+  只有target replace才隔离旧conversation，原因是取消/停止按钮必须在refresh期间保持与已提交
+  Agent snapshot一致。
 - UI允许thread-level ContextFrame在视觉上把同一turn切成多个presentation section。Section的React
   identity由首个canonical display item identity派生，而不是只用turn id；authoritative收敛替换掉
   live section时会得到新的identity，旧DOM不会与新section并存。
+- `Platform(ContextFrameChanged)`只进入canonical feed与ContextFrame展示，不触发AgentRun
+  workspace/hook runtime refetch；Product-owned Frame/resource变化由对应typed projection
+  invalidation刷新，Workspace Module展示请求按自身currentness合同显式刷新一次。
 - Backbone product/resource event只触发相应projection invalidate，不推进Runtime state。
 - live 标准 `thread_name_updated` 触发 AgentRun workspace state 与 list 的重新查询；初始
   hydration replay boundary 内的历史名称事件不重复执行该副作用。UI 不直接用事件 payload
@@ -44,6 +51,9 @@
 必须测试target切换、stale snapshot、live lane重建、availability、presentation URI与layout稳定性；
 命令式 presentation 还必须覆盖“历史request不打开”“live request先刷新current projection”
 与“先打开 Tab、后执行 WorkspacePanel 首次初始化”的顺序。
+后台refresh测试必须从`running_active + enabled cancel command`开始，断言refresh期间仍保持
+running、cancel command与停止按钮派生条件；ContextFrame planner测试断言不产生workspace或hook
+runtime refresh effect。
 Runtime feed生命周期测试还必须覆盖StrictMode的`setup → cleanup → setup`：第一次load被取消、
 第二次同target load完成时boundary从`null`变为该次`lastAppliedSeq`；后续重连继续保留原boundary。
 Terminal convergence测试必须覆盖ephemeral overlay被committed snapshot替换，以及snapshot请求在途

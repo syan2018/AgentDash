@@ -269,3 +269,13 @@ CAPABILITY frame，随后`READ -> EDIT -> READ`成功把`cvs-capability-tracer:/
 - [x] 后端8项列表单测、前端14项状态/失效测试、API check、前端typecheck与契约生成检查通过。
 - [x] 当前开发库37个AgentRun实测：`limit=1/5`为10–13ms，`limit=30`为30–35ms；查询耗时不再
   随Complete Agent绑定数量与history snapshot体积线性增长。
+
+## Workspace refresh 与 canonical feed 边界
+
+- [x] 同target后台refresh继续使用committed conversation的execution与command set；
+  `refreshing`不再让运行中的停止按钮退化为发送loading状态。
+- [x] Agent-native `ContextFrameChanged`只归约canonical feed，不再为一批materialized frame逐项
+  触发Product workspace与hook runtime查询。
+- [x] 保留真正需要current Product projection的message、terminal、title、capability与Workspace
+  Module刷新；frame id不进入Runtime feed target，后台refresh不重建live connection。
+- [x] conversation/control-plane/feed/button状态39项定向测试、受影响文件ESLint与前端typecheck通过。

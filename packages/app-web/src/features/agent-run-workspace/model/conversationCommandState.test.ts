@@ -11,6 +11,7 @@ import type {
   ConversationCommandStaleGuardView,
 } from "../../../generated/agent-run-interaction-contracts";
 import type { ProjectAgentSummary } from "../../../types";
+import { isAgentRunWorkspaceActionRunning } from "../../session/ui/SessionChatViewModel";
 import {
   buildAgentRunConversationCommandState,
   buildDraftConversationCommandState,
@@ -150,12 +151,20 @@ describe("AgentRun conversation command state", () => {
     expect(model.helperText).toBe("工作台状态加载失败");
   });
 
-  it("does not expose stale running commands while workspace state is refreshing", () => {
+  it("keeps the committed running conversation authoritative during a background refresh", () => {
     const submit = command({
       kind: "submit_message",
       command_id: "cmd-submit",
       shortcut: "enter",
       placement: ["composer_primary"],
+    });
+    const cancel = command({
+      kind: "cancel",
+      command_id: "cmd-cancel",
+      enabled: true,
+      requires_input: false,
+      executor_config_policy: "forbidden",
+      placement: ["header"],
     });
     const commandState = buildAgentRunConversationCommandState({
       conversation: {
@@ -169,7 +178,7 @@ describe("AgentRun conversation command state", () => {
           keyboard: {
             enter: "cmd-submit",
           },
-          commands: [submit],
+          commands: [cancel, submit],
         },
         model_config: resolvedModelConfig(),
       },
@@ -179,9 +188,13 @@ describe("AgentRun conversation command state", () => {
 
     const model = projectAgentRunChatCommandState(commandState);
 
-    expect(model.executionStatus).toBe("refreshing");
-    expect(model.commands).toEqual([]);
-    expect(model.helperText).toBe("当前 AgentRun 工作台状态正在刷新。");
+    expect(model.executionStatus).toBe("running_active");
+    expect(model.commands.map((item) => item.command_id)).toEqual(["cmd-cancel", "cmd-submit"]);
+    expect(model.cancelCommand?.enabled).toBe(true);
+    expect(model.helperText).toBe("当前 AgentRun 正在执行中。");
+    expect(isAgentRunWorkspaceActionRunning({
+      executionStatus: model.executionStatus,
+    })).toBe(true);
   });
 
   it("uses draft model policy as the local draft command authority", () => {

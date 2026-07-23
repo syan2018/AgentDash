@@ -159,10 +159,7 @@ function planControlPlaneProjectionChanged(
       break;
   }
 
-  if (
-    change.reason === "capability_state_changed" ||
-    change.reason === "context_frame_changed"
-  ) {
+  if (change.reason === "capability_state_changed") {
     plan.refreshWorkspaceState = true;
     plan.hookRuntimeRefresh = { reason };
   }
@@ -231,12 +228,6 @@ function planAgentRunEventEffects(
 
   if (event.payload.kind === "workspace_module_presentation_requested") {
     return planWorkspaceModulePresentationPayload(event.payload.data);
-  }
-  if (event.payload.kind === "context_frame_changed") {
-    return {
-      refreshWorkspaceState: true,
-      hookRuntimeRefresh: { reason: "context_frame_changed" },
-    };
   }
   if (event.payload.kind === "hook_trace") {
     return {

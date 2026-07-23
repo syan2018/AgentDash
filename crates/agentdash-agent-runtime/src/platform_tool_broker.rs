@@ -32,10 +32,19 @@ pub enum RuntimeToolPermission {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeToolProvenance {
+    pub capability_key: String,
+    pub source: String,
+    pub tool_path: String,
+    pub context_usage_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeToolDefinition {
     pub name: AgentToolName,
     pub description: String,
     pub parameters_schema: Value,
+    pub provenance: RuntimeToolProvenance,
     pub protocol_projector: agentdash_agent_protocol::ToolProtocolProjector,
     pub permission: RuntimeToolPermission,
     pub effect: RuntimeToolEffect,
@@ -421,6 +430,12 @@ mod tests {
                     "type": "object",
                     "additionalProperties": false
                 }),
+                provenance: RuntimeToolProvenance {
+                    capability_key: "file_read".into(),
+                    source: "platform:read".into(),
+                    tool_path: "file_read::mounts_list".into(),
+                    context_usage_kind: "system_tools".into(),
+                },
                 protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 permission: RuntimeToolPermission::VfsRead,
                 effect: RuntimeToolEffect::ReadOnly,
@@ -443,6 +458,12 @@ mod tests {
                 name: AgentToolName::new("mcp_docs_search").unwrap(),
                 description: "Search docs".into(),
                 parameters_schema: serde_json::json!({"type": "object"}),
+                provenance: RuntimeToolProvenance {
+                    capability_key: "mcp:docs".into(),
+                    source: "mcp:docs".into(),
+                    tool_path: "mcp:docs::search".into(),
+                    context_usage_kind: "mcp_tools".into(),
+                },
                 protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Mcp {
                     server_key: "docs".to_owned(),
                 },

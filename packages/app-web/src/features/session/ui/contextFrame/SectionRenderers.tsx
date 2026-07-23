@@ -443,6 +443,7 @@ function DeltaListItem({
   meta,
   hoverDesc,
   expandContent,
+  defaultExpanded = false,
 }: {
   symbol: string;
   name: string;
@@ -451,15 +452,17 @@ function DeltaListItem({
   meta?: string;
   hoverDesc?: string;
   expandContent?: React.ReactNode;
+  defaultExpanded?: boolean;
 }) {
   const clickable = expandContent != null;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultExpanded);
 
   return (
     <div className={`rounded-[6px] transition-colors hover:bg-secondary/40 ${open ? "bg-secondary/30" : ""}`}>
       <button
         type="button"
         onClick={clickable ? () => setOpen((v) => !v) : undefined}
+        aria-expanded={clickable ? open : undefined}
         className="flex w-full items-center gap-2 px-2 py-1 text-left"
       >
         <span className="shrink-0 w-3 select-none text-[10px] text-muted-foreground/70">{symbol}</span>
@@ -494,7 +497,13 @@ function DeltaListItem({
   );
 }
 
-function ToolSchemaDeltaBody({ section }: { section: ToolSchemaDeltaSection }) {
+export function ToolSchemaDeltaBody({
+  section,
+  defaultExpandedTools = false,
+}: {
+  section: ToolSchemaDeltaSection;
+  defaultExpandedTools?: boolean;
+}) {
   if (
     section.added_tools.length
       + section.removed_tools.length
@@ -517,6 +526,12 @@ function ToolSchemaDeltaBody({ section }: { section: ToolSchemaDeltaSection }) {
         chips={chips}
         meta={fieldNames.length > 0 ? `${fieldNames.length} params` : undefined}
         hoverDesc={tool.description || undefined}
+        defaultExpanded={defaultExpandedTools}
+        expandContent={
+          tool.parameters_schema != null ? (
+            <JsonTree data={tool.parameters_schema} defaultDepth={4} />
+          ) : undefined
+        }
       />
     );
   });

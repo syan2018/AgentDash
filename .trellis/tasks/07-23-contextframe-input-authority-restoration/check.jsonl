@@ -1,0 +1,10 @@
+{"file": ".trellis/tasks/07-23-contextframe-input-authority-restoration/prd.md", "reason": "逐项核对单一renderer、per-provider-round refresh、同类上下文收束与跨adapter守卫验收。"}
+{"file": ".trellis/tasks/07-23-contextframe-input-authority-restoration/design.md", "reason": "检查accepted ContextFrame、machine tools、history projection与context consumption没有重新形成双事实源。"}
+{"file": ".trellis/tasks/07-23-contextframe-input-authority-restoration/research/model-input-lane-audit.md", "reason": "复查已确认旁路是否全部关闭，并验证明确排除的native conversation lane未被误改。"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "验证Native adapter、Dash Core、provider bridge与canonical history最终合同一致。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "验证initial context、runtime context、compaction和owner boundary。"}
+{"file": ".trellis/spec/backend/agent-runtime-surface-tool-broker.md", "reason": "验证热更新只影响后续provider request与新tool admission，已接纳调用仍按稳定binding完成。"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "验证built-in、platform MCP与dynamic MCP schema/provenance均完整。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "验证native history、canonical ContextFrame、live/read与frontend使用同一accepted frame。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "验证ContextFrame wire payload、feed归约与前端展示没有旁路协议。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证ToolSchema展开、实际原文与调试信息的类型安全和可诊断性。"}

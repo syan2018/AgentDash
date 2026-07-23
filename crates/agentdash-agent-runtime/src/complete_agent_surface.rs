@@ -124,8 +124,8 @@ mod tests {
         AgentHookSemanticFacet, AgentHookTiming, AgentPayloadDigest, AgentProfileDigest,
         AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload, AgentSurfaceDigest,
         AgentSurfaceRequirement, AgentSurfaceRevision, AgentSurfaceSemanticFacet,
-        AgentToolDelivery, AgentToolName, AgentToolSemanticFacet, AgentToolUpdateSemantics,
-        SemanticFidelity,
+        AgentToolDelivery, AgentToolName, AgentToolProvenance, AgentToolSemanticFacet,
+        AgentToolUpdateSemantics, SemanticFidelity,
     };
     use serde_json::json;
 
@@ -150,6 +150,12 @@ mod tests {
                 description: "Search".to_owned(),
                 input_schema: json!({"type": "object"}),
                 output_schema: None,
+                provenance: AgentToolProvenance {
+                    capability_key: "search".to_owned(),
+                    source: "test".to_owned(),
+                    tool_path: "search::search".to_owned(),
+                    context_usage_kind: "system_tools".to_owned(),
+                },
                 protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
             },
             payload_digest: AgentPayloadDigest::new("sha256:tool").expect("payload digest"),
@@ -360,6 +366,12 @@ mod tests {
                     description: "Search".to_owned(),
                     input_schema: json!({"type": "object"}),
                     output_schema: None,
+                    provenance: AgentToolProvenance {
+                        capability_key: "search".to_owned(),
+                        source: "test".to_owned(),
+                        tool_path: "search::search".to_owned(),
+                        context_usage_kind: "system_tools".to_owned(),
+                    },
                     protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 },
                 AgentSurfaceRoute::AgentNativeCallback,

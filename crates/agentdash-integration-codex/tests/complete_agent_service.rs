@@ -1123,6 +1123,12 @@ async fn apply_surface_rejects_unadvertised_dynamic_tools_before_side_effect() {
                     description: "search".to_owned(),
                     input_schema: json!({"type": "object"}),
                     output_schema: None,
+                    provenance: agentdash_agent_service_api::AgentToolProvenance {
+                        capability_key: "search".to_owned(),
+                        source: "test".to_owned(),
+                        tool_path: "search::search".to_owned(),
+                        context_usage_kind: "system_tools".to_owned(),
+                    },
                     protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 },
                 payload_digest,

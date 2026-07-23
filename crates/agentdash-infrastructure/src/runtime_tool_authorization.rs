@@ -1406,6 +1406,12 @@ mod tests {
                 name: AgentToolName::new(tool).unwrap(),
                 description: tool.to_owned(),
                 parameters_schema: serde_json::json!({}),
+                provenance: agentdash_agent_runtime::RuntimeToolProvenance {
+                    capability_key: "test".to_owned(),
+                    source: "test".to_owned(),
+                    tool_path: format!("test::{tool}"),
+                    context_usage_kind: "system_tools".to_owned(),
+                },
                 protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 permission,
                 effect,

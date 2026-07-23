@@ -74,10 +74,12 @@ type AgentLiveEvent = {
 - Agent实际保存的surface/context history通过
   `Platform(ContextFrameChanged { frame, message })` 进入canonical stream。前端直接消费该variant；
   `SessionMetaUpdate` 只处理自身metadata语义，不承担ContextFrame旁路编码。
-- `ContextFrame`是平台对Agent已接纳context/surface事实的typed presentation，不是Dash输入领域对象。
-  `tool_schema_delta`携带`added_tools/removed_tools/changed_tools`；前端按变化类型渲染工具名、来源、
-  参数数量与description，不把`parameters_schema`作为默认JSON树展示。frame排序依次使用delivery
-  phase、delivery order、created_at与稳定frame id，禁止依赖JavaScript sort的隐式稳定性。
+- `ContextFrame`是平台事实进入concrete Agent模型上下文的typed delivery协议，也是该已接纳事实的
+  canonical presentation。Agent history保存最终frame，provider materializer消费其
+  `rendered_text`，canonical stream发布同一typed value。
+- `tool_schema_delta`携带`added_tools/removed_tools/changed_tools`及完整`parameters_schema`；前端
+  默认展示工具摘要并提供JSON tree展开，以便审计模型可读文本与机器schema是否同源。frame排序依次
+  使用delivery phase、delivery order、created_at与稳定frame id。
 - 断线或进程重启后丢弃 ephemeral lane，并从 Complete Agent `read` 重新获取 durable history。
   Snapshot-only Agent 不需要平台 durable change journal。
 - PTY terminal、Canvas、Workspace Module 与 AgentFrame 是独立资源事实；即使它们引用 Agent
@@ -104,7 +106,7 @@ type AgentLiveEvent = {
 | vendor 发送 executor-specific conversation DTO | adapter 边界拒绝或映射为 owned canonical record |
 | tool surface同名定义改变 | `changed_tools`渲染↻；不渲染为第二次新增 |
 | 多个ContextFrame拥有相同phase/order/time | 以稳定frame id确定顺序，snapshot与live merge后顺序一致 |
-| tool delta带完整parameters schema | schema保留为structured contract；默认UI只呈现参数字段计数，不展开原始JSON |
+| tool delta带完整parameters schema | schema保留为structured contract；UI摘要可展开完整嵌套JSON tree |
 | fsRead结果同时包含typed正文与details | Read Card显示路径、行数和逐行正文；重载后使用同一内容，不展示executor envelope |
 | durable展示record在初始snapshot中 | 渲染审计记录，不自动切换面板 |
 | durable展示record在当前连接中到达 | 刷新Workspace descriptor后打开typed target，turn继续运行 |
@@ -137,8 +139,8 @@ type AgentLiveEvent = {
 - liveness test 断言 `TurnStarted + first output` 仍 active，加入 `TurnCompleted` 后才 inactive。
 - ordering test断言用户输入与`TurnStarted`先于第一个ephemeral output；ContextFrame test断言直接
   消费`Platform(ContextFrameChanged)`并保留typed frame。
-- ContextFrame frontend tests覆盖added/removed/changed tool渲染、不展示schema JSON，以及相同
-  phase/order/time时按frame id稳定排序。
+- ContextFrame frontend tests覆盖added/removed/changed tool渲染、added/changed完整schema展开，
+  以及相同phase/order/time时按frame id稳定排序。
 - production tracer 覆盖 Product input → tool live items → final assistant → reload durable history，
   并断言页面没有未知工具卡或悬空会话。
 - schema generation 与 TypeScript typecheck 必须证明 Agent service/Runtime wrapper 只引用

@@ -6,8 +6,8 @@ use std::{
 use agentdash_agent_runtime::{
     RuntimeTaskExecutionScope, RuntimeTaskGrantedOperation, RuntimeToolDefinition,
     RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation, RuntimeToolPermission,
-    RuntimeToolResourceGrant, RuntimeVfsGrantedOperation, RuntimeVfsPathGrant,
-    ToolProtocolProjector,
+    RuntimeToolProvenance, RuntimeToolResourceGrant, RuntimeVfsGrantedOperation,
+    RuntimeVfsPathGrant, ToolProtocolProjector,
 };
 use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
 use agentdash_application_agentrun::runtime_task_tools::{
@@ -24,6 +24,10 @@ use agentdash_application_vfs::{
     AppliedVfsToolSurface,
 };
 use agentdash_contracts::workspace_module::WorkspaceModulePresentation;
+use agentdash_platform_spi::{
+    PlatformMcpScope, ToolCluster, context_usage_kind,
+    platform::tool_capability::{ToolSource, platform_tool_descriptors},
+};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -54,6 +58,52 @@ pub fn product_runtime_tool_catalog(
             Arc::new(ProductCommandRuntimeTool::new(service)) as Arc<dyn RuntimeToolExecutor>
         })
         .collect()
+}
+
+fn platform_tool_provenance(name: &str) -> RuntimeToolProvenance {
+    let descriptor = platform_tool_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.name == name)
+        .expect("static runtime tool must have a platform descriptor");
+    let (source, context_usage_kind) = match descriptor.source {
+        ToolSource::Platform { cluster } => (
+            format!("platform:{}", tool_cluster_key(cluster)),
+            context_usage_kind::SYSTEM_TOOLS,
+        ),
+        ToolSource::PlatformMcp { scope } => (
+            format!("platform_mcp:{}", platform_mcp_scope_key(scope)),
+            context_usage_kind::MCP_TOOLS,
+        ),
+        ToolSource::Mcp { server_name } => {
+            (format!("mcp:{server_name}"), context_usage_kind::MCP_TOOLS)
+        }
+    };
+    RuntimeToolProvenance {
+        tool_path: format!("{}::{name}", descriptor.capability_key),
+        capability_key: descriptor.capability_key,
+        source,
+        context_usage_kind: context_usage_kind.to_owned(),
+    }
+}
+
+fn tool_cluster_key(cluster: ToolCluster) -> &'static str {
+    match cluster {
+        ToolCluster::Read => "read",
+        ToolCluster::Write => "write",
+        ToolCluster::Execute => "execute",
+        ToolCluster::Workflow => "workflow",
+        ToolCluster::Collaboration => "collaboration",
+        ToolCluster::Task => "task",
+        ToolCluster::WorkspaceModule => "workspace_module",
+    }
+}
+
+fn platform_mcp_scope_key(scope: PlatformMcpScope) -> &'static str {
+    match scope {
+        PlatformMcpScope::Relay => "relay",
+        PlatformMcpScope::Story => "story",
+        PlatformMcpScope::Workflow => "workflow",
+    }
 }
 
 pub struct DeferredProductRuntimeToolService {
@@ -131,6 +181,7 @@ impl RuntimeToolExecutor for ProductCommandRuntimeTool {
             name: AgentToolName::new(name).expect("static Product runtime tool name"),
             description: description.to_owned(),
             parameters_schema: self.service.parameters_schema(),
+            provenance: platform_tool_provenance(name),
             protocol_projector: ToolProtocolProjector::Dynamic,
             permission,
             effect,
@@ -268,6 +319,7 @@ macro_rules! vfs_executor {
                     name: AgentToolName::new($tool_name).expect("static runtime tool name"),
                     description: $description.to_owned(),
                     parameters_schema: AppliedVfsRuntimeToolService::parameters_schema($kind),
+                    provenance: platform_tool_provenance($tool_name),
                     protocol_projector: $projector,
                     permission: $permission,
                     effect: $effect,
@@ -363,6 +415,7 @@ impl RuntimeToolExecutor for RuntimeTaskReadTool {
             name: AgentToolName::new("task_read").expect("static runtime tool name"),
             description: "Read the granted Product Task scope.".to_owned(),
             parameters_schema: self.service.parameters_schema(RuntimeTaskToolKind::Read),
+            provenance: platform_tool_provenance("task_read"),
             protocol_projector: ToolProtocolProjector::Dynamic,
             permission: RuntimeToolPermission::ProductRead,
             effect: RuntimeToolEffect::ReadOnly,
@@ -381,6 +434,7 @@ impl RuntimeToolExecutor for RuntimeTaskWriteTool {
             name: AgentToolName::new("task_write").expect("static runtime tool name"),
             description: "Mutate the granted Product Task scope.".to_owned(),
             parameters_schema: self.service.parameters_schema(RuntimeTaskToolKind::Write),
+            provenance: platform_tool_provenance("task_write"),
             protocol_projector: ToolProtocolProjector::Dynamic,
             permission: RuntimeToolPermission::ProductWrite,
             effect: RuntimeToolEffect::ProductMutation,
@@ -433,6 +487,7 @@ impl RuntimeToolExecutor for WorkspaceModulePresentRuntimeTool {
                     "diagnostics": {}
                 }
             }),
+            provenance: platform_tool_provenance("workspace_module_present"),
             protocol_projector: ToolProtocolProjector::Dynamic,
             permission: RuntimeToolPermission::ProductRead,
             effect: RuntimeToolEffect::ReadOnly,
@@ -720,6 +775,7 @@ mod tests {
                     "type": "object",
                     "owner": "workspace_module_present"
                 }),
+                provenance: platform_tool_provenance("workspace_module_present"),
                 protocol_projector: ToolProtocolProjector::Dynamic,
                 permission: RuntimeToolPermission::ProductWrite,
                 effect: RuntimeToolEffect::ProductMutation,
@@ -792,6 +848,23 @@ mod tests {
                 "task_write",
                 "workspace_module_present",
             ]
+        );
+        let definitions = executors
+            .iter()
+            .map(|executor| executor.definition())
+            .collect::<Vec<_>>();
+        assert_eq!(definitions[1].provenance.capability_key, "file_read");
+        assert_eq!(definitions[1].provenance.source, "platform:read");
+        assert_eq!(definitions[1].provenance.tool_path, "file_read::fs_read");
+        assert_eq!(
+            definitions[1].provenance.context_usage_kind,
+            context_usage_kind::SYSTEM_TOOLS
+        );
+        let platform_mcp = platform_tool_provenance("list_projects");
+        assert_eq!(platform_mcp.source, "platform_mcp:relay");
+        assert_eq!(
+            platform_mcp.context_usage_kind,
+            context_usage_kind::MCP_TOOLS
         );
     }
 
@@ -872,6 +945,11 @@ mod tests {
             RuntimeToolPermission::ProductRead
         );
         assert_eq!(definitions[0].effect, RuntimeToolEffect::ReadOnly);
+        assert_eq!(definitions[0].provenance.capability_key, "collaboration");
+        assert_eq!(
+            definitions[1].provenance.tool_path,
+            "workflow::complete_lifecycle_node"
+        );
         assert!(definitions[1..4].iter().all(|definition| {
             definition.permission == RuntimeToolPermission::ProductWrite
                 && definition.effect == RuntimeToolEffect::ProductMutation

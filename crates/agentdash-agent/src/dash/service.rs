@@ -14,7 +14,8 @@ use super::{
     DashAgentCommit, DashAgentStore, DashCancellation, DashCommand, DashCommandKind,
     DashCoreContext, DashCoreError, DashCoreEvent, DashCoreTurn, DashExecutionCallbacks,
     DashExecutionEvent, DashExecutionInspection, DashFinishReason, DashMessage, DashMessageRole,
-    DashProvider, DashSurface, DashToolCall, DashToolCallbacks, DashToolResult, EffectId,
+    DashProvider, DashProviderRequest, DashProviderRoundMaterializer, DashProviderRoundSnapshots,
+    DashSurface, DashToolCall, DashToolCallbacks, DashToolDefinition, DashToolResult, EffectId,
     EffectOutcome, EffectSettlement, ForkCutoff, HistoryContribution, HistoryEntryId,
     HistoryPayload, InitialContextInstallation, InteractionId, ItemKind, SessionStatus, StoreError,
 };
@@ -343,7 +344,7 @@ struct PendingProviderRound {
 struct DurableDashExecutionCallbacks {
     service: DashAgentService,
     downstream: Arc<dyn DashExecutionCallbacks>,
-    tool_projectors: BTreeMap<String, agentdash_agent_protocol::ToolProtocolProjector>,
+    round_snapshots: DashProviderRoundSnapshots,
     rounds: tokio::sync::Mutex<BTreeMap<u32, PendingProviderRound>>,
 }
 
@@ -351,16 +352,12 @@ impl DurableDashExecutionCallbacks {
     fn new(
         service: DashAgentService,
         downstream: Arc<dyn DashExecutionCallbacks>,
-        context: &DashCoreContext,
+        round_snapshots: DashProviderRoundSnapshots,
     ) -> Self {
         Self {
             service,
             downstream,
-            tool_projectors: context
-                .tools
-                .iter()
-                .map(|tool| (tool.name.clone(), tool.protocol_projector.clone()))
-                .collect(),
+            round_snapshots,
             rounds: tokio::sync::Mutex::new(BTreeMap::new()),
         }
     }
@@ -408,9 +405,8 @@ impl DurableDashExecutionCallbacks {
         for call in pending.tool_calls {
             let item_id = super::execution_tool_item_id(turn_id, &call.call_id);
             let projector = self
-                .tool_projectors
-                .get(&call.name)
-                .cloned()
+                .round_snapshots
+                .tool_projector(round, &call.name)
                 .ok_or_else(|| DashCoreError::Callback {
                     message: format!(
                         "executed Dash tool `{}` has no accepted protocol projector",
@@ -964,8 +960,12 @@ impl DashAgentService {
 
         let context = self.materialize_context(&turn_id).await?;
         let execution = self.execution_dependencies().await;
-        let callbacks =
-            DurableDashExecutionCallbacks::new(self.clone(), execution.callbacks.clone(), &context);
+        let round_snapshots = DashProviderRoundSnapshots::default();
+        let callbacks = DurableDashExecutionCallbacks::new(
+            self.clone(),
+            execution.callbacks.clone(),
+            round_snapshots.clone(),
+        );
         let result = DashCoreTurn {
             turn_id: turn_id.clone(),
             input: content.clone(),
@@ -980,10 +980,12 @@ impl DashAgentService {
             )),
             terminal_entry_id: HistoryEntryId::new(format!("{effect_prefix}:turn-completed")),
         }
-        .run(
+        .run_with_materializer(
             execution.provider.as_ref(),
             execution.tools.as_ref(),
             &callbacks,
+            self,
+            round_snapshots,
             cancellation,
         )
         .await;
@@ -1325,10 +1327,11 @@ impl DashAgentService {
                 request.command_id.0
             )))
             .await?;
+        let round_snapshots = DashProviderRoundSnapshots::default();
         let callbacks = DurableDashExecutionCallbacks::new(
             self.clone(),
             execution.callbacks.clone(),
-            &continuation_context,
+            round_snapshots.clone(),
         );
         let continuation = DashCoreTurn {
             turn_id: continuation_turn_id.clone(),
@@ -1342,10 +1345,12 @@ impl DashAgentService {
             )),
             terminal_entry_id: HistoryEntryId::new(format!("{prefix}:C-completed")),
         }
-        .run(
+        .run_with_materializer(
             execution.provider.as_ref(),
             execution.tools.as_ref(),
             &callbacks,
+            self,
+            round_snapshots,
             continuation_cancellation,
         )
         .await;
@@ -1761,32 +1766,32 @@ impl DashAgentService {
             match &entry.payload {
                 HistoryPayload::CompactionApplied {
                     compaction_id,
-                    summary,
+                    context_frame,
                     retained_from,
                     ..
                 } => {
                     applied_compactions.insert(
                         compaction_id.clone(),
-                        (summary.clone(), retained_from.clone()),
+                        (context_frame.clone(), retained_from.clone()),
                     );
                 }
                 HistoryPayload::CompactionCompleted { compaction_id } => {
-                    if let Some((summary, retained_from)) =
+                    if let Some((context_frame, retained_from)) =
                         applied_compactions.get(compaction_id).cloned()
                     {
-                        latest_compaction = Some((index, summary, retained_from));
+                        latest_compaction = Some((index, context_frame, retained_from));
                     }
                 }
                 _ => {}
             }
         }
-        let (compaction_summary, history_start) = latest_compaction
-            .map(|(completed_index, summary, retained_from)| {
+        let (compaction_frame, history_start) = latest_compaction
+            .map(|(completed_index, context_frame, retained_from)| {
                 let start = retained_from
                     .as_ref()
                     .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
                     .unwrap_or(completed_index.saturating_add(1));
-                (Some(summary), start)
+                (Some(context_frame), start)
             })
             .unwrap_or((None, 0));
         let mut history = Vec::new();
@@ -1857,32 +1862,50 @@ impl DashAgentService {
         }
         flush_provider_tool_calls(&mut history, &mut pending_tool_calls);
         history.pop();
-        let mut system_prompt = surface
-            .as_ref()
-            .map(DashSurface::render_system_prompt)
-            .unwrap_or_default();
-        if let Some(initial_context) = initial_context {
-            let rendered = initial_context.render_for_prompt();
-            if !rendered.is_empty() {
-                if !system_prompt.is_empty() {
-                    system_prompt.push_str("\n\n");
-                }
-                system_prompt.push_str(&rendered);
-            }
-        }
-        if let Some(summary) = compaction_summary {
-            if !system_prompt.is_empty() {
-                system_prompt.push_str("\n\n");
-            }
-            system_prompt.push_str("<compacted_context>\n");
-            system_prompt.push_str(&summary);
-            system_prompt.push_str("\n</compacted_context>");
-        }
+        let system_prompt = render_accepted_context(
+            surface.as_ref(),
+            initial_context.as_ref(),
+            compaction_frame.as_ref(),
+        );
         Ok(DashCoreContext {
             system_prompt,
             history,
             tools: surface.map(|surface| surface.tools).unwrap_or_default(),
         })
+    }
+
+    async fn materialize_provider_round_context(
+        &self,
+    ) -> Result<(String, Vec<DashToolDefinition>), DashServiceError> {
+        let repository = self.repository.load().await?;
+        let state = repository.store.history().state()?;
+        let mut applied_compactions = BTreeMap::new();
+        let mut latest_frame = None;
+        for entry in repository.store.history().entries() {
+            match &entry.payload {
+                HistoryPayload::CompactionApplied {
+                    compaction_id,
+                    context_frame,
+                    ..
+                } => {
+                    applied_compactions.insert(compaction_id.clone(), context_frame.clone());
+                }
+                HistoryPayload::CompactionCompleted { compaction_id } => {
+                    latest_frame = applied_compactions.get(compaction_id).cloned();
+                }
+                _ => {}
+            }
+        }
+        let system_prompt = render_accepted_context(
+            state.surface.as_ref(),
+            state.initial_context.as_ref(),
+            latest_frame.as_ref(),
+        );
+        let tools = state
+            .surface
+            .map(|surface| surface.tools)
+            .unwrap_or_default();
+        Ok((system_prompt, tools))
     }
 
     async fn finish_failed_turn(
@@ -2090,6 +2113,62 @@ fn conversation_naming_request(
     Some(DashConversationNamingRequest {
         messages: vec![user, assistant],
     })
+}
+
+#[async_trait]
+impl DashProviderRoundMaterializer for DashAgentService {
+    async fn materialize_provider_round(
+        &self,
+        _turn_id: &AgentTurnId,
+        mut draft: DashProviderRequest,
+    ) -> Result<DashProviderRequest, DashCoreError> {
+        let (system_prompt, tools) =
+            self.materialize_provider_round_context()
+                .await
+                .map_err(|error| DashCoreError::Callback {
+                    message: format!("failed to materialize accepted ContextFrame input: {error}"),
+                })?;
+        draft.system_prompt = system_prompt;
+        draft.tools = tools;
+        Ok(draft)
+    }
+}
+
+fn render_accepted_context(
+    surface: Option<&DashSurface>,
+    initial_context: Option<&InitialContextInstallation>,
+    compaction_frame: Option<&agentdash_agent_protocol::ContextFrame>,
+) -> String {
+    let mut frames = Vec::new();
+    if let Some(surface) = surface {
+        frames.extend(surface.context_frames.iter().cloned());
+    }
+    if let Some(initial_context) = initial_context {
+        frames.extend(initial_context.context_frames.iter().cloned());
+    }
+    if let Some(compaction_frame) = compaction_frame {
+        frames.push(compaction_frame.clone());
+    }
+    frames.sort_by(|left, right| {
+        (
+            left.delivery_metadata.delivery_phase,
+            left.delivery_metadata.delivery_order,
+            left.created_at_ms,
+            left.id.as_str(),
+        )
+            .cmp(&(
+                right.delivery_metadata.delivery_phase,
+                right.delivery_metadata.delivery_order,
+                right.created_at_ms,
+                right.id.as_str(),
+            ))
+    });
+    frames
+        .into_iter()
+        .map(|frame| frame.rendered_text)
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn flush_provider_tool_calls(history: &mut Vec<DashMessage>, pending: &mut Vec<DashToolCall>) {

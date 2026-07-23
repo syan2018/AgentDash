@@ -285,6 +285,15 @@ impl AgentSurfaceSemanticFacet {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentToolProvenance {
+    pub capability_key: String,
+    pub source: String,
+    pub tool_path: String,
+    pub context_usage_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentSurfaceContributionPayload {
     Instruction {
@@ -297,6 +306,7 @@ pub enum AgentSurfaceContributionPayload {
         description: String,
         input_schema: Value,
         output_schema: Option<Value>,
+        provenance: AgentToolProvenance,
         protocol_projector: agentdash_agent_protocol::ToolProtocolProjector,
     },
     Hook {

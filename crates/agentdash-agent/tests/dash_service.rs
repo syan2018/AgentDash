@@ -19,6 +19,47 @@ use agentdash_agent::dash::{
 use async_trait::async_trait;
 use futures::stream;
 
+fn accepted_context_frame(id: &str, text: &str) -> agentdash_agent_protocol::ContextFrame {
+    use agentdash_agent_protocol::{
+        ContextDeliveryChannel, ContextDeliveryMetadata, ContextDeliveryStatus, ContextFrame,
+        ContextFrameKind, ContextFrameSource, ContextMessageRole,
+    };
+    ContextFrame {
+        id: id.to_owned(),
+        kind: ContextFrameKind::SystemGuidelines,
+        source: ContextFrameSource::RuntimeContextUpdate,
+        phase_node: None,
+        apply_mode: Some("test_acceptance".to_owned()),
+        delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
+        delivery_channel: ContextDeliveryChannel::ConnectorContext,
+        message_role: ContextMessageRole::System,
+        delivery_metadata: ContextDeliveryMetadata::for_frame(
+            ContextFrameKind::SystemGuidelines,
+            ContextDeliveryChannel::ConnectorContext,
+            ContextMessageRole::System,
+        ),
+        rendered_text: text.to_owned(),
+        sections: Vec::new(),
+        created_at_ms: 0,
+    }
+}
+
+fn test_tool(
+    name: &str,
+    projector: agentdash_agent_protocol::ToolProtocolProjector,
+) -> DashToolDefinition {
+    DashToolDefinition {
+        name: name.to_owned(),
+        description: format!("Test tool {name}"),
+        input_schema: serde_json::json!({"type": "object"}),
+        capability_key: format!("test/{name}"),
+        source: "test".to_owned(),
+        tool_path: format!("test::{name}"),
+        context_usage_kind: "test_tools".to_owned(),
+        protocol_projector: projector,
+    }
+}
+
 #[derive(Default)]
 struct RecordingDashRepository {
     state: tokio::sync::RwLock<Option<DashAgentRepositoryState>>,
@@ -109,7 +150,10 @@ impl DashToolCallbacks for NoTools {
     }
 }
 
-struct SurfaceChangingProvider;
+#[derive(Default)]
+struct SurfaceChangingProvider {
+    requests: tokio::sync::Mutex<Vec<DashProviderRequest>>,
+}
 
 #[async_trait]
 impl DashProvider for SurfaceChangingProvider {
@@ -117,6 +161,7 @@ impl DashProvider for SurfaceChangingProvider {
         &self,
         request: DashProviderRequest,
     ) -> Result<DashProviderEventStream, DashCoreError> {
+        self.requests.lock().await.push(request.clone());
         let events = match request.round {
             1 => vec![
                 Ok(DashProviderEvent::ToolCall {
@@ -274,13 +319,14 @@ impl DashToolCallbacks for RecordingToolCallbacks {
 async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
     let original = Arc::new(BlockingToolCallbacks::new());
     let replacement = Arc::new(RecordingToolCallbacks::default());
+    let provider = Arc::new(SurfaceChangingProvider::default());
     let service = create_service(
         AgentHistory::empty(
             AgentSessionId::new("surface-change-session"),
             BranchId::new("surface-change-branch"),
         ),
         DashExecutionDependencies {
-            provider: Arc::new(SurfaceChangingProvider),
+            provider: provider.clone(),
             tools: original.clone(),
             callbacks: Arc::new(NoCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),
@@ -294,20 +340,14 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
             revision: 1,
             digest: "canvas-surface".into(),
             instructions: Vec::new(),
-            tools: vec![
-                DashToolDefinition {
-                    name: "workspace_module_operate".into(),
-                    description: "Operate a workspace module".into(),
-                    input_schema: serde_json::json!({"type": "object"}),
-                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
-                },
-                DashToolDefinition {
-                    name: "fs_apply_patch".into(),
-                    description: "Apply a file patch".into(),
-                    input_schema: serde_json::json!({"type": "object"}),
-                    protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FileChange,
-                },
-            ],
+            tools: vec![test_tool(
+                "workspace_module_operate",
+                agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
+            )],
+            context_frames: vec![accepted_context_frame(
+                "surface:1:tools",
+                "accepted tool schema revision one",
+            )],
         })
         .await
         .unwrap();
@@ -328,6 +368,22 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
     });
 
     original.entered.notified().await;
+    service
+        .apply_surface(DashSurface {
+            revision: 2,
+            digest: "canvas-surface-updated".into(),
+            instructions: Vec::new(),
+            tools: vec![test_tool(
+                "fs_apply_patch",
+                agentdash_agent_protocol::ToolProtocolProjector::FileChange,
+            )],
+            context_frames: vec![accepted_context_frame(
+                "surface:2:tools",
+                "accepted tool schema revision two",
+            )],
+        })
+        .await
+        .unwrap();
     service.replace_tool_callbacks(replacement.clone()).await;
     original.release.notify_one();
     executing.await.unwrap().unwrap();
@@ -341,6 +397,35 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
         replacement.calls.lock().await.as_slice(),
         ["edit-canvas"],
         "the next invocation in the same turn must observe the newly applied surface route"
+    );
+    let requests = provider.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
+        requests[0]
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>(),
+        ["workspace_module_operate"]
+    );
+    assert!(requests[0].system_prompt.contains("revision one"));
+    assert_eq!(
+        requests[1]
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>(),
+        ["fs_apply_patch"]
+    );
+    assert!(requests[1].system_prompt.contains("revision two"));
+    assert_eq!(
+        requests[1]
+            .messages
+            .iter()
+            .filter(|message| message.content == "create and edit a canvas")
+            .count(),
+        1,
+        "round refresh must not duplicate the native user transcript"
     );
 }
 
@@ -366,12 +451,11 @@ async fn failed_turn_retains_each_completed_tool_call_in_native_history() {
             revision: 1,
             digest: "round-limit-surface".into(),
             instructions: Vec::new(),
-            tools: vec![DashToolDefinition {
-                name: "inspect_capability".into(),
-                description: "Inspect a capability".into(),
-                input_schema: serde_json::json!({"type": "object"}),
-                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
-            }],
+            tools: vec![test_tool(
+                "inspect_capability",
+                agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
+            )],
+            context_frames: Vec::new(),
         })
         .await
         .unwrap();
@@ -432,12 +516,11 @@ async fn failed_terminal_turn_with_agent_output_still_initializes_thread_name() 
             revision: 1,
             digest: "failed-turn-naming-surface".into(),
             instructions: Vec::new(),
-            tools: vec![DashToolDefinition {
-                name: "inspect_capability".into(),
-                description: "Inspect a capability".into(),
-                input_schema: serde_json::json!({"type": "object"}),
-                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
-            }],
+            tools: vec![test_tool(
+                "inspect_capability",
+                agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
+            )],
+            context_frames: Vec::new(),
         })
         .await
         .unwrap();
@@ -632,6 +715,10 @@ async fn installed_initial_context_is_materialized_into_the_provider_prompt() {
             source_revision: "revision-7".into(),
             digest: "sha256:summary".into(),
         }],
+        context_frames: vec![accepted_context_frame(
+            "initial-context:package-1:0",
+            "## AgentDash Initial Context: Compaction Summary\nthe durable parent summary",
+        )],
     };
     let service = DashAgentService::create_with_repository(
         Arc::new(RecordingDashRepository::default()),
@@ -695,6 +782,10 @@ async fn repository_reopen_preserves_surface_inspect_and_idempotency_without_pro
                     agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
             }],
             tools: vec![],
+            context_frames: vec![accepted_context_frame(
+                "surface:7:instruction:test:persisted",
+                "persisted instructions",
+            )],
         })
         .await
         .unwrap();

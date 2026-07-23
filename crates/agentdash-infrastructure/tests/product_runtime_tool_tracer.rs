@@ -492,6 +492,12 @@ fn desired_tool_surface(tool_names: &[&str]) -> AgentSurfaceSnapshot {
                     description: format!("{name} tracer"),
                     input_schema: json!({"type": "object"}),
                     output_schema: Some(json!({"type": "object"})),
+                    provenance: agentdash_agent_service_api::AgentToolProvenance {
+                        capability_key: format!("test/{name}"),
+                        source: "test".to_owned(),
+                        tool_path: format!("test/{name}::{name}"),
+                        context_usage_kind: "system_tools".to_owned(),
+                    },
                     protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 },
                 payload_digest: AgentPayloadDigest::new(format!("{name}-payload"))

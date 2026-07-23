@@ -603,6 +603,10 @@ mod tests {
                 },
                 "required": ["module_id"]
             }),
+            capability_key: "workspace/modules".to_owned(),
+            source: "test".to_owned(),
+            tool_path: "workspace/modules::workspace_module_invoke".to_owned(),
+            context_usage_kind: "system_tools".to_owned(),
             protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
         };
         let expected_schema = definition.input_schema.clone();

@@ -7406,7 +7406,7 @@
       ]
     },
     "ContextFrame": {
-      "description": "AgentDash-owned context presentation payload.\n\nThis is a presentation/audit projection of the materialized agent surface. It is not the\nmodel context itself and must never be used as the execution adapter's input contract.",
+      "description": "AgentDash-owned model-context delivery payload.\n\nA concrete Agent accepts these frames, consumes `rendered_text` according to the delivery\nmetadata, and publishes the same value for history, live presentation, and audit.",
       "type": "object",
       "properties": {
         "id": {
@@ -9773,6 +9773,9 @@
             },
             "input_schema": true,
             "output_schema": true,
+            "provenance": {
+              "$ref": "#/$defs/AgentToolProvenance"
+            },
             "protocol_projector": {
               "$ref": "#/$defs/ToolProtocolProjector"
             },
@@ -9786,6 +9789,7 @@
             "name",
             "description",
             "input_schema",
+            "provenance",
             "protocol_projector"
           ]
         },
@@ -10329,6 +10333,29 @@
       "required": [
         "mode",
         "allowed_module_ids"
+      ]
+    },
+    "AgentToolProvenance": {
+      "type": "object",
+      "properties": {
+        "capability_key": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "tool_path": {
+          "type": "string"
+        },
+        "context_usage_kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "capability_key",
+        "source",
+        "tool_path",
+        "context_usage_kind"
       ]
     },
     "ToolProtocolProjector": {

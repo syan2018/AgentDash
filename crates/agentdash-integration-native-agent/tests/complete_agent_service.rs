@@ -33,12 +33,12 @@ use agentdash_agent_service_api::{
     AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshotRevision, AgentSourceCoordinate,
     AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
     AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolInvocation,
-    AgentToolName, AgentToolResult, AgentToolSemanticFacet, AgentToolUpdateSemantics,
-    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
-    ContextAuthorityKind, ContextProvenance, CreateAgentCommand, ForkAgentCommand,
-    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContribution,
-    InitialContextDeliveryFidelity, InitialContextMode, ResumeAgentCommand,
-    RevokeBoundAgentSurface, SemanticFidelity,
+    AgentToolName, AgentToolProvenance, AgentToolResult, AgentToolSemanticFacet,
+    AgentToolUpdateSemantics, ApplyBoundAgentSurface, BoundAgentSurface,
+    BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind, ContextProvenance,
+    CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
+    InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
+    InitialContextMode, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_native_agent::{
     DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
@@ -868,6 +868,15 @@ fn meta(command: &str, effect: &str) -> AgentCommandMeta {
     }
 }
 
+fn tool_provenance(name: &str) -> AgentToolProvenance {
+    AgentToolProvenance {
+        capability_key: format!("test/{name}"),
+        source: "test".to_owned(),
+        tool_path: format!("test/{name}::{name}"),
+        context_usage_kind: "system_tools".to_owned(),
+    }
+}
+
 fn initial_package() -> InitialAgentContextPackage {
     let package_id = AgentContextPackageId::new("package-1").unwrap();
     let contribution = InitialContextContribution::CompactSummary {
@@ -979,7 +988,8 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
                 &record.presentation.envelope.event,
                 BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
                     if changed.frame.kind == ContextFrameKind::CompactionSummary
-                        && changed.frame.rendered_text == "parent summary"
+                        && changed.frame.rendered_text
+                            == "## AgentDash Initial Context: Compaction Summary\nparent summary"
             ))
     );
 
@@ -1427,19 +1437,57 @@ async fn dash_intrinsic_prompt_is_one_accepted_fact_for_provider_and_context_fra
                 revision: AgentSurfaceRevision(1),
                 digest: AgentSurfaceDigest::new("product-surface-intrinsic-prompt").unwrap(),
                 offer_profile_digest: descriptor.profile_digest,
-                contributions: vec![BoundAgentSurfaceContribution {
-                    key: "instruction:product:agent-prompt".to_owned(),
-                    required: true,
-                    route: AgentSurfaceRoute::ImmutableDelivery,
-                    fidelity: SemanticFidelity::Exact,
-                    semantics: AgentSurfaceSemanticFacet::Instruction,
-                    payload: AgentSurfaceContributionPayload::Instruction {
-                        channel: "system".to_owned(),
-                        text: "product-specific instruction".to_owned(),
-                        presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
+                contributions: vec![
+                    BoundAgentSurfaceContribution {
+                        key: "instruction:product:agent-prompt".to_owned(),
+                        required: true,
+                        route: AgentSurfaceRoute::ImmutableDelivery,
+                        fidelity: SemanticFidelity::Exact,
+                        semantics: AgentSurfaceSemanticFacet::Instruction,
+                        payload: AgentSurfaceContributionPayload::Instruction {
+                            channel: "system".to_owned(),
+                            text: "product-specific instruction".to_owned(),
+                            presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
+                        },
+                        payload_digest: AgentPayloadDigest::new("product-agent-prompt").unwrap(),
                     },
-                    payload_digest: AgentPayloadDigest::new("product-agent-prompt").unwrap(),
-                }],
+                    BoundAgentSurfaceContribution {
+                        key: "tool:inspect_payload".to_owned(),
+                        required: true,
+                        route: AgentSurfaceRoute::AgentNativeCallback,
+                        fidelity: SemanticFidelity::Exact,
+                        semantics: AgentSurfaceSemanticFacet::Tool(AgentToolSemanticFacet {
+                            delivery: AgentToolDelivery::AgentNativeCallback,
+                            invocation: SemanticFidelity::Exact,
+                            update: AgentToolUpdateSemantics::HotUpdate,
+                        }),
+                        payload: AgentSurfaceContributionPayload::Tool {
+                            name: AgentToolName::new("inspect_payload").unwrap(),
+                            description: "Inspect a nested payload.".to_owned(),
+                            input_schema: serde_json::json!({
+                                "type": "object",
+                                "properties": {
+                                    "payload": {
+                                        "type": "object",
+                                        "properties": {
+                                            "mode": {
+                                                "type": "string",
+                                                "enum": ["fast", "thorough"]
+                                            }
+                                        },
+                                        "required": ["mode"]
+                                    }
+                                },
+                                "required": ["payload"]
+                            }),
+                            output_schema: None,
+                            provenance: tool_provenance("inspect_payload"),
+                            protocol_projector:
+                                agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
+                        },
+                        payload_digest: AgentPayloadDigest::new("product-inspect-payload").unwrap(),
+                    },
+                ],
             },
             callbacks: AgentHostCallbackBinding {
                 route_id: AgentCallbackRouteId::new("callbacks-intrinsic-prompt").unwrap(),
@@ -1452,7 +1500,7 @@ async fn dash_intrinsic_prompt_is_one_accepted_fact_for_provider_and_context_fra
         .unwrap();
     assert_eq!(
         applied.applied.contributions.len(),
-        1,
+        2,
         "the Product receipt must not claim a concrete Agent intrinsic instruction"
     );
     assert_eq!(
@@ -1496,7 +1544,7 @@ async fn dash_intrinsic_prompt_is_one_accepted_fact_for_provider_and_context_fra
         .await
         .unwrap();
 
-    {
+    let provider_system_prompt = {
         let requests = provider.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert!(
@@ -1511,7 +1559,20 @@ async fn dash_intrinsic_prompt_is_one_accepted_fact_for_provider_and_context_fra
                 .contains("product-specific instruction"),
             "the provider prompt must also include the accepted Product instruction"
         );
-    }
+        assert_eq!(requests[0].tools.len(), 1);
+        assert_eq!(requests[0].tools[0].name, "inspect_payload");
+        assert_eq!(
+            requests[0].tools[0].input_schema["properties"]["payload"]["properties"]["mode"]["enum"],
+            serde_json::json!(["fast", "thorough"])
+        );
+        assert!(requests[0].system_prompt.contains("`payload.mode`"));
+        assert!(
+            requests[0]
+                .system_prompt
+                .contains("enum \"fast\" | \"thorough\"")
+        );
+        requests[0].system_prompt.clone()
+    };
 
     let snapshot = service
         .read(AgentReadQuery {
@@ -1540,6 +1601,48 @@ async fn dash_intrinsic_prompt_is_one_accepted_fact_for_provider_and_context_fra
         intrinsic_frames.len(),
         1,
         "the same accepted intrinsic instruction must project one Identity ContextFrame"
+    );
+    let tool_schema_frame = snapshot
+        .conversation_history
+        .iter()
+        .filter_map(|record| match &record.presentation.envelope.event {
+            BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
+                if changed.frame.sections.iter().any(|section| {
+                    matches!(
+                        section,
+                        ContextFrameSection::ToolSchemaDelta { added_tools, .. }
+                            if added_tools.iter().any(|tool| tool.name == "inspect_payload")
+                    )
+                }) =>
+            {
+                Some(&changed.frame)
+            }
+            _ => None,
+        })
+        .next()
+        .expect("accepted ToolSchema ContextFrame");
+    assert!(
+        provider_system_prompt.contains(&tool_schema_frame.rendered_text),
+        "canonical presentation must publish the exact ContextFrame text consumed by Dash"
+    );
+    let accepted_tool = tool_schema_frame
+        .sections
+        .iter()
+        .find_map(|section| match section {
+            ContextFrameSection::ToolSchemaDelta { added_tools, .. } => added_tools
+                .iter()
+                .find(|tool| tool.name == "inspect_payload"),
+            _ => None,
+        })
+        .expect("accepted tool schema entry");
+    assert_eq!(
+        accepted_tool.capability_key.as_deref(),
+        Some("test/inspect_payload")
+    );
+    assert_eq!(accepted_tool.source.as_deref(), Some("test"));
+    assert_eq!(
+        accepted_tool.tool_path.as_deref(),
+        Some("test/inspect_payload::inspect_payload")
     );
 }
 
@@ -1681,6 +1784,7 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
             description: "read".into(),
             input_schema: serde_json::json!({"type": "object"}),
             output_schema: None,
+            provenance: tool_provenance("read"),
             protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FsRead,
         },
         payload_digest: AgentPayloadDigest::new("sha256:tool-read").unwrap(),
@@ -1834,6 +1938,7 @@ async fn surface_projection_reports_tool_changes_instead_of_replaying_full_schem
             description: description.to_owned(),
             input_schema: serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}}),
             output_schema: None,
+            provenance: tool_provenance(name),
             protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FsRead,
         },
         payload_digest: AgentPayloadDigest::new(format!("sha256:{name}:{description}")).unwrap(),
@@ -2166,6 +2271,7 @@ fn hook_execution_surface() -> BoundAgentSurface {
                     description: "read".into(),
                     input_schema: serde_json::json!({"type": "object"}),
                     output_schema: None,
+                    provenance: tool_provenance("read"),
                     protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FsRead,
                 },
                 payload_digest: AgentPayloadDigest::new("sha256:hook-tool").unwrap(),
@@ -2208,6 +2314,7 @@ fn generation_surface(revision: u64) -> BoundAgentSurface {
                 description: "read".into(),
                 input_schema: serde_json::json!({"type": "object"}),
                 output_schema: None,
+                provenance: tool_provenance("read"),
                 protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FsRead,
             },
             payload_digest: AgentPayloadDigest::new(format!("sha256:generation-tool-{revision}"))
@@ -2273,14 +2380,15 @@ async fn exact_hooks_run_once_rewrite_and_do_not_retrigger_on_effect_replay() {
         &[serde_json::json!({"rewritten": true})]
     );
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
-    let requests = provider.requests.lock().unwrap();
-    assert!(
-        requests[1]
-            .messages
-            .iter()
-            .any(|message| message.content == "rewritten-result")
-    );
-    drop(requests);
+    {
+        let requests = provider.requests.lock().unwrap();
+        assert!(
+            requests[1]
+                .messages
+                .iter()
+                .any(|message| message.content == "rewritten-result")
+        );
+    }
     let snapshot = service
         .read(AgentReadQuery {
             source: AgentSourceCoordinate::new("dash-hook-execution").unwrap(),

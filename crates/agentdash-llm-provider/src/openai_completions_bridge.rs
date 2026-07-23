@@ -467,6 +467,28 @@ async fn process_chunk_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider_bridge_test_support::{
+        SYSTEM_PROMPT, TOOL_DESCRIPTION, TOOL_NAME, USER_PROMPT,
+        assert_prompt_lanes_exclude_tool_metadata, bridge_request, serialized_body,
+        tool_parameters,
+    };
+
+    #[test]
+    fn chat_completions_wire_body_keeps_tool_contract_structured_and_prompt_lanes_clean() {
+        let body = serialized_body(build_request_body("gpt-5.5", &bridge_request()));
+
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["messages"][0]["content"], SYSTEM_PROMPT);
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"], USER_PROMPT);
+
+        let function = &body["tools"][0]["function"];
+        assert_eq!(function["name"], TOOL_NAME);
+        assert_eq!(function["description"], TOOL_DESCRIPTION);
+        assert_eq!(function["parameters"], tool_parameters());
+
+        assert_prompt_lanes_exclude_tool_metadata(&[&body["messages"]]);
+    }
 
     #[test]
     fn chat_completions_body_maps_profile_thinking_level() {

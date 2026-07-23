@@ -99,9 +99,9 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - `DashSurface` 以 `SurfaceApplied/SurfaceRevoked` native history entry 表达，当前 surface 从
   history fold 得出。repository root 不保存第二个 `surface` 字段。
 - `DashSurface` 保存按应用顺序排列的materialized instructions
-  `[{ key, channel, text }]`与callable tools。provider system prompt通过拼接该instruction列表
-  得出，`ContextFrameChanged`按同一列表的key/channel逐项投影；source history不另存一份扁平
-  prompt字符串，presentation也不从prompt正文猜测分片。
+  `[{ key, channel, text }]`、callable tools与最终accepted ContextFrames。ContextFrame保存typed
+  sections、delivery metadata和唯一的`rendered_text`；provider materializer与
+  `ContextFrameChanged`都读取该值，因此模型输入、history重放和前端审计不会产生第二套文本渲染。
 - concrete Agent内建工作基底属于该Complete Agent实现，不属于Product或AgentFrame。Dash以稳定
   intrinsic instruction key把编译期提示词放在Product instructions之前，再把合并后的完整
   `DashSurface`提交到native history；provider prompt与Identity ContextFrame都从该entry投影。
@@ -114,14 +114,16 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - intrinsic instruction的namespace由concrete Agent保留。Product contribution与保留key冲突时，
   Native Adapter在history mutation前返回typed invalid argument，保证accepted surface中每个key
   只有一个owner。
-- callable tools在accepted surface中保存名称、description、input schema与owner projector。provider
-  `tools[]`携带完整机器契约；Dash system prompt中的工具参数摘要从同一列表按需渲染，帮助模型读取
-  用途、类型、必填性与关键嵌套字段。`tool_schema_delta`是Native Adapter面向平台UI的变化投影，
-  不作为另一条Agent输入通道。
-- Dash Core只理解`DashSurface { instructions, tools }`。`ContextFrame`是Native Adapter从
-  `SurfaceApplied` history生成的平台展示协议，不进入Dash领域模型，也不作为prompt的另一份输入。
-  Adapter以`state_at(sequence - 1)`与当前surface比较：instruction只发布新增/修改项，tool发布
-  added/removed/changed真增量；authoritative read、changes与live callback共用同一个projector。
+- callable tools在`RuntimeToolDefinition`中同时保存名称、description、input schema、owner
+  projector与typed provenance；Product surface无损携带capability/source/tool path/context usage，
+  Native adapter按字段接纳而不从runtime name或route反推。provider `tools[]`携带完整机器契约；
+  accepted tool保留同一provenance。
+  ToolSchema ContextFrame从同一列表生成完整、确定性的nested-schema可读文本，同时在section中保存
+  added/removed/changed真增量。机器调用契约与可读上下文是同一事实的两个投影。
+- Dash provider port在每个逻辑provider round固定一份request snapshot：当前accepted
+  ContextFrames生成system/context文本，当前tools生成structured tool contract，并同时固定该round
+  的owner projector。工具结果提交与surface mutation完成后，下一round重新物化；同一round重试
+  复用已固定snapshot，原因是一次已发出的provider请求不能在中途改变语义。
 - Product的skill、memory、MCP、workspace与context requirement必须先物化为Agent实际接纳的
   instruction/tool surface，再由Native Adapter按channel映射为Identity、Environment、
   SystemGuidelines、AssignmentContext、CapabilityStateDelta、MemoryContext或UserContext。
@@ -219,8 +221,9 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - Good：首个具备非空 user input 与 Agent output 的 terminal 回合提交后，Dash 根据该 source 的原生对话生成标题并追加
   `ThreadNameChanged`；snapshot与live notification来自该 entry，Product据此仅初始化一次
   AgentRun标题，之后两个owner可以独立修改各自标题。
-- Good：Product提交skills/MCP/memory instructions与tool surface，Dash原样保存；Native Adapter从
-  同一`SurfaceApplied` entry生成多种typed ContextFrame和真实tool delta，前端只展示变化摘要。
+- Good：Product提交skills/MCP/memory instructions与tool surface，Native Adapter在接纳边界生成
+  typed ContextFrames并与tool definitions一起写入`SurfaceApplied`；provider与canonical projector
+  消费同一已接纳frame。
 - Good：Dash Adapter先加入自身intrinsic instruction，再物化Product surface；Agent收到的基础行为
   规则和平台展示的Identity frame来自同一source-owned history entry。
 - Base：live subscriber掉线，Core继续执行并提交 history；新 subscriber先 read再订阅。
@@ -233,8 +236,8 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   的首次标题。
 - Bad：生产 composition 注入 Noop execution callback。输入可能执行成功，但用户永远看不到
   live delta。
-- Bad：把`ContextFrame`塞进Dash或在每个`SurfaceApplied`上把完整tools数组写成`added_tools`；前者
-  让展示协议反向污染Agent领域，后者让snapshot历史看起来像能力不断重复新增。
+- Bad：在Dash、canonical projector或provider bridge各自格式化工具说明。三处都能单独工作，但
+  surface热更新后无法证明模型所见文本、结构化schema与平台审计属于同一accepted revision。
 
 ## 6. Tests Required
 
@@ -248,14 +251,16 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   失败的回归测试断言此前完成的每条ToolCall/ToolResult仍在native history中。
 - live composition test在执行前订阅，断言顺序为 durable user input、durable `TurnStarted`、
   ephemeral text/reasoning/tool delta 与 durable terminal；执行后从 read断言同 turn 已终态。
-- surface/context tests断言 native history保存实际instruction边界与tools，provider prompt由
-  instructions派生，snapshot与live逐项投影`ContextFrameChanged`，repository root不存在平行
-  surface字段。
+- surface/context tests断言 native history保存实际instruction、tools与accepted ContextFrames，
+  provider prompt逐字包含frame `rendered_text`，snapshot与live逐项发布同一frame，repository root
+  不存在平行surface字段。
 - intrinsic surface测试断言内建`.md`进入provider request与Identity ContextFrame，Product applied
   receipt不认领该contribution，且Product binding digest不同于Dash materialization digest。
 - surface delta tests连续应用三版surface，覆盖tool新增、修改、删除，断言read重放只返回真实
-  变化且`rendered_text`不包含原始JSON schema；context channel矩阵覆盖system、identity、
-  workspace、workflow、skills、MCP、memory与user context的typed frame映射。
+  变化、`rendered_text`包含完整nested字段说明且section保留原始schema；context channel矩阵覆盖
+  system、identity、workspace、workflow、skills、MCP、memory与user context的typed frame映射。
+- active-turn测试在第一轮tool callback期间替换surface，断言旧call沿已接纳route完成、下一round
+  读取新ContextFrame/tools/projector，且native user/tool transcript没有重复。
 - naming test断言Succeeded与“已有Agent output的Failed”回合都把accepted user input与最终
   Agent output交给namer，只提交一次非空`ThreadNameChanged`，且`read/changes/live`均投影同一标题；
   Accepted、interaction与无output失败不命名，命名失败不改变原回合terminal。
@@ -323,12 +328,13 @@ let (added_tools, removed_tools, changed_tools) = diff_tools(previous, &surface)
 requirements.push(dash_specific_default_prompt());
 provider.system_prompt.push_str(HIDDEN_DEFAULT);
 
-// Correct: concrete Agent先形成自己的intrinsic contribution，再保存完整accepted surface。
+// Correct: concrete Agent先形成自己的intrinsic contribution和accepted ContextFrames。
 let mut instructions = vec![dash_intrinsic_instruction()];
 instructions.extend(materialize_product_instructions(bound_surface)?);
 let digest = materialization_digest(&instructions, &tools)?;
+let context_frames = materialize_accepted_context(&instructions, &tools, previous_surface)?;
 history.commit(HistoryPayload::SurfaceApplied {
-    surface: DashSurface { digest, instructions, tools, .. },
+    surface: DashSurface { digest, instructions, tools, context_frames, .. },
 })?;
 ```
 

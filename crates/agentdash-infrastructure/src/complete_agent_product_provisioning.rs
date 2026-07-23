@@ -24,8 +24,8 @@ use agentdash_agent_service_api::{
     AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming, AgentIdempotencyKey,
     AgentPayloadDigest, AgentSurfaceContributionPayload, AgentSurfaceDigest,
     AgentSurfaceRequirement, AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
-    AgentSurfaceSnapshot, AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics,
-    SemanticFidelity,
+    AgentSurfaceSnapshot, AgentToolDelivery, AgentToolProvenance, AgentToolSemanticFacet,
+    AgentToolUpdateSemantics, SemanticFidelity,
 };
 use agentdash_application_agentrun::agent_run::frame::{
     AgentContextSourceSnapshot, runtime_backend_anchor_from_vfs,
@@ -1200,6 +1200,12 @@ fn tool_requirements(
                 description: definition.description,
                 input_schema: definition.parameters_schema,
                 output_schema: None,
+                provenance: AgentToolProvenance {
+                    capability_key: definition.provenance.capability_key,
+                    source: definition.provenance.source,
+                    tool_path: definition.provenance.tool_path,
+                    context_usage_kind: definition.provenance.context_usage_kind,
+                },
                 protocol_projector: definition.protocol_projector,
             };
             surface_requirement(
@@ -1613,7 +1619,7 @@ mod tests {
     }
 
     #[test]
-    fn discovered_skill_and_mcp_facts_compile_to_model_visible_instructions() {
+    fn discovered_capability_and_tool_facts_preserve_model_context_provenance() {
         let mut capability = CapabilityState::default();
         capability
             .skill
@@ -1661,6 +1667,13 @@ mod tests {
                 )
                 .unwrap(),
                 description: "Get lifecycle".to_owned(),
+                provenance: agentdash_agent_runtime::RuntimeToolProvenance {
+                    capability_key: "workflow_management".to_owned(),
+                    source: "mcp:agentdash-workflow-tools".to_owned(),
+                    tool_path: "workflow_management::get_lifecycle".to_owned(),
+                    context_usage_kind: agentdash_platform_spi::context_usage_kind::MCP_TOOLS
+                        .to_owned(),
+                },
                 protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Mcp {
                     server_key: "agentdash-workflow-tools".to_owned(),
                 },
@@ -1674,8 +1687,15 @@ mod tests {
         .unwrap();
         assert!(matches!(
             &dynamic[0].payload,
-            AgentSurfaceContributionPayload::Tool { name, .. }
+            AgentSurfaceContributionPayload::Tool {
+                name,
+                provenance,
+                ..
+            }
                 if name.as_str() == "mcp_agentdash_workflow_tools_get_lifecycle"
+                    && provenance.capability_key == "workflow_management"
+                    && provenance.source == "mcp:agentdash-workflow-tools"
+                    && provenance.tool_path == "workflow_management::get_lifecycle"
         ));
     }
 

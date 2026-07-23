@@ -11,6 +11,8 @@ mod openai_completions_bridge;
 mod openai_content;
 mod openai_responses_bridge;
 mod openai_responses_common;
+#[cfg(test)]
+mod provider_bridge_test_support;
 mod provider_registry;
 mod sse;
 

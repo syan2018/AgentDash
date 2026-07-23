@@ -1,25 +1,24 @@
-use std::collections::BTreeMap;
-
 use agentdash_agent::dash::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentItemId,
     HistoryPayload, ItemDetails,
 };
+#[cfg(test)]
+use agentdash_agent_protocol::AgentCapabilityManifest;
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
-    AgentCapabilityManifest, AgentDashThreadItem, AgentSurfaceInstructionPresentation,
-    BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
+    AgentDashThreadItem, BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
     CanonicalConversationRecord, ContextAgentConsumption, ContextAgentConsumptionMode,
     ContextConnectorProfile, ContextDeliveryChannel, ContextDeliveryMetadata,
     ContextDeliveryStatus, ContextFrame, ContextFrameChanged, ContextFrameKind,
     ContextFrameSection, ContextFrameSource, ContextMessageRole, ItemCompletedNotification,
     ItemStartedNotification, ItemUpdatedNotification, PlatformEvent, PresentationDurability,
-    RuntimeCompanionAgentEntry, RuntimeContextFragmentEntry, RuntimeMemoryDiagnosticEntry,
-    RuntimeMemoryInventoryMode, RuntimeMemorySourceEntry, RuntimeSkillEntry,
-    RuntimeToolSchemaEntry, SkillContextExposure, SourceInfo, TraceInfo, Turn,
-    TurnCompletedNotification, TurnStartedNotification, UserInputSource, UserInputSubmissionKind,
-    UserInputSubmittedNotification, WorkspaceModulePresentation,
+    SourceInfo, TraceInfo, Turn, TurnCompletedNotification, TurnStartedNotification,
+    UserInputSource, UserInputSubmissionKind, UserInputSubmittedNotification,
+    WorkspaceModulePresentation,
 };
 
+#[cfg(test)]
+use crate::accepted_context::capability_manifest_sections;
 use crate::tool_presentation::{ToolPresentationResult, project_tool_item};
 
 pub(crate) fn history_records(
@@ -52,20 +51,16 @@ pub(crate) fn history_records(
 pub(crate) fn entry_records(
     session_id: &str,
     entry: &AgentHistoryEntry,
-    previous_state: Option<&AgentHistoryState>,
+    _previous_state: Option<&AgentHistoryState>,
     state: &AgentHistoryState,
 ) -> Result<Vec<CanonicalConversationRecord>, serde_json::Error> {
     let mut events = Vec::new();
     match &entry.payload {
         HistoryPayload::InitialContextInstalled { installation } => {
-            events.extend(initial_context_events(installation));
+            events.extend(accepted_context_events(&installation.context_frames));
         }
         HistoryPayload::SurfaceApplied { surface } => {
-            events.extend(surface_events(
-                entry,
-                previous_state.and_then(|state| state.surface.as_ref()),
-                surface,
-            )?);
+            events.extend(accepted_context_events(&surface.context_frames));
         }
         HistoryPayload::SurfaceRevoked { surface } => {
             events.push(surface_revoked_event(entry, surface));
@@ -173,13 +168,18 @@ pub(crate) fn entry_records(
                 started_at_ms: 0,
             }));
         }
-        HistoryPayload::CompactionApplied { compaction_id, .. } => {
+        HistoryPayload::CompactionApplied {
+            compaction_id,
+            context_frame,
+            ..
+        } => {
             events.push(BackboneEvent::ExecutorContextCompacted(
                 codex::ContextCompactedNotification {
                     thread_id: session_id.to_owned(),
                     turn_id: compaction_id.0.clone(),
                 },
             ));
+            events.extend(accepted_context_events(std::slice::from_ref(context_frame)));
         }
         HistoryPayload::CompactionCompleted { compaction_id }
         | HistoryPayload::CompactionFailed { compaction_id, .. } => {
@@ -237,6 +237,18 @@ pub(crate) fn entry_records(
         .collect())
 }
 
+fn accepted_context_events(frames: &[ContextFrame]) -> Vec<BackboneEvent> {
+    frames
+        .iter()
+        .cloned()
+        .map(|frame| {
+            BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(Box::new(
+                ContextFrameChanged { frame },
+            )))
+        })
+        .collect()
+}
+
 fn workspace_module_presentation(
     state: &AgentHistoryState,
     item_id: &AgentItemId,
@@ -260,757 +272,6 @@ fn workspace_module_presentation(
         return Ok(None);
     };
     serde_json::from_value(value.clone()).map(Some)
-}
-
-fn initial_context_events(
-    installation: &agentdash_agent::dash::InitialContextInstallation,
-) -> Vec<BackboneEvent> {
-    installation
-        .contributions
-        .iter()
-        .enumerate()
-        .map(|(index, contribution)| {
-            let (kind, title, role) = match contribution.kind.as_str() {
-                "compact_summary" => (
-                    ContextFrameKind::CompactionSummary,
-                    "Compaction Summary",
-                    ContextMessageRole::Context,
-                ),
-                "constraint_set" => (
-                    ContextFrameKind::SystemGuidelines,
-                    "System Guidelines",
-                    ContextMessageRole::System,
-                ),
-                _ => (
-                    ContextFrameKind::AssignmentContext,
-                    "Workflow Context",
-                    ContextMessageRole::Context,
-                ),
-            };
-            let mut metadata = ContextDeliveryMetadata::for_frame(
-                kind,
-                ContextDeliveryChannel::ConnectorContext,
-                role,
-            );
-            metadata.cache_key = Some(installation.package_digest.clone());
-            metadata.cache_revision = Some(contribution.source_revision.clone());
-            metadata.agent_consumption = ContextAgentConsumption {
-                target: "dash-agent".to_owned(),
-                mode: ContextAgentConsumptionMode::Consume,
-                reason: "dash_initial_context_installed".to_owned(),
-            };
-            metadata.connector_profile = ContextConnectorProfile {
-                profile_id: "dash-agent".to_owned(),
-                declared_consumption_modes: vec![ContextAgentConsumptionMode::Consume],
-            };
-            BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(Box::new(
-                ContextFrameChanged {
-                    frame: ContextFrame {
-                        id: format!("initial-context:{}:{index}", installation.package_id),
-                        kind,
-                        source: ContextFrameSource::RuntimeContextUpdate,
-                        phase_node: None,
-                        apply_mode: Some("initial_context_install".to_owned()),
-                        delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
-                        delivery_channel: ContextDeliveryChannel::ConnectorContext,
-                        message_role: role,
-                        delivery_metadata: metadata,
-                        rendered_text: contribution.payload.clone(),
-                        sections: vec![ContextFrameSection::SystemNotice {
-                            title: title.to_owned(),
-                            summary: contribution.kind.clone(),
-                            body: Some(contribution.payload.clone()),
-                        }],
-                        created_at_ms: 0,
-                    },
-                },
-            )))
-        })
-        .collect()
-}
-
-fn surface_events(
-    entry: &AgentHistoryEntry,
-    previous: Option<&agentdash_agent::dash::DashSurface>,
-    surface: &agentdash_agent::dash::DashSurface,
-) -> Result<Vec<BackboneEvent>, serde_json::Error> {
-    let mut events = Vec::new();
-    let previous_instructions = previous
-        .into_iter()
-        .flat_map(|surface| surface.instructions.iter())
-        .map(|instruction| (instruction.key.as_str(), instruction))
-        .collect::<BTreeMap<_, _>>();
-    for (index, instruction) in surface
-        .instructions
-        .iter()
-        .filter(|instruction| {
-            previous_instructions
-                .get(instruction.key.as_str())
-                .is_none_or(|previous| *previous != *instruction)
-        })
-        .enumerate()
-    {
-        if instruction.text.trim().is_empty() {
-            continue;
-        }
-        let (kind, role, title) = surface_instruction_presentation(instruction);
-        let mut metadata = ContextDeliveryMetadata::for_frame(
-            kind,
-            ContextDeliveryChannel::ConnectorContext,
-            role,
-        );
-        metadata.cache_key = Some(surface.digest.clone());
-        metadata.cache_revision = Some(surface.revision.to_string());
-        metadata.delivery_order = metadata
-            .delivery_order
-            .saturating_add(u32::try_from(index).unwrap_or(u32::MAX));
-        metadata.agent_consumption = ContextAgentConsumption {
-            target: "dash-agent".to_owned(),
-            mode: ContextAgentConsumptionMode::SystemAppend,
-            reason: "dash_materialized_instruction".to_owned(),
-        };
-        metadata.connector_profile = ContextConnectorProfile {
-            profile_id: "dash-agent".to_owned(),
-            declared_consumption_modes: vec![ContextAgentConsumptionMode::SystemAppend],
-        };
-        let fragment = RuntimeContextFragmentEntry {
-            slot: instruction.channel.clone(),
-            label: instruction
-                .key
-                .rsplit(':')
-                .next()
-                .unwrap_or(instruction.key.as_str())
-                .to_owned(),
-            source: instruction.key.clone(),
-            content: instruction.text.clone(),
-            context_usage_kind: Some("agent_surface".to_owned()),
-        };
-        let sections = match &instruction.presentation {
-            AgentSurfaceInstructionPresentation::CapabilityManifest { manifest } => {
-                let previous_manifest = previous_instructions
-                    .get(instruction.key.as_str())
-                    .and_then(|instruction| match &instruction.presentation {
-                        AgentSurfaceInstructionPresentation::CapabilityManifest { manifest } => {
-                            Some(manifest)
-                        }
-                        _ => None,
-                    });
-                capability_manifest_sections(previous_manifest, manifest)?
-            }
-            AgentSurfaceInstructionPresentation::Identity => {
-                vec![ContextFrameSection::Identity {
-                    title: title.to_owned(),
-                    summary: instruction.key.clone(),
-                    fragments: vec![fragment],
-                }]
-            }
-            _ => vec![ContextFrameSection::AssignmentContext {
-                title: title.to_owned(),
-                summary: instruction.key.clone(),
-                fragments: vec![fragment],
-            }],
-        };
-        events.push(BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(
-            Box::new(ContextFrameChanged {
-                frame: ContextFrame {
-                    id: format!("{}:instruction:{index}", entry.entry_id.0),
-                    kind,
-                    source: ContextFrameSource::RuntimeContextUpdate,
-                    phase_node: None,
-                    apply_mode: Some(
-                        if previous_instructions.contains_key(instruction.key.as_str()) {
-                            "surface_update"
-                        } else {
-                            "surface_apply"
-                        }
-                        .to_owned(),
-                    ),
-                    delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
-                    delivery_channel: ContextDeliveryChannel::ConnectorContext,
-                    message_role: role,
-                    delivery_metadata: metadata,
-                    rendered_text: instruction.text.clone(),
-                    sections,
-                    created_at_ms: 0,
-                },
-            }),
-        )));
-    }
-    let removed_instructions = previous
-        .into_iter()
-        .flat_map(|surface| surface.instructions.iter())
-        .filter(|instruction| {
-            !surface
-                .instructions
-                .iter()
-                .any(|current| current.key == instruction.key)
-        })
-        .map(|instruction| instruction.key.clone())
-        .collect::<Vec<_>>();
-    if !removed_instructions.is_empty() {
-        let kind = ContextFrameKind::SystemNotice;
-        let role = ContextMessageRole::Context;
-        let mut metadata = ContextDeliveryMetadata::for_frame(
-            kind,
-            ContextDeliveryChannel::ConnectorContext,
-            role,
-        );
-        metadata.cache_key = Some(surface.digest.clone());
-        metadata.cache_revision = Some(surface.revision.to_string());
-        events.push(BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(
-            Box::new(ContextFrameChanged {
-                frame: ContextFrame {
-                    id: format!("{}:instructions-removed", entry.entry_id.0),
-                    kind,
-                    source: ContextFrameSource::RuntimeContextUpdate,
-                    phase_node: None,
-                    apply_mode: Some("surface_update".to_owned()),
-                    delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
-                    delivery_channel: ContextDeliveryChannel::ConnectorContext,
-                    message_role: role,
-                    delivery_metadata: metadata,
-                    rendered_text: format!(
-                        "## Removed Surface Instructions\n{}",
-                        removed_instructions
-                            .iter()
-                            .map(|key| format!("- `{key}`"))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    ),
-                    sections: vec![ContextFrameSection::SystemNotice {
-                        title: "Surface Instructions Removed".to_owned(),
-                        summary: format!("{} instructions removed", removed_instructions.len()),
-                        body: Some(removed_instructions.join("\n")),
-                    }],
-                    created_at_ms: 0,
-                },
-            }),
-        )));
-    }
-
-    let previous_tools = previous
-        .into_iter()
-        .flat_map(|surface| surface.tools.iter())
-        .map(|tool| (tool.name.as_str(), tool))
-        .collect::<BTreeMap<_, _>>();
-    let current_tools = surface
-        .tools
-        .iter()
-        .map(|tool| (tool.name.as_str(), tool))
-        .collect::<BTreeMap<_, _>>();
-    let added_tools = surface
-        .tools
-        .iter()
-        .filter(|tool| !previous_tools.contains_key(tool.name.as_str()))
-        .map(runtime_tool_schema_entry)
-        .collect::<Vec<_>>();
-    let changed_tools = surface
-        .tools
-        .iter()
-        .filter(|tool| {
-            previous_tools
-                .get(tool.name.as_str())
-                .is_some_and(|previous| *previous != *tool)
-        })
-        .map(runtime_tool_schema_entry)
-        .collect::<Vec<_>>();
-    let removed_tools = previous_tools
-        .keys()
-        .filter(|name| !current_tools.contains_key(**name))
-        .map(|name| (*name).to_owned())
-        .collect::<Vec<_>>();
-    if !added_tools.is_empty() || !removed_tools.is_empty() || !changed_tools.is_empty() {
-        let kind = ContextFrameKind::CapabilityStateDelta;
-        let role = ContextMessageRole::Context;
-        let mut metadata = ContextDeliveryMetadata::for_frame(
-            kind,
-            ContextDeliveryChannel::ConnectorContext,
-            role,
-        );
-        metadata.cache_key = Some(surface.digest.clone());
-        metadata.cache_revision = Some(surface.revision.to_string());
-        metadata.agent_consumption = ContextAgentConsumption {
-            target: "dash-agent".to_owned(),
-            mode: ContextAgentConsumptionMode::ConnectorNative,
-            reason: "dash_materialized_tool_registry".to_owned(),
-        };
-        metadata.connector_profile = ContextConnectorProfile {
-            profile_id: "dash-agent".to_owned(),
-            declared_consumption_modes: vec![ContextAgentConsumptionMode::ConnectorNative],
-        };
-        events.push(BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(
-            Box::new(ContextFrameChanged {
-                frame: ContextFrame {
-                    id: format!("{}:tools", entry.entry_id.0),
-                    kind,
-                    source: ContextFrameSource::RuntimeContextUpdate,
-                    phase_node: None,
-                    apply_mode: Some(
-                        if previous.is_some() {
-                            "surface_update"
-                        } else {
-                            "surface_apply"
-                        }
-                        .to_owned(),
-                    ),
-                    delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
-                    delivery_channel: ContextDeliveryChannel::ConnectorContext,
-                    message_role: role,
-                    delivery_metadata: metadata,
-                    rendered_text: render_tool_surface_delta(
-                        &added_tools,
-                        &removed_tools,
-                        &changed_tools,
-                    ),
-                    sections: vec![ContextFrameSection::ToolSchemaDelta {
-                        added_tools,
-                        removed_tools,
-                        changed_tools,
-                    }],
-                    created_at_ms: 0,
-                },
-            }),
-        )));
-    }
-    Ok(events)
-}
-
-fn runtime_tool_schema_entry(
-    tool: &agentdash_agent::dash::DashToolDefinition,
-) -> RuntimeToolSchemaEntry {
-    let mcp = tool.name.starts_with("mcp_");
-    RuntimeToolSchemaEntry {
-        name: tool.name.clone(),
-        description: tool.description.clone(),
-        parameters_schema: tool.input_schema.clone(),
-        capability_key: None,
-        source: Some(if mcp { "mcp" } else { "agentdash" }.to_owned()),
-        tool_path: Some(tool.name.clone()),
-        context_usage_kind: Some("agent_surface".to_owned()),
-    }
-}
-
-fn render_tool_surface_delta(
-    added: &[RuntimeToolSchemaEntry],
-    removed: &[String],
-    changed: &[RuntimeToolSchemaEntry],
-) -> String {
-    let mut sections = vec!["## Tool Surface Delta".to_owned()];
-    if !added.is_empty() {
-        sections.push(format!(
-            "### Added Tools\n{}",
-            added
-                .iter()
-                .map(|tool| format!("- `{}`: {}", tool.name, tool.description))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
-    if !removed.is_empty() {
-        sections.push(format!(
-            "### Removed Tools\n{}",
-            removed
-                .iter()
-                .map(|name| format!("- `{name}`"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
-    if !changed.is_empty() {
-        sections.push(format!(
-            "### Changed Tools\n{}",
-            changed
-                .iter()
-                .map(|tool| format!("- `{}`: {}", tool.name, tool.description))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
-    sections.join("\n\n")
-}
-
-fn capability_manifest_sections(
-    previous: Option<&AgentCapabilityManifest>,
-    current: &AgentCapabilityManifest,
-) -> Result<Vec<ContextFrameSection>, serde_json::Error> {
-    let before_capabilities = previous
-        .map(|manifest| manifest.tool_capabilities.iter().cloned().collect())
-        .unwrap_or_default();
-    let after_capabilities = current.tool_capabilities.iter().cloned().collect();
-    let before_excluded = previous
-        .map(|manifest| manifest.excluded_tool_paths.iter().cloned().collect())
-        .unwrap_or_default();
-    let after_excluded = current.excluded_tool_paths.iter().cloned().collect();
-    let before_included = previous
-        .map(|manifest| manifest.included_tool_paths.iter().cloned().collect())
-        .unwrap_or_default();
-    let after_included = current.included_tool_paths.iter().cloned().collect();
-    let before_mcp = previous
-        .map(|manifest| {
-            manifest
-                .mcp_servers
-                .iter()
-                .map(|server| (server.name.clone(), server))
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
-    let after_mcp = current
-        .mcp_servers
-        .iter()
-        .map(|server| (server.name.clone(), server))
-        .collect::<BTreeMap<_, _>>();
-    let before_mounts = previous
-        .and_then(|manifest| manifest.vfs.as_ref())
-        .map(|vfs| {
-            vfs.mounts
-                .iter()
-                .map(|mount| (mount.id.clone(), mount))
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
-    let after_mounts = current
-        .vfs
-        .as_ref()
-        .map(|vfs| {
-            vfs.mounts
-                .iter()
-                .map(|mount| (mount.id.clone(), mount))
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
-    let before_skills = previous
-        .map(|manifest| {
-            manifest
-                .skills
-                .iter()
-                .map(|skill| (capability_skill_key(skill), skill))
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
-    let after_skills = current
-        .skills
-        .iter()
-        .map(|skill| (capability_skill_key(skill), skill))
-        .collect::<BTreeMap<_, _>>();
-    let before_memory = previous
-        .map(|manifest| {
-            manifest
-                .memory_sources
-                .iter()
-                .map(|source| (capability_memory_key(source), source))
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
-    let after_memory = current
-        .memory_sources
-        .iter()
-        .map(|source| (capability_memory_key(source), source))
-        .collect::<BTreeMap<_, _>>();
-    let before_companions = previous
-        .map(|manifest| {
-            manifest
-                .companion_agents
-                .iter()
-                .map(|agent| (agent.agent_key.clone(), agent))
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
-    let after_companions = current
-        .companion_agents
-        .iter()
-        .map(|agent| (agent.agent_key.clone(), agent))
-        .collect::<BTreeMap<_, _>>();
-    let skill_entry = |skill: &agentdash_agent_protocol::AgentCapabilitySkill| {
-        Ok(RuntimeSkillEntry {
-            name: skill.name.clone(),
-            capability_key: skill.capability_key.clone(),
-            provider_key: skill.provider_key.clone(),
-            local_name: skill.local_name.clone(),
-            display_name: skill.display_name.clone(),
-            description: skill.description.clone(),
-            file_path: skill.file_path.clone(),
-            base_dir: skill.base_dir.clone(),
-            exposure: match skill.exposure.as_str() {
-                "default_exposed" => SkillContextExposure::DefaultExposed,
-                "explicit_only" => SkillContextExposure::ExplicitOnly,
-                other => {
-                    return Err(serde_json::Error::io(std::io::Error::other(format!(
-                        "accepted capability manifest contains invalid skill exposure `{other}`"
-                    ))));
-                }
-            },
-            disable_model_invocation: skill.disable_model_invocation,
-            context_usage_kind: Some("agent_surface".to_owned()),
-        })
-    };
-    let memory_entry =
-        |source: &agentdash_agent_protocol::AgentCapabilityMemorySource| RuntimeMemorySourceEntry {
-            provider_key: source.provider_key.clone(),
-            source_key: source.source_key.clone(),
-            display_name: source.display_name.clone(),
-            source_uri: source.source_uri.clone(),
-            index_uri: source.index_uri.clone(),
-            mount_id: source.mount_id.clone(),
-            scope: source.scope.clone(),
-            index_status: source.index_status.clone(),
-            trust_level: source.trust_level.clone(),
-            revision: String::new(),
-            summary: source.summary.clone(),
-            context_usage_kind: Some("agent_surface".to_owned()),
-        };
-    let companion_entry = |agent: &agentdash_agent_protocol::AgentCapabilityCompanionAgent| {
-        RuntimeCompanionAgentEntry {
-            agent_key: agent.agent_key.clone(),
-            executor: agent.executor.clone(),
-            display_name: agent.display_name.clone(),
-            context_usage_kind: Some("agent_surface".to_owned()),
-        }
-    };
-    let sections = vec![
-        ContextFrameSection::CapabilityKeyDelta {
-            added_capabilities: set_added(&before_capabilities, &after_capabilities),
-            removed_capabilities: set_added(&after_capabilities, &before_capabilities),
-            effective_capabilities: current.tool_capabilities.clone(),
-        },
-        ContextFrameSection::ToolPathDelta {
-            blocked_tool_paths: set_added(&before_excluded, &after_excluded),
-            unblocked_tool_paths: set_added(&after_excluded, &before_excluded),
-            whitelisted_tool_paths: set_added(&before_included, &after_included),
-            removed_whitelist_paths: set_added(&after_included, &before_included),
-        },
-        ContextFrameSection::McpServerDelta {
-            added_mcp_servers: map_added(&before_mcp, &after_mcp),
-            removed_mcp_servers: map_added(&after_mcp, &before_mcp),
-            changed_mcp_servers: map_changed(&before_mcp, &after_mcp),
-        },
-        ContextFrameSection::VfsDelta {
-            vfs_mounts_added: map_added(&before_mounts, &after_mounts),
-            vfs_mounts_removed: map_added(&after_mounts, &before_mounts),
-            default_mount_before: previous
-                .and_then(|manifest| manifest.vfs.as_ref())
-                .and_then(|vfs| vfs.default_mount.clone()),
-            default_mount_after: current
-                .vfs
-                .as_ref()
-                .and_then(|vfs| vfs.default_mount.clone()),
-        },
-        ContextFrameSection::SkillDelta {
-            added_skills: map_added_values(&before_skills, &after_skills)
-                .into_iter()
-                .map(skill_entry)
-                .collect::<Result<Vec<_>, _>>()?,
-            removed_skills: map_added_values(&after_skills, &before_skills)
-                .into_iter()
-                .map(skill_entry)
-                .collect::<Result<Vec<_>, _>>()?,
-            changed_skills: map_changed_values(&before_skills, &after_skills)
-                .into_iter()
-                .map(skill_entry)
-                .collect::<Result<Vec<_>, _>>()?,
-        },
-        ContextFrameSection::SystemNotice {
-            title: "Skill Discovery".to_owned(),
-            summary: if current.skill_diagnostics.is_empty() {
-                "Discovery completed without diagnostics".to_owned()
-            } else {
-                format!("{} discovery diagnostics", current.skill_diagnostics.len())
-            },
-            body: (!current.skill_diagnostics.is_empty()).then(|| {
-                current
-                    .skill_diagnostics
-                    .iter()
-                    .map(|diagnostic| {
-                        format!(
-                            "- `{}` / `{}`: {}",
-                            diagnostic.provider_key, diagnostic.code, diagnostic.message
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }),
-        },
-        ContextFrameSection::MemoryInventory {
-            title: "Memory Inventory".to_owned(),
-            summary: format!("{} memory sources", current.memory_sources.len()),
-            mode: if previous.is_some() {
-                RuntimeMemoryInventoryMode::Delta
-            } else {
-                RuntimeMemoryInventoryMode::Snapshot
-            },
-            sources: current.memory_sources.iter().map(memory_entry).collect(),
-            diagnostics: current
-                .memory_diagnostics
-                .iter()
-                .map(|diagnostic| RuntimeMemoryDiagnosticEntry {
-                    provider_key: diagnostic.provider_key.clone(),
-                    code: diagnostic.code.clone(),
-                    message: diagnostic.message.clone(),
-                    source_key: diagnostic.source_key.clone(),
-                    uri: diagnostic.uri.clone(),
-                    context_usage_kind: Some("agent_surface".to_owned()),
-                })
-                .collect(),
-            added_sources: map_added_values(&before_memory, &after_memory)
-                .into_iter()
-                .map(memory_entry)
-                .collect(),
-            removed_sources: map_added_values(&after_memory, &before_memory)
-                .into_iter()
-                .map(memory_entry)
-                .collect(),
-            changed_sources: map_changed_values(&before_memory, &after_memory)
-                .into_iter()
-                .map(memory_entry)
-                .collect(),
-        },
-        ContextFrameSection::CompanionAgentRosterDelta {
-            added_agents: map_added_values(&before_companions, &after_companions)
-                .into_iter()
-                .map(companion_entry)
-                .collect(),
-            removed_agent_keys: map_added(&after_companions, &before_companions),
-            changed_agents: map_changed_values(&before_companions, &after_companions)
-                .into_iter()
-                .map(companion_entry)
-                .collect(),
-            effective_agents: current
-                .companion_agents
-                .iter()
-                .map(companion_entry)
-                .collect(),
-        },
-        ContextFrameSection::SystemNotice {
-            title: "Channels".to_owned(),
-            summary: format!("{} visible channels", current.channels.len()),
-            body: Some(
-                current
-                    .channels
-                    .iter()
-                    .map(|channel| {
-                        format!(
-                            "- `{}` [{}] ({})",
-                            channel.channel_ref,
-                            channel.operations.join(", "),
-                            channel.readiness
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ),
-        },
-        ContextFrameSection::SystemNotice {
-            title: "Workspace Modules".to_owned(),
-            summary: format!("visibility: {}", current.workspace_module.mode),
-            body: Some(if current.workspace_module.allowed_module_ids.is_empty() {
-                "No module-id allowlist is applied.".to_owned()
-            } else {
-                current.workspace_module.allowed_module_ids.join("\n")
-            }),
-        },
-    ];
-    Ok(sections)
-}
-
-fn capability_skill_key(skill: &agentdash_agent_protocol::AgentCapabilitySkill) -> String {
-    if skill.capability_key.is_empty() {
-        skill.name.clone()
-    } else {
-        skill.capability_key.clone()
-    }
-}
-
-fn capability_memory_key(source: &agentdash_agent_protocol::AgentCapabilityMemorySource) -> String {
-    format!("{}:{}", source.provider_key, source.source_key)
-}
-
-fn map_added<K: Ord + Clone, V>(before: &BTreeMap<K, V>, after: &BTreeMap<K, V>) -> Vec<K> {
-    after
-        .keys()
-        .filter(|key| !before.contains_key(*key))
-        .cloned()
-        .collect()
-}
-
-fn set_added<K: Ord + Clone>(
-    before: &std::collections::BTreeSet<K>,
-    after: &std::collections::BTreeSet<K>,
-) -> Vec<K> {
-    after.difference(before).cloned().collect()
-}
-
-fn map_changed<K: Ord + Clone, V: PartialEq>(
-    before: &BTreeMap<K, V>,
-    after: &BTreeMap<K, V>,
-) -> Vec<K> {
-    after
-        .iter()
-        .filter(|(key, value)| before.get(*key).is_some_and(|before| before != *value))
-        .map(|(key, _)| key.clone())
-        .collect()
-}
-
-fn map_added_values<'a, K: Ord, V>(
-    before: &BTreeMap<K, &'a V>,
-    after: &BTreeMap<K, &'a V>,
-) -> Vec<&'a V> {
-    after
-        .iter()
-        .filter(|(key, _)| !before.contains_key(*key))
-        .map(|(_, value)| *value)
-        .collect()
-}
-
-fn map_changed_values<'a, K: Ord, V: PartialEq>(
-    before: &BTreeMap<K, &'a V>,
-    after: &BTreeMap<K, &'a V>,
-) -> Vec<&'a V> {
-    after
-        .iter()
-        .filter(|(key, value)| before.get(*key).is_some_and(|before| before != *value))
-        .map(|(_, value)| *value)
-        .collect()
-}
-
-fn surface_instruction_presentation(
-    instruction: &agentdash_agent::dash::DashSurfaceInstruction,
-) -> (ContextFrameKind, ContextMessageRole, &'static str) {
-    match &instruction.presentation {
-        AgentSurfaceInstructionPresentation::SystemGuidelines => (
-            ContextFrameKind::SystemGuidelines,
-            ContextMessageRole::System,
-            "System Guidelines",
-        ),
-        AgentSurfaceInstructionPresentation::Identity => (
-            ContextFrameKind::Identity,
-            ContextMessageRole::System,
-            "Agent Identity",
-        ),
-        AgentSurfaceInstructionPresentation::Environment => (
-            ContextFrameKind::Environment,
-            ContextMessageRole::Context,
-            "Runtime Environment",
-        ),
-        AgentSurfaceInstructionPresentation::MemoryContext => (
-            ContextFrameKind::MemoryContext,
-            ContextMessageRole::Context,
-            "Memory Context",
-        ),
-        AgentSurfaceInstructionPresentation::CapabilityManifest { .. } => (
-            ContextFrameKind::CapabilityStateDelta,
-            ContextMessageRole::Context,
-            "Capability Surface",
-        ),
-        AgentSurfaceInstructionPresentation::UserContext => (
-            ContextFrameKind::UserContext,
-            ContextMessageRole::User,
-            "User Context",
-        ),
-        AgentSurfaceInstructionPresentation::AssignmentContext => (
-            ContextFrameKind::AssignmentContext,
-            ContextMessageRole::Context,
-            "Assignment Context",
-        ),
-    }
 }
 
 fn surface_revoked_event(
@@ -1344,8 +605,13 @@ mod tests {
                 name: "read_document".to_owned(),
                 description: "Read a document".to_owned(),
                 input_schema: serde_json::json!({"type": "object"}),
+                capability_key: "test/read".to_owned(),
+                source: "test".to_owned(),
+                tool_path: "test/read::read_document".to_owned(),
+                context_usage_kind: "test_tools".to_owned(),
                 protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FsRead,
             }],
+            context_frames: Vec::new(),
         };
         let turn_id = AgentTurnId::new("turn-1");
         let item_id = AgentItemId::new("item-1");
@@ -1431,8 +697,13 @@ mod tests {
                 name: "workspace_module_present".to_owned(),
                 description: "Present a Workspace Module".to_owned(),
                 input_schema: serde_json::json!({"type": "object"}),
+                capability_key: "test/workspace".to_owned(),
+                source: "test".to_owned(),
+                tool_path: "test/workspace::workspace_module_present".to_owned(),
+                context_usage_kind: "test_tools".to_owned(),
                 protocol_projector: projector.clone(),
             }],
+            context_frames: Vec::new(),
         };
         let turn_id = AgentTurnId::new("turn-1");
         let item_id = AgentItemId::new("item-1");

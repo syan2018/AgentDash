@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use agentdash_agent_runtime::{
     RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation,
-    RuntimeToolPermission, ToolProtocolProjector,
+    RuntimeToolPermission, RuntimeToolProvenance, ToolProtocolProjector,
 };
 use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
 use agentdash_platform_spi::{
@@ -279,6 +279,8 @@ fn runtime_definition(
     description: &str,
     parameters_schema: serde_json::Value,
 ) -> Result<RuntimeToolDefinition, RuntimeMcpToolCatalogError> {
+    let stable_server_name = stable_server_name(server_name);
+    let capability_key = capability_key_for_mcp_server_name(&stable_server_name);
     Ok(RuntimeToolDefinition {
         name: AgentToolName::new(namespaced_tool_name(server_name, tool_name)).map_err(
             |error| RuntimeMcpToolCatalogError::InvalidTool {
@@ -287,6 +289,12 @@ fn runtime_definition(
         )?,
         description: description.trim().to_owned(),
         parameters_schema: sanitize_tool_schema(parameters_schema),
+        provenance: RuntimeToolProvenance {
+            source: format!("mcp:{stable_server_name}"),
+            tool_path: format!("{capability_key}::{tool_name}"),
+            capability_key,
+            context_usage_kind: agentdash_platform_spi::context_usage_kind::MCP_TOOLS.to_owned(),
+        },
         protocol_projector: ToolProtocolProjector::Mcp {
             server_key: server_name.to_owned(),
         },
@@ -378,6 +386,23 @@ mod tests {
         assert_eq!(
             capability_key_for_mcp_server_name("agentdash-workflow-tools-8de613e7"),
             "workflow_management"
+        );
+        let definition = runtime_definition(
+            "agentdash-workflow-tools-8de613e7",
+            "get_lifecycle",
+            "Get lifecycle",
+            serde_json::json!({"type": "object"}),
+        )
+        .expect("runtime definition");
+        assert_eq!(definition.provenance.capability_key, "workflow_management");
+        assert_eq!(definition.provenance.source, "mcp:agentdash-workflow-tools");
+        assert_eq!(
+            definition.provenance.tool_path,
+            "workflow_management::get_lifecycle"
+        );
+        assert_eq!(
+            definition.provenance.context_usage_kind,
+            agentdash_platform_spi::context_usage_kind::MCP_TOOLS
         );
     }
 }

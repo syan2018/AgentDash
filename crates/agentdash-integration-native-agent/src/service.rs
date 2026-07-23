@@ -53,6 +53,7 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use crate::DashAgentCoreToolCallbacks;
+use crate::accepted_context::{materialize_initial_context_frames, materialize_surface_frames};
 use crate::intrinsic_surface;
 use crate::tool_presentation::{ToolPresentationResult, project_tool_item};
 
@@ -880,7 +881,8 @@ impl CompleteAgentService for DashAgentCompleteService {
             return Ok(receipt);
         }
         let (service, metadata) = self.open_source(&command.source).await?;
-        let dash_surface = dash_surface_from_bound(&command.bound_surface)?;
+        let dash_surface =
+            dash_surface_from_bound(&command.bound_surface, metadata.callback_surface.as_ref())?;
         let profile = Self::descriptor().profile.surface;
         if let Some(unsupported) = command
             .bound_surface
@@ -1283,13 +1285,16 @@ fn translate_initial_context(
             })
         })
         .collect::<Result<Vec<_>, AgentServiceError>>()?;
-    Ok(InitialContextInstallation {
+    let mut installation = InitialContextInstallation {
         package_id: package.package_id.to_string(),
         package_digest: package.digest.to_string(),
         mode,
         fidelity: ContextDeliveryFidelity::TypedNative,
         contributions,
-    })
+        context_frames: Vec::new(),
+    };
+    installation.context_frames = materialize_initial_context_frames(&installation);
+    Ok(installation)
 }
 
 fn translate_fork_cutoff(cutoff: &AgentForkPoint) -> Result<ForkCutoff, AgentServiceError> {
@@ -1354,6 +1359,7 @@ fn service_terminal(outcome: DashTerminalOutcome) -> AgentTerminalOutcome {
 
 fn dash_surface_from_bound(
     surface: &agentdash_agent_service_api::BoundAgentSurface,
+    previous: Option<&agentdash_agent_service_api::BoundAgentSurface>,
 ) -> Result<DashSurface, AgentServiceError> {
     let mut instructions = vec![intrinsic_surface::instruction()];
     let mut tools = Vec::new();
@@ -1378,12 +1384,17 @@ fn dash_surface_from_bound(
                 name,
                 description,
                 input_schema,
+                provenance,
                 protocol_projector,
                 ..
             } => tools.push(DashToolDefinition {
                 name: name.to_string(),
                 description: description.clone(),
                 input_schema: input_schema.clone(),
+                capability_key: provenance.capability_key.clone(),
+                source: provenance.source.clone(),
+                tool_path: provenance.tool_path.clone(),
+                context_usage_kind: provenance.context_usage_kind.clone(),
                 protocol_projector: protocol_projector.clone(),
             }),
             agentdash_agent_service_api::AgentSurfaceContributionPayload::Workspace {
@@ -1409,12 +1420,20 @@ fn dash_surface_from_bound(
     }
     let digest =
         intrinsic_surface::materialization_digest(&instructions, &tools).map_err(internal)?;
-    Ok(DashSurface {
+    let mut accepted_surface = DashSurface {
         revision: surface.revision.0,
         digest,
         instructions,
         tools,
-    })
+        context_frames: Vec::new(),
+    };
+    let previous_surface = previous
+        .map(|surface| dash_surface_from_bound(surface, None))
+        .transpose()?;
+    accepted_surface.context_frames =
+        materialize_surface_frames(&accepted_surface, previous_surface.as_ref())
+            .map_err(internal)?;
+    Ok(accepted_surface)
 }
 
 fn text_input(input: &AgentInput) -> Result<String, AgentServiceError> {

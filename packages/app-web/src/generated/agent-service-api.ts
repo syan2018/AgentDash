@@ -201,7 +201,7 @@ export type AgentSurfaceCapabilityFacet = { semantics: AgentSurfaceSemanticFacet
 
 export type AgentSurfaceContributionKind = "instruction" | "tool" | "hook" | "workspace" | "context_requirement";
 
-export type AgentSurfaceContributionPayload = { "kind": "instruction", channel: string, text: string, presentation: AgentSurfaceInstructionPresentation, } | { "kind": "tool", name: AgentToolName, description: string, input_schema: JsonValue, output_schema: JsonValue | null, protocol_projector: ToolProtocolProjector, } | { "kind": "hook", definition_id: AgentHookDefinitionId, point: AgentHookPoint, timing: AgentHookTiming, actions: Array<AgentHookAction>, deadline_ms: AgentServiceU64, } | { "kind": "workspace", requirement: string, } | { "kind": "context_requirement", requirement: string, };
+export type AgentSurfaceContributionPayload = { "kind": "instruction", channel: string, text: string, presentation: AgentSurfaceInstructionPresentation, } | { "kind": "tool", name: AgentToolName, description: string, input_schema: JsonValue, output_schema: JsonValue | null, provenance: AgentToolProvenance, protocol_projector: ToolProtocolProjector, } | { "kind": "hook", definition_id: AgentHookDefinitionId, point: AgentHookPoint, timing: AgentHookTiming, actions: Array<AgentHookAction>, deadline_ms: AgentServiceU64, } | { "kind": "workspace", requirement: string, } | { "kind": "context_requirement", requirement: string, };
 
 export type AgentSurfaceDigest = string;
 
@@ -228,6 +228,8 @@ export type AgentToolDelivery = "prompt_declaration" | "runtime_broker_callback"
 export type AgentToolInvocation = { meta: AgentHostCallbackMeta, tool: AgentToolName, arguments: JsonValue, };
 
 export type AgentToolName = string;
+
+export type AgentToolProvenance = { capability_key: string, source: string, tool_path: string, context_usage_kind: string, };
 
 export type AgentToolResult = { "kind": "completed", output: JsonValue, } | { "kind": "rejected", code: string, message: string, } | { "kind": "failed", code: string, message: string, };
 

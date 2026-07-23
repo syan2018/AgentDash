@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, pin::Pin};
+use std::{
+    collections::BTreeMap,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use agentdash_agent_core::{
     CoreBeforeToolDecision, CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput,
@@ -46,6 +50,10 @@ pub struct DashToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    pub capability_key: String,
+    pub source: String,
+    pub tool_path: String,
+    pub context_usage_kind: String,
     pub protocol_projector: ToolProtocolProjector,
 }
 
@@ -252,6 +260,63 @@ pub trait DashProvider: Send + Sync {
 }
 
 #[async_trait]
+pub trait DashProviderRoundMaterializer: Send + Sync {
+    async fn materialize_provider_round(
+        &self,
+        turn_id: &AgentTurnId,
+        draft: DashProviderRequest,
+    ) -> Result<DashProviderRequest, DashCoreError>;
+}
+
+#[derive(Clone, Default)]
+pub struct DashProviderRoundSnapshots {
+    requests: Arc<Mutex<BTreeMap<u32, DashProviderRequest>>>,
+}
+
+impl DashProviderRoundSnapshots {
+    #[must_use]
+    pub fn snapshot(&self, round: u32) -> Option<DashProviderRequest> {
+        self.requests
+            .lock()
+            .expect("Dash provider round snapshot lock poisoned")
+            .get(&round)
+            .cloned()
+    }
+
+    fn pin(&self, request: DashProviderRequest) -> DashProviderRequest {
+        let mut requests = self
+            .requests
+            .lock()
+            .expect("Dash provider round snapshot lock poisoned");
+        requests.entry(request.round).or_insert(request).clone()
+    }
+
+    #[must_use]
+    pub fn tool_projector(&self, round: u32, tool_name: &str) -> Option<ToolProtocolProjector> {
+        self.snapshot(round).and_then(|request| {
+            request
+                .tools
+                .into_iter()
+                .find(|tool| tool.name == tool_name)
+                .map(|tool| tool.protocol_projector)
+        })
+    }
+}
+
+struct StaticDashProviderRoundMaterializer;
+
+#[async_trait]
+impl DashProviderRoundMaterializer for StaticDashProviderRoundMaterializer {
+    async fn materialize_provider_round(
+        &self,
+        _turn_id: &AgentTurnId,
+        draft: DashProviderRequest,
+    ) -> Result<DashProviderRequest, DashCoreError> {
+        Ok(draft)
+    }
+}
+
+#[async_trait]
 pub trait DashToolCallbacks: Send + Sync {
     async fn before_tool(
         &self,
@@ -328,15 +393,38 @@ impl DashCoreTurn {
         callbacks: &dyn DashExecutionCallbacks,
         cancel: DashCancellation,
     ) -> Result<DashCoreTurnResult, DashCoreError> {
-        let tool_protocol_projectors = self
+        self.run_with_materializer(
+            provider,
+            tools,
+            callbacks,
+            &StaticDashProviderRoundMaterializer,
+            DashProviderRoundSnapshots::default(),
+            cancel,
+        )
+        .await
+    }
+
+    pub async fn run_with_materializer(
+        self,
+        provider: &dyn DashProvider,
+        tools: &dyn DashToolCallbacks,
+        callbacks: &dyn DashExecutionCallbacks,
+        materializer: &dyn DashProviderRoundMaterializer,
+        round_snapshots: DashProviderRoundSnapshots,
+        cancel: DashCancellation,
+    ) -> Result<DashCoreTurnResult, DashCoreError> {
+        let seed_tools = self
             .context
             .tools
             .iter()
-            .map(|tool| (tool.name.clone(), tool.protocol_projector.clone()))
+            .map(|tool| (tool.name.clone(), tool.clone()))
             .collect::<BTreeMap<_, _>>();
         let provider = ProviderAdapter {
             inner: provider,
-            tool_protocol_projectors: tool_protocol_projectors.clone(),
+            turn_id: self.turn_id.clone(),
+            seed_tools,
+            materializer,
+            round_snapshots,
         };
         let tools = ToolAdapter {
             inner: tools,
@@ -404,35 +492,51 @@ pub fn execution_tool_item_id(turn_id: &AgentTurnId, call_id: &str) -> AgentItem
 
 struct ProviderAdapter<'a> {
     inner: &'a dyn DashProvider,
-    tool_protocol_projectors: BTreeMap<String, ToolProtocolProjector>,
+    turn_id: AgentTurnId,
+    seed_tools: BTreeMap<String, DashToolDefinition>,
+    materializer: &'a dyn DashProviderRoundMaterializer,
+    round_snapshots: DashProviderRoundSnapshots,
 }
 
 #[async_trait]
 impl CoreProvider for ProviderAdapter<'_> {
     async fn stream(&self, request: ProviderRequest) -> Result<ProviderEventStream, CoreError> {
-        let stream = self
-            .inner
-            .stream(DashProviderRequest {
-                system_prompt: request.system_prompt,
-                messages: request.messages.into_iter().map(dash_message).collect(),
-                tools: request
-                    .tools
-                    .into_iter()
-                    .map(|tool| DashToolDefinition {
-                        protocol_projector: self
-                            .tool_protocol_projectors
-                            .get(&tool.name)
-                            .cloned()
-                            .expect("Dash Core tool must retain its accepted protocol projector"),
+        let draft = DashProviderRequest {
+            system_prompt: request.system_prompt,
+            messages: request.messages.into_iter().map(dash_message).collect(),
+            tools: request
+                .tools
+                .into_iter()
+                .map(|tool| {
+                    let accepted = self
+                        .seed_tools
+                        .get(&tool.name)
+                        .expect("Dash Core tool must retain its accepted definition");
+                    DashToolDefinition {
                         name: tool.name,
                         description: tool.description,
                         input_schema: tool.input_schema,
-                    })
-                    .collect(),
-                round: request.round,
-            })
-            .await
-            .map_err(core_error)?;
+                        capability_key: accepted.capability_key.clone(),
+                        source: accepted.source.clone(),
+                        tool_path: accepted.tool_path.clone(),
+                        context_usage_kind: accepted.context_usage_kind.clone(),
+                        protocol_projector: accepted.protocol_projector.clone(),
+                    }
+                })
+                .collect(),
+            round: request.round,
+        };
+        let request = if let Some(snapshot) = self.round_snapshots.snapshot(draft.round) {
+            snapshot
+        } else {
+            let materialized = self
+                .materializer
+                .materialize_provider_round(&self.turn_id, draft)
+                .await
+                .map_err(core_error)?;
+            self.round_snapshots.pin(materialized)
+        };
+        let stream = self.inner.stream(request).await.map_err(core_error)?;
         Ok(Box::pin(stream.map(|event| {
             event.map(provider_event).map_err(core_error)
         })))

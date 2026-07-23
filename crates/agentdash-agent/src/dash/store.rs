@@ -184,6 +184,8 @@ impl DashAgentStore {
             .ok_or_else(|| StoreError::UnknownCompaction(compaction_id.clone()))?
             .source_digest
             .clone();
+        let context_frame =
+            super::history::accepted_compaction_summary_frame(&compaction_id, &revision, &summary);
         self.commit(DashAgentCommit {
             expected_head: self.history.head().cloned(),
             command_settlement: Some(CommandSettlement {
@@ -203,6 +205,7 @@ impl DashAgentStore {
                         summary,
                         retained_from,
                         source_digest,
+                        context_frame,
                     },
                 },
                 HistoryContribution {

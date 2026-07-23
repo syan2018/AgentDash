@@ -167,8 +167,8 @@ pub enum ToolSource {
 
 /// 统一工具描述 — 平台内嵌工具和 MCP 工具的共用元数据。
 ///
-/// 前端查询工具目录、connector 组装 system prompt、以及 capability editor
-/// 展示工具列表时都消费此类型。
+/// 运行时工具定义用它保留 capability/source/path provenance；ContextFrame materializer
+/// 与 capability editor 分别消费相同元数据，确保模型上下文和目录展示共享工具身份。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDescriptor {
     pub name: String,
@@ -229,24 +229,6 @@ impl ToolDescriptor {
             self.source,
             ToolSource::Platform { .. } | ToolSource::PlatformMcp { .. }
         )
-    }
-}
-
-/// 格式化工具描述为 system prompt 片段（platform + MCP 统一格式）。
-///
-/// 输出形如：
-/// ```text
-/// - **fs_read** (file_read): 读取 mount 内文件内容
-/// ```
-pub fn format_tool_for_prompt(desc: &ToolDescriptor) -> String {
-    let source_tag = match &desc.source {
-        ToolSource::Platform { .. } | ToolSource::PlatformMcp { .. } => desc.capability_key.clone(),
-        ToolSource::Mcp { server_name } => format!("mcp:{server_name}"),
-    };
-    if desc.description.is_empty() {
-        format!("- **{}** ({})", desc.name, source_tag)
-    } else {
-        format!("- **{}** ({}): {}", desc.name, source_tag, desc.description)
     }
 }
 

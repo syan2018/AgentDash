@@ -434,16 +434,21 @@ Correct: task runtime capability exposes task_read/task_write and execution arti
 
 ## 工具 schema 与模型可见说明
 
-运行时工具更新从Agent实际接纳的tool definition派生三种用途不同的投影：
+运行时工具更新从Agent实际接纳的tool definition派生两个消费者不同、identity相同的投影：
 
 - Provider `tools[]` 携带完整机器 schema，用于 OpenAI/Codex Responses 等服务解析工具调用。
-- Complete Agent按需生成模型可读摘要，用工具名、用途、参数名、必填性、类型和关键嵌套字段指导
-  调用；该摘要与provider工具定义读取同一accepted list。
-- `tool_schema_delta`携带added/removed/changed结构化证据，供平台ContextFrame展示工具面变化，
-  不承担Agent prompt输入。
+- ToolSchema ContextFrame同时携带added/removed/changed结构化证据与完整可读`rendered_text`；
+  Complete Agent把该文本投递给模型，并把精确同一frame发布给平台展示。
 
-模型可读摘要采用结构化参数说明，完整机器契约保留在provider `tools[]`。这样模型阅读体验、provider
-解析与平台展示共享同一definition，同时各自保留适合其消费者的形态。
+可读renderer必须覆盖名称、description、capability/source/path、required/optional、object/array
+嵌套、enum/const与schema constraints；section中的`parameters_schema`保持原样，前端可按需展开。
+provider bridge只做vendor structured field映射，不追加工具PromptText，原因是ContextFrame owner
+需要独立管理context更新、缓存与compaction。
+
+`RuntimeToolDefinition.provenance`是capability/source/tool path/context usage的typed来源：
+静态平台工具从统一`ToolDescriptor`注册表取得，动态MCP在discovery时按真实server/tool identity
+构造，并随`AgentSurfaceContributionPayload::Tool`无损传入concrete Agent。这样delta identity、
+ContextFrame展示和工具执行表都不依赖runtime name前缀或adapter route猜测。
 
 进入 Responses API 的工具 schema 必须先经过 sanitizer：递归内联本地 `$ref`，移除 `$defs` /
 `definitions` 与装饰性关键字，确保 object/array 结构、nullable 与组合器表达在目标 provider

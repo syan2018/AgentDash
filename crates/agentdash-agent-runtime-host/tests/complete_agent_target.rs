@@ -414,6 +414,12 @@ fn desired_surface() -> AgentSurfaceSnapshot {
                 description: "Echo".to_owned(),
                 input_schema: json!({"type": "object"}),
                 output_schema: Some(json!({"type": "object"})),
+                provenance: AgentToolProvenance {
+                    capability_key: "echo".to_owned(),
+                    source: "test".to_owned(),
+                    tool_path: "echo::echo".to_owned(),
+                    context_usage_kind: "system_tools".to_owned(),
+                },
                 protocol_projector: agentdash_agent_runtime::ToolProtocolProjector::Dynamic,
             },
             payload_digest: AgentPayloadDigest::new("tool-payload").unwrap(),

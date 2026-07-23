@@ -29,6 +29,9 @@ provenance 与整体 digest。
   `TypedNative | CanonicalRendered | Unsupported` fidelity；
 - Runtime 在 applied evidence 到达前不激活 source；
 - 派发任务作为 create 之后的首个普通 `SubmitInput`，不能代替 initial context 安装。
+- concrete Agent在安装时把每项contribution物化为accepted ContextFrame并随history保存；
+  provider input与canonical history读取同一`rendered_text`，原因是initial context的authority、
+  provenance与实际模型文本必须由同一接纳事实证明。
 
 ## 4. Compaction capability
 
@@ -49,13 +52,17 @@ Dash Agent compaction 以 history transform 表达：
 source history revision
   -> CompactionStarted
   -> summary + retained suffix + provenance
-  -> CompactionApplied(new history revision)
+  -> CompactionApplied(new history revision + accepted CompactionSummary frame)
   -> CompactionCompleted
 ```
 
 command inbox、provider effect、retry 与 recovery ledger 位于 `AgentSession` 外。一次
 `DashAgentCommit` 原子提交 effect settlement、history append/head CAS、derived change
 与下一 continuation intent。
+
+`CompactionApplied`保存最终CompactionSummary ContextFrame。后续provider round、overflow
+continuation与canonical presentation直接使用该frame的`rendered_text`，使summary恢复与用户看到的
+compaction evidence保持同一revision。
 
 Manual compaction：
 

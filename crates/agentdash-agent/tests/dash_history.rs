@@ -4,7 +4,7 @@ use agentdash_agent::dash::{
     ContextDeliveryFidelity, ContextRevision, DashAgentCommit, DashAgentStore, DashCommand,
     DashCommandKind, DashExecutionConsistency, EffectId, EffectOutcome, EffectSettlement,
     ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload, InitialContextContribution,
-    InitialContextInstallation, InitialContextMode,
+    InitialContextInstallation, InitialContextMode, accepted_compaction_summary_frame,
 };
 
 fn contribution(id: &str, payload: HistoryPayload) -> HistoryContribution {
@@ -27,6 +27,7 @@ fn initial_package() -> InitialContextInstallation {
             source_revision: "source-r1".into(),
             digest: "contribution-digest".into(),
         }],
+        context_frames: Vec::new(),
     }
 }
 
@@ -166,6 +167,11 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
                     summary: "compacted".into(),
                     retained_from: Some(HistoryEntryId::new("entry-input")),
                     source_digest,
+                    context_frame: accepted_compaction_summary_frame(
+                        &CompactionId::new("compact-b"),
+                        &ContextRevision::new("context-r2"),
+                        "compacted",
+                    ),
                 },
             ),
             contribution(

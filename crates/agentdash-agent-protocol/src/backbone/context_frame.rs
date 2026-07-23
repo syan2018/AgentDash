@@ -2,11 +2,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// AgentDash-owned context presentation payload.
+/// AgentDash-owned model-context delivery payload.
 ///
-/// This is a presentation/audit projection of the materialized agent surface. It is not the
-/// model context itself and must never be used as the execution adapter's input contract.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+/// A concrete Agent accepts these frames, consumes `rendered_text` according to the delivery
+/// metadata, and publishes the same value for history, live presentation, and audit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ContextFrame {
     pub id: String,
@@ -409,7 +409,7 @@ pub struct ContextConnectorProfile {
     pub declared_consumption_modes: Vec<ContextAgentConsumptionMode>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ContextFrameSection {
     Identity {
@@ -602,7 +602,7 @@ string_entry!(ProjectGuidelineEntry {
     path: String,
     content: String
 });
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeToolSchemaEntry {
     pub name: String,
@@ -660,7 +660,7 @@ string_entry!(RuntimeMemorySourceEntry { provider_key: String, source_key: Strin
 string_entry!(RuntimeMemoryDiagnosticEntry { provider_key: String, code: String, message: String, #[serde(default, skip_serializing_if = "Option::is_none")] source_key: Option<String>, #[serde(default, skip_serializing_if = "Option::is_none")] uri: Option<String>, #[serde(default, skip_serializing_if = "Option::is_none")] context_usage_kind: Option<String> });
 string_entry!(RuntimeCompanionAgentEntry { agent_key: String, executor: String, display_name: String, #[serde(default, skip_serializing_if = "Option::is_none")] context_usage_kind: Option<String> });
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ContextFrameChanged {
     pub frame: ContextFrame,

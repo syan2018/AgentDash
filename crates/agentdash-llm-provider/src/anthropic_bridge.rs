@@ -599,6 +599,31 @@ async fn process_anthropic_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider_bridge_test_support::{
+        SCHEMA_PROPERTY, SYSTEM_PROMPT, TOOL_DESCRIPTION, TOOL_NAME, USER_PROMPT,
+        assert_prompt_lanes_exclude_tool_metadata, bridge_request, serialized_body,
+        tool_parameters,
+    };
+
+    #[test]
+    fn anthropic_wire_body_keeps_tool_contract_structured_and_prompt_lanes_clean() {
+        let body = serialized_body(build_request_body("claude-sonnet", &bridge_request()));
+
+        assert_eq!(body["system"], SYSTEM_PROMPT);
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"][0]["text"], USER_PROMPT);
+
+        let tool = &body["tools"][0];
+        assert_eq!(tool["name"], TOOL_NAME);
+        assert_eq!(tool["description"], TOOL_DESCRIPTION);
+        assert_eq!(tool["input_schema"], tool_parameters());
+        assert_eq!(
+            tool["input_schema"]["required"][0],
+            serde_json::Value::String(SCHEMA_PROPERTY.to_string())
+        );
+
+        assert_prompt_lanes_exclude_tool_metadata(&[&body["system"], &body["messages"]]);
+    }
 
     #[test]
     fn anthropic_body_maps_profile_thinking_level() {

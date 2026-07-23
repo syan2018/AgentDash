@@ -548,6 +548,11 @@ fn is_responses_protocol_event(event_type: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider_bridge_test_support::{
+        SYSTEM_PROMPT, TOOL_DESCRIPTION, TOOL_NAME, USER_PROMPT,
+        assert_prompt_lanes_exclude_tool_metadata, bridge_request, serialized_body,
+        tool_parameters,
+    };
     use agentdash_agent::bridge::ProviderErrorKind;
     use agentdash_agent::types::ToolDefinition;
     use std::time::Duration;
@@ -565,6 +570,29 @@ mod tests {
             message,
             ProviderErrorClassification::retryable().with_provider_code("fixture_decoder"),
         )
+    }
+
+    #[test]
+    fn openai_responses_wire_body_keeps_tool_contract_structured_and_prompt_lanes_clean() {
+        let body = serialized_body(build_responses_request_body(
+            "gpt-5.5",
+            &bridge_request(),
+            ResponsesRequestOptions::openai_api(),
+        ));
+
+        let input = body["input"].as_array().expect("input array");
+        assert_eq!(input[0]["role"], "system");
+        assert_eq!(input[0]["content"], SYSTEM_PROMPT);
+        assert_eq!(input[1]["role"], "user");
+        assert_eq!(input[1]["content"][0]["text"], USER_PROMPT);
+        assert!(body.get("instructions").is_none());
+
+        let tool = &body["tools"][0];
+        assert_eq!(tool["name"], TOOL_NAME);
+        assert_eq!(tool["description"], TOOL_DESCRIPTION);
+        assert_eq!(tool["parameters"], tool_parameters());
+
+        assert_prompt_lanes_exclude_tool_metadata(&[&body["input"]]);
     }
 
     #[test]

@@ -118,12 +118,21 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   projector与typed provenance；Product surface无损携带capability/source/tool path/context usage，
   Native adapter按字段接纳而不从runtime name或route反推。provider `tools[]`携带完整机器契约；
   accepted tool保留同一provenance。
-  ToolSchema ContextFrame从同一列表生成完整、确定性的nested-schema可读文本，同时在section中保存
-  added/removed/changed真增量。机器调用契约与可读上下文是同一事实的两个投影。
+  Native Adapter把capability manifest各维度与`ToolSchemaDelta`合并到同一个
+  `CapabilityStateDelta` ContextFrame：首次接纳按empty→current生成完整初始增量，后续revision只
+  保留真正变化的section，语义未变时不生成空frame。ToolSchema renderer从同一列表生成完整、
+  确定性的nested-schema说明与无损JSON Schema，同时保存added/removed/changed结构化证据。
+  合并为单frame的原因是capability状态和它开放的工具说明属于同一次surface transition，不能让
+  模型与审计分别观察两个可独立漂移的revision。
+- Dash对`CapabilityStateDelta`固定声明`context/system_append`。Native history按当前active
+  surface链累积这些append frame，每个provider round重放initial delta与后续真delta；surface
+  revoke清空该链。这样平台拥有工具上下文的更新、顺序与撤销语义，connector只接收最终物化文本，
+  不拥有native prompt注入策略。
 - Dash provider port在每个逻辑provider round固定一份request snapshot：当前accepted
-  ContextFrames生成system/context文本，当前tools生成structured tool contract，并同时固定该round
-  的owner projector。工具结果提交与surface mutation完成后，下一round重新物化；同一round重试
-  复用已固定snapshot，原因是一次已发出的provider请求不能在中途改变语义。
+  stable ContextFrames与active system-append ledger生成system/context文本，当前tools生成structured
+  tool contract，并同时固定该round的owner projector。工具结果提交与surface mutation完成后，
+  下一round重新物化；同一round重试复用已固定snapshot，原因是一次已发出的provider请求不能在
+  中途改变语义。
 - Product的skill、memory、MCP、workspace与context requirement必须先物化为Agent实际接纳的
   instruction/tool surface，再由Native Adapter按channel映射为Identity、Environment、
   SystemGuidelines、AssignmentContext、CapabilityStateDelta、MemoryContext或UserContext。
@@ -189,7 +198,10 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 | 连续surface只增加一个tool | 只发布该tool的`added_tools`，不重放完整当前schema |
 | tool同名但description/schema变化 | 发布到`changed_tools`，不同时出现在`added_tools` |
 | tool从surface消失 | tool name进入`removed_tools` |
+| capability manifest与tool schema同时变化 | 合并为一个`context/system_append` CAP frame |
 | surface revision变化但instruction/tool语义未变 | 不发布伪ContextFrame delta |
+| active surface连续热更新 | provider context按history顺序累积initial CAP delta与后续真delta |
+| active surface被revoke | 清空该surface链的append context，后续request不保留失效schema |
 | Product contribution使用Dash intrinsic保留key | side effect与history mutation前typed invalid argument |
 | Product binding digest与Dash materialization digest比较 | 分别解释上游binding与实际接纳内容，不要求相等 |
 | 内建提示内容升级 | verified profile/build evidence变化；rebind提交新的实际surface，既有history保持原事实 |
@@ -257,10 +269,12 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - intrinsic surface测试断言内建`.md`进入provider request与Identity ContextFrame，Product applied
   receipt不认领该contribution，且Product binding digest不同于Dash materialization digest。
 - surface delta tests连续应用三版surface，覆盖tool新增、修改、删除，断言read重放只返回真实
-  变化、`rendered_text`包含完整nested字段说明且section保留原始schema；context channel矩阵覆盖
-  system、identity、workspace、workflow、skills、MCP、memory与user context的typed frame映射。
+  变化、capability与ToolSchema只形成一个`context/system_append` frame、`rendered_text`包含完整
+  nested字段说明与无损JSON Schema且section保留原始schema；context channel矩阵覆盖system、
+  identity、workspace、workflow、skills、MCP、memory与user context的typed frame映射。
 - active-turn测试在第一轮tool callback期间替换surface，断言旧call沿已接纳route完成、下一round
-  读取新ContextFrame/tools/projector，且native user/tool transcript没有重复。
+  读取新ContextFrame/tools/projector、provider prompt仍包含同一active surface链的早期append
+  frame，且native user/tool transcript没有重复；revoke测试证明失效链被清空。
 - naming test断言Succeeded与“已有Agent output的Failed”回合都把accepted user input与最终
   Agent output交给namer，只提交一次非空`ThreadNameChanged`，且`read/changes/live`均投影同一标题；
   Accepted、interaction与无output失败不命名，命名失败不改变原回合terminal。

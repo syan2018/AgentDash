@@ -13,7 +13,8 @@
 - [x] accepted surface 同时保留 machine tool definitions、typed provenance 与 readable ContextFrame。
 - [x] frame id、cache key/revision 与 surface/context revision 稳定关联。
 - [x] canonical projection 直接发布已接纳 frame，不再重渲染 instruction、ToolSchema、initial context 或 compaction 文本。
-- [x] Dash 生产路径只把 `Consume` frame 作为模型输入；presentation/audit 事件不再伪装成另一份输入事实。
+- [x] Dash按accepted delivery metadata消费模型输入：stable frame直接物化，capability delta通过
+  `SystemAppend` ledger物化；presentation/audit事件不再伪装成另一份输入事实。
 
 ## Phase 2: Context Delivery Materializer
 
@@ -64,6 +65,16 @@
 - [x] focused frontend type/lint/tests 通过。
 - [x] 新增 pre-release migration 清理旧 Dash owner documents/effects；没有兼容 reader 或 fallback 分支。
 - [x] 仓库级前端 `typecheck` 通过；全量 ESLint 仍被 33 个本任务外既有 React effect 规则错误阻断，按工作区约束未修改无关文件。
+
+## Phase 8: Capability Append Regression Closure
+
+- [x] 将capability manifest维度与ToolSchema delta合并为单一CAP ContextFrame。
+- [x] Dash CAP delivery固定为`context/system_append`，移除该路径的connector-native/consume语义。
+- [x] update frame过滤未变化section，未变化工具schema不再全量重放，no-op revision不生成空CAP。
+- [x] added/changed工具由平台renderer输出字段说明与无损完整JSON Schema。
+- [x] provider round按native history累积当前active surface的append frames，surface revoke清空链路。
+- [x] 前端Dash CAP fixtures同步为`system_append`并继续直接展示accepted `rendered_text`。
+- [x] 完成focused Rust/frontend验证与重复缺陷复盘；任务随本次修复提交完成后归档。
 
 ## Primary Files
 

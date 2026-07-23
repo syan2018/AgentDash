@@ -169,13 +169,13 @@ function contextFrameEntry(
               model_channel: "context",
               agent_consumption: {
                 target: "dash-agent",
-                mode: "consume",
-                reason: "test",
+                mode: "system_append",
+                reason: "accepted_capability_state_append",
               },
               frontend_label: "Capability State Delta",
               connector_profile: {
                 profile_id: "dash-agent",
-                declared_consumption_modes: ["consume"],
+                declared_consumption_modes: ["system_append"],
               },
             },
             rendered_text: "## Capability Update",

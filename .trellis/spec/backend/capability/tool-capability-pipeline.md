@@ -437,13 +437,17 @@ Correct: task runtime capability exposes task_read/task_write and execution arti
 运行时工具更新从Agent实际接纳的tool definition派生两个消费者不同、identity相同的投影：
 
 - Provider `tools[]` 携带完整机器 schema，用于 OpenAI/Codex Responses 等服务解析工具调用。
-- ToolSchema ContextFrame同时携带added/removed/changed结构化证据与完整可读`rendered_text`；
-  Complete Agent把该文本投递给模型，并把精确同一frame发布给平台展示。
+- 一个`CapabilityStateDelta` ContextFrame同时携带capability各维度变化与
+  `ToolSchemaDelta` added/removed/changed结构化证据，以及完整可读`rendered_text`；Complete Agent
+  以`context/system_append`投递该文本，并把精确同一frame发布给平台展示。首次投递是
+  empty→current，运行中revision只包含真正变化的section，语义无变化时不生成frame。
 
 可读renderer必须覆盖名称、description、capability/source/path、required/optional、object/array
-嵌套、enum/const与schema constraints；section中的`parameters_schema`保持原样，前端可按需展开。
+嵌套、enum/const与schema constraints，并附带无损完整JSON Schema；section中的
+`parameters_schema`保持原样，前端可按需展开。
 provider bridge只做vendor structured field映射，不追加工具PromptText，原因是ContextFrame owner
-需要独立管理context更新、缓存与compaction。
+需要独立管理context更新、缓存与compaction。Dash从native history恢复当前active surface的append
+序列，而不是要求最新surface重放完整schema；这样增量语义、热更新顺序与revoke都由平台控制。
 
 `RuntimeToolDefinition.provenance`是capability/source/tool path/context usage的typed来源：
 静态平台工具从统一`ToolDescriptor`注册表取得，动态MCP在discovery时按真实server/tool identity

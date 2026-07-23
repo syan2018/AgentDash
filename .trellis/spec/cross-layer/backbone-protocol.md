@@ -80,6 +80,10 @@ type AgentLiveEvent = {
 - `tool_schema_delta`携带`added_tools/removed_tools/changed_tools`及完整`parameters_schema`；前端
   默认展示工具摘要并提供JSON tree展开，以便审计模型可读文本与机器schema是否同源。frame排序依次
   使用delivery phase、delivery order、created_at与稳定frame id。
+- Dash capability surface的各维度delta与`tool_schema_delta`属于同一个
+  `capability_state_delta` record，并声明`context/system_append`。因此前端看到的每个CAP record
+  对应一次可执行surface transition；首次record是完整初始增量，后续record只展示发生变化的
+  section，不把capability清单与工具schema拆成两个独立投递事实。
 - 断线或进程重启后丢弃 ephemeral lane，并从 Complete Agent `read` 重新获取 durable history。
   Snapshot-only Agent 不需要平台 durable change journal。
 - PTY terminal、Canvas、Workspace Module 与 AgentFrame 是独立资源事实；即使它们引用 Agent

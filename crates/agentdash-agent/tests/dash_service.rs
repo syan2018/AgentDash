@@ -44,6 +44,36 @@ fn accepted_context_frame(id: &str, text: &str) -> agentdash_agent_protocol::Con
     }
 }
 
+fn accepted_system_append_frame(id: &str, text: &str) -> agentdash_agent_protocol::ContextFrame {
+    use agentdash_agent_protocol::{
+        ContextAgentConsumptionMode, ContextDeliveryChannel, ContextDeliveryMetadata,
+        ContextDeliveryStatus, ContextFrame, ContextFrameKind, ContextFrameSource,
+        ContextMessageRole,
+    };
+    let kind = ContextFrameKind::CapabilityStateDelta;
+    let role = ContextMessageRole::Context;
+    let mut delivery_metadata =
+        ContextDeliveryMetadata::for_frame(kind, ContextDeliveryChannel::ConnectorContext, role);
+    delivery_metadata.agent_consumption.mode = ContextAgentConsumptionMode::SystemAppend;
+    delivery_metadata
+        .connector_profile
+        .declared_consumption_modes = vec![ContextAgentConsumptionMode::SystemAppend];
+    ContextFrame {
+        id: id.to_owned(),
+        kind,
+        source: ContextFrameSource::RuntimeContextUpdate,
+        phase_node: None,
+        apply_mode: Some("test_surface_append".to_owned()),
+        delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
+        delivery_channel: ContextDeliveryChannel::ConnectorContext,
+        message_role: role,
+        delivery_metadata,
+        rendered_text: text.to_owned(),
+        sections: Vec::new(),
+        created_at_ms: 0,
+    }
+}
+
 fn test_tool(
     name: &str,
     projector: agentdash_agent_protocol::ToolProtocolProjector,
@@ -344,7 +374,7 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
                 "workspace_module_operate",
                 agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
             )],
-            context_frames: vec![accepted_context_frame(
+            context_frames: vec![accepted_system_append_frame(
                 "surface:1:tools",
                 "accepted tool schema revision one",
             )],
@@ -377,7 +407,7 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
                 "fs_apply_patch",
                 agentdash_agent_protocol::ToolProtocolProjector::FileChange,
             )],
-            context_frames: vec![accepted_context_frame(
+            context_frames: vec![accepted_system_append_frame(
                 "surface:2:tools",
                 "accepted tool schema revision two",
             )],
@@ -416,6 +446,10 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
             .map(|tool| tool.name.as_str())
             .collect::<Vec<_>>(),
         ["fs_apply_patch"]
+    );
+    assert!(
+        requests[1].system_prompt.contains("revision one"),
+        "system-append ContextFrames from earlier accepted surfaces must remain in model context"
     );
     assert!(requests[1].system_prompt.contains("revision two"));
     assert_eq!(
@@ -750,6 +784,53 @@ async fn installed_initial_context_is_materialized_into_the_provider_prompt() {
             .system_prompt
             .contains("the durable parent summary"),
         "accepted initial context must be part of the actual provider prompt"
+    );
+}
+
+#[tokio::test]
+async fn surface_revoke_clears_the_active_system_append_context_chain() {
+    let provider = Arc::new(CapturingProvider::default());
+    let service = create_service(
+        AgentHistory::empty(
+            AgentSessionId::new("surface-revoke-context-session"),
+            BranchId::new("surface-revoke-context-branch"),
+        ),
+        dependencies(provider.clone()),
+    )
+    .await;
+    service
+        .apply_surface(DashSurface {
+            revision: 1,
+            digest: "surface-before-revoke".to_owned(),
+            instructions: Vec::new(),
+            tools: Vec::new(),
+            context_frames: vec![accepted_system_append_frame(
+                "surface:1:capability-state-delta",
+                "STALE CAPABILITY SCHEMA",
+            )],
+        })
+        .await
+        .unwrap();
+    service.revoke_surface(1).await.unwrap();
+
+    service
+        .execute(DashCommandRequest {
+            command_id: CommandId::new("surface-revoke-context-command"),
+            effect_id: EffectId::new("surface-revoke-context-effect"),
+            command: DashPublicCommand::SubmitInput {
+                content: "continue without the revoked surface".to_owned(),
+            },
+        })
+        .await
+        .unwrap();
+
+    let requests = provider.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert!(
+        !requests[0]
+            .system_prompt
+            .contains("STALE CAPABILITY SCHEMA"),
+        "revoking a surface must remove its accepted append ledger from subsequent model input"
     );
 }
 

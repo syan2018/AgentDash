@@ -3,7 +3,7 @@
   "name": "contextframe-input-authority-restoration",
   "title": "收复 ContextFrame 单一上下文权威并审计模型输入旁路",
   "description": "恢复 ContextFrame 作为平台模型可见上下文的唯一可读渲染与投递协议，修复 ToolSchema、surface instructions、initial context、compaction 与 provider-round 热更新旁路。",
-  "status": "completed",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "cross-layer",
   "package": null,
@@ -11,8 +11,8 @@
   "creator": "codex-agent",
   "assignee": "codex-agent",
   "createdAt": "2026-07-23",
-  "completedAt": "2026-07-23",
-  "branch": null,
+  "completedAt": null,
+  "branch": "codex/agent-runtime-final-convergence-plan",
   "base_branch": "codex/agent-runtime-final-convergence-plan",
   "worktree_path": null,
   "commit": null,
@@ -24,12 +24,14 @@
     "crates/agentdash-agent/src/dash/history.rs",
     "crates/agentdash-agent/src/dash/service.rs",
     "crates/agentdash-agent-core/src/loop_engine.rs",
+    "crates/agentdash-integration-native-agent/src/accepted_context.rs",
     "crates/agentdash-integration-native-agent/src/canonical_projection.rs",
     "crates/agentdash-integration-native-agent/src/bridge_execution.rs",
     "crates/agentdash-infrastructure/src/complete_agent_product_provisioning.rs",
     "crates/agentdash-agent-protocol/src/backbone/context_frame.rs",
-    "packages/app-web/src/features/session/ui/contextFrame/SectionRenderers.tsx"
+    "packages/app-web/src/features/session/ui/contextFrame/SectionRenderers.tsx",
+    "packages/app-web/src/features/session/ui/SessionSystemEventCard.test.tsx"
   ],
-  "notes": "实现与 focused quality gate 已完成；因工作代码尚未提交，按 trellis-finish-work 规则保留在 active tasks 中，等待后续提交与归档。",
+  "notes": "复核阶段发现的拆帧、伪全量delta与latest-surface重放已修复：Dash capability/tool schema统一为单一context/system_append frame，并由native history恢复active append链。",
   "meta": {}
 }

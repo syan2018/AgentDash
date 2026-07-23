@@ -19,15 +19,22 @@ pub(crate) fn materialize_surface_frames(
     previous: Option<&DashSurface>,
 ) -> Result<Vec<ContextFrame>, serde_json::Error> {
     let mut frames = Vec::new();
+    let mut capability_frame_index = None;
     for (index, instruction) in surface.instructions.iter().enumerate() {
-        if let Some(frame) = materialize_instruction_frame(surface, previous, instruction, index)? {
+        if matches!(
+            &instruction.presentation,
+            AgentSurfaceInstructionPresentation::CapabilityManifest { .. }
+        ) {
+            capability_frame_index.get_or_insert(frames.len());
+            continue;
+        }
+        if let Some(frame) = materialize_instruction_frame(surface, instruction, index) {
             frames.push(frame);
         }
     }
-    if !surface.tools.is_empty()
-        || previous.is_some_and(|previous_surface| !previous_surface.tools.is_empty())
-    {
-        frames.push(materialize_tool_schema_frame(surface, previous));
+    if let Some(frame) = materialize_capability_state_frame(surface, previous)? {
+        let index = capability_frame_index.unwrap_or(frames.len());
+        frames.insert(index, frame);
     }
     Ok(frames)
 }
@@ -49,12 +56,11 @@ pub(crate) fn materialize_initial_context_frames(
 
 fn materialize_instruction_frame(
     surface: &DashSurface,
-    previous: Option<&DashSurface>,
     instruction: &DashSurfaceInstruction,
     index: usize,
-) -> Result<Option<ContextFrame>, serde_json::Error> {
+) -> Option<ContextFrame> {
     if instruction.text.trim().is_empty() {
-        return Ok(None);
+        return None;
     }
     let (kind, role, title) = instruction_presentation(instruction);
     let mut metadata = dash_delivery_metadata(kind, role, "accepted_surface_instruction");
@@ -76,19 +82,6 @@ fn materialize_instruction_frame(
         context_usage_kind: Some("agent_surface".to_owned()),
     };
     let sections = match &instruction.presentation {
-        AgentSurfaceInstructionPresentation::CapabilityManifest { manifest } => {
-            let previous_manifest = previous
-                .into_iter()
-                .flat_map(|surface| surface.instructions.iter())
-                .find(|candidate| candidate.key == instruction.key)
-                .and_then(|candidate| match &candidate.presentation {
-                    AgentSurfaceInstructionPresentation::CapabilityManifest { manifest } => {
-                        Some(manifest)
-                    }
-                    _ => None,
-                });
-            capability_manifest_sections(previous_manifest, manifest)?
-        }
         AgentSurfaceInstructionPresentation::Identity => vec![ContextFrameSection::Identity {
             title: title.to_owned(),
             summary: instruction.key.clone(),
@@ -100,7 +93,7 @@ fn materialize_instruction_frame(
             fragments: vec![fragment],
         }],
     };
-    Ok(Some(ContextFrame {
+    Some(ContextFrame {
         id: format!(
             "surface:{}:{}:instruction:{}",
             surface.revision, surface.digest, instruction.key
@@ -116,18 +109,76 @@ fn materialize_instruction_frame(
         rendered_text: instruction.text.clone(),
         sections,
         created_at_ms: 0,
+    })
+}
+
+fn materialize_capability_state_frame(
+    surface: &DashSurface,
+    previous: Option<&DashSurface>,
+) -> Result<Option<ContextFrame>, serde_json::Error> {
+    let current_manifest =
+        surface
+            .instructions
+            .iter()
+            .find_map(|instruction| match &instruction.presentation {
+                AgentSurfaceInstructionPresentation::CapabilityManifest { manifest } => {
+                    Some(manifest)
+                }
+                _ => None,
+            });
+    let previous_manifest = previous
+        .into_iter()
+        .flat_map(|surface| surface.instructions.iter())
+        .find_map(|instruction| match &instruction.presentation {
+            AgentSurfaceInstructionPresentation::CapabilityManifest { manifest } => Some(manifest),
+            _ => None,
+        });
+    let mut sections = match (previous_manifest, current_manifest) {
+        (None, None) => Vec::new(),
+        (previous, Some(current)) => capability_manifest_sections(previous, current)?,
+        (Some(previous), None) => {
+            capability_manifest_sections(Some(previous), &AgentCapabilityManifest::default())?
+        }
+    };
+    if let Some(tool_schema_delta) = tool_schema_delta(surface, previous) {
+        sections.push(tool_schema_delta);
+    }
+    if sections.is_empty() {
+        return Ok(None);
+    }
+
+    let kind = ContextFrameKind::CapabilityStateDelta;
+    let role = ContextMessageRole::Context;
+    let mut metadata = dash_delivery_metadata(kind, role, "accepted_capability_state_append");
+    metadata.agent_consumption.mode = ContextAgentConsumptionMode::SystemAppend;
+    metadata.connector_profile.declared_consumption_modes =
+        vec![ContextAgentConsumptionMode::SystemAppend];
+    metadata.cache_key = Some(surface.digest.clone());
+    metadata.cache_revision = Some(surface.revision.to_string());
+    metadata.frontend_label = "Capability State Delta".to_owned();
+    Ok(Some(ContextFrame {
+        id: format!(
+            "surface:{}:{}:capability-state-delta",
+            surface.revision, surface.digest
+        ),
+        kind,
+        source: ContextFrameSource::RuntimeContextUpdate,
+        phase_node: None,
+        apply_mode: Some("accepted_surface_append".to_owned()),
+        delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
+        delivery_channel: ContextDeliveryChannel::ConnectorContext,
+        message_role: role,
+        delivery_metadata: metadata,
+        rendered_text: render_capability_state_delta(&sections),
+        sections,
+        created_at_ms: 0,
     }))
 }
 
-fn materialize_tool_schema_frame(
+fn tool_schema_delta(
     surface: &DashSurface,
     previous: Option<&DashSurface>,
-) -> ContextFrame {
-    let tools = surface
-        .tools
-        .iter()
-        .map(runtime_tool_schema_entry)
-        .collect::<Vec<_>>();
+) -> Option<ContextFrameSection> {
     let previous_tools = previous
         .into_iter()
         .flat_map(|surface| surface.tools.iter())
@@ -157,32 +208,14 @@ fn materialize_tool_schema_frame(
         .filter(|key| !current_tools.contains_key(*key))
         .map(|(_, _, _, name)| name.clone())
         .collect::<Vec<_>>();
-    let kind = ContextFrameKind::CapabilityStateDelta;
-    let role = ContextMessageRole::System;
-    let mut metadata = dash_delivery_metadata(kind, role, "accepted_tool_schema_context");
-    metadata.cache_key = Some(surface.digest.clone());
-    metadata.cache_revision = Some(surface.revision.to_string());
-    metadata.frontend_label = "Runtime Tool Schema".to_owned();
-    ContextFrame {
-        id: format!(
-            "surface:{}:{}:tool-schema",
-            surface.revision, surface.digest
-        ),
-        kind,
-        source: ContextFrameSource::RuntimeContextUpdate,
-        phase_node: None,
-        apply_mode: Some("accepted_surface".to_owned()),
-        delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
-        delivery_channel: ContextDeliveryChannel::ConnectorContext,
-        message_role: role,
-        delivery_metadata: metadata,
-        rendered_text: render_tool_schema(&tools, &added_tools, &removed_tools, &changed_tools),
-        sections: vec![ContextFrameSection::ToolSchemaDelta {
+    if added_tools.is_empty() && removed_tools.is_empty() && changed_tools.is_empty() {
+        None
+    } else {
+        Some(ContextFrameSection::ToolSchemaDelta {
             added_tools,
             removed_tools,
             changed_tools,
-        }],
-        created_at_ms: 0,
+        })
     }
 }
 
@@ -445,11 +478,43 @@ pub(crate) fn capability_manifest_sections(
             context_usage_kind: Some("agent_surface".to_owned()),
         }
     };
-    let sections = vec![
+    let is_initial = previous.is_none();
+    let skill_diagnostics_changed =
+        previous.is_none_or(|manifest| manifest.skill_diagnostics != current.skill_diagnostics);
+    let memory_diagnostics_changed =
+        previous.is_none_or(|manifest| manifest.memory_diagnostics != current.memory_diagnostics);
+    let channels_changed = previous.is_none_or(|manifest| manifest.channels != current.channels);
+    let workspace_module_changed =
+        previous.is_none_or(|manifest| manifest.workspace_module != current.workspace_module);
+    let tool_clusters_changed =
+        previous.is_none_or(|manifest| manifest.tool_clusters != current.tool_clusters);
+    let mut vfs_mounts_added = map_added(&before_mounts, &after_mounts);
+    let mut vfs_mounts_removed = map_added(&after_mounts, &before_mounts);
+    let changed_vfs_mounts = map_changed(&before_mounts, &after_mounts);
+    vfs_mounts_added.extend(changed_vfs_mounts.iter().cloned());
+    vfs_mounts_removed.extend(changed_vfs_mounts);
+    vfs_mounts_added.sort();
+    vfs_mounts_added.dedup();
+    vfs_mounts_removed.sort();
+    vfs_mounts_removed.dedup();
+
+    let mut sections = vec![
         ContextFrameSection::CapabilityKeyDelta {
             added_capabilities: set_added(&before_capabilities, &after_capabilities),
             removed_capabilities: set_added(&after_capabilities, &before_capabilities),
             effective_capabilities: current.tool_capabilities.clone(),
+        },
+        ContextFrameSection::SystemNotice {
+            title: "Tool Clusters".to_owned(),
+            summary: format!("{} enabled tool clusters", current.tool_clusters.len()),
+            body: Some(
+                current
+                    .tool_clusters
+                    .iter()
+                    .map(|cluster| format!("- `{cluster}`"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
         },
         ContextFrameSection::ToolPathDelta {
             blocked_tool_paths: set_added(&before_excluded, &after_excluded),
@@ -463,8 +528,8 @@ pub(crate) fn capability_manifest_sections(
             changed_mcp_servers: map_changed(&before_mcp, &after_mcp),
         },
         ContextFrameSection::VfsDelta {
-            vfs_mounts_added: map_added(&before_mounts, &after_mounts),
-            vfs_mounts_removed: map_added(&after_mounts, &before_mounts),
+            vfs_mounts_added,
+            vfs_mounts_removed,
             default_mount_before: previous
                 .and_then(|manifest| manifest.vfs.as_ref())
                 .and_then(|vfs| vfs.default_mount.clone()),
@@ -516,19 +581,27 @@ pub(crate) fn capability_manifest_sections(
             } else {
                 RuntimeMemoryInventoryMode::Snapshot
             },
-            sources: current.memory_sources.iter().map(memory_entry).collect(),
-            diagnostics: current
-                .memory_diagnostics
-                .iter()
-                .map(|diagnostic| RuntimeMemoryDiagnosticEntry {
-                    provider_key: diagnostic.provider_key.clone(),
-                    code: diagnostic.code.clone(),
-                    message: diagnostic.message.clone(),
-                    source_key: diagnostic.source_key.clone(),
-                    uri: diagnostic.uri.clone(),
-                    context_usage_kind: Some("agent_surface".to_owned()),
-                })
-                .collect(),
+            sources: if is_initial {
+                current.memory_sources.iter().map(memory_entry).collect()
+            } else {
+                Vec::new()
+            },
+            diagnostics: if is_initial || memory_diagnostics_changed {
+                current
+                    .memory_diagnostics
+                    .iter()
+                    .map(|diagnostic| RuntimeMemoryDiagnosticEntry {
+                        provider_key: diagnostic.provider_key.clone(),
+                        code: diagnostic.code.clone(),
+                        message: diagnostic.message.clone(),
+                        source_key: diagnostic.source_key.clone(),
+                        uri: diagnostic.uri.clone(),
+                        context_usage_kind: Some("agent_surface".to_owned()),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
             added_sources: map_added_values(&before_memory, &after_memory)
                 .into_iter()
                 .map(memory_entry)
@@ -587,6 +660,81 @@ pub(crate) fn capability_manifest_sections(
             }),
         },
     ];
+    if !is_initial {
+        sections.retain(|section| match section {
+            ContextFrameSection::CapabilityKeyDelta {
+                added_capabilities,
+                removed_capabilities,
+                ..
+            } => !added_capabilities.is_empty() || !removed_capabilities.is_empty(),
+            ContextFrameSection::ToolPathDelta {
+                blocked_tool_paths,
+                unblocked_tool_paths,
+                whitelisted_tool_paths,
+                removed_whitelist_paths,
+            } => {
+                !blocked_tool_paths.is_empty()
+                    || !unblocked_tool_paths.is_empty()
+                    || !whitelisted_tool_paths.is_empty()
+                    || !removed_whitelist_paths.is_empty()
+            }
+            ContextFrameSection::McpServerDelta {
+                added_mcp_servers,
+                removed_mcp_servers,
+                changed_mcp_servers,
+            } => {
+                !added_mcp_servers.is_empty()
+                    || !removed_mcp_servers.is_empty()
+                    || !changed_mcp_servers.is_empty()
+            }
+            ContextFrameSection::VfsDelta {
+                vfs_mounts_added,
+                vfs_mounts_removed,
+                default_mount_before,
+                default_mount_after,
+            } => {
+                !vfs_mounts_added.is_empty()
+                    || !vfs_mounts_removed.is_empty()
+                    || default_mount_before != default_mount_after
+            }
+            ContextFrameSection::SkillDelta {
+                added_skills,
+                removed_skills,
+                changed_skills,
+            } => {
+                !added_skills.is_empty() || !removed_skills.is_empty() || !changed_skills.is_empty()
+            }
+            ContextFrameSection::MemoryInventory {
+                added_sources,
+                removed_sources,
+                changed_sources,
+                ..
+            } => {
+                !added_sources.is_empty()
+                    || !removed_sources.is_empty()
+                    || !changed_sources.is_empty()
+                    || memory_diagnostics_changed
+            }
+            ContextFrameSection::CompanionAgentRosterDelta {
+                added_agents,
+                removed_agent_keys,
+                changed_agents,
+                ..
+            } => {
+                !added_agents.is_empty()
+                    || !removed_agent_keys.is_empty()
+                    || !changed_agents.is_empty()
+            }
+            ContextFrameSection::SystemNotice { title, .. } => match title.as_str() {
+                "Tool Clusters" => tool_clusters_changed,
+                "Skill Discovery" => skill_diagnostics_changed,
+                "Channels" => channels_changed,
+                "Workspace Modules" => workspace_module_changed,
+                _ => true,
+            },
+            _ => true,
+        });
+    }
     Ok(sections)
 }
 
@@ -662,73 +810,290 @@ fn runtime_tool_schema_entry(tool: &DashToolDefinition) -> RuntimeToolSchemaEntr
     }
 }
 
-fn render_tool_schema(
-    tools: &[RuntimeToolSchemaEntry],
+fn render_capability_state_delta(sections: &[ContextFrameSection]) -> String {
+    let mut rendered = vec![
+        "## Capability State Delta".to_owned(),
+        "Only capability facts changed by this accepted surface revision are appended below."
+            .to_owned(),
+    ];
+    for section in sections {
+        match section {
+            ContextFrameSection::CapabilityKeyDelta {
+                added_capabilities,
+                removed_capabilities,
+                ..
+            } => {
+                push_string_delta(&mut rendered, "Added Capabilities", added_capabilities);
+                push_string_delta(&mut rendered, "Removed Capabilities", removed_capabilities);
+            }
+            ContextFrameSection::ToolPathDelta {
+                blocked_tool_paths,
+                unblocked_tool_paths,
+                whitelisted_tool_paths,
+                removed_whitelist_paths,
+            } => {
+                push_string_delta(&mut rendered, "Blocked Tool Paths", blocked_tool_paths);
+                push_string_delta(&mut rendered, "Unblocked Tool Paths", unblocked_tool_paths);
+                push_string_delta(
+                    &mut rendered,
+                    "Whitelisted Tool Paths",
+                    whitelisted_tool_paths,
+                );
+                push_string_delta(
+                    &mut rendered,
+                    "Removed Tool Path Whitelist",
+                    removed_whitelist_paths,
+                );
+            }
+            ContextFrameSection::McpServerDelta {
+                added_mcp_servers,
+                removed_mcp_servers,
+                changed_mcp_servers,
+            } => {
+                push_string_delta(&mut rendered, "Added MCP Servers", added_mcp_servers);
+                push_string_delta(&mut rendered, "Removed MCP Servers", removed_mcp_servers);
+                push_string_delta(&mut rendered, "Changed MCP Servers", changed_mcp_servers);
+            }
+            ContextFrameSection::VfsDelta {
+                vfs_mounts_added,
+                vfs_mounts_removed,
+                default_mount_before,
+                default_mount_after,
+            } => {
+                push_string_delta(
+                    &mut rendered,
+                    "Added / Changed VFS Mounts",
+                    vfs_mounts_added,
+                );
+                push_string_delta(
+                    &mut rendered,
+                    "Removed / Replaced VFS Mounts",
+                    vfs_mounts_removed,
+                );
+                if default_mount_before != default_mount_after {
+                    rendered.push(format!(
+                        "### Default VFS Mount\n- before: `{}`\n- after: `{}`",
+                        default_mount_before.as_deref().unwrap_or("none"),
+                        default_mount_after.as_deref().unwrap_or("none")
+                    ));
+                }
+            }
+            ContextFrameSection::ToolSchemaDelta {
+                added_tools,
+                removed_tools,
+                changed_tools,
+            } => render_tool_schema_delta(&mut rendered, added_tools, removed_tools, changed_tools),
+            ContextFrameSection::SkillDelta {
+                added_skills,
+                removed_skills,
+                changed_skills,
+            } => {
+                push_skill_delta(&mut rendered, "Added Skills", added_skills);
+                push_skill_delta(&mut rendered, "Removed Skills", removed_skills);
+                push_skill_delta(&mut rendered, "Changed Skills", changed_skills);
+            }
+            ContextFrameSection::MemoryInventory {
+                title,
+                summary,
+                added_sources,
+                removed_sources,
+                changed_sources,
+                diagnostics,
+                ..
+            } => {
+                push_memory_delta(&mut rendered, "Added Memory Sources", added_sources);
+                push_memory_delta(&mut rendered, "Removed Memory Sources", removed_sources);
+                push_memory_delta(&mut rendered, "Changed Memory Sources", changed_sources);
+                if !diagnostics.is_empty() {
+                    rendered.push(format!(
+                        "### Memory Diagnostics\n{}",
+                        diagnostics
+                            .iter()
+                            .map(|diagnostic| format!(
+                                "- `{}` / `{}`: {}",
+                                diagnostic.provider_key, diagnostic.code, diagnostic.message
+                            ))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ));
+                }
+                if added_sources.is_empty()
+                    && removed_sources.is_empty()
+                    && changed_sources.is_empty()
+                    && diagnostics.is_empty()
+                {
+                    rendered.push(format!("### {title}\n{summary}\n- diagnostics: none"));
+                }
+            }
+            ContextFrameSection::CompanionAgentRosterDelta {
+                added_agents,
+                removed_agent_keys,
+                changed_agents,
+                ..
+            } => {
+                if !added_agents.is_empty() {
+                    rendered.push(format!(
+                        "### Added Companion Agents\n{}",
+                        added_agents
+                            .iter()
+                            .map(|agent| format!(
+                                "- `{}` (`{}` via `{}`)",
+                                agent.agent_key, agent.display_name, agent.executor
+                            ))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ));
+                }
+                push_string_delta(
+                    &mut rendered,
+                    "Removed Companion Agents",
+                    removed_agent_keys,
+                );
+                if !changed_agents.is_empty() {
+                    rendered.push(format!(
+                        "### Changed Companion Agents\n{}",
+                        changed_agents
+                            .iter()
+                            .map(|agent| format!(
+                                "- `{}` (`{}` via `{}`)",
+                                agent.agent_key, agent.display_name, agent.executor
+                            ))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ));
+                }
+            }
+            ContextFrameSection::SystemNotice {
+                title,
+                summary,
+                body,
+            } => {
+                let mut notice = format!("### {title}\n{summary}");
+                if let Some(body) = body.as_deref().filter(|body| !body.trim().is_empty()) {
+                    notice.push('\n');
+                    notice.push_str(body);
+                }
+                rendered.push(notice);
+            }
+            _ => {}
+        }
+    }
+    rendered.join("\n\n")
+}
+
+fn push_string_delta(rendered: &mut Vec<String>, title: &str, values: &[String]) {
+    if values.is_empty() {
+        return;
+    }
+    rendered.push(format!(
+        "### {title}\n{}",
+        values
+            .iter()
+            .map(|value| format!("- `{value}`"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    ));
+}
+
+fn push_skill_delta(rendered: &mut Vec<String>, title: &str, skills: &[RuntimeSkillEntry]) {
+    if skills.is_empty() {
+        return;
+    }
+    rendered.push(format!(
+        "### {title}\n{}",
+        skills
+            .iter()
+            .map(|skill| format!(
+                "- `{}`: {} (path: `{}`)",
+                skill.display_name.as_deref().unwrap_or(&skill.name),
+                skill.description,
+                skill.file_path
+            ))
+            .collect::<Vec<_>>()
+            .join("\n")
+    ));
+}
+
+fn push_memory_delta(
+    rendered: &mut Vec<String>,
+    title: &str,
+    sources: &[RuntimeMemorySourceEntry],
+) {
+    if sources.is_empty() {
+        return;
+    }
+    rendered.push(format!(
+        "### {title}\n{}",
+        sources
+            .iter()
+            .map(|source| format!(
+                "- `{}` / `{}`: `{}`",
+                source.provider_key, source.source_key, source.source_uri
+            ))
+            .collect::<Vec<_>>()
+            .join("\n")
+    ));
+}
+
+fn render_tool_schema_delta(
+    rendered: &mut Vec<String>,
     added_tools: &[RuntimeToolSchemaEntry],
     removed_tools: &[String],
     changed_tools: &[RuntimeToolSchemaEntry],
-) -> String {
-    let mut sections = vec!["## Tool Surface Delta".to_owned()];
+) {
     if !added_tools.is_empty() {
-        sections.push(format!(
-            "### Added Tools\n{}",
+        rendered.push(format!(
+            "### Added Tool Schemas\n{}",
             added_tools
                 .iter()
-                .map(|tool| format!("- `{}`", tool.name))
+                .map(render_tool_schema_entry)
                 .collect::<Vec<_>>()
-                .join("\n")
+                .join("\n\n")
         ));
     }
-    if !removed_tools.is_empty() {
-        sections.push(format!(
-            "### Removed Tools\n{}",
-            removed_tools
-                .iter()
-                .map(|name| format!("- `{name}`"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
+    push_string_delta(rendered, "Removed Tool Schemas", removed_tools);
     if !changed_tools.is_empty() {
-        sections.push(format!(
-            "### Changed Tools\n{}",
+        rendered.push(format!(
+            "### Changed Tool Schemas\n{}",
             changed_tools
                 .iter()
-                .map(|tool| format!("- `{}`", tool.name))
+                .map(render_tool_schema_entry)
                 .collect::<Vec<_>>()
-                .join("\n")
+                .join("\n\n")
         ));
     }
-    sections.extend([
-        "## Runtime Tool Schema".to_owned(),
-        "The following readable schemas and the provider-native structured tool contracts describe the same accepted tool surface.".to_owned(),
-    ]);
-    for tool in tools {
-        let mut lines = vec![format!("### `{}`", tool.name)];
-        let mut provenance = Vec::new();
-        if let Some(capability_key) = tool.capability_key.as_deref() {
-            provenance.push(format!("capability: `{capability_key}`"));
-        }
-        if let Some(source) = tool.source.as_deref() {
-            provenance.push(format!("source: `{source}`"));
-        }
-        if let Some(tool_path) = tool.tool_path.as_deref() {
-            provenance.push(format!("path: `{tool_path}`"));
-        }
-        if !provenance.is_empty() {
-            lines.push(provenance.join("; "));
-        }
-        let description = tool.description.trim();
-        if !description.is_empty() {
-            lines.push(description.to_owned());
-        }
-        lines.push("Parameters:".to_owned());
-        let mut parameters = Vec::new();
-        render_schema_node(&tool.parameters_schema, "$", None, 0, &mut parameters);
-        lines.extend(parameters);
-        sections.push(lines.join("\n"));
+}
+
+fn render_tool_schema_entry(tool: &RuntimeToolSchemaEntry) -> String {
+    let mut lines = vec![format!("#### `{}`", tool.name)];
+    let mut provenance = Vec::new();
+    if let Some(capability_key) = tool.capability_key.as_deref() {
+        provenance.push(format!("capability: `{capability_key}`"));
     }
-    sections.join("\n\n")
+    if let Some(source) = tool.source.as_deref() {
+        provenance.push(format!("source: `{source}`"));
+    }
+    if let Some(tool_path) = tool.tool_path.as_deref() {
+        provenance.push(format!("path: `{tool_path}`"));
+    }
+    if !provenance.is_empty() {
+        lines.push(provenance.join("; "));
+    }
+    let description = tool.description.trim();
+    if !description.is_empty() {
+        lines.push(description.to_owned());
+    }
+    lines.push("Parameters:".to_owned());
+    let mut parameters = Vec::new();
+    render_schema_node(&tool.parameters_schema, "$", None, 0, &mut parameters);
+    lines.extend(parameters);
+    lines.push("Complete JSON Schema:".to_owned());
+    lines.push(format!(
+        "```json\n{}\n```",
+        serde_json::to_string_pretty(&tool.parameters_schema)
+            .unwrap_or_else(|_| tool.parameters_schema.to_string())
+    ));
+    lines.join("\n")
 }
 
 fn render_schema_node(
@@ -896,6 +1261,173 @@ mod tests {
     use agentdash_agent_protocol::ToolProtocolProjector;
 
     use super::*;
+
+    fn capability_instruction(manifest: AgentCapabilityManifest) -> DashSurfaceInstruction {
+        DashSurfaceInstruction {
+            key: "instruction:capability:manifest".to_owned(),
+            channel: "capabilities".to_owned(),
+            text: "UPSTREAM FULL CAPABILITY MANIFEST MUST NOT BE INJECTED".to_owned(),
+            presentation: AgentSurfaceInstructionPresentation::CapabilityManifest { manifest },
+        }
+    }
+
+    fn test_tool(name: &str, description: &str) -> DashToolDefinition {
+        DashToolDefinition {
+            name: name.to_owned(),
+            description: description.to_owned(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "type": "string",
+                        "description": format!("{name} value")
+                    }
+                },
+                "required": ["value"]
+            }),
+            capability_key: "workspace/write".to_owned(),
+            source: "platform:workspace".to_owned(),
+            tool_path: format!("workspace/write::{name}"),
+            context_usage_kind: "system_tools".to_owned(),
+            protocol_projector: ToolProtocolProjector::Dynamic,
+        }
+    }
+
+    #[test]
+    fn capability_and_tool_schema_are_one_platform_owned_system_append_frame() {
+        let surface = DashSurface {
+            revision: 1,
+            digest: "surface-1".to_owned(),
+            instructions: vec![capability_instruction(AgentCapabilityManifest {
+                tool_capabilities: vec!["workspace/write".to_owned()],
+                ..AgentCapabilityManifest::default()
+            })],
+            tools: vec![test_tool("workspace_write", "Write a workspace document.")],
+            context_frames: Vec::new(),
+        };
+
+        let frames = materialize_surface_frames(&surface, None).expect("frames");
+        let capability_frames = frames
+            .iter()
+            .filter(|frame| frame.kind == ContextFrameKind::CapabilityStateDelta)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            capability_frames.len(),
+            1,
+            "capability facts and readable tool schemas must share one CAP frame"
+        );
+        let frame = capability_frames[0];
+        assert_eq!(
+            frame.delivery_metadata.agent_consumption.mode,
+            ContextAgentConsumptionMode::SystemAppend
+        );
+        assert_eq!(
+            frame
+                .delivery_metadata
+                .connector_profile
+                .declared_consumption_modes,
+            [ContextAgentConsumptionMode::SystemAppend]
+        );
+        assert!(
+            frame
+                .sections
+                .iter()
+                .any(|section| matches!(section, ContextFrameSection::CapabilityKeyDelta { .. }))
+        );
+        assert!(
+            frame
+                .sections
+                .iter()
+                .any(|section| matches!(section, ContextFrameSection::ToolSchemaDelta { .. }))
+        );
+        assert!(frame.rendered_text.contains("#### `workspace_write`"));
+        assert!(frame.rendered_text.contains("`value`"));
+        assert!(
+            !frame
+                .rendered_text
+                .contains("UPSTREAM FULL CAPABILITY MANIFEST"),
+            "accepted text must be rendered from typed delta facts"
+        );
+    }
+
+    #[test]
+    fn capability_state_update_renders_only_changed_tool_schemas() {
+        let manifest = AgentCapabilityManifest {
+            tool_capabilities: vec!["workspace/write".to_owned()],
+            ..AgentCapabilityManifest::default()
+        };
+        let previous = DashSurface {
+            revision: 1,
+            digest: "surface-1".to_owned(),
+            instructions: vec![capability_instruction(manifest.clone())],
+            tools: vec![test_tool("existing_tool", "Existing tool description.")],
+            context_frames: Vec::new(),
+        };
+        let current = DashSurface {
+            revision: 2,
+            digest: "surface-2".to_owned(),
+            instructions: vec![capability_instruction(manifest)],
+            tools: vec![
+                test_tool("existing_tool", "Existing tool description."),
+                test_tool("new_tool", "New tool description."),
+            ],
+            context_frames: Vec::new(),
+        };
+
+        let frames = materialize_surface_frames(&current, Some(&previous)).expect("frames");
+        let frame = frames
+            .iter()
+            .find(|frame| frame.kind == ContextFrameKind::CapabilityStateDelta)
+            .expect("capability delta");
+
+        assert_eq!(
+            frame.sections.len(),
+            1,
+            "an update frame must contain only dimensions that actually changed"
+        );
+        assert!(frame.rendered_text.contains("#### `new_tool`"));
+        assert!(frame.rendered_text.contains("New tool description."));
+        assert!(
+            !frame.rendered_text.contains("existing_tool"),
+            "an unchanged schema must not be replayed in a delta"
+        );
+        assert!(
+            !frame.rendered_text.contains("Existing tool description."),
+            "an unchanged schema description must not be replayed in a delta"
+        );
+    }
+
+    #[test]
+    fn unchanged_capability_state_does_not_emit_an_empty_delta_frame() {
+        let manifest = AgentCapabilityManifest {
+            tool_capabilities: vec!["workspace/write".to_owned()],
+            ..AgentCapabilityManifest::default()
+        };
+        let previous = DashSurface {
+            revision: 1,
+            digest: "surface-1".to_owned(),
+            instructions: vec![capability_instruction(manifest.clone())],
+            tools: vec![test_tool("workspace_write", "Write a workspace document.")],
+            context_frames: Vec::new(),
+        };
+        let current = DashSurface {
+            revision: 2,
+            digest: "surface-2".to_owned(),
+            instructions: vec![capability_instruction(manifest)],
+            tools: previous.tools.clone(),
+            context_frames: Vec::new(),
+        };
+
+        let frames = materialize_surface_frames(&current, Some(&previous)).expect("frames");
+
+        assert!(
+            frames
+                .iter()
+                .all(|frame| frame.kind != ContextFrameKind::CapabilityStateDelta),
+            "a surface revision without capability changes must not publish an empty CAP delta"
+        );
+    }
 
     #[test]
     fn tool_schema_frame_renders_nested_schema_and_provenance_without_omission() {

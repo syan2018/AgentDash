@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
 };
 
@@ -1866,6 +1866,7 @@ impl DashAgentService {
             surface.as_ref(),
             initial_context.as_ref(),
             compaction_frame.as_ref(),
+            &accepted_surface_append_frames(entries),
         );
         Ok(DashCoreContext {
             system_prompt,
@@ -1900,6 +1901,7 @@ impl DashAgentService {
             state.surface.as_ref(),
             state.initial_context.as_ref(),
             latest_frame.as_ref(),
+            &accepted_surface_append_frames(repository.store.history().entries()),
         );
         let tools = state
             .surface
@@ -2138,37 +2140,90 @@ fn render_accepted_context(
     surface: Option<&DashSurface>,
     initial_context: Option<&InitialContextInstallation>,
     compaction_frame: Option<&agentdash_agent_protocol::ContextFrame>,
+    surface_append_frames: &[agentdash_agent_protocol::ContextFrame],
 ) -> String {
     let mut frames = Vec::new();
     if let Some(surface) = surface {
-        frames.extend(surface.context_frames.iter().cloned());
+        frames.extend(
+            surface
+                .context_frames
+                .iter()
+                .filter(|frame| {
+                    frame.delivery_metadata.agent_consumption.mode
+                        != agentdash_agent_protocol::ContextAgentConsumptionMode::SystemAppend
+                })
+                .cloned()
+                .map(|frame| (frame, None)),
+        );
     }
     if let Some(initial_context) = initial_context {
-        frames.extend(initial_context.context_frames.iter().cloned());
+        frames.extend(
+            initial_context
+                .context_frames
+                .iter()
+                .cloned()
+                .map(|frame| (frame, None)),
+        );
     }
     if let Some(compaction_frame) = compaction_frame {
-        frames.push(compaction_frame.clone());
+        frames.push((compaction_frame.clone(), None));
     }
+    frames.extend(
+        surface_append_frames
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, frame)| (frame, Some(index))),
+    );
     frames.sort_by(|left, right| {
         (
-            left.delivery_metadata.delivery_phase,
-            left.delivery_metadata.delivery_order,
-            left.created_at_ms,
-            left.id.as_str(),
+            left.0.delivery_metadata.delivery_phase,
+            left.0.delivery_metadata.delivery_order,
+            left.1.unwrap_or_default(),
+            left.0.created_at_ms,
+            left.0.id.as_str(),
         )
             .cmp(&(
-                right.delivery_metadata.delivery_phase,
-                right.delivery_metadata.delivery_order,
-                right.created_at_ms,
-                right.id.as_str(),
+                right.0.delivery_metadata.delivery_phase,
+                right.0.delivery_metadata.delivery_order,
+                right.1.unwrap_or_default(),
+                right.0.created_at_ms,
+                right.0.id.as_str(),
             ))
     });
     frames
         .into_iter()
-        .map(|frame| frame.rendered_text)
+        .map(|(frame, _)| frame.rendered_text)
         .filter(|text| !text.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn accepted_surface_append_frames(
+    entries: &[AgentHistoryEntry],
+) -> Vec<agentdash_agent_protocol::ContextFrame> {
+    let mut frames = Vec::new();
+    let mut frame_ids = BTreeSet::new();
+    for entry in entries {
+        match &entry.payload {
+            HistoryPayload::SurfaceApplied { surface } => {
+                for frame in &surface.context_frames {
+                    if frame.delivery_metadata.agent_consumption.mode
+                        == agentdash_agent_protocol::ContextAgentConsumptionMode::SystemAppend
+                        && frame_ids.insert(frame.id.clone())
+                    {
+                        frames.push(frame.clone());
+                    }
+                }
+            }
+            HistoryPayload::SurfaceRevoked { .. } => {
+                frames.clear();
+                frame_ids.clear();
+            }
+            _ => {}
+        }
+    }
+    frames
 }
 
 fn flush_provider_tool_calls(history: &mut Vec<DashMessage>, pending: &mut Vec<DashToolCall>) {

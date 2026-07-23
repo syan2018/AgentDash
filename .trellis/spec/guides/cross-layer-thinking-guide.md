@@ -45,6 +45,10 @@
     live attachment/connection epoch 与 remote binding generation分别回答“重建什么”“本地第几代
     binding”“当前连接是谁”“远端接受哪一代”。跨层设计要为每个坐标指定唯一owner和显式映射，
     因为任意一个注册期常量都无法代表多个Runtime thread及其重启恢复历史。
+20. **把同一次状态转移拆成多个可独立投递的模型事实**：当capability状态与它开放的ToolSchema
+    来自同一个accepted surface revision时，应先在owner边界合并为一个ContextFrame，再由模型输入、
+    history和前端共同消费。增量更新还必须验证“initial + 后续delta”的历史恢复；只读取最新snapshot
+    会迫使producer重放全量并让delta合同失真。
 
 ---
 
@@ -69,6 +73,8 @@
 - [ ] 若工具返回可续接handle，确认owner、route registry与retained state owner在返回前同时建立，并覆盖跨owner拒绝及短命令完成后的保留窗口
 - [ ] 若新增Driver fact或sink admission枚举，建立“所有producer × Runtime admission × 所有pump/worker consumer”矩阵，并至少增加一条真实persistence组合回归
 - [ ] 若工具执行中可能更新catalog/surface，分别列出新调用准入坐标与已accept调用的progress/approval/terminal坐标，并覆盖“发起更新的调用完成 + 更新后的新调用按新revision准入”
+- [ ] 若一次surface transition同时改变capability与ToolSchema，固定单一ContextFrame owner、
+  delivery mode、initial/delta/revoke历史语义，并分别断言frame数量、真实变化section和最终模型原文
 - [ ] 若schema被多个进程或数据根消费，列出每个持久实例并验证既有数据库升级，而不只验证空库或Dashboard数据库
 - [ ] 若跨Host/transport重写identity或generation，列出Product、Host binding、attachment/connection与remote target四个owner，并为出站改写、callback反向映射、disconnect retire和restart re-materialization各放一条回归
 
@@ -82,5 +88,7 @@
 - [ ] 用真实持久数据库和production composition覆盖“user → 多工具（含业务错误）→ tool result回灌 → final assistant → disconnect/rebind → 下一轮”，并断言Operation、outbox、cursor和前端card identity
 - [ ] 对所有continuation handle运行“start返回 → 原owner续接 → terminal后读取 → 错误owner拒绝”的composition测试，且测试在漏注入registry时必须失败
 - [ ] 对外协议升级同时运行generated contract check与前端typecheck，确保generator生成的跨crate类型导入完整
+- [ ] 对平台拥有的模型上下文做纵向断言：accepted frame数量与mode、native history序列、
+  provider-visible原文、canonical record和前端展示必须来自同一对象；“某处包含预期字符串”不足以证明单一权威
 - [ ] 对 durable presentation 使用真实 journal 与 production 页面验证成功事件、面板展开、
   active tab 和 renderer 内容同时成立；planner/executor 单测只证明中间节点，不作为闭环证据

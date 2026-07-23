@@ -1393,7 +1393,6 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
             ContextFrameKind::Environment,
             ContextFrameKind::AssignmentContext,
             ContextFrameKind::CapabilityStateDelta,
-            ContextFrameKind::CapabilityStateDelta,
             ContextFrameKind::MemoryContext,
             ContextFrameKind::UserContext,
         ]
@@ -2035,9 +2034,10 @@ async fn surface_projection_reports_tool_changes_instead_of_replaying_full_schem
         vec!["read"]
     );
     assert_eq!(deltas[2].1, &vec!["read".to_owned()]);
-    assert!(deltas[1].3.contains("Added Tools"));
-    assert!(deltas[1].3.contains("Changed Tools"));
-    assert!(!deltas[1].3.contains("properties"));
+    assert!(deltas[1].3.contains("Added Tool Schemas"));
+    assert!(deltas[1].3.contains("Changed Tool Schemas"));
+    assert!(deltas[1].3.contains("Complete JSON Schema"));
+    assert!(deltas[1].3.contains("\"properties\""));
 }
 
 #[tokio::test]

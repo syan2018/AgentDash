@@ -508,7 +508,7 @@ pub fn build_personal_canvas(
 ) -> Result<Canvas, DomainError> {
     let mount_id = match mount_id {
         Some(value) => normalize_canvas_mount_id_for_domain(&value)?,
-        None => derive_canvas_mount_id(&title),
+        None => generated_canvas_mount_id(&title),
     };
     let mut canvas = Canvas::new_personal(project_id, owner_user_id, mount_id, title, description);
     canvas.sandbox_config = CanvasSandboxConfig::react_default();
@@ -526,7 +526,7 @@ pub fn build_canvas(
 ) -> Result<Canvas, DomainError> {
     let mount_id = match mount_id {
         Some(value) => normalize_canvas_mount_id_for_domain(&value)?,
-        None => derive_canvas_mount_id(&title),
+        None => generated_canvas_mount_id(&title),
     };
     let mut canvas = Canvas::new(project_id, mount_id, title, description);
     canvas.sandbox_config = CanvasSandboxConfig::react_default();
@@ -705,6 +705,12 @@ fn normalize_canvas_data_binding(binding: &mut CanvasDataBinding) {
 
 fn normalize_canvas_mount_id_for_domain(raw: &str) -> Result<String, DomainError> {
     normalize_canvas_mount_id(raw).map_err(|error| DomainError::InvalidConfig(error.to_string()))
+}
+
+fn generated_canvas_mount_id(title: &str) -> String {
+    let base = derive_canvas_mount_id(title);
+    let entropy = Uuid::new_v4().simple().to_string();
+    format!("{base}-{}", &entropy[..8])
 }
 
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
@@ -924,6 +930,33 @@ mod tests {
         assert_eq!(canvas.scope, CanvasScope::Personal);
         assert!(canvas.published_from_canvas_id.is_none());
         assert!(canvas.cloned_from_canvas_id.is_none());
+    }
+
+    #[test]
+    fn generated_canvas_mount_identity_is_unique_for_repeated_non_ascii_titles() {
+        let project_id = Uuid::new_v4();
+        let first = build_personal_canvas(
+            project_id,
+            "alice".to_string(),
+            None,
+            "随手展示 Canvas".to_string(),
+            String::new(),
+            CanvasMutationInput::default(),
+        )
+        .expect("应能生成第一个 Canvas");
+        let second = build_personal_canvas(
+            project_id,
+            "alice".to_string(),
+            None,
+            "随手展示 Canvas".to_string(),
+            String::new(),
+            CanvasMutationInput::default(),
+        )
+        .expect("应能生成第二个 Canvas");
+
+        assert_ne!(first.mount_id, second.mount_id);
+        assert!(first.mount_id.starts_with("cvs-canvas-"));
+        assert!(second.mount_id.starts_with("cvs-canvas-"));
     }
 
     #[test]

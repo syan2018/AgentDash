@@ -24,6 +24,7 @@ use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationVisibility,
 };
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_domain::canvas::{
     CanvasAccessProjection, CanvasDataBinding, CanvasRepository, CanvasRuntimeStateRepository,
     CanvasScope,
@@ -68,6 +69,7 @@ struct WorkspaceModuleOperateArguments {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CreateCanvasArguments {
     canvas_mount_id: Option<String>,
     title: Option<String>,
@@ -505,6 +507,17 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                 let input: CreateCanvasArguments = match serde_json::from_value(arguments.input) {
                     Ok(input) => input,
                     Err(error) => {
+                        diag!(
+                            Warn,
+                            Subsystem::AgentRun,
+                            operation = "workspace_module.canvas.create",
+                            stage = "validate_input",
+                            run_id = %request.context.target.run_id,
+                            agent_id = %request.context.target.agent_id,
+                            project_id = %request.context.target.project_id,
+                            error = %error,
+                            "Canvas workspace module input validation failed"
+                        );
                         return rejected(
                             "workspace_module_invalid_arguments",
                             format!("invalid canvas.create input: {error}"),
@@ -522,6 +535,7 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                         "title is required for canvas.create",
                     );
                 };
+                let requested_mount_id = input.canvas_mount_id.clone();
                 match create_personal_canvas(
                     &self.deps.repos,
                     &current_user,
@@ -537,7 +551,21 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                 {
                     Ok(canvas) => (canvas.canvas, "created", canvas.access),
                     Err(error) => {
-                        return failed("workspace_module_canvas_create_failed", error.to_string());
+                        let context = DiagnosticErrorContext::new(
+                            "workspace_module.canvas.create",
+                            "persist_canvas",
+                        );
+                        diag_error!(
+                            Error,
+                            Subsystem::AgentRun,
+                            context = &context,
+                            error = &error,
+                            run_id = %request.context.target.run_id,
+                            agent_id = %request.context.target.agent_id,
+                            project_id = %request.context.target.project_id,
+                            "Canvas workspace module creation failed"
+                        );
+                        return canvas_create_failure(error, requested_mount_id.as_deref());
                     }
                 }
             }
@@ -1062,5 +1090,54 @@ fn failed(code: impl Into<String>, message: impl Into<String>) -> ProductRuntime
     ProductRuntimeToolOutcome::Failed {
         code: code.into(),
         message: message.into(),
+    }
+}
+
+fn canvas_create_failure(
+    error: crate::ApplicationError,
+    requested_mount_id: Option<&str>,
+) -> ProductRuntimeToolOutcome {
+    if matches!(&error, crate::ApplicationError::Conflict(_)) {
+        let message = requested_mount_id.map_or_else(
+            || "Canvas mount identity conflicts with an existing Canvas".to_owned(),
+            |mount_id| format!("Canvas mount `{mount_id}` already exists"),
+        );
+        return rejected("workspace_module_canvas_mount_conflict", message);
+    }
+    failed("workspace_module_canvas_create_failed", error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canvas_create_rejects_unknown_mount_identity_field() {
+        let error = serde_json::from_value::<CreateCanvasArguments>(json!({
+            "mount_id": "cvs-wrong-field",
+            "title": "Canvas"
+        }))
+        .expect_err("mount_id 不是 canvas.create 的输入字段，必须显式拒绝");
+
+        assert!(error.to_string().contains("unknown field `mount_id`"));
+        assert!(error.to_string().contains("canvas_mount_id"));
+    }
+
+    #[test]
+    fn canvas_create_maps_database_identity_conflict_to_typed_tool_error() {
+        let outcome = canvas_create_failure(
+            crate::ApplicationError::Conflict(
+                "资源冲突: database.unique: canvases_project_mount_id_uidx".to_owned(),
+            ),
+            Some("cvs-existing"),
+        );
+
+        assert_eq!(
+            outcome,
+            ProductRuntimeToolOutcome::Rejected {
+                code: "workspace_module_canvas_mount_conflict".to_owned(),
+                message: "Canvas mount `cvs-existing` already exists".to_owned(),
+            }
+        );
     }
 }

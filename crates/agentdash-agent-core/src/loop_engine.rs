@@ -15,13 +15,13 @@ pub async fn run_agent_loop(
     callbacks: &dyn CoreCallbacks,
     cancel: CancellationToken,
 ) -> Result<CoreOutput, CoreError> {
-    let max_rounds = context.max_provider_rounds.max(1);
     let mut messages = context.history;
     messages.push(input.message);
     let initial_len = messages.len();
     let mut total_usage = CoreTokenUsage::default();
+    let mut round = 1_u32;
 
-    for round in 1..=max_rounds {
+    loop {
         ensure_not_cancelled(&cancel)?;
         callbacks
             .emit(CoreEvent::ProviderRoundStarted { round })
@@ -142,9 +142,13 @@ pub async fn run_agent_loop(
             }
             _ => return Err(CoreError::InvalidProviderTerminal),
         }
-    }
 
-    Err(CoreError::ProviderRoundLimit { max_rounds })
+        round = round.checked_add(1).ok_or_else(|| CoreError::Provider {
+            code: "provider_round_counter_overflow".to_owned(),
+            message: "provider round counter overflowed".to_owned(),
+            retryable: false,
+        })?;
+    }
 }
 
 fn ensure_not_cancelled(cancel: &CancellationToken) -> Result<(), CoreError> {

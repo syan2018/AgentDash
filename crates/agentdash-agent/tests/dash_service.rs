@@ -161,14 +161,21 @@ impl DashProvider for SurfaceChangingProvider {
     }
 }
 
-struct RoundLimitProvider;
+struct FailureAfterEightToolRoundsProvider;
 
 #[async_trait]
-impl DashProvider for RoundLimitProvider {
+impl DashProvider for FailureAfterEightToolRoundsProvider {
     async fn stream(
         &self,
         request: DashProviderRequest,
     ) -> Result<DashProviderEventStream, DashCoreError> {
+        if request.round > 8 {
+            return Err(DashCoreError::Provider {
+                code: "scripted_provider_failure".into(),
+                message: "provider failed after completed tool rounds".into(),
+                retryable: false,
+            });
+        }
         Ok(Box::pin(stream::iter([
             Ok(DashProviderEvent::TextDelta {
                 delta: format!("partial answer {}", request.round),
@@ -345,7 +352,7 @@ async fn failed_turn_retains_each_completed_tool_call_in_native_history() {
             BranchId::new("failed-tool-history-branch"),
         ),
         DashExecutionDependencies {
-            provider: Arc::new(RoundLimitProvider),
+            provider: Arc::new(FailureAfterEightToolRoundsProvider),
             tools: Arc::new(RecordingToolCallbacks::default()),
             callbacks: Arc::new(NoCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),
@@ -411,7 +418,7 @@ async fn failed_terminal_turn_with_agent_output_still_initializes_thread_name() 
             BranchId::new("failed-turn-naming-branch"),
         ),
         DashExecutionDependencies {
-            provider: Arc::new(RoundLimitProvider),
+            provider: Arc::new(FailureAfterEightToolRoundsProvider),
             tools: Arc::new(RecordingToolCallbacks::default()),
             callbacks: Arc::new(NoCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),

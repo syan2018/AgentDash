@@ -162,6 +162,10 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   未命名 source 可在后续满足条件的 terminal 回合再次尝试。history 一旦已有标题，自动命名不再重复调用。
 - Core 只拥有 provider-neutral inference/stream/tool loop，不依赖 Product workflow、
   Lifecycle、PostgreSQL repository、Codex DTO 或 Runtime persistence。
+- Core 不维护隐式 provider round 上限。一次Agent turn只由provider `Stop`、typed provider/tool/
+  callback failure、interaction、context overflow或显式cancel结束；工具调用后继续请求provider是同一
+  turn的正常执行，不具有可由内部计数推导的业务终态。未来若产品需要deadline或成本预算，应作为
+  显式执行策略在owner边界触发cancel/typed terminal，而不是重新引入Core匿名轮次常量。
 - Tool/Hook 通过 Host callback route调用真实 handler。Dash 在 callback identity 上重试；
   handler owner负责副作用幂等。
 - callback result以typed text/image/reasoning content parts与structured details穿过Core、Dash event和
@@ -193,6 +197,7 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 | unsupported input family | Core side effect 前 typed unsupported |
 | 空输入 | side effect 前 rejected |
 | provider失败 | terminal history保留真实 code/message/retryable |
+| 正常任务需要超过8次provider响应 | 继续执行，直到收到真实terminal或显式cancel |
 | source callback未绑定 | composition/configuration error |
 | 没有 live subscriber | execution/history commit 正常完成 |
 | live subscriber lagged | retryable unavailable；重新 read |
@@ -239,6 +244,8 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   stable effect replay/conflict。
 - failure tests断言 provider/Core code、message、retryable 在 terminal history与 Agent snapshot
   一致。
+- Core loop测试至少执行12轮工具调用后再返回`Stop`，断言不会由内部轮次计数终止；provider真实
+  失败的回归测试断言此前完成的每条ToolCall/ToolResult仍在native history中。
 - live composition test在执行前订阅，断言顺序为 durable user input、durable `TurnStarted`、
   ephemeral text/reasoning/tool delta 与 durable terminal；执行后从 read断言同 turn 已终态。
 - surface/context tests断言 native history保存实际instruction边界与tools，provider prompt由
@@ -323,4 +330,18 @@ let digest = materialization_digest(&instructions, &tools)?;
 history.commit(HistoryPayload::SurfaceApplied {
     surface: DashSurface { digest, instructions, tools, .. },
 })?;
+```
+
+```rust
+// Wrong: 用内部响应次数伪造Agent turn终态。
+for round in 1..=8 { run_provider_round(round).await?; }
+return Err(ProviderRoundLimit);
+
+// Correct: Core只响应真实协议终态；外部策略通过显式cancel进入typed terminal。
+loop {
+    match run_provider_round().await? {
+        ProviderTerminal::Stop => break,
+        ProviderTerminal::ToolCalls => continue,
+    }
+}
 ```

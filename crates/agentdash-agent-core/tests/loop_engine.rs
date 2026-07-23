@@ -111,7 +111,6 @@ async fn provider_tool_loop_has_only_explicit_state() {
                 description: "read a file".into(),
                 input_schema: json!({"type": "object"}),
             }],
-            max_provider_rounds: 4,
         },
         provider.as_ref(),
         &tools,
@@ -136,6 +135,63 @@ async fn provider_tool_loop_has_only_explicit_state() {
 }
 
 #[tokio::test]
+async fn provider_tool_loop_is_not_terminated_by_an_internal_round_budget() {
+    let mut rounds = VecDeque::new();
+    for round in 1..=12 {
+        rounds.push_back(vec![
+            ProviderEvent::ToolCall {
+                call: CoreToolCall {
+                    call_id: format!("call-{round}"),
+                    name: "inspect".into(),
+                    arguments: json!({"round": round}),
+                },
+            },
+            ProviderEvent::Completed {
+                finish_reason: FinishReason::ToolCalls,
+                usage: CoreTokenUsage::default(),
+            },
+        ]);
+    }
+    rounds.push_back(vec![
+        ProviderEvent::TextDelta {
+            delta: "done".into(),
+        },
+        ProviderEvent::Completed {
+            finish_reason: FinishReason::Stop,
+            usage: CoreTokenUsage::default(),
+        },
+    ]);
+    let provider = ScriptedProvider {
+        rounds: Mutex::new(rounds),
+        requests: Mutex::new(Vec::new()),
+    };
+    let tools = ToolRecorder {
+        calls: Mutex::new(Vec::new()),
+    };
+
+    let output = run_agent_loop(
+        CoreInput {
+            message: CoreMessage::user("complete the whole tool chain"),
+        },
+        CoreContext {
+            system_prompt: String::new(),
+            history: Vec::new(),
+            tools: Vec::new(),
+        },
+        &provider,
+        &tools,
+        &EventRecorder::default(),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("provider Stop、显式失败或取消之前不应由内部轮次计数终止");
+
+    assert_eq!(output.provider_rounds, 13);
+    assert_eq!(output.assistant_message.content, "done");
+    assert_eq!(tools.calls.lock().unwrap().len(), 12);
+}
+
+#[tokio::test]
 async fn cancellation_is_observed_before_provider_side_effect() {
     let provider = ScriptedProvider {
         rounds: Mutex::new(VecDeque::new()),
@@ -156,7 +212,6 @@ async fn cancellation_is_observed_before_provider_side_effect() {
             system_prompt: String::new(),
             history: Vec::new(),
             tools: Vec::new(),
-            max_provider_rounds: 1,
         },
         &provider,
         &tools,

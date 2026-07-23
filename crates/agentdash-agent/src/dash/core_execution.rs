@@ -54,7 +54,6 @@ pub struct DashCoreContext {
     pub system_prompt: String,
     pub history: Vec<DashMessage>,
     pub tools: Vec<DashToolDefinition>,
-    pub max_provider_rounds: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -181,8 +180,6 @@ pub enum DashCoreError {
     ProviderStreamDisconnected,
     #[error("Dash Agent provider returned an invalid terminal")]
     InvalidProviderTerminal,
-    #[error("Dash Agent provider round limit reached: {max_rounds}")]
-    ProviderRoundLimit { max_rounds: u32 },
     #[error("Dash Agent provider failed ({code}): {message}")]
     Provider {
         code: String,
@@ -208,7 +205,6 @@ impl DashCoreError {
             Self::Cancelled => "cancelled",
             Self::ProviderStreamDisconnected => "provider_stream_disconnected",
             Self::InvalidProviderTerminal => "invalid_provider_terminal",
-            Self::ProviderRoundLimit { .. } => "provider_round_limit",
             Self::Provider { code, .. } => code,
             Self::Tool { .. } => "tool_error",
             Self::Callback { .. } => "execution_callback_error",
@@ -565,7 +561,6 @@ fn core_context(context: DashCoreContext) -> CoreContext {
                 input_schema: tool.input_schema,
             })
             .collect(),
-        max_provider_rounds: context.max_provider_rounds,
     }
 }
 
@@ -738,9 +733,6 @@ fn core_error(error: DashCoreError) -> CoreError {
         DashCoreError::Cancelled => CoreError::Cancelled,
         DashCoreError::ProviderStreamDisconnected => CoreError::ProviderStreamDisconnected,
         DashCoreError::InvalidProviderTerminal => CoreError::InvalidProviderTerminal,
-        DashCoreError::ProviderRoundLimit { max_rounds } => {
-            CoreError::ProviderRoundLimit { max_rounds }
-        }
         DashCoreError::Provider {
             code,
             message,
@@ -768,9 +760,6 @@ fn dash_error(error: CoreError) -> DashCoreError {
         CoreError::Cancelled => DashCoreError::Cancelled,
         CoreError::ProviderStreamDisconnected => DashCoreError::ProviderStreamDisconnected,
         CoreError::InvalidProviderTerminal => DashCoreError::InvalidProviderTerminal,
-        CoreError::ProviderRoundLimit { max_rounds } => {
-            DashCoreError::ProviderRoundLimit { max_rounds }
-        }
         CoreError::Provider {
             code,
             message,

@@ -168,8 +168,8 @@
 - [x] 0108在当前开发数据库执行成功，新后端可读取既有source/effect document。
 - [x] AgentDash canonical Turn直接承载`AgentDashThreadItem[]`，turn边界不再把Native工具消息反序列化
   为vendor协议；`fsRead`/`fsApplyPatch`等专属消息可同时穿过item事件和turn完成事件。
-- [x] ToolCall在副作用执行前、ToolResult在每轮完成后立即进入Dash native history；即使provider达到
-  round limit，已执行的完整工具轨迹仍可从authoritative snapshot恢复。
+- [x] ToolCall在副作用执行前、ToolResult在每轮完成后立即进入Dash native history；即使provider
+  后续失败，已执行的完整工具轨迹仍可从authoritative snapshot恢复。
 - [x] Canvas VFS provider进入生产provider registry；Canvas mount访问权从Canvas归属与
   LifecycleAgent创建者事实计算，个人owner获得write，共享项目资源保持read-only。
 - [x] capability篮子完整投影tool path、MCP、VFS、skill discovery、memory、companion、channel与
@@ -245,3 +245,15 @@ CAPABILITY frame，随后`READ -> EDIT -> READ`成功把`cvs-capability-tracer:/
 - [x] 定向projector/Native投影测试、API生产组合check、contract生成/check、前端typecheck与migration
   guard通过；当前开发库已正向迁移到schema 112并通过doctor readiness。
 - [ ] 用户完成本轮实际会话验收后再生成最终closeout并归档任务。
+
+## Canvas identity 与 Dash 执行终止语义
+
+- [x] `canvas.create`的owner输入边界拒绝未知字段，错误的`mount_id`不再静默退化为缺省身份。
+- [x] 省略`canvas_mount_id`时由Canvas owner生成带唯一后缀的mount identity；重复中文标题不再共享
+  `cvs-canvas`。
+- [x] 显式mount冲突收成`workspace_module_canvas_mount_conflict`，原始数据库约束只进入diagnostics。
+- [x] 删除Core与Dash的隐式provider round上限；同一turn的工具循环只由真实provider terminal、
+  interaction、context overflow、typed failure或显式cancel结束。
+- [x] Canvas创建失败与Dash执行终态失败写入结构化diagnostics，关联run/agent/project或
+  turn/command/effect坐标。
+- [x] Canvas输入/身份/冲突回归、12轮工具链持续执行回归与provider失败history保留回归通过。

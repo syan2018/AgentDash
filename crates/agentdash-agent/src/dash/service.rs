@@ -1059,6 +1059,20 @@ impl DashAgentService {
                 } else {
                     DashTerminalOutcome::Failed
                 };
+                diag!(
+                    Error,
+                    Subsystem::AgentRun,
+                    operation = "dash.execute",
+                    stage = "core_terminal_failure",
+                    turn_id = %turn_id.0,
+                    command_id = %request.command_id.0,
+                    effect_id = %request.effect_id.0,
+                    error_code = error.code(),
+                    retryable = error.retryable(),
+                    error = %error,
+                    error_debug = ?error,
+                    "Dash Agent execution reached a failed terminal"
+                );
                 self.finish_failed_turn(&request, &turn_id, terminal, Some(error.failure()))
                     .await?
             }
@@ -1868,7 +1882,6 @@ impl DashAgentService {
             system_prompt,
             history,
             tools: surface.map(|surface| surface.tools).unwrap_or_default(),
-            max_provider_rounds: 8,
         })
     }
 

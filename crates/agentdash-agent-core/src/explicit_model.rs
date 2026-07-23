@@ -88,7 +88,6 @@ pub struct CoreContext {
     pub system_prompt: String,
     pub history: Vec<CoreMessage>,
     pub tools: Vec<CoreTool>,
-    pub max_provider_rounds: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -247,8 +246,6 @@ pub enum CoreError {
     ProviderStreamDisconnected,
     #[error("provider 返回了与 finish reason 不一致的 tool call 状态")]
     InvalidProviderTerminal,
-    #[error("达到 provider round 上限 {max_rounds}")]
-    ProviderRoundLimit { max_rounds: u32 },
     #[error("provider 失败 ({code}): {message}")]
     Provider {
         code: String,

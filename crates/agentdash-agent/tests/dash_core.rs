@@ -72,7 +72,6 @@ async fn dash_agent_maps_explicit_core_output_back_into_history() {
             system_prompt: "answer".into(),
             history: vec![],
             tools: vec![],
-            max_provider_rounds: 1,
         },
         output_item_id: AgentItemId::new("assistant-item"),
         output_started_entry_id: HistoryEntryId::new("turn-output-started"),

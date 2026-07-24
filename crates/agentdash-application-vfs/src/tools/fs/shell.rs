@@ -933,6 +933,7 @@ fn shell_session_snapshot_result(
         ));
     }
     if !merged.is_empty() {
+        lines.push(String::new());
         lines.push(merged.clone());
     }
     VfsToolExecutionResult {
@@ -1023,7 +1024,10 @@ fn shell_exec_result_text(
     truncated: bool,
     omitted_bytes: usize,
 ) -> String {
-    let mut lines = vec![format!("command: {original_command}")];
+    let mut lines = vec![
+        "operation: start".to_string(),
+        format!("command: {original_command}"),
+    ];
     if has_rewrite {
         lines.push(format!("executed_command: {rewritten_command}"));
     }
@@ -1044,6 +1048,7 @@ fn shell_exec_result_text(
         ));
     }
     if !merged_output.is_empty() {
+        lines.push(String::new());
         lines.push(merged_output.to_string());
     }
     lines.join("\n")
@@ -1475,6 +1480,10 @@ mod shell_exec_rewrite_tests {
 
         assert!(text.contains("terminal_id: term-123"));
         assert!(!text.contains("session_id:"));
+        assert!(
+            text.contains("next_seq: 4\n\nready"),
+            "terminal metadata and retained output must have an explicit separator: {text}"
+        );
     }
 
     #[test]

@@ -616,9 +616,7 @@ impl ApplicationRuntimeTaskToolService {
             .read(&scope, params.into_query())
             .await
         {
-            Ok(view) => RuntimeTaskToolOutcome::Completed {
-                output: serde_json::json!({"summary": "Task view 已读取", "view": view}),
-            },
+            Ok(view) => runtime_result_with_view("Task view 已读取", view),
             Err(error) => RuntimeTaskToolOutcome::Failed {
                 code: "task_read_failed".to_owned(),
                 message: error.to_string(),
@@ -656,12 +654,10 @@ impl ApplicationRuntimeTaskToolService {
             .apply(&scope, changeset)
             .await
         {
-            Ok(result) => RuntimeTaskToolOutcome::Completed {
-                output: serde_json::json!({
-                    "summary": format!("Task 写入完成，变更 {} 个 Task。", result.changes.len()),
-                    "view": result.view
-                }),
-            },
+            Ok(result) => runtime_result_with_view(
+                &format!("Task 写入完成，变更 {} 个 Task。", result.changes.len()),
+                result.view,
+            ),
             Err(error) => RuntimeTaskToolOutcome::Failed {
                 code: "task_write_failed".to_owned(),
                 message: error.to_string(),
@@ -791,6 +787,16 @@ fn result_with_view(summary: &str, view: serde_json::Value, is_error: bool) -> A
     }
 }
 
+fn runtime_result_with_view(summary: &str, view: serde_json::Value) -> RuntimeTaskToolOutcome {
+    match serde_json::to_value(result_with_view(summary, view, false)) {
+        Ok(output) => RuntimeTaskToolOutcome::Completed { output },
+        Err(error) => RuntimeTaskToolOutcome::Failed {
+            code: "task_result_serialization_failed".to_owned(),
+            message: error.to_string(),
+        },
+    }
+}
+
 fn scope_error(error: AgentRunTaskScopeResolutionError) -> AgentToolError {
     AgentToolError::ExecutionFailed(error.to_string())
 }
@@ -824,6 +830,28 @@ mod tests {
         );
         assert!(text.starts_with("Task view 已读取"));
         assert!(result.details.is_some(), "details 仍保留供持久化");
+    }
+
+    #[test]
+    fn runtime_result_with_view_preserves_the_task_presentation_contract() {
+        let view = serde_json::json!({
+            "mode": "list",
+            "tasks": [{ "title": "Runtime Task", "status": "active" }]
+        });
+        let RuntimeTaskToolOutcome::Completed { output } =
+            runtime_result_with_view("Task view 已读取", view)
+        else {
+            panic!("runtime task result should complete");
+        };
+        let decoded: AgentToolResult =
+            serde_json::from_value(output).expect("runtime result should encode AgentToolResult");
+        let text = decoded.content[0]
+            .extract_text()
+            .expect("task presentation should contain text");
+
+        assert!(text.starts_with("Task view 已读取\n{"));
+        assert!(text.contains("\"mode\": \"list\""));
+        assert_eq!(decoded.details.expect("task view details")["mode"], "list");
     }
 
     #[test]

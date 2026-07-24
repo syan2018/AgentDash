@@ -11,6 +11,8 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { ThreadItem, AgentDashThreadItem } from "../../../../generated/backbone-protocol";
 import { parseReadToolText, type ParsedReadOutput } from "./readPayload";
+import { ToolOutputContentViewer } from "./ToolOutputContentViewer";
+import { normalizeDynamicOutput } from "./toolOutputContent";
 import { CB } from "./cardBodyTokens";
 
 const PREVIEW_LINES = 24;
@@ -21,10 +23,18 @@ export interface ReadCardBodyProps {
 
 export function ReadCardBody({ item }: ReadCardBodyProps): ReactNode {
   const parsed = useMemo(() => buildParsedRead(item), [item]);
+  const contentItems = readContentItems(item);
+  const imageBlocks = useMemo(
+    () => normalizeDynamicOutput(contentItems).filter((block) => block.kind === "image"),
+    [contentItems],
+  );
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState<"body" | "raw" | false>(false);
 
   if (!parsed || parsed.lines.length === 0) {
+    if (imageBlocks.length > 0) {
+      return <ToolOutputContentViewer blocks={imageBlocks} />;
+    }
     return <p className="text-xs text-muted-foreground">尚无读取内容</p>;
   }
 
@@ -110,6 +120,10 @@ export function ReadCardBody({ item }: ReadCardBodyProps): ReactNode {
           </button>
         )}
       </div>
+
+      {imageBlocks.length > 0 && (
+        <ToolOutputContentViewer blocks={imageBlocks} />
+      )}
     </div>
   );
 }
@@ -137,10 +151,15 @@ type ContentItems = NonNullable<
 >;
 
 function extractTextFromItem(item: AgentDashThreadItem): string | null {
-  if (item.type === "fsRead" || item.type === "dynamicToolCall") {
-    return extractText(item.contentItems);
-  }
-  return null;
+  return extractText(readContentItems(item));
+}
+
+function readContentItems(
+  item: AgentDashThreadItem,
+): ContentItems | null | undefined {
+  return item.type === "fsRead" || item.type === "dynamicToolCall"
+    ? item.contentItems
+    : null;
 }
 
 function extractText(items: ContentItems | null | undefined): string | null {

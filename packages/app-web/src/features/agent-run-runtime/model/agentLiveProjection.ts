@@ -23,6 +23,7 @@ export function applyAgentLiveEvent(
   snapshot: ManagedRuntimeSnapshot,
   event: AgentLiveEvent,
 ): ManagedRuntimeSnapshot {
+  const canonicalEvent = event.record.presentation.envelope.event;
   const existingIndex = snapshot.conversation_history.findIndex(
     (record) => record.presentation_id === event.record.presentation_id,
   );
@@ -34,6 +35,10 @@ export function applyAgentLiveEvent(
   }
   return {
     ...snapshot,
+    thread_name:
+      canonicalEvent.type === "thread_name_updated"
+        ? (canonicalEvent.payload.threadName ?? null)
+        : snapshot.thread_name,
     conversation_history: conversationHistory,
   };
 }

@@ -835,6 +835,43 @@ async fn surface_revoke_clears_the_active_system_append_context_chain() {
 }
 
 #[tokio::test]
+async fn surface_can_repeat_apply_and_revoke_with_the_same_revision_and_digest() {
+    let service = create_service(
+        AgentHistory::empty(
+            AgentSessionId::new("surface-reapply-session"),
+            BranchId::new("surface-reapply-branch"),
+        ),
+        dependencies(Arc::new(CapturingProvider::default())),
+    )
+    .await;
+    let surface = DashSurface {
+        revision: 2,
+        digest: "surface-reapply".to_owned(),
+        instructions: Vec::new(),
+        tools: Vec::new(),
+        context_frames: Vec::new(),
+    };
+
+    service.apply_surface(surface.clone()).await.unwrap();
+    service.revoke_surface(surface.revision).await.unwrap();
+    service.apply_surface(surface.clone()).await.unwrap();
+    service.revoke_surface(surface.revision).await.unwrap();
+
+    assert_eq!(
+        service
+            .export_repository_state()
+            .await
+            .unwrap()
+            .store()
+            .history()
+            .state()
+            .unwrap()
+            .surface,
+        None
+    );
+}
+
+#[tokio::test]
 async fn repository_reopen_preserves_surface_inspect_and_idempotency_without_provider_replay() {
     let provider = Arc::new(CountingProvider {
         calls: AtomicUsize::new(0),

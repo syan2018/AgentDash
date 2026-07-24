@@ -44,3 +44,4 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 - Windows 上 `cargo fmt --all` 可能因源码文件被用户映射区域短暂占用而报 `os error 1224`；未格式化文件可使用相同 toolchain 的 `rustfmt --edition 2024 <files>` 定向完成，随后再用 diff 与编译检查确认结果。
 - Windows 工作区中的 Playwright skill wrapper 可能以 CRLF 保存，直接交给 WSL `bash` 会在 `set -o pipefail` 处把 `\r` 识别为选项名；本机已有 Node/npm 时可直接使用 `npx --yes --package @playwright/cli playwright-cli ...`，保持同一 CLI session 语义且不改写共享 skill 文件。
 - `lifecycle_agents.runtime_binding` 与 concrete Agent authority（例如 `dash_complete_source`）共同构成可打开会话的 owner invariant；重塑或重置 concrete Agent authority 的迁移需要在同一迁移链中收敛对应 Product owner，因为 Runtime snapshot 与 live subscription 会严格沿 committed binding 解析 source。
+- Dash Surface 在撤销后可以用相同 revision/digest 再次绑定，因此 Surface 历史条目 ID 需要包含本次发生位置；revision/digest 只标识 Surface 内容，不能单独充当历史事件身份。

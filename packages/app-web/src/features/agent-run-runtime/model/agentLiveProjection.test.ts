@@ -4,7 +4,12 @@ import type {
   BackboneEvent,
   CanonicalConversationRecord,
 } from "../../../generated/backbone-protocol";
-import { hasActiveCanonicalTurn } from "./agentLiveProjection";
+import type { AgentLiveEvent } from "../../../generated/agent-service-api";
+import { managedRuntimeTestFixtures } from "./managedRuntimeTestFixtures";
+import {
+  applyAgentLiveEvent,
+  hasActiveCanonicalTurn,
+} from "./agentLiveProjection";
 
 function record(
   presentationId: string,
@@ -62,5 +67,24 @@ describe("canonical Agent execution liveness", () => {
 
     expect(hasActiveCanonicalTurn([started, firstOutput])).toBe(true);
     expect(hasActiveCanonicalTurn([started, firstOutput, completed])).toBe(false);
+  });
+
+  it("projects a live thread name update into the runtime snapshot", () => {
+    const updated = applyAgentLiveEvent(
+      managedRuntimeTestFixtures.snapshots.completed,
+      {
+        source: "source-1",
+        sequence: "3" as AgentLiveEvent["sequence"],
+        record: record("thread-name", {
+          type: "thread_name_updated",
+          payload: {
+            threadId: "source-1",
+            threadName: "消息流收束",
+          },
+        }),
+      },
+    );
+
+    expect(updated.thread_name).toBe("消息流收束");
   });
 });

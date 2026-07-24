@@ -781,13 +781,14 @@ impl DashAgentService {
             });
         }
         if current_surface.as_ref() != Some(&surface) {
+            let next_sequence = replacement.store.history().entries().len() as u64 + 1;
             replacement.store.commit(DashAgentCommit {
                 expected_head: replacement.store.history().head().cloned(),
                 command_settlement: None,
                 effect_settlements: vec![],
                 history: vec![HistoryContribution {
                     entry_id: HistoryEntryId::new(format!(
-                        "surface-applied:{}:{}",
+                        "surface-applied:{next_sequence}:{}:{}",
                         surface.revision, surface.digest
                     )),
                     payload: HistoryPayload::SurfaceApplied {
@@ -816,12 +817,15 @@ impl DashAgentService {
             });
         }
         if let Some(surface) = current_surface {
+            let next_sequence = replacement.store.history().entries().len() as u64 + 1;
             replacement.store.commit(DashAgentCommit {
                 expected_head: replacement.store.history().head().cloned(),
                 command_settlement: None,
                 effect_settlements: vec![],
                 history: vec![HistoryContribution {
-                    entry_id: HistoryEntryId::new(format!("surface-revoked:{expected_revision}")),
+                    entry_id: HistoryEntryId::new(format!(
+                        "surface-revoked:{next_sequence}:{expected_revision}"
+                    )),
                     payload: HistoryPayload::SurfaceRevoked { surface },
                 }],
                 enqueue_commands: vec![],

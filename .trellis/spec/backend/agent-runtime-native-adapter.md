@@ -45,11 +45,24 @@ impl CompleteAgentService for DashAgentCompleteService {
 
 ```rust
 pub trait DashExecutionCallbacks {
-    async fn on_event(&self, event: DashExecutionEvent) -> Result<(), DashCoreError>;
+    async fn emit(&self, event: DashExecutionEvent) -> Result<(), DashCoreError>;
+    async fn drain_steering(
+        &self,
+        turn_id: &AgentTurnId,
+        round: u32,
+        terminal_boundary: bool,
+    ) -> Result<Vec<String>, DashCoreError>;
 }
 
 pub trait DashHistoryCallbacks {
-    async fn on_committed(&self, commit: DashHistoryCommit) -> Result<(), DashServiceError>;
+    async fn committed(&self, commit: DashHistoryCommit) -> Result<(), DashCoreError>;
+}
+
+pub trait DashProvider {
+    async fn stream(
+        &self,
+        request: DashProviderRequest,
+    ) -> Result<DashProviderEventStream, DashCoreError>;
 }
 ```
 
@@ -153,6 +166,13 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   原子提交后立即返回；provider/tool loop由source owner后台推进。后台错误或panic必须提交typed
   terminal，Interrupt必须原子终结原effect并取消同turn的pending interaction，因此HTTP生命周期、
   worker生命周期和挂起交互不会形成彼此等待的第二状态机。
+- active turn 的 `Steer` 由 Dash Agent owner 接纳：校验当前 turn 后先把新的
+  `InputAccepted` 与成功 command receipt 提交到同一 repository，再由 Core 在工具结果之后或
+  provider `Stop` 边界调用 `drain_steering` 消费。`Stop` 边界存在新输入时继续同一 turn 的下一
+  provider round；没有新输入时才结束 turn。自动压缩切换 continuation turn 时保留同一消费游标，
+  因而压缩期间已接纳的输入不会丢失。
+- `DashProvider` 只负责一次 provider request/stream，不拥有 active turn，也不提供 steering
+  方法。运行中输入的持久化、排序、消费与终态竞争都属于 Dash service/Core callback 边界。
 - 每个provider round确认的input/output token与模型context window以
   `ProviderUsageConfirmed`写入同一native history。folded state保存最新round并累计source totals，
   canonical snapshot/changes/live从该entry统一投影`TokenUsageUpdated`，使重连恢复与实时展示使用
@@ -225,6 +245,11 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 | effect identity相同且request相同 | 返回原 receipt |
 | effect identity相同但request不同 | typed idempotency conflict |
 | 普通Submit已完成admission但provider仍在运行 | 立即返回`Accepted`；active turn可被read/live观察，HTTP不等待terminal |
+| active turn在provider请求进行中收到Steer | 原子提交`InputAccepted`与成功receipt；当前round在安全边界后带该输入继续下一round |
+| provider返回Stop且没有待消费Steer | fence该turn的steering接纳并正常提交terminal |
+| 自动压缩期间收到Steer | 输入保持durable；continuation turn继承消费游标并在下一安全边界消费 |
+| active turn正在等待interaction resolution | Steer返回typed invalid state；只接受ResolveInteraction或Interrupt |
+| 已完成或已fence的turn收到Steer | typed invalid state；不得调用provider或写入输入history |
 | active turn等待interaction时收到Interrupt | 原effect提交`Interrupted`、pending interaction取消、active execution清空并唤醒等待者 |
 | source-owned后台worker返回错误或panic | 若回合尚未终态则提交typed Failed；不得遗留永久active turn |
 | Complete outer effect仍为Accepted但Dash effect已终态 | `inspect`按Dash权威终态收敛并持久化outer terminal |
@@ -265,6 +290,10 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - Base：标题生成暂时失败，原回合terminal不变且source保持未命名；下一满足条件的terminal回合可以再次生成。
 - Base：Submit返回`Accepted`后客户端断开；source-owned worker继续执行，重连通过read恢复active或terminal，
   不依赖原HTTP请求存活。
+- Good：provider首轮仍在运行时提交Steer，Dash立即持久化输入并返回成功；首轮到达`Stop`后Core把
+  该输入加入同一turn transcript并发起第二轮provider请求。
+- Base：Steer与首轮`Stop`同时到达；Dash steering mutex在接纳与terminal fence之间给出唯一顺序，
+  输入要么进入下一round，要么收到typed invalid state，不会成功返回后丢失。
 - Good：每个provider round只提交一次`ProviderUsageConfirmed`，canonical live显示latest round，
   authoritative read同时恢复latest与source cumulative totals。
 - Bad：Dash 同时写 repository JSONB 与 history/effect镜像，再逐次校验相等。镜像没有独立
@@ -277,6 +306,8 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   live delta。
 - Bad：在Dash、canonical projector或provider bridge各自格式化工具说明。三处都能单独工作，但
   surface热更新后无法证明模型所见文本、结构化schema与平台审计属于同一accepted revision。
+- Bad：把Steer调用转发给`DashProvider`。provider是单次模型请求端口，不持有Agent执行队列，
+  production bridge会拒绝该调用，也无法提供durable receipt与恢复语义。
 
 ## 6. Tests Required
 
@@ -286,6 +317,9 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   stable effect replay/conflict。
 - background admission测试覆盖Accepted立即返回、并发同effect只启动一次、interaction期间
   Interrupt、worker error/panic终态，以及Complete effect在Dash已终态后的inspection收敛。
+- steering集成测试使用只实现`DashProvider::stream`的production-shape provider：首轮阻塞时
+  提交Steer必须立即成功；释放首轮后必须产生第二个provider request，且其messages包含已接纳输入。
+  同组测试继续断言Interrupt终结active turn。
 - usage测试覆盖多provider round的last/total/context window，并断言read、changes与live投影一致。
 - failure tests断言 provider/Core code、message、retryable 在 terminal history与 Agent snapshot
   一致。
@@ -395,4 +429,14 @@ loop {
         ProviderTerminal::ToolCalls => continue,
     }
 }
+```
+
+```rust
+// Wrong: 一次性provider端口被迫理解并修改正在运行的Agent turn。
+execution.provider.steer(&turn_id, &content).await?;
+
+// Correct: Agent先持久化输入；Core只在确定性的round边界消费。
+repository.commit(HistoryPayload::InputAccepted { input_id, content })?;
+let steering = callbacks.drain_steering(round, terminal_boundary).await?;
+messages.extend(steering);
 ```

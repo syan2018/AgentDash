@@ -41,6 +41,15 @@
 - 删除前端对投影 404 的静默降级，让产品合同断链直接暴露。
 - Stop 可见性只读取权威 workspace execution status，不再读取 `isReceiving`。
 
+## Phase 7：Native steering owner 收口
+
+- 删除 `DashProvider::steer`，Provider 只保留单次模型 request/stream 职责。
+- Dash Service 原子持久化 active turn 的 Steer 输入与 receipt，并维护 source-owned 消费游标。
+- Agent Core 在工具结果后和 provider `Stop` 边界排空输入；有输入时继续同一 turn 的下一轮。
+- 自动压缩 continuation 接管 steering owner 并保留游标，避免压缩窗口丢失已接纳输入。
+- 用不实现专用 steering 的 production-shape provider 覆盖 Submit、Steer、后续 provider round
+  与 Interrupt。
+
 ## 验证结果
 
 - Native Complete Agent：29/29；Dash service：10/10；Agent Core loop：3/3；Dash Core：1/1。

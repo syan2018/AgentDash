@@ -252,14 +252,6 @@ pub trait DashProvider: Send + Sync {
         &self,
         request: DashProviderRequest,
     ) -> Result<DashProviderEventStream, DashCoreError>;
-
-    async fn steer(&self, _turn_id: &AgentTurnId, _input: &str) -> Result<(), DashCoreError> {
-        Err(DashCoreError::Provider {
-            code: "steering_unsupported".to_owned(),
-            message: "provider does not accept in-flight steering".into(),
-            retryable: false,
-        })
-    }
 }
 
 #[async_trait]
@@ -348,6 +340,15 @@ pub trait DashToolCallbacks: Send + Sync {
 #[async_trait]
 pub trait DashExecutionCallbacks: Send + Sync {
     async fn emit(&self, event: DashExecutionEvent) -> Result<(), DashCoreError>;
+
+    async fn drain_steering(
+        &self,
+        _turn_id: &AgentTurnId,
+        _round: u32,
+        _terminal_boundary: bool,
+    ) -> Result<Vec<String>, DashCoreError> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -653,6 +654,18 @@ impl CoreCallbacks for CallbackAdapter<'_> {
                 event: dash_event(event),
             })
             .await
+            .map_err(core_error)
+    }
+
+    async fn drain_steering(
+        &self,
+        round: u32,
+        terminal_boundary: bool,
+    ) -> Result<Vec<CoreMessage>, CoreError> {
+        self.inner
+            .drain_steering(&self.turn_id, round, terminal_boundary)
+            .await
+            .map(|messages| messages.into_iter().map(CoreMessage::user).collect())
             .map_err(core_error)
     }
 }

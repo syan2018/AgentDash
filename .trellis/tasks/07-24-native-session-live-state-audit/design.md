@@ -20,7 +20,11 @@ Product 不保存第二份执行账本。运行态、active turn、commands、us
 - 将 Dash Submit 分成“原子接纳”和“执行推进”两个阶段。
 - 接纳阶段完成输入校验、effect 幂等检查、`InputAccepted + TurnStarted` 提交、active execution/cancellation 注册，然后返回 `Accepted`。
 - 执行阶段由 Native owner 管理的 task 继续 provider/tool loop；terminal 后更新 Dash effect、Complete Agent effect 与 history。
-- Steer/Interrupt 仍同步作用于 authoritative active turn，并快速返回其 command receipt。
+- Steer 在 authoritative active turn 上原子提交 `InputAccepted` 与成功 command receipt；Agent
+  Core 在工具结果后或 provider `Stop` 边界消费队列，并在存在新输入时继续同一 turn 的下一轮。
+- Provider 只负责单次 request/stream，不接收 Steer。自动压缩切换 continuation turn 时转移
+  steering owner、保留消费游标，使压缩期间已接纳的输入仍可被消费。
+- Interrupt 同步作用于 authoritative active turn，并快速返回其 command receipt。
 - 后台 task 失败必须形成 typed terminal history/effect；禁止只写日志后遗留永久 active turn。
 - `inspect` 对 Accepted/Applied 返回同一 effect 的真实当前状态，重复 client id 不启动第二次执行。
 

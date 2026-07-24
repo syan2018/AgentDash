@@ -7,6 +7,8 @@
 ## Background
 
 - Native Complete Agent 在写入 `Accepted` 后仍同步等待整个 provider/tool 回合终态，导致 Composer 请求在回合期间一直 pending；前端 `isSending` 因此持续为真，Steer 在发起命令前就被本地拦截。
+- Submit 时序修复后，Dash Service 仍把 Steer 转发给只负责单次模型请求的 Provider；生产
+  `BridgeDashProvider` 不拥有运行中输入队列，因此返回 `steering_unsupported`。
 - Native provider bridge 已取得每轮 input/output token，但 `CoreEvent -> DashCoreEvent -> HistoryPayload -> BackboneEvent` 没有 usage 事实，页面永远收不到 `token_usage_updated`，重连也没有可恢复的 durable usage。
 - 前端同时消费 Agent canonical feed 与 Product workspace snapshot。turn 边界已经进入统一 live-event planner，但缺少覆盖真实 Native active snapshot、命令刷新和 HTTP receipt 时序的生产级回归测试。
 - `main` reference 曾在成功收到 `task_write` 的 `item_completed` 后主动刷新 Task 状态栏；当前通用 live-event planner 重构时删除了该逻辑，却没有把 Task owner 刷新加入新的 effect plan。
@@ -25,6 +27,8 @@
 
 - Native Submit 必须在 Agent 原子接纳命令、写入 active turn 后立即返回 `Accepted` receipt；provider/tool 执行继续由 Agent owner 推进，不占用 Composer HTTP 请求。
 - active turn 出现后，输入区必须展示并执行当前有效的 steer 与 cancel 命令。
+- Steer 必须由 Native Agent 持久化接纳，并在工具完成或 provider Stop 的安全边界进入同一 turn
+  的下一轮模型请求；Provider 端口不承担 Agent 调度职责。
 - UI 运行态、键盘命令和 cancel receipt 必须来自同一聚合状态，不能出现“按钮显示但点击直接返回”的状态。
 - 命令提交、终态和重连后必须重新读取权威命令视图。
 
@@ -64,6 +68,7 @@
 - [x] Native Agent active turn 期间，页面持续显示运行态，stop 可执行，Ctrl/Cmd+Enter 可 steer。
 - [x] 普通 Submit 在 active turn 建立后返回 `Accepted`，不等待 provider terminal。
 - [x] stop/steer 不依赖刷新页面，不出现可见按钮但缺少有效命令的情况。
+- [x] Native Steer 不依赖 Provider 专用接口，成功 receipt 对应的输入一定进入当前 turn 后续轮次。
 - [x] token/context usage 在 provider round 完成时更新，包含有效 context window，刷新或重连后保持已确认值。
 - [x] Agent 成功执行 `task_write` 后，状态栏在同一会话内更新，无需切换页面。
 - [x] snapshot 与 live 竞争时，已提交 live 记录不会被旧 snapshot 回退。

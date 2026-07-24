@@ -96,12 +96,16 @@ pub async fn run_agent_loop(
             FinishReason::Stop if tool_calls.is_empty() => {
                 let assistant_message = CoreMessage::assistant(assistant_text);
                 messages.push(assistant_message.clone());
-                return Ok(CoreOutput {
-                    assistant_message,
-                    transcript_delta: messages.split_off(initial_len),
-                    usage: total_usage,
-                    provider_rounds: round,
-                });
+                let steering = callbacks.drain_steering(round, true).await?;
+                if steering.is_empty() {
+                    return Ok(CoreOutput {
+                        assistant_message,
+                        transcript_delta: messages.split_off(initial_len),
+                        usage: total_usage,
+                        provider_rounds: round,
+                    });
+                }
+                messages.extend(steering);
             }
             FinishReason::ToolCalls if !tool_calls.is_empty() => {
                 messages.push(CoreMessage::assistant_with_tool_calls(
@@ -142,6 +146,7 @@ pub async fn run_agent_loop(
                         result.is_error,
                     ));
                 }
+                messages.extend(callbacks.drain_steering(round, false).await?);
             }
             _ => return Err(CoreError::InvalidProviderTerminal),
         }

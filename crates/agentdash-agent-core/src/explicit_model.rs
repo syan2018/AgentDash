@@ -293,4 +293,12 @@ pub trait CoreToolCallbacks: Send + Sync {
 #[async_trait]
 pub trait CoreCallbacks: Send + Sync {
     async fn emit(&self, event: CoreEvent) -> Result<(), CoreError>;
+
+    async fn drain_steering(
+        &self,
+        _round: u32,
+        _terminal_boundary: bool,
+    ) -> Result<Vec<CoreMessage>, CoreError> {
+        Ok(Vec::new())
+    }
 }

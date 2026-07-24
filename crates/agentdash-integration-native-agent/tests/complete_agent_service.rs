@@ -782,24 +782,43 @@ impl DashProvider for ErrorProvider {
     }
 }
 
-struct SteerProvider {
+struct QueuedSteerProvider {
     started: Arc<Notify>,
     release: Arc<Notify>,
+    requests: Arc<Mutex<Vec<DashProviderRequest>>>,
 }
 
 #[async_trait]
-impl DashProvider for SteerProvider {
+impl DashProvider for QueuedSteerProvider {
     async fn stream(
         &self,
-        _: DashProviderRequest,
+        request: DashProviderRequest,
     ) -> Result<DashProviderEventStream, DashCoreError> {
+        let request_index = {
+            let mut requests = self.requests.lock().unwrap();
+            requests.push(request);
+            requests.len()
+        };
+        if request_index > 1 {
+            return Ok(Box::pin(stream::iter([
+                Ok(DashProviderEvent::TextDelta {
+                    delta: "steered answer".into(),
+                }),
+                Ok(DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::Stop,
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    context_window: 200_000,
+                }),
+            ])));
+        }
         self.started.notify_one();
         let release = self.release.clone();
         Ok(Box::pin(
             stream::once(async move {
                 release.notified().await;
                 Ok(DashProviderEvent::TextDelta {
-                    delta: "steered answer".into(),
+                    delta: "initial answer".into(),
                 })
             })
             .chain(stream::iter([Ok(DashProviderEvent::Completed {
@@ -809,11 +828,6 @@ impl DashProvider for SteerProvider {
                 context_window: 200_000,
             })])),
         ))
-    }
-
-    async fn steer(&self, _: &DashTurnId, _: &str) -> Result<(), DashCoreError> {
-        self.release.notify_one();
-        Ok(())
     }
 }
 
@@ -3629,9 +3643,11 @@ async fn resume_preserves_state_old_tail_digest_and_effect_owner_is_exact() {
 async fn steer_and_interrupt_orchestrate_the_active_turn() {
     let started = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
-    let service = Arc::new(service_with_provider(Arc::new(SteerProvider {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let service = Arc::new(service_with_provider(Arc::new(QueuedSteerProvider {
         started: started.clone(),
-        release,
+        release: release.clone(),
+        requests: requests.clone(),
     })));
     let source = create_source(&service, "dash-steer").await;
     let submit_request = submit_envelope(source.clone(), "input-steer", "effect-input-steer");
@@ -3660,12 +3676,36 @@ async fn steer_and_interrupt_orchestrate_the_active_turn() {
             outcome: AgentTerminalOutcome::Succeeded
         }
     ));
+    let steered_snapshot = service
+        .read(AgentReadQuery {
+            source: source.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert!(steered_snapshot.conversation_history.iter().any(|record| {
+        matches!(
+            &record.presentation.envelope.event,
+            BackboneEvent::UserInputSubmitted(input) if input.item_id == "steer"
+        )
+    }));
+    release.notify_one();
     assert!(matches!(
         execute_and_wait(&service, submit_request).await.state,
         AgentReceiptState::Terminal {
             outcome: AgentTerminalOutcome::Succeeded
         }
     ));
+    {
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(
+            requests[1]
+                .messages
+                .iter()
+                .any(|message| message.content == "new direction")
+        );
+    }
 
     let started = Arc::new(Notify::new());
     let service = Arc::new(service_with_provider(Arc::new(BlockingProvider {
@@ -3734,6 +3774,25 @@ async fn resolve_interaction_completes_the_suspended_turn() {
         tokio::task::yield_now().await;
     };
     assert_eq!(snapshot.interactions.len(), 1);
+    let steer_error = service
+        .execute(AgentCommandEnvelope {
+            meta: meta("steer-suspended", "effect-steer-suspended"),
+            source: source.clone(),
+            command: AgentCommand::Steer {
+                expected_turn_id: agentdash_agent_service_api::AgentTurnId::new(
+                    "turn:input-interaction",
+                )
+                .unwrap(),
+                input: AgentInput {
+                    content: vec![AgentInputContent::Text {
+                        text: "cannot bypass interaction".into(),
+                    }],
+                },
+            },
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(steer_error.code, AgentServiceErrorCode::Conflict);
     service
         .execute(AgentCommandEnvelope {
             meta: meta("resolve", "effect-resolve"),

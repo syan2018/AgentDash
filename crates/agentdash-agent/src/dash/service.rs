@@ -347,6 +347,7 @@ pub struct DashAgentService {
     execution: Arc<tokio::sync::RwLock<DashExecutionDependencies>>,
     tool_callbacks: Arc<RoutableDashToolCallbacks>,
     cancellation: Arc<tokio::sync::Mutex<Option<(AgentTurnId, DashCancellation)>>>,
+    steering: Arc<tokio::sync::Mutex<DashSteeringState>>,
     effect_updates: Arc<tokio::sync::Notify>,
 }
 
@@ -354,6 +355,12 @@ pub struct DashAgentService {
 struct PendingProviderRound {
     assistant_text: String,
     tool_calls: Vec<DashToolCall>,
+}
+
+#[derive(Default)]
+struct DashSteeringState {
+    active_turn: Option<AgentTurnId>,
+    after_sequence: u64,
 }
 
 struct DurableDashExecutionCallbacks {
@@ -553,6 +560,17 @@ impl DashExecutionCallbacks for DurableDashExecutionCallbacks {
         }
         self.downstream.emit(execution).await
     }
+
+    async fn drain_steering(
+        &self,
+        turn_id: &AgentTurnId,
+        _round: u32,
+        terminal_boundary: bool,
+    ) -> Result<Vec<String>, DashCoreError> {
+        self.service
+            .drain_steering(turn_id, terminal_boundary)
+            .await
+    }
 }
 
 fn provider_round_entry_id(
@@ -647,6 +665,7 @@ impl DashAgentService {
             execution: Arc::new(tokio::sync::RwLock::new(execution)),
             tool_callbacks,
             cancellation: Arc::new(tokio::sync::Mutex::new(None)),
+            steering: Arc::new(tokio::sync::Mutex::new(DashSteeringState::default())),
             effect_updates: Arc::new(tokio::sync::Notify::new()),
         }
     }
@@ -993,6 +1012,7 @@ impl DashAgentService {
             },
             dependency: None,
         };
+        let mut steering = self.steering.lock().await;
         let (_, accepted) = self
             .update_repository(|repository| {
                 if repository.active.is_some() {
@@ -1052,6 +1072,9 @@ impl DashAgentService {
                 Ok(receipt)
             })
             .await?;
+        steering.active_turn = Some(turn_id.clone());
+        steering.after_sequence = accepted.history_revision;
+        drop(steering);
         let cancellation = DashCancellation::new();
         {
             let mut handle = self.cancellation.lock().await;
@@ -1457,6 +1480,7 @@ impl DashAgentService {
                 return Ok(receipt);
             }
         };
+        let mut steering = self.steering.lock().await;
         self.update_repository(|repository| {
             repository.store.complete_compaction(
                 compaction_command_id.clone(),
@@ -1495,6 +1519,8 @@ impl DashAgentService {
             Ok(())
         })
         .await?;
+        steering.active_turn = Some(continuation_turn_id.clone());
+        drop(steering);
         let continuation_cancellation = DashCancellation::new();
         {
             let mut handle = self.cancellation.lock().await;
@@ -1634,14 +1660,49 @@ impl DashAgentService {
         turn_id: AgentTurnId,
         content: String,
     ) -> Result<DashCommandReceipt, DashServiceError> {
+        if content.trim().is_empty() {
+            return Err(DashServiceError::InvalidArgument {
+                message: "Dash Agent steering input must not be blank".into(),
+            });
+        }
         self.require_active_turn(&turn_id).await?;
-        self.execution_dependencies()
-            .await
-            .provider
-            .steer(&turn_id, &content)
-            .await?;
+        let steering = self.steering.lock().await;
+        if steering.active_turn.as_ref() != Some(&turn_id) {
+            return Err(DashServiceError::InvalidState {
+                message: "Dash Agent turn no longer accepts steering".into(),
+            });
+        }
         let (_, receipt) = self
             .update_repository(|repository| {
+                let active =
+                    repository
+                        .active
+                        .as_ref()
+                        .ok_or_else(|| DashServiceError::InvalidState {
+                            message: "Dash Agent turn completed before steering was committed"
+                                .into(),
+                        })?;
+                if active.turn_id != turn_id {
+                    return Err(DashServiceError::InvalidState {
+                        message: "Dash Agent turn is not active".into(),
+                    });
+                }
+                let has_pending_interaction = repository
+                    .store
+                    .history()
+                    .state()?
+                    .interactions
+                    .values()
+                    .any(|interaction| {
+                        interaction.turn_id == turn_id
+                            && interaction.response.is_none()
+                            && !interaction.cancelled
+                    });
+                if has_pending_interaction {
+                    return Err(DashServiceError::InvalidState {
+                        message: "Dash Agent turn is waiting for interaction resolution".into(),
+                    });
+                }
                 repository.store.commit(DashAgentCommit {
                     expected_head: repository.store.history().head().cloned(),
                     command_settlement: None,
@@ -1671,6 +1732,7 @@ impl DashAgentService {
                 Ok(receipt)
             })
             .await?;
+        drop(steering);
         Ok(receipt)
     }
 
@@ -2258,6 +2320,53 @@ impl DashAgentService {
         {
             *handle = None;
         }
+        drop(handle);
+        let mut steering = self.steering.lock().await;
+        if steering.active_turn.as_ref() == Some(turn_id) {
+            steering.active_turn = None;
+        }
+    }
+
+    async fn drain_steering(
+        &self,
+        turn_id: &AgentTurnId,
+        terminal_boundary: bool,
+    ) -> Result<Vec<String>, DashCoreError> {
+        let mut steering = self.steering.lock().await;
+        if steering.active_turn.as_ref() != Some(turn_id) {
+            return Ok(Vec::new());
+        }
+        let repository = self
+            .repository
+            .load()
+            .await
+            .map_err(|error| DashCoreError::Callback {
+                message: error.to_string(),
+            })?;
+        let mut inputs = Vec::new();
+        for entry in repository
+            .store
+            .history()
+            .entries()
+            .iter()
+            .filter(|entry| entry.sequence > steering.after_sequence)
+        {
+            if let HistoryPayload::InputAccepted { content, .. } = &entry.payload {
+                inputs.push(content.clone());
+            }
+        }
+        steering.after_sequence = repository
+            .store
+            .history()
+            .state()
+            .map_err(|error| DashCoreError::Callback {
+                message: error.to_string(),
+            })?
+            .entry_count;
+        if terminal_boundary && inputs.is_empty() {
+            steering.active_turn = None;
+        }
+        Ok(inputs)
     }
 
     async fn update_store<T>(

@@ -20,7 +20,7 @@ export const ST = {
 
   /** 无边框粗体徽标 — 一级 group 和二级 item 共用 */
   badge:
-    "shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60",
+    "relative top-px inline-flex h-4 shrink-0 items-center text-[10px] font-semibold leading-none uppercase tracking-[0.08em] text-muted-foreground/60",
 
   /** 标题文字 */
   title: "min-w-0 flex-1 truncate text-xs text-foreground/70",

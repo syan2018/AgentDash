@@ -41,9 +41,9 @@ export function DisclosureRow({
       type="button"
       {...buttonProps}
       aria-expanded={expanded}
-      className={`flex w-full items-center gap-2 text-left ${className}`}
+      className={`flex w-full items-center gap-2 text-left leading-4 ${className}`}
     >
-      <span className="flex h-4 w-3 shrink-0 items-center justify-center">
+      <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/40">
         <DisclosureChevron expanded={expanded} />
       </span>
       {children}

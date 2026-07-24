@@ -26,8 +26,10 @@ describe("DisclosureRow", () => {
     );
 
     for (const html of [collapsed, expanded]) {
-      expect(html).toContain("h-4 w-3");
+      expect(html).toContain("size-4");
       expect(html).toContain("items-center gap-2");
+      expect(html).toContain("leading-4");
+      expect(html).toContain("text-muted-foreground/40");
       expect(html).toContain(">TOOLS</button>");
     }
   });

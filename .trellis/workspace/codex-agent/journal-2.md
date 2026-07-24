@@ -530,3 +530,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 69: 数据库表收束与迁移基线压缩
+
+**Date**: 2026-07-24
+**Task**: 数据库表收束与迁移基线压缩
+**Branch**: `codex/agent-runtime-final-convergence-plan`
+
+### Summary
+
+清理冗余持久化结构，将 Gate 与 Canvas 状态收回 owner 文档，把 116 份 migration 压缩为包含 46 张业务表的单一首发基线，并手工重建验证项目内嵌数据库。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `108ae5633` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,4 +1,8 @@
-import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
+import type {
+  AgentDashThreadItem,
+  BackboneEvent,
+  FileUpdateChange,
+} from "../../../generated/backbone-protocol";
 import type {
   SessionDisplayEntry,
   SessionEventEnvelope,
@@ -51,6 +55,7 @@ function getItemIdFromEvent(event: BackboneEvent): string | undefined {
     case "command_output_delta":
     case "file_change_delta":
     case "mcp_tool_call_progress":
+    case "file_change_patch_updated":
     case "agent_message_delta":
     case "reasoning_text_delta":
     case "reasoning_summary_delta":
@@ -96,6 +101,7 @@ function freshnessForEvent(event: BackboneEvent): SessionItemFreshness | undefin
     case "command_output_delta":
     case "file_change_delta":
     case "mcp_tool_call_progress":
+    case "file_change_patch_updated":
     case "agent_message_delta":
     case "reasoning_text_delta":
     case "reasoning_summary_delta":
@@ -150,6 +156,37 @@ function getCommandAggregatedOutput(item: AgentDashThreadItem): string | null {
     return null;
   }
   return item.aggregatedOutput ?? null;
+}
+
+function applyFileChangePatch(
+  event: BackboneEvent,
+  changes: FileUpdateChange[],
+): BackboneEvent | null {
+  if (
+    event.type === "item_started" &&
+    event.payload.item.type === "fileChange"
+  ) {
+    return {
+      type: "item_started",
+      payload: {
+        ...event.payload,
+        item: { ...event.payload.item, changes },
+      },
+    };
+  }
+  if (
+    event.type === "item_updated" &&
+    event.payload.item.type === "fileChange"
+  ) {
+    return {
+      type: "item_updated",
+      payload: {
+        ...event.payload,
+        item: { ...event.payload.item, changes },
+      },
+    };
+  }
+  return null;
 }
 
 function isWillRetryErrorEvent(event: BackboneEvent): boolean {
@@ -410,6 +447,35 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
         };
         return next;
       }
+    }
+    return prev;
+  }
+
+  if (bbEvent.type === "file_change_patch_updated") {
+    const targetId = `item:${bbEvent.payload.itemId}`;
+    for (let i = prev.length - 1; i >= 0; i -= 1) {
+      const existing = prev[i];
+      if (!existing || existing.id !== targetId) {
+        continue;
+      }
+      if (
+        existing.itemFreshness === "completed" ||
+        existing.event.type === "item_completed"
+      ) {
+        return prev;
+      }
+      const patchedEvent = applyFileChangePatch(
+        existing.event,
+        bbEvent.payload.changes,
+      );
+      if (!patchedEvent) return prev;
+      const next = [...prev];
+      next[i] = {
+        ...mergeEntryMetadata(existing, event, bbEvent, "progress"),
+        event: patchedEvent,
+        isStreaming: true,
+      };
+      return next;
     }
     return prev;
   }

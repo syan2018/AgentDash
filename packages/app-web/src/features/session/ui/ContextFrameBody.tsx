@@ -13,6 +13,7 @@ import { useState } from "react";
 import type { ContextFrame } from "../model/contextFrame";
 import { Chip, SectionBlock } from "./contextFrame/SectionRenderers";
 import { CB } from "./bodies/cardBodyTokens";
+import { DisclosureChevron } from "../../../components/ui/disclosure";
 
 export interface ContextFrameBodyProps {
   frame: ContextFrame;
@@ -45,7 +46,7 @@ function AgentVisibleTextBlock({ text }: { text: string }) {
           Agent 实际原文
         </span>
         <span className={CB.meta}>{lineCount} 行</span>
-        <span className={CB.expandToggle}>{open ? "▲" : "▼"}</span>
+        <DisclosureChevron expanded={open} className={CB.expandToggle} />
       </button>
       {open && (
         <pre className={`max-h-96 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
@@ -79,7 +80,7 @@ function DebugBlock({ frame }: { frame: ContextFrame }) {
         <span className="min-w-0 flex-1 truncate text-xs text-foreground/70">
           调试信息
         </span>
-        <span className={CB.expandToggle}>{open ? "▲" : "▼"}</span>
+        <DisclosureChevron expanded={open} className={CB.expandToggle} />
       </button>
       {open && (
         <div className={`${CB.sectionGap} px-2 py-2`}>

@@ -22,9 +22,6 @@ export const ST = {
   badge:
     "shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60",
 
-  /** 折叠三角 */
-  chevron: "text-muted-foreground/50",
-
   /** 标题文字 */
   title: "min-w-0 flex-1 truncate text-xs text-foreground/70",
   /** 摘要/辅助文字 */

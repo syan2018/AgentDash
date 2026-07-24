@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DisclosureChevron } from "../../components/ui/disclosure";
 import type {
   ActiveWorkflowHookMetadata,
   HookInjection,
@@ -150,7 +151,10 @@ function HookInjectionRow({ injection }: { injection: HookInjection }) {
         </span>
         <span className="min-w-0 flex-1 truncate text-xs text-foreground/85">{injection.source}</span>
         {injection.content && (
-          <span className="shrink-0 text-[10px] text-muted-foreground/40">{open ? "▲" : "▼"}</span>
+          <DisclosureChevron
+            expanded={open}
+            className="text-muted-foreground/40"
+          />
         )}
       </button>
       {open && injection.content && (

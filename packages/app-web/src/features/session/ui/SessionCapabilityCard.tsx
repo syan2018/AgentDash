@@ -19,6 +19,7 @@ import type {
   SkillEntry,
   SkillProviderCluster,
 } from "../../../types/context";
+import { DisclosureChevron } from "../../../components/ui/disclosure";
 
 export interface SessionCapabilityCardProps {
   block: ContentBlock;
@@ -52,9 +53,10 @@ export function SessionCapabilityCard({ block, defaultExpanded = false }: Sessio
         <span className="shrink-0 text-[10px] text-muted-foreground/50">
           {summaryParts.join(" · ")}
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">
-          {expanded ? "▲" : "▼"}
-        </span>
+        <DisclosureChevron
+          expanded={expanded}
+          className="text-muted-foreground/40"
+        />
       </button>
 
       {expanded && (

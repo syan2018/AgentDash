@@ -82,6 +82,7 @@ describe("SessionChatStream turn headers", () => {
 
     expect(html).toContain("已处理 55s");
     expect(html.match(/已处理/g)).toHaveLength(1);
+    expect(html).toContain("rotate-90");
   });
 
   it("renders the authoritative error for a failed turn without output", () => {

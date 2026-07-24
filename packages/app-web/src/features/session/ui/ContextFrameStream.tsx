@@ -3,7 +3,7 @@
  *
  * 单帧 / 多帧 context_frame 事件统一经此渲染：
  *
- * - header 行：CTX badge + "N 帧 · 最后阶段 X" 汇总 + ▲▼
+ * - header 行：CTX badge + "N 帧 · 最后阶段 X" 汇总 + 展开箭头
  * - 展开后：横向 frame tab 条（单帧时等效 pill label）+ 对应 frame body
  *
  * 所有 frame 数据是 model 层已解析的 `ContextFrame`。UI 只负责展示。
@@ -13,6 +13,7 @@ import { useState } from "react";
 import type { ContextFrame } from "../model/contextFrame";
 import { frameKindToToken } from "../model/contextFrame";
 import { ContextFrameBody } from "./ContextFrameBody";
+import { DisclosureRow } from "../../../components/ui/disclosure";
 import { ST } from "./bodies/cardBodyTokens";
 
 export interface ContextFrameStreamProps {
@@ -36,17 +37,16 @@ export function ContextFrameStream({
 
   return (
     <div>
-      <button
-        type="button"
+      <DisclosureRow
+        expanded={expanded}
         onClick={() => setExpanded((v) => !v)}
         className={ST.groupRow}
       >
-        <span className={ST.chevron}>{expanded ? "▼" : "▶"}</span>
         <span className={ST.badge}>CTX</span>
         <span className={ST.hint}>
           上下文已更新 {describeFrameSet(orderedFrames)} {summary ? `· ${summary}` : ""}
         </span>
-      </button>
+      </DisclosureRow>
 
       {expanded && (
         <div className={ST.itemList}>

@@ -40,6 +40,7 @@ import type {
 } from "../model/types";
 import { ToolCallCardShell } from "./ToolCallCardShell";
 import { renderToolCallCard } from "./toolCardRegistry";
+import { DisclosureRow } from "../../../components/ui/disclosure";
 import { SessionMessageCard } from "./SessionMessageCard";
 import { SessionPlanCard } from "./SessionPlanCard";
 import { SessionTaskEventCard } from "./SessionTaskEventCard";
@@ -400,15 +401,14 @@ function AggregatedToolGroupEntry({
 
   return (
     <div>
-      <button
-        type="button"
+      <DisclosureRow
+        expanded={expanded}
         onClick={() => setExpanded(!expanded)}
         className={ST.groupRow}
       >
-        <span className={ST.chevron}>{expanded ? "▼" : "▶"}</span>
         <span className={ST.badge}>TOOLS</span>
         <span className={ST.hint}>{summary}</span>
-      </button>
+      </DisclosureRow>
       {expanded && (
         <div className={ST.itemList}>
           {entries.map((entry) => (

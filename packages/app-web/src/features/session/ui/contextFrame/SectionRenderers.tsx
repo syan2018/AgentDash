@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { CB } from "../bodies/cardBodyTokens";
+import { DisclosureChevron } from "../../../../components/ui/disclosure";
 import { JsonTree } from "../bodies/JsonTree";
 import type {
   AutoResumeSection,
@@ -403,7 +404,7 @@ function EffectiveCapabilitiesBlock({ capabilities }: { capabilities: string[] }
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           当前生效能力 ({capabilities.length} 项)
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">{open ? "▲" : "▼"}</span>
+        <DisclosureChevron expanded={open} className="text-muted-foreground/40" />
       </button>
       {open && (
         <div className="max-h-48 overflow-auto border-t border-border/70 px-2.5 py-2">
@@ -478,7 +479,9 @@ function DeltaListItem({
           </span>
         )}
         {meta && <span className={CB.meta}>{meta}</span>}
-        {clickable && <span className={CB.expandToggle}>{open ? "▲" : "▼"}</span>}
+        {clickable && (
+          <DisclosureChevron expanded={open} className={CB.expandToggle} />
+        )}
       </button>
       {hoverDesc && (
         <p
@@ -718,7 +721,7 @@ function EffectiveCompanionAgentsBlock({
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           当前可用 companion ({agents.length} 项)
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">{open ? "▲" : "▼"}</span>
+        <DisclosureChevron expanded={open} className="text-muted-foreground/40" />
       </button>
       {open && (
         <div className="max-h-48 overflow-auto border-t border-border/70 px-2.5 py-2">
@@ -954,7 +957,7 @@ function CompactedUntilRefBlock({ value }: { value: unknown }) {
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           compacted_until_ref
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">{open ? "▲" : "▼"}</span>
+        <DisclosureChevron expanded={open} className="text-muted-foreground/40" />
       </button>
       {open && (
         <pre className="max-h-48 overflow-auto whitespace-pre-wrap border-t border-border/70 p-2 text-[11px] leading-relaxed text-muted-foreground">

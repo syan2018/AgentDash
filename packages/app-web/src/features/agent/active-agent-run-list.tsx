@@ -13,6 +13,10 @@ import { deleteAgentRun } from "../../services/agentRun";
 import { formatRelativeTime } from "../../lib/format";
 import { agentSourceLabel } from "../../lib/agent-source";
 import {
+  DisclosureChevron,
+  DisclosureRow,
+} from "../../components/ui/disclosure";
+import {
   AGENT_RUN_DELIVERY_STATUS_LABEL,
   agentRunListPresentationStatus,
   type AgentRunDeliveryStatus,
@@ -160,21 +164,7 @@ function SubAgentToggle({
       aria-expanded={expanded}
       aria-label={a11yLabel}
     >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="11"
-        height="11"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden
-        className={`transition-transform ${expanded ? "rotate-90" : ""}`}
-      >
-        <path d="m9 18 6-6-6-6" />
-      </svg>
+      <DisclosureChevron expanded={expanded} />
       <span className="leading-none">{COMPANION_LABEL} · {count}</span>
     </button>
   );
@@ -378,14 +368,11 @@ function SubjectGroupHeader({
   onToggle: () => void;
 }) {
   return (
-    <button
-      type="button"
+    <DisclosureRow
+      expanded={!collapsed}
       onClick={onToggle}
-      className="group flex w-full items-center gap-2 border-b border-border/40 bg-muted/20 px-3 py-2 text-left transition-colors hover:bg-muted/40"
+      className="group border-b border-border/40 bg-muted/20 px-3 py-2 transition-colors hover:bg-muted/40"
     >
-      <span className={`inline-block shrink-0 text-[10px] transition-transform ${collapsed ? "" : "rotate-90"}`}>
-        ▶
-      </span>
       {group.kind !== "ungrouped" && (
         <span className="rounded-[4px] bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
           {groupKindLabel(group.kind)}
@@ -397,7 +384,7 @@ function SubjectGroupHeader({
       <span className="shrink-0 text-[10px] text-muted-foreground/60">
         {group.entries.length} 个 AgentRun
       </span>
-    </button>
+    </DisclosureRow>
   );
 }
 

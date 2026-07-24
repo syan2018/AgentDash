@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
+use super::GateResultDeliveryState;
+
 const WAITING_PREVIEW_CHARS: usize = 280;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +36,8 @@ pub struct LifecycleGate {
     pub created_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub delivery: GateResultDeliveryState,
 }
 
 impl LifecycleGate {
@@ -57,6 +61,7 @@ impl LifecycleGate {
             resolved_by: None,
             created_at: Utc::now(),
             resolved_at: None,
+            delivery: GateResultDeliveryState::default(),
         }
     }
 

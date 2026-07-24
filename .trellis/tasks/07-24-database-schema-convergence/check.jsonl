@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查最终 schema、readiness、migration guard 与空库初始化一致。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "执行 Rust/TypeScript 质量门与负向搜索。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "确认 Terminal 删除镜像后 change/revision authority 未退化。"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "确认 Gate delivery owner mutation 和 lineage 合同保持。"}
+{"file": ".trellis/tasks/07-24-database-schema-convergence/prd.md", "reason": "逐项验收删除、合并、保留表和 baseline 收束结果。"}

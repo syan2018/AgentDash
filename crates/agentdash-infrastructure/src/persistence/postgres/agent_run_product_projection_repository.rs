@@ -746,43 +746,6 @@ async fn insert_terminal_change(
     .execute(&mut **tx)
     .await
     .map_err(terminal_conflict_or_persistence)?;
-    if let AgentRunTerminalProjectionDelta::ControlCorrelated {
-        correlation_id,
-        control,
-        status,
-        ..
-    } = &change.delta
-    {
-        sqlx::query(
-            "INSERT INTO agent_run_terminal_control_correlation(
-                 correlation_id,terminal_id,terminal_owner_epoch_id,change_id,
-                 control_kind,control_status,correlation
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-        )
-        .bind(transparent_string(correlation_id).map_err(terminal_serde_error)?)
-        .bind(terminal_id.as_str())
-        .bind(&owner_epoch)
-        .bind(&change_id)
-        .bind(terminal_control_name(*control))
-        .bind(terminal_control_status_name(*status))
-        .bind(encode(&change.delta).map_err(terminal_serde_error)?)
-        .execute(&mut **tx)
-        .await
-        .map_err(terminal_conflict_or_persistence)?;
-    }
-    sqlx::query(
-        "INSERT INTO agent_run_terminal_projection_outbox(
-             target_run_id,target_agent_id,change_sequence,change_id,entry
-         ) VALUES ($1,$2,$3,$4,$5)",
-    )
-    .bind(commit.outbox.target.run_id.to_string())
-    .bind(commit.outbox.target.agent_id.to_string())
-    .bind(terminal_i64(commit.outbox.sequence.0)?)
-    .bind(change_id)
-    .bind(encode(&commit.outbox).map_err(terminal_serde_error)?)
-    .execute(&mut **tx)
-    .await
-    .map_err(terminal_conflict_or_persistence)?;
     Ok(())
 }
 
@@ -937,30 +900,6 @@ fn terminal_availability_name(state: AgentRunTerminalAvailability) -> &'static s
         AgentRunTerminalAvailability::Online => "online",
         AgentRunTerminalAvailability::Offline => "offline",
         AgentRunTerminalAvailability::Reconciling => "reconciling",
-    }
-}
-
-fn terminal_control_name(
-    control: agentdash_application_agentrun::agent_run::AgentRunTerminalControlKind,
-) -> &'static str {
-    use agentdash_application_agentrun::agent_run::AgentRunTerminalControlKind as Control;
-    match control {
-        Control::Input => "input",
-        Control::Resize => "resize",
-        Control::Terminate => "terminate",
-        Control::Read => "read",
-        Control::Status => "status",
-    }
-}
-
-fn terminal_control_status_name(
-    status: agentdash_application_agentrun::agent_run::AgentRunTerminalControlStatus,
-) -> &'static str {
-    use agentdash_application_agentrun::agent_run::AgentRunTerminalControlStatus as Status;
-    match status {
-        Status::Accepted => "accepted",
-        Status::Completed => "completed",
-        Status::Failed => "failed",
     }
 }
 

@@ -3,7 +3,7 @@ use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentLineage, AgentLineageRepository,
     ClaimGateResultParentContinuationRequest, ClaimGateResultWaiterRequest,
     CompleteGateResultParentContinuationRequest, GateResultDeliveryClaim, GateResultDeliveryMarker,
-    GateResultDeliveryMarkerRepository, GateResultDeliveryStatus, GateWaitPolicyEnvelope,
+    GateResultDeliveryMarkerRepository, GateResultDeliveryState, GateWaitPolicyEnvelope,
     LifecycleAgent, LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository,
     LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
     RegisterGateResultWaiterRequest, SubjectRef, WaitProducerRef,
@@ -15,7 +15,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::db_err;
-use super::json_document::{to_jsonb, to_optional_jsonb};
+use super::json_document::{from_jsonb, to_jsonb, to_optional_jsonb};
 
 fn parse_uuid(s: &str, ctx: &str) -> Result<Uuid, DomainError> {
     Uuid::parse_str(s)
@@ -513,6 +513,7 @@ struct GateRow {
     resolved_by: Option<String>,
     created_at: DateTime<Utc>,
     resolved_at: Option<DateTime<Utc>>,
+    delivery: Value,
 }
 
 impl TryFrom<GateRow> for LifecycleGate {
@@ -530,6 +531,7 @@ impl TryFrom<GateRow> for LifecycleGate {
             resolved_by: row.resolved_by,
             created_at: row.created_at,
             resolved_at: row.resolved_at,
+            delivery: from_jsonb(row.delivery, "lifecycle_gates.delivery")?,
         })
     }
 }
@@ -539,8 +541,8 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
     async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
         sqlx::query(
             r#"INSERT INTO lifecycle_gates
-                (id, run_id, agent_id, frame_id, gate_kind, correlation_id, status, payload_json, resolved_by, created_at, resolved_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
+                (id, run_id, agent_id, frame_id, gate_kind, correlation_id, status, payload_json, resolved_by, created_at, resolved_at, delivery)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"#,
         )
         .bind(gate.id.to_string())
         .bind(gate.run_id.to_string())
@@ -556,6 +558,7 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
         .bind(&gate.resolved_by)
         .bind(gate.created_at)
         .bind(gate.resolved_at)
+        .bind(to_jsonb(&gate.delivery, "lifecycle_gates.delivery")?)
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
@@ -564,7 +567,7 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
 
     async fn get(&self, id: Uuid) -> Result<Option<LifecycleGate>, DomainError> {
         sqlx::query_as::<_, GateRow>(
-            r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at
+            r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at,delivery
                FROM lifecycle_gates WHERE id=$1"#,
         )
         .bind(id.to_string())
@@ -577,7 +580,7 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
 
     async fn list_open_for_agent(&self, agent_id: Uuid) -> Result<Vec<LifecycleGate>, DomainError> {
         sqlx::query_as::<_, GateRow>(
-            r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at
+            r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at,delivery
                FROM lifecycle_gates WHERE agent_id=$1 AND status='open' ORDER BY created_at"#,
         )
         .bind(agent_id.to_string())
@@ -599,7 +602,7 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let paths = GateWaitPolicyEnvelope::json_paths();
         let query = format!(
-            r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at
+            r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at,delivery
                FROM lifecycle_gates
                WHERE status='open'
                  AND payload_json IS NOT NULL
@@ -640,7 +643,7 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
             } => {
                 let paths = GateWaitPolicyEnvelope::json_paths();
                 let query = format!(
-                    r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at
+                    r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at,delivery
                        FROM lifecycle_gates
                        WHERE payload_json IS NOT NULL
                          AND payload_json ->> '{schema_version}' = '1'
@@ -679,7 +682,7 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
         correlation_id: &str,
     ) -> Result<Option<LifecycleGate>, DomainError> {
         sqlx::query_as::<_, GateRow>(
-            r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at
+            r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at,delivery
                FROM lifecycle_gates WHERE agent_id=$1 AND correlation_id=$2 ORDER BY created_at DESC LIMIT 1"#,
         )
         .bind(agent_id.to_string())
@@ -714,54 +717,45 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
 // GateResultDeliveryMarkerRepository
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[derive(sqlx::FromRow)]
-struct GateResultDeliveryMarkerRow {
-    gate_id: String,
-    result_attempt: i32,
-    status: String,
-    target_run_id: Option<String>,
-    target_agent_id: Option<String>,
-    target_waiter_ref: Option<String>,
-    input_handoff_id: Option<String>,
-    accepted_operation_id: Option<String>,
-    claim_token: Option<String>,
-    claim_expires_at: Option<DateTime<Utc>>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-}
+impl PostgresLifecycleGateRepository {
+    async fn load_delivery_for_update(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        gate_id: Uuid,
+    ) -> Result<GateResultDeliveryState, DomainError> {
+        let delivery = sqlx::query_scalar::<_, Value>(
+            r#"SELECT delivery FROM lifecycle_gates WHERE id=$1 FOR UPDATE"#,
+        )
+        .bind(gate_id.to_string())
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| DomainError::NotFound {
+            entity: "lifecycle_gate",
+            id: gate_id.to_string(),
+        })?;
+        from_jsonb(delivery, "lifecycle_gates.delivery")
+    }
 
-const GATE_RESULT_DELIVERY_MARKER_COLS: &str = "gate_id,result_attempt,status,target_run_id,target_agent_id,target_waiter_ref,input_handoff_id,accepted_operation_id,claim_token,claim_expires_at,created_at,updated_at";
-
-impl TryFrom<GateResultDeliveryMarkerRow> for GateResultDeliveryMarker {
-    type Error = DomainError;
-
-    fn try_from(row: GateResultDeliveryMarkerRow) -> Result<Self, Self::Error> {
-        Ok(Self {
-            gate_id: parse_uuid(&row.gate_id, "gate_result_delivery_markers.gate_id")?,
-            result_attempt: row.result_attempt,
-            status: GateResultDeliveryStatus::parse(&row.status)?,
-            target_run_id: opt_uuid(
-                row.target_run_id.as_ref(),
-                "gate_result_delivery_markers.target_run_id",
-            )?,
-            target_agent_id: opt_uuid(
-                row.target_agent_id.as_ref(),
-                "gate_result_delivery_markers.target_agent_id",
-            )?,
-            target_waiter_ref: row.target_waiter_ref,
-            input_handoff_id: opt_uuid(
-                row.input_handoff_id.as_ref(),
-                "gate_result_delivery_markers.input_handoff_id",
-            )?,
-            accepted_operation_id: row.accepted_operation_id,
-            claim_token: opt_uuid(
-                row.claim_token.as_ref(),
-                "gate_result_delivery_markers.claim_token",
-            )?,
-            claim_expires_at: row.claim_expires_at,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        })
+    async fn save_delivery(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        gate_id: Uuid,
+        delivery: &GateResultDeliveryState,
+        now: DateTime<Utc>,
+    ) -> Result<(), DomainError> {
+        sqlx::query(
+            r#"UPDATE lifecycle_gates
+               SET delivery=$2, updated_at=$3
+               WHERE id=$1"#,
+        )
+        .bind(gate_id.to_string())
+        .bind(to_jsonb(delivery, "lifecycle_gates.delivery")?)
+        .bind(now)
+        .execute(&mut **transaction)
+        .await
+        .map_err(db_err)?;
+        Ok(())
     }
 }
 
@@ -772,45 +766,16 @@ impl GateResultDeliveryMarkerRepository for PostgresLifecycleGateRepository {
         request: RegisterGateResultWaiterRequest,
     ) -> Result<GateResultDeliveryMarker, DomainError> {
         let now = Utc::now();
-        sqlx::query_as::<_, GateResultDeliveryMarkerRow>(&format!(
-            r#"INSERT INTO gate_result_delivery_markers
-                (gate_id,result_attempt,status,target_run_id,target_agent_id,target_waiter_ref,claim_expires_at,created_at,updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
-               ON CONFLICT (gate_id,result_attempt) DO UPDATE SET
-                 target_run_id = CASE
-                    WHEN gate_result_delivery_markers.status = 'pending' THEN EXCLUDED.target_run_id
-                    ELSE gate_result_delivery_markers.target_run_id
-                 END,
-                 target_agent_id = CASE
-                    WHEN gate_result_delivery_markers.status = 'pending' THEN EXCLUDED.target_agent_id
-                    ELSE gate_result_delivery_markers.target_agent_id
-                 END,
-                 target_waiter_ref = CASE
-                    WHEN gate_result_delivery_markers.status = 'pending' THEN EXCLUDED.target_waiter_ref
-                    ELSE gate_result_delivery_markers.target_waiter_ref
-                 END,
-                 claim_expires_at = CASE
-                    WHEN gate_result_delivery_markers.status = 'pending' THEN EXCLUDED.claim_expires_at
-                    ELSE gate_result_delivery_markers.claim_expires_at
-                 END,
-                 updated_at = CASE
-                    WHEN gate_result_delivery_markers.status = 'pending' THEN EXCLUDED.updated_at
-                    ELSE gate_result_delivery_markers.updated_at
-                 END
-               RETURNING {GATE_RESULT_DELIVERY_MARKER_COLS}"#
-        ))
-        .bind(request.gate_id.to_string())
-        .bind(request.result_attempt)
-        .bind(GateResultDeliveryStatus::Pending.as_str())
-        .bind(request.target_run_id.to_string())
-        .bind(request.target_agent_id.to_string())
-        .bind(request.waiter_ref)
-        .bind(request.claim_expires_at)
-        .bind(now)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db_err)?
-        .try_into()
+        let gate_id = request.gate_id;
+        let mut transaction = self.pool.begin().await.map_err(db_err)?;
+        let mut delivery = self
+            .load_delivery_for_update(&mut transaction, gate_id)
+            .await?;
+        let marker = delivery.register_waiter(request, now);
+        self.save_delivery(&mut transaction, gate_id, &delivery, now)
+            .await?;
+        transaction.commit().await.map_err(db_err)?;
+        Ok(marker)
     }
 
     async fn claim_waiter_delivery(
@@ -818,58 +783,16 @@ impl GateResultDeliveryMarkerRepository for PostgresLifecycleGateRepository {
         request: ClaimGateResultWaiterRequest,
     ) -> Result<GateResultDeliveryClaim, DomainError> {
         let now = Utc::now();
-        let updated = sqlx::query_as::<_, GateResultDeliveryMarkerRow>(&format!(
-            r#"UPDATE gate_result_delivery_markers
-               SET status=$4, claim_token=NULL, claim_expires_at=NULL, updated_at=$5
-               WHERE gate_id=$1 AND result_attempt=$2
-                 AND status='pending'
-                 AND target_waiter_ref=$3
-                 AND (claim_expires_at IS NULL OR claim_expires_at >= $5)
-               RETURNING {GATE_RESULT_DELIVERY_MARKER_COLS}"#
-        ))
-        .bind(request.gate_id.to_string())
-        .bind(request.result_attempt)
-        .bind(&request.waiter_ref)
-        .bind(GateResultDeliveryStatus::DeliveredToWaiter.as_str())
-        .bind(now)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?;
-        if let Some(row) = updated {
-            return row.try_into().map(GateResultDeliveryClaim::Claimed);
-        }
-
-        let inserted = sqlx::query_as::<_, GateResultDeliveryMarkerRow>(&format!(
-            r#"INSERT INTO gate_result_delivery_markers
-                (gate_id,result_attempt,status,target_run_id,target_agent_id,target_waiter_ref,created_at,updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
-               ON CONFLICT (gate_id,result_attempt) DO NOTHING
-               RETURNING {GATE_RESULT_DELIVERY_MARKER_COLS}"#
-        ))
-        .bind(request.gate_id.to_string())
-        .bind(request.result_attempt)
-        .bind(GateResultDeliveryStatus::DeliveredToWaiter.as_str())
-        .bind(request.target_run_id.to_string())
-        .bind(request.target_agent_id.to_string())
-        .bind(&request.waiter_ref)
-        .bind(now)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?;
-        if let Some(row) = inserted {
-            return row.try_into().map(GateResultDeliveryClaim::Claimed);
-        }
-
-        GateResultDeliveryMarkerRepository::get(self, request.gate_id, request.result_attempt)
-            .await?
-            .ok_or_else(|| DomainError::Database {
-                operation: "claim_gate_result_waiter_delivery",
-                message: format!(
-                    "marker disappeared for gate_id={} result_attempt={}",
-                    request.gate_id, request.result_attempt
-                ),
-            })
-            .map(GateResultDeliveryClaim::Existing)
+        let gate_id = request.gate_id;
+        let mut transaction = self.pool.begin().await.map_err(db_err)?;
+        let mut delivery = self
+            .load_delivery_for_update(&mut transaction, gate_id)
+            .await?;
+        let claim = delivery.claim_waiter_delivery(request, now);
+        self.save_delivery(&mut transaction, gate_id, &delivery, now)
+            .await?;
+        transaction.commit().await.map_err(db_err)?;
+        Ok(claim)
     }
 
     async fn claim_parent_continuation(
@@ -877,121 +800,42 @@ impl GateResultDeliveryMarkerRepository for PostgresLifecycleGateRepository {
         request: ClaimGateResultParentContinuationRequest,
     ) -> Result<GateResultDeliveryClaim, DomainError> {
         let now = Utc::now();
-        let inserted = sqlx::query_as::<_, GateResultDeliveryMarkerRow>(&format!(
-            r#"INSERT INTO gate_result_delivery_markers
-                (gate_id,result_attempt,status,target_run_id,target_agent_id,claim_token,claim_expires_at,created_at,updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
-               ON CONFLICT (gate_id,result_attempt) DO NOTHING
-               RETURNING {GATE_RESULT_DELIVERY_MARKER_COLS}"#
-        ))
-        .bind(request.gate_id.to_string())
-        .bind(request.result_attempt)
-        .bind(GateResultDeliveryStatus::QueuedForParentContinuation.as_str())
-        .bind(request.target_run_id.to_string())
-        .bind(request.target_agent_id.to_string())
-        .bind(request.claim_token.to_string())
-        .bind(request.claim_expires_at)
-        .bind(now)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?;
-        if let Some(row) = inserted {
-            return row.try_into().map(GateResultDeliveryClaim::Claimed);
-        }
-
-        let updated = sqlx::query_as::<_, GateResultDeliveryMarkerRow>(&format!(
-            r#"UPDATE gate_result_delivery_markers
-               SET status=$3,
-                   target_run_id=$4,
-                   target_agent_id=$5,
-                   claim_token=$6,
-                   claim_expires_at=$7,
-                   updated_at=$8
-               WHERE gate_id=$1 AND result_attempt=$2
-                 AND (
-                    (status='pending' AND (claim_expires_at IS NULL OR claim_expires_at < $8))
-                    OR (
-                        status='queued_for_parent_continuation'
-                        AND input_handoff_id IS NULL
-                        AND (claim_expires_at IS NULL OR claim_expires_at < $8)
-                    )
-                 )
-               RETURNING {GATE_RESULT_DELIVERY_MARKER_COLS}"#
-        ))
-        .bind(request.gate_id.to_string())
-        .bind(request.result_attempt)
-        .bind(GateResultDeliveryStatus::QueuedForParentContinuation.as_str())
-        .bind(request.target_run_id.to_string())
-        .bind(request.target_agent_id.to_string())
-        .bind(request.claim_token.to_string())
-        .bind(request.claim_expires_at)
-        .bind(now)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?;
-        if let Some(row) = updated {
-            return row.try_into().map(GateResultDeliveryClaim::Claimed);
-        }
-
-        GateResultDeliveryMarkerRepository::get(self, request.gate_id, request.result_attempt)
-            .await?
-            .ok_or_else(|| DomainError::Database {
-                operation: "claim_gate_result_parent_continuation",
-                message: format!(
-                    "marker disappeared for gate_id={} result_attempt={}",
-                    request.gate_id, request.result_attempt
-                ),
-            })
-            .map(GateResultDeliveryClaim::Existing)
+        let gate_id = request.gate_id;
+        let mut transaction = self.pool.begin().await.map_err(db_err)?;
+        let mut delivery = self
+            .load_delivery_for_update(&mut transaction, gate_id)
+            .await?;
+        let claim = delivery.claim_parent_continuation(request, now);
+        self.save_delivery(&mut transaction, gate_id, &delivery, now)
+            .await?;
+        transaction.commit().await.map_err(db_err)?;
+        Ok(claim)
     }
 
     async fn complete_parent_continuation(
         &self,
         request: CompleteGateResultParentContinuationRequest,
     ) -> Result<GateResultDeliveryMarker, DomainError> {
-        let status = if request.dispatched_to_parent {
-            GateResultDeliveryStatus::DispatchedToParent
-        } else {
-            GateResultDeliveryStatus::QueuedForParentContinuation
-        };
-        let row = sqlx::query_as::<_, GateResultDeliveryMarkerRow>(&format!(
-            r#"UPDATE gate_result_delivery_markers
-               SET status=$4,
-                   input_handoff_id=$5,
-                   accepted_operation_id=$6,
-                   claim_token=NULL,
-                   claim_expires_at=NULL,
-                   updated_at=$7
-               WHERE gate_id=$1 AND result_attempt=$2 AND claim_token=$3
-               RETURNING {GATE_RESULT_DELIVERY_MARKER_COLS}"#
-        ))
-        .bind(request.gate_id.to_string())
-        .bind(request.result_attempt)
-        .bind(request.claim_token.to_string())
-        .bind(status.as_str())
-        .bind(request.input_handoff_id.map(|id| id.to_string()))
-        .bind(request.accepted_operation_id)
-        .bind(Utc::now())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        match row {
-            Some(row) => row.try_into(),
-            None => GateResultDeliveryMarkerRepository::get(
-                self,
-                request.gate_id,
-                request.result_attempt,
-            )
-            .await?
+        let now = Utc::now();
+        let gate_id = request.gate_id;
+        let result_attempt = request.result_attempt;
+        let mut transaction = self.pool.begin().await.map_err(db_err)?;
+        let mut delivery = self
+            .load_delivery_for_update(&mut transaction, gate_id)
+            .await?;
+        let marker = delivery
+            .complete_parent_continuation(request, now)
             .ok_or_else(|| DomainError::Database {
                 operation: "complete_gate_result_parent_continuation",
                 message: format!(
                     "marker disappeared for gate_id={} result_attempt={}",
-                    request.gate_id, request.result_attempt
+                    gate_id, result_attempt
                 ),
-            }),
-        }
+            })?;
+        self.save_delivery(&mut transaction, gate_id, &delivery, now)
+            .await?;
+        transaction.commit().await.map_err(db_err)?;
+        Ok(marker)
     }
 
     async fn get(
@@ -999,18 +843,19 @@ impl GateResultDeliveryMarkerRepository for PostgresLifecycleGateRepository {
         gate_id: Uuid,
         result_attempt: i32,
     ) -> Result<Option<GateResultDeliveryMarker>, DomainError> {
-        sqlx::query_as::<_, GateResultDeliveryMarkerRow>(&format!(
-            r#"SELECT {GATE_RESULT_DELIVERY_MARKER_COLS}
-               FROM gate_result_delivery_markers
-               WHERE gate_id=$1 AND result_attempt=$2"#
-        ))
-        .bind(gate_id.to_string())
-        .bind(result_attempt)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
+        let delivery =
+            sqlx::query_scalar::<_, Value>(r#"SELECT delivery FROM lifecycle_gates WHERE id=$1"#)
+                .bind(gate_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(db_err)?;
+        delivery
+            .map(|delivery| {
+                from_jsonb::<GateResultDeliveryState>(delivery, "lifecycle_gates.delivery")
+                    .map(|delivery| delivery.marker(result_attempt).cloned())
+            })
+            .transpose()
+            .map(Option::flatten)
     }
 }
 
@@ -1133,6 +978,7 @@ impl AgentLineageRepository for PostgresAgentLineageRepository {
 mod tests {
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
+    use agentdash_domain::workflow::GateResultDeliveryStatus;
     use serde_json::json;
 
     fn stored_frame() -> StoredAgentFrame {

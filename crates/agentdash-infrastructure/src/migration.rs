@@ -4,10 +4,12 @@ use sqlx::PgPool;
 const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_lineages",
     "agent_procedures",
+    "agent_run_lineages",
     "auth_sessions",
     "backend_execution_leases",
     "backend_workspace_inventory",
     "backends",
+    "agent_run_canvas_state",
     "canvas_files",
     "canvases",
     "extension_package_artifacts",
@@ -35,17 +37,13 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_run_terminal_projection_head",
     "agent_run_terminal_projection",
     "agent_run_terminal_projection_change",
-    "agent_run_terminal_control_correlation",
-    "agent_run_terminal_projection_outbox",
     "dash_complete_source",
     "dash_complete_effect",
-    "agent_run_control_effects",
     "settings",
     "skill_assets",
     "state_changes",
     "stories",
     "users",
-    "views",
     "workflow_graphs",
     "workflow_executor_effects",
     "workspace_bindings",
@@ -53,6 +51,13 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
 ];
 
 const RETIRED_POSTGRES_TABLES: &[&str] = &[
+    "agent_run_canvas_runtime_observations",
+    "agent_run_canvas_interaction_snapshots",
+    "views",
+    "agent_run_control_effects",
+    "agent_run_terminal_projection_outbox",
+    "agent_run_terminal_control_correlation",
+    "gate_result_delivery_markers",
     "workspace_module_presentation_head",
     "workspace_module_presentation_intent",
     "workspace_module_presentation_change",
@@ -167,6 +172,13 @@ pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
 
 pub async fn assert_postgres_schema_ready(pool: &PgPool) -> Result<(), DomainError> {
     assert_postgres_tables_ready(pool, REQUIRED_POSTGRES_TABLES).await?;
+    assert_postgres_columns_ready(
+        pool,
+        "agent_run_canvas_state",
+        &["runtime_observation", "interaction_snapshot"],
+    )
+    .await?;
+    assert_postgres_columns_ready(pool, "lifecycle_gates", &["delivery", "updated_at"]).await?;
     assert_postgres_columns_ready(pool, "lifecycle_agents", &["frames", "runtime_binding"]).await?;
     assert_postgres_tables_absent(pool, RETIRED_POSTGRES_TABLES).await
 }

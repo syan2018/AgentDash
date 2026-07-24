@@ -5,7 +5,7 @@ use agentdash_agent_runtime_contract::RuntimePayloadDigest;
 use agentdash_application_agentrun::agent_run::{
     AgentRunTerminalAvailability, AgentRunTerminalChange, AgentRunTerminalChangeId,
     AgentRunTerminalChangeOrigin, AgentRunTerminalChangeSequence, AgentRunTerminalLifecycleState,
-    AgentRunTerminalOutboxEntry, AgentRunTerminalOutputSequence, AgentRunTerminalOutputStream,
+    AgentRunTerminalOutputSequence, AgentRunTerminalOutputStream,
     AgentRunTerminalProductChangeKind, AgentRunTerminalProjection,
     AgentRunTerminalProjectionCommit, AgentRunTerminalProjectionDelta,
     AgentRunTerminalProjectionRepository, AgentRunTerminalProjectionRevision,
@@ -76,11 +76,6 @@ impl RelayAgentRunTerminalProjectionProducer {
                     },
                     payload_digest: payload_digest(&delta)?,
                     delta,
-                },
-                outbox: AgentRunTerminalOutboxEntry {
-                    change_id,
-                    target: projection.owner.target,
-                    sequence: AgentRunTerminalChangeSequence(next),
                 },
             })
             .await
@@ -389,11 +384,6 @@ impl RelayAgentRunTerminalProjectionProducer {
                     origin,
                     payload_digest,
                     delta,
-                },
-                outbox: AgentRunTerminalOutboxEntry {
-                    change_id,
-                    target: projection.owner.target.clone(),
-                    sequence: AgentRunTerminalChangeSequence(next),
                 },
             })
             .await

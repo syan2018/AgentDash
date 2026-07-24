@@ -288,9 +288,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    use agentdash_domain::backend::{
-        BackendType, BackendVisibility, LocalBackendClaim, ViewConfig,
-    };
+    use agentdash_domain::backend::{BackendType, BackendVisibility, LocalBackendClaim};
     use agentdash_domain::project::{
         Project, ProjectConfig, ProjectRole, ProjectSubjectGrant, ProjectSubjectType,
         ProjectVisibility,
@@ -351,14 +349,6 @@ mod tests {
         }
 
         async fn remove_backend(&self, _id: &str) -> Result<(), DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn list_views(&self) -> Result<Vec<ViewConfig>, DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn save_view(&self, _view: &ViewConfig) -> Result<(), DomainError> {
             unreachable!("测试未使用");
         }
     }

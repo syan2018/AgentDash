@@ -153,6 +153,7 @@ pnpm run migration:guard
 ### 3. Contracts
 
 - `crates/agentdash-infrastructure/migrations/` 是 PostgreSQL schema 事实源。
+- 当前首发基线只有 `0001_init.sql`；其结果必须与 `REQUIRED_POSTGRES_TABLES` 的 46 张业务表完全一致。
 - 普通 schema 变更新增 migration 文件。
 - 已提交 migration 是历史事实；baseline squash / reset / merge 任务必须在任务文档写明授权范围、重建要求和验证命令。
 - Repository 只观察已迁移 schema。API bootstrap 执行 readiness check，不创建表、补列、建索引或迁移数据。
@@ -191,6 +192,81 @@ feature task -> add NNNN_<change>.sql
 
 ```text
 baseline task -> documented authorization -> edit existing migrations -> rebuild DB -> ALLOW_MIGRATION_BASELINE_REWRITE=1 pnpm run migration:guard
+```
+
+---
+
+## Scenario: Current Product Schema Shape
+
+### 1. Scope / Trigger
+
+修改 Product owner、Gate delivery、Canvas runtime state、Terminal projection、group membership 或
+`assert_postgres_schema_ready`。
+
+### 2. Signatures
+
+```sql
+lifecycle_gates.delivery jsonb NOT NULL DEFAULT '{}'::jsonb
+
+agent_run_canvas_state (
+    run_id text,
+    agent_id text,
+    canvas_mount_id text,
+    runtime_observation jsonb,
+    interaction_snapshot jsonb,
+    PRIMARY KEY (run_id, agent_id, canvas_mount_id)
+)
+```
+
+```rust
+const REQUIRED_POSTGRES_TABLES: &[&str]; // 46 张业务表
+const RETIRED_POSTGRES_TABLES: &[&str];
+```
+
+### 3. Contracts
+
+- `groups` 与 `group_memberships` 表达独立的权限主体和成员关系，保留为规范化关系。
+- Gate delivery 随 `LifecycleGate` 生灭，由 `lifecycle_gates.delivery` typed owner document 承载。
+- 同一 run/agent/mount 的 Canvas 状态由一行 `agent_run_canvas_state` 承载；两类文档独立更新。
+- Terminal 当前态、change log 与 projection head 是持久化合同；控制关联作为 typed change delta 写入 change log。
+- `agent_run_lineages` 由 fork graph store 使用，不额外暴露同表的通用 Repository。
+- readiness 同时验证必需表、必需列与 retired 表缺席，使 migration 结果与 repository 合同一致。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 必需表或 owner document 列缺失 | readiness 失败 |
+| retired 表仍存在 | readiness 失败 |
+| Gate delivery JSON shape 无法解码 | 返回带 `lifecycle_gates.delivery` 上下文的领域错误 |
+| Canvas 只写 observation | snapshot 原值保持不变 |
+| Canvas 只写 snapshot | observation 原值保持不变 |
+| owner mutation 并发 | 事务内锁 owner row，再 typed decode / mutate / update |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Gate waiter claim 更新单个 `delivery` 文档并刷新 `updated_at`。
+- Base: 新 Gate 的 `delivery` 从 `{}` 解码为默认 typed state。
+- Bad: 为同一 Gate 或 Canvas owner 的 latest-state 字段另建一对一镜像表。
+
+### 6. Tests Required
+
+- 空库通过 SQLx migration runner，只产生 version 1 且 readiness 通过。
+- Gate delivery 覆盖 register、claim、lease retry、completion 与 replay。
+- Canvas 覆盖 observation/snapshot 独立 roundtrip 和互不覆盖。
+- Terminal projection protocol、fork graph store 与 PostgreSQL repository 定向测试通过。
+- `ALLOW_MIGRATION_BASELINE_REWRITE=1 pnpm run migration:guard` 通过。
+
+### 7. Wrong vs Correct
+
+```text
+owner-local latest state -> 独立一对一镜像表
+owner-local latest state -> owner row 的 typed jsonb document
+```
+
+```text
+同表同时维护通用 lineage repository 与 fork graph store
+agent_run_lineages -> fork graph store 单一持久化入口
 ```
 
 ---

@@ -303,21 +303,12 @@ pub struct AgentRunTerminalChange {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunTerminalOutboxEntry {
-    pub change_id: AgentRunTerminalChangeId,
-    pub target: AgentRunTarget,
-    pub sequence: AgentRunTerminalChangeSequence,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub struct AgentRunTerminalProjectionCommit {
     pub expected_revision: AgentRunTerminalProjectionRevision,
     pub expected_source_sequence: Option<AgentRunTerminalSourceSequence>,
     pub expected_output_sequence: Option<AgentRunTerminalOutputSequence>,
     pub expected_terminal_state: Option<AgentRunTerminalLifecycleState>,
     pub change: AgentRunTerminalChange,
-    pub outbox: AgentRunTerminalOutboxEntry,
 }
 
 impl AgentRunTerminalProjectionCommit {
@@ -332,15 +323,8 @@ impl AgentRunTerminalProjectionCommit {
         if self.change.sequence != expected_sequence {
             return Err(AgentRunTerminalProtocolError::ChangeSequenceNotContiguous);
         }
-        if self.change.target != self.change.delta.owner().target
-            || self.outbox.target != self.change.target
-        {
+        if self.change.target != self.change.delta.owner().target {
             return Err(AgentRunTerminalProtocolError::OwnerFenceMismatch);
-        }
-        if self.outbox.change_id != self.change.change_id
-            || self.outbox.sequence != self.change.sequence
-        {
-            return Err(AgentRunTerminalProtocolError::OutboxMismatch);
         }
         let expects_source_fact = matches!(
             self.change.delta,
@@ -925,8 +909,6 @@ pub enum AgentRunTerminalProtocolError {
     ChangeOriginMismatch,
     #[error("terminal owner fence differs across the atomic write set")]
     OwnerFenceMismatch,
-    #[error("terminal outbox identity differs from the committed change")]
-    OutboxMismatch,
     #[error("terminal output mutation is missing its expected sequence")]
     MissingOutputFence,
     #[error("terminal output sequence is not monotonic")]
@@ -971,7 +953,7 @@ pub const AGENT_RUN_TERMINAL_PERSISTENCE_CONSTRAINTS: &[&str] = &[
     "process state and backend availability are independent projection dimensions",
     "retained output uses the spawn max_output_bytes and over-cap writes emit typed OutputOmitted",
     "terminal and AgentRun retention policies own cleanup; the projection adds no hidden TTL",
-    "terminal projection, change, control correlation, and outbox commit in one transaction",
+    "terminal projection and change commit in one transaction",
 ];
 
 #[cfg(test)]
@@ -1085,11 +1067,6 @@ mod tests {
                     stream: AgentRunTerminalOutputStream::Pty,
                     data: "hello".to_string(),
                 },
-            },
-            outbox: AgentRunTerminalOutboxEntry {
-                change_id,
-                target: owner.target,
-                sequence: AgentRunTerminalChangeSequence(3),
             },
         }
     }

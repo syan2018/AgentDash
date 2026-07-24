@@ -1,11 +1,10 @@
 import { create } from 'zustand';
-import type { BackendConfig, BackendRuntimeSummary, ViewConfig } from '../types';
+import type { BackendConfig, BackendRuntimeSummary } from '../types';
 import { api } from '../api/client';
 
 interface CoordinatorState {
   backends: BackendConfig[];
   backendRuntimeSummaries: BackendRuntimeSummary[];
-  views: ViewConfig[];
   isLoading: boolean;
   error: string | null;
 
@@ -18,7 +17,6 @@ interface CoordinatorState {
 export const useCoordinatorStore = create<CoordinatorState>((set) => ({
   backends: [],
   backendRuntimeSummaries: [],
-  views: [],
   isLoading: false,
   error: null,
 

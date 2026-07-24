@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::entity::{
     BackendConfig, BackendExecutionLease, BackendExecutionTerminalKind, BackendWorkspaceInventory,
     LocalBackendClaim, ProjectBackendAccess, ProjectBackendAccessStatus, RunnerRegistrationToken,
-    RuntimeHealth, RuntimeHealthOnlineUpdate, ViewConfig,
+    RuntimeHealth, RuntimeHealthOnlineUpdate,
 };
 use crate::common::error::DomainError;
 use uuid::Uuid;
@@ -20,8 +20,6 @@ pub trait BackendRepository: Send + Sync {
         claim: &LocalBackendClaim,
     ) -> Result<BackendConfig, DomainError>;
     async fn remove_backend(&self, id: &str) -> Result<(), DomainError>;
-    async fn list_views(&self) -> Result<Vec<ViewConfig>, DomainError>;
-    async fn save_view(&self, view: &ViewConfig) -> Result<(), DomainError>;
 }
 
 #[async_trait::async_trait]

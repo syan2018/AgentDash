@@ -1,3 +1,0 @@
-DROP TABLE workflow_agent_call_product_graph_effects;
-DROP TABLE workflow_agent_call_product_effects;
-DROP TABLE workflow_agent_call_product_sagas;

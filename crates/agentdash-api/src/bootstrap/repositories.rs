@@ -15,13 +15,13 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
-    PostgresAgentLineageRepository, PostgresAgentRunLineageRepository,
-    PostgresAuthSessionRepository, PostgresBackendExecutionLeaseRepository,
-    PostgresBackendRepository, PostgresCanvasRepository, PostgresCanvasRuntimeStateRepository,
-    PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
-    PostgresLifecycleAgentRepository, PostgresLifecycleGateRepository,
-    PostgresLifecycleSubjectAssociationRepository, PostgresLlmProviderCredentialRepository,
-    PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
+    PostgresAgentLineageRepository, PostgresAuthSessionRepository,
+    PostgresBackendExecutionLeaseRepository, PostgresBackendRepository, PostgresCanvasRepository,
+    PostgresCanvasRuntimeStateRepository, PostgresExtensionPackageArtifactRepository,
+    PostgresInlineFileRepository, PostgresLifecycleAgentRepository,
+    PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
+    PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
+    PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository,
@@ -120,7 +120,6 @@ pub(crate) async fn build_repositories(
     );
     let lifecycle_gate_repo = Arc::new(PostgresLifecycleGateRepository::new(pool.clone()));
     let agent_lineage_repo = Arc::new(PostgresAgentLineageRepository::new(pool.clone()));
-    let agent_run_lineage_repo = Arc::new(PostgresAgentRunLineageRepository::new(pool.clone()));
     let routine_repo = Arc::new(PostgresRoutineRepository::new(pool.clone()));
     let routine_execution_repo = Arc::new(PostgresRoutineExecutionRepository::new(pool.clone()));
     let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool));
@@ -209,7 +208,6 @@ pub(crate) async fn build_repositories(
         lifecycle_gate_repo: lifecycle_gate_repo.clone(),
         gate_result_delivery_marker_repo: lifecycle_gate_repo,
         agent_lineage_repo,
-        agent_run_lineage_repo,
         routine_repo,
         routine_execution_repo,
         inline_file_repo,

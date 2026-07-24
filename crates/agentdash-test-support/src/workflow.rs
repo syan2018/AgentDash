@@ -7,11 +7,10 @@ use agentdash_domain::backend::{
 use agentdash_domain::channel::{ChannelRegistryDocument, ChannelRegistryMutation};
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentLineage, AgentLineageRepository, AgentProcedure,
-    AgentProcedureRepository, AgentRunLineage, AgentRunLineageRepository, GateWaitPolicyEnvelope,
-    LifecycleAgent, LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleRun,
-    LifecycleRunRepository, LifecycleRunWriteError, LifecycleSubjectAssociation,
-    LifecycleSubjectAssociationRepository, SubjectRef, WaitProducerRef, WorkflowGraph,
-    WorkflowGraphRepository,
+    AgentProcedureRepository, GateWaitPolicyEnvelope, LifecycleAgent, LifecycleAgentRepository,
+    LifecycleGate, LifecycleGateRepository, LifecycleRun, LifecycleRunRepository,
+    LifecycleRunWriteError, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
+    SubjectRef, WaitProducerRef, WorkflowGraph, WorkflowGraphRepository,
 };
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -139,74 +138,6 @@ impl MemoryLifecycleRunRepository {
 #[derive(Default)]
 pub struct MemoryAgentFrameRepository {
     frames: Mutex<Vec<AgentFrame>>,
-}
-
-#[derive(Default)]
-pub struct MemoryAgentRunLineageRepository {
-    lineages: Mutex<Vec<AgentRunLineage>>,
-}
-
-#[async_trait::async_trait]
-impl AgentRunLineageRepository for MemoryAgentRunLineageRepository {
-    async fn create(&self, lineage: &AgentRunLineage) -> Result<(), DomainError> {
-        let mut lineages = self.lineages.lock().await;
-        if lineages.iter().any(|existing| {
-            existing.child_run_id == lineage.child_run_id
-                && existing.child_agent_id == lineage.child_agent_id
-        }) {
-            return Err(DomainError::Conflict {
-                entity: "agent_run_lineage",
-                constraint: "unique_child",
-                message: "child AgentRun already has a parent lineage".to_string(),
-            });
-        }
-        lineages.push(lineage.clone());
-        Ok(())
-    }
-
-    async fn find_parent(
-        &self,
-        child_run_id: Uuid,
-        child_agent_id: Uuid,
-    ) -> Result<Option<AgentRunLineage>, DomainError> {
-        Ok(self
-            .lineages
-            .lock()
-            .await
-            .iter()
-            .find(|lineage| {
-                lineage.child_run_id == child_run_id && lineage.child_agent_id == child_agent_id
-            })
-            .cloned())
-    }
-
-    async fn list_children(
-        &self,
-        parent_run_id: Uuid,
-        parent_agent_id: Uuid,
-    ) -> Result<Vec<AgentRunLineage>, DomainError> {
-        Ok(self
-            .lineages
-            .lock()
-            .await
-            .iter()
-            .filter(|lineage| {
-                lineage.parent_run_id == parent_run_id && lineage.parent_agent_id == parent_agent_id
-            })
-            .cloned()
-            .collect())
-    }
-
-    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentRunLineage>, DomainError> {
-        Ok(self
-            .lineages
-            .lock()
-            .await
-            .iter()
-            .filter(|lineage| lineage.parent_run_id == run_id || lineage.child_run_id == run_id)
-            .cloned()
-            .collect())
-    }
 }
 
 #[async_trait::async_trait]

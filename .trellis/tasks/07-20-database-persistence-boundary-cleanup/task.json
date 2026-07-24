@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "07-20-complete-agent-persistence-boundary"
+    "07-20-complete-agent-persistence-boundary",
+    "07-24-database-schema-convergence"
   ],
   "parent": null,
   "relatedFiles": [],

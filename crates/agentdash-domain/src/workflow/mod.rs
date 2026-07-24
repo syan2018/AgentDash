@@ -31,7 +31,8 @@ pub use entity::{
 pub use gate_result_delivery_marker::{
     ClaimGateResultParentContinuationRequest, ClaimGateResultWaiterRequest,
     CompleteGateResultParentContinuationRequest, GateResultDeliveryClaim, GateResultDeliveryMarker,
-    GateResultDeliveryMarkerRepository, GateResultDeliveryStatus, RegisterGateResultWaiterRequest,
+    GateResultDeliveryMarkerRepository, GateResultDeliveryState, GateResultDeliveryStatus,
+    RegisterGateResultWaiterRequest,
 };
 pub use gate_wait_policy::{
     GATE_WAIT_POLICY_SCHEMA_VERSION, GateWaitPolicy, GateWaitPolicyEnvelope,
@@ -44,9 +45,9 @@ pub use lifecycle_gate::{LifecycleGate, LifecycleGateWaitingProjection};
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 pub use repository::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunLineageRepository, LifecycleAgentRepository, LifecycleGateRepository,
-    LifecycleRunRepository, LifecycleRunWriteError, LifecycleSubjectAssociationRepository,
-    WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
+    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
+    LifecycleRunWriteError, LifecycleSubjectAssociationRepository, WorkflowGraphRepository,
+    WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };
 pub use validation::{validate_agent_procedure, validate_workflow_graph};

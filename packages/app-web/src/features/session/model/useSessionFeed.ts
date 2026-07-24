@@ -569,6 +569,13 @@ function extractTurnId(item: SessionDisplayItem): string | undefined {
   return undefined;
 }
 
+function isContextFrameDisplayItem(item: SessionDisplayItem): boolean {
+  if ("type" in item && item.type === "aggregated_context_frames") {
+    return true;
+  }
+  return "event" in item && isContextFrameEvent(item.event);
+}
+
 function isAgentMessageItem(item: SessionDisplayItem): boolean {
   if (!("event" in item)) return false;
   const event = (item as SessionDisplayEntry).event;
@@ -759,6 +766,17 @@ export function segmentByTurn(
   const seenTurnIds = new Set<string>();
   let currentTurnId: string | null = null;
   let currentItems: SessionDisplayItem[] = [];
+  const followingTurnIds = new Array<string | null>(displayItems.length).fill(null);
+  let followingTurnId: string | null = null;
+  for (let index = displayItems.length - 1; index >= 0; index -= 1) {
+    const item = displayItems[index]!;
+    if (isUserInputItem(item)) {
+      followingTurnId = null;
+      continue;
+    }
+    followingTurnIds[index] = followingTurnId;
+    followingTurnId = extractTurnId(item) ?? followingTurnId;
+  }
   const fallbackStatus = (turnId: string | null, items: SessionDisplayItem[]): TurnSegment["status"] => {
     if (activeTurnId !== undefined) {
       return turnId != null && turnId === activeTurnId ? "active" : "completed";
@@ -804,7 +822,7 @@ export function segmentByTurn(
     });
   };
 
-  for (const item of displayItems) {
+  for (const [index, item] of displayItems.entries()) {
     if (isUserInputItem(item)) {
       flush();
       currentTurnId = null;
@@ -812,7 +830,10 @@ export function segmentByTurn(
       continue;
     }
 
-    const turnId = extractTurnId(item) ?? null;
+    let turnId = extractTurnId(item) ?? null;
+    if (turnId == null && isContextFrameDisplayItem(item)) {
+      turnId = currentTurnId ?? followingTurnIds[index] ?? null;
+    }
     if (turnId !== currentTurnId) {
       flush();
       currentTurnId = turnId;

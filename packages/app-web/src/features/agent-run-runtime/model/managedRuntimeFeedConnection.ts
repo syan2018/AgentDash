@@ -57,6 +57,7 @@ export function connectManagedRuntimeFeed(
   let currentSnapshot: ManagedRuntimeSnapshot | null = null;
   let reloadInFlight: Promise<void> | null = null;
   let bufferedLiveEvents: AgentLiveEvent[] = [];
+  const pendingDurableEvents = new Map<string, AgentLiveEvent>();
   let terminalReloadQueued = false;
   let reconnectPending = false;
   let baselinePublished = false;
@@ -88,12 +89,21 @@ export function connectManagedRuntimeFeed(
         if (closed) return;
         const events = bufferedLiveEvents;
         bufferedLiveEvents = [];
+        const snapshotPresentationIds = new Set(
+          snapshot.conversation_history.map((record) => record.presentation_id),
+        );
+        for (const presentationId of snapshotPresentationIds) {
+          pendingDurableEvents.delete(presentationId);
+        }
         currentSnapshot = snapshot;
         if (publishBaseline && !baselinePublished) {
           baselinePublished = true;
           observer.onBaseline(snapshot);
         }
-        const converged = events.reduce(applyAgentLiveEvent, snapshot);
+        const converged = [...events, ...pendingDurableEvents.values()].reduce(
+          applyAgentLiveEvent,
+          snapshot,
+        );
         currentSnapshot = converged;
         if (!publishBaseline || converged !== snapshot) {
           observer.onProjection(converged);
@@ -133,6 +143,9 @@ export function connectManagedRuntimeFeed(
     onError: observer.onError,
     onEvent: (event) => {
       if (closed) return;
+      if (event.record.presentation.durability === "durable") {
+        pendingDurableEvents.set(event.record.presentation_id, event);
+      }
       if (reloadInFlight || reconnectPending || !currentSnapshot) {
         bufferedLiveEvents.push(event);
         if (isAuthoritativeSnapshotBoundary(event)) {
@@ -166,6 +179,7 @@ export function connectManagedRuntimeFeed(
       terminalReloadQueued = false;
       reconnectPending = false;
       bufferedLiveEvents = [];
+      pendingDurableEvents.clear();
       transport?.close();
       transport = null;
       observer.onLifecycleChange("closed");

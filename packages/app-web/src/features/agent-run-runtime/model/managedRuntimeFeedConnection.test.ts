@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentLiveEvent } from "../../../generated/agent-service-api";
 import type { ManagedRuntimeSnapshot } from "../../../generated/agent-runtime-validators";
 import { managedRuntimeTestFixtures } from "./managedRuntimeTestFixtures";
+import { hasActiveCanonicalTurn } from "./agentLiveProjection";
 import {
   connectManagedRuntimeFeed,
   type ManagedRuntimeFeedConnectionObserver,
@@ -33,6 +34,40 @@ function deferred<T>(): {
 }
 
 describe("Managed Runtime feed connection", () => {
+  const turnStarted: AgentLiveEvent = {
+    source: "source-1",
+    sequence: "0" as AgentLiveEvent["sequence"],
+    record: {
+      presentation_id: "live:source-1:turn-started",
+      presentation: {
+        durability: "durable",
+        envelope: {
+          event: {
+            type: "turn_started",
+            payload: {
+              threadId: "source-1",
+              turn: {
+                id: "turn-live",
+                items: [],
+                itemsView: "full",
+                status: "inProgress",
+                error: null,
+              },
+            },
+          },
+          sessionId: "source-1",
+          source: {
+            connectorId: "dash-agent",
+            connectorType: "native",
+            executorId: null,
+          },
+          trace: { turnId: "turn-live", entryIndex: null },
+          observedAt: "2026-07-21T00:00:00Z",
+        },
+      },
+    },
+  };
+
   const textDelta: AgentLiveEvent = {
     source: "source-1",
     sequence: "1" as AgentLiveEvent["sequence"],
@@ -253,10 +288,46 @@ describe("Managed Runtime feed connection", () => {
     await Promise.resolve();
 
     expect(fetchSnapshot).toHaveBeenCalledTimes(2);
-    expect(connectionObserver.onProjection).toHaveBeenLastCalledWith(completed);
-    expect(completed.conversation_history).not.toContainEqual(
+    const converged = vi.mocked(connectionObserver.onProjection).mock.calls.at(-1)?.[0];
+    expect(converged?.conversation_history).toContainEqual(
+      expect.objectContaining({
+        presentation_id: turnCompleted.record.presentation_id,
+      }),
+    );
+    expect(converged?.conversation_history).not.toContainEqual(
       expect.objectContaining({ presentation_id: textDelta.record.presentation_id }),
     );
+  });
+
+  it("keeps the terminal boundary when the immediate authoritative reload is stale", async () => {
+    const staleStarted = {
+      ...managedRuntimeTestFixtures.snapshots.started,
+      conversation_history: [turnStarted.record],
+    };
+    const transports: ManagedRuntimeFeedTransportOptions[] = [];
+    const connectionObserver = observer();
+    const fetchSnapshot = vi.fn().mockResolvedValue(staleStarted);
+
+    const connection = connectManagedRuntimeFeed(
+      { runId: "run-1", agentId: "agent-1" },
+      connectionObserver,
+      {
+        fetchSnapshot,
+        createTransport: (options) => {
+          transports.push(options);
+          return { close: vi.fn() };
+        },
+      },
+    );
+    await connection.ready;
+
+    transports[0]?.onEvent(turnCompleted);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const converged = vi.mocked(connectionObserver.onProjection).mock.calls.at(-1)?.[0];
+    expect(converged).toBeDefined();
+    expect(hasActiveCanonicalTurn(converged?.conversation_history ?? [])).toBe(false);
   });
 
   it("preserves canonical live records received while the terminal snapshot is loading", async () => {
@@ -355,8 +426,13 @@ describe("Managed Runtime feed connection", () => {
     await Promise.resolve();
 
     expect(fetchSnapshot).toHaveBeenCalledTimes(3);
-    expect(connectionObserver.onProjection).toHaveBeenLastCalledWith(completed);
-    expect(completed.conversation_history).not.toContainEqual(
+    const converged = vi.mocked(connectionObserver.onProjection).mock.calls.at(-1)?.[0];
+    expect(converged?.conversation_history).toContainEqual(
+      expect.objectContaining({
+        presentation_id: laterCompleted.record.presentation_id,
+      }),
+    );
+    expect(converged?.conversation_history).not.toContainEqual(
       expect.objectContaining({ presentation_id: laterDelta.record.presentation_id }),
     );
   });

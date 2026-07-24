@@ -94,6 +94,50 @@ function providerStatusEvent(
   };
 }
 
+function completedMessage(id: string, eventSeq: number): SessionDisplayEntry {
+  return {
+    id,
+    sessionId: "session-1",
+    timestamp: eventSeq,
+    eventSeq,
+    turnId: "turn-1",
+    itemFreshness: "completed",
+    isStreaming: false,
+    event: {
+      type: "item_completed",
+      payload: {
+        threadId: "session-1",
+        turnId: "turn-1",
+        completedAtMs: eventSeq,
+        item: {
+          type: "agentMessage",
+          id,
+          text: id,
+        },
+      },
+    },
+  };
+}
+
+function contextFrameEntry(): SessionDisplayEntry {
+  return {
+    id: "context-frame",
+    sessionId: "session-1",
+    timestamp: 2,
+    eventSeq: 2,
+    turnId: undefined,
+    event: {
+      type: "platform",
+      payload: {
+        kind: "context_frame_changed",
+        data: {
+          frame: { id: "surface:2:capability-state-delta" },
+        },
+      },
+    },
+  } as unknown as SessionDisplayEntry;
+}
+
 describe("session turn segmentation", () => {
   it("keeps a failed terminal-only turn and its authoritative error", () => {
     const segments = segmentByTurn([], [failedTurnEvent()], null);
@@ -152,6 +196,37 @@ describe("session turn segmentation", () => {
       startedAtMs: 1_000_000,
       durationMs: 2_500,
     }));
+  });
+
+  it("keeps an unscoped ContextFrame inside one completed canonical turn", () => {
+    const terminal = failedTurnEvent();
+    if (terminal.notification.event.type !== "turn_completed") {
+      throw new Error("expected terminal event");
+    }
+    terminal.notification.event.payload.turn.status = "completed";
+    terminal.notification.event.payload.turn.error = null;
+    terminal.notification.event.payload.turn.durationMs = 2_500;
+
+    const segments = segmentByTurn(
+      [
+        completedMessage("before-context", 1),
+        contextFrameEntry(),
+        completedMessage("after-context", 3),
+      ],
+      [terminal],
+      null,
+    );
+
+    expect(segments).toEqual([
+      expect.objectContaining({
+        turnId: "turn-1",
+        status: "completed",
+        durationMs: 2_500,
+        items: expect.arrayContaining([
+          expect.objectContaining({ id: "context-frame" }),
+        ]),
+      }),
+    ]);
   });
 });
 

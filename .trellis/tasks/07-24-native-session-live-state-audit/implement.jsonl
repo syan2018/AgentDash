@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "约束 Complete Agent command receipt、live、snapshot 与 effect inspection 的权威边界"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "约束 Native history、provider/Core、live callback 与 durable projection"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "约束 Product 同步 handoff、conversation snapshot 与命令刷新"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "约束 Session 状态与持久事实的 owner 边界"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "约束前端 feature/store/service 分层"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "约束 snapshot/live overlay 与刷新期间状态保持"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "约束 Workspace control-plane hook 的 effect 执行"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "约束 canonical event、usage 与 tool item 的跨层语义"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "用于核对 Native 到 UI 的完整数据流"}
+{"file": ".trellis/tasks/07-24-native-session-live-state-audit/research/root-cause.md", "reason": "已确认根因、历史提交与删除范围"}

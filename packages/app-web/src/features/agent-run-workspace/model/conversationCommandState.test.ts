@@ -197,6 +197,12 @@ describe("AgentRun conversation command state", () => {
     })).toBe(true);
   });
 
+  it("does not show a disabled Stop from feed activity before the authoritative command snapshot is active", () => {
+    expect(isAgentRunWorkspaceActionRunning({
+      executionStatus: "ready",
+    })).toBe(false);
+  });
+
   it("uses draft model policy as the local draft command authority", () => {
     const agent: ProjectAgentSummary = {
       key: "agent-key",

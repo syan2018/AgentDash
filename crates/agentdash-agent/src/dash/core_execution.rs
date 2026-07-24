@@ -129,6 +129,7 @@ pub enum DashProviderEvent {
         finish_reason: DashFinishReason,
         input_tokens: u64,
         output_tokens: u64,
+        context_window: u64,
     },
 }
 
@@ -161,6 +162,9 @@ pub enum DashCoreEvent {
     ProviderRoundCompleted {
         round: u32,
         finish_reason: DashFinishReason,
+        input_tokens: u64,
+        output_tokens: u64,
+        context_window: u64,
     },
 }
 
@@ -728,6 +732,7 @@ fn provider_event(event: DashProviderEvent) -> ProviderEvent {
             finish_reason,
             input_tokens,
             output_tokens,
+            context_window,
         } => ProviderEvent::Completed {
             finish_reason: match finish_reason {
                 DashFinishReason::Stop => FinishReason::Stop,
@@ -737,6 +742,7 @@ fn provider_event(event: DashProviderEvent) -> ProviderEvent {
                 input_tokens,
                 output_tokens,
             },
+            context_window,
         },
     }
 }
@@ -777,12 +783,17 @@ fn dash_event(event: CoreEvent) -> DashCoreEvent {
         CoreEvent::ProviderRoundCompleted {
             round,
             finish_reason,
+            usage,
+            context_window,
         } => DashCoreEvent::ProviderRoundCompleted {
             round,
             finish_reason: match finish_reason {
                 FinishReason::Stop => DashFinishReason::Stop,
                 FinishReason::ToolCalls => DashFinishReason::ToolCalls,
             },
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            context_window,
         },
     }
 }

@@ -18,7 +18,6 @@ use agentdash_platform_spi::{
 use crate::agent_run::frame::{
     AgentFrameBuilder, AgentFrameSurfaceExt, runtime_backend_anchor_from_vfs,
 };
-use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::workspace::BackendAvailability;
@@ -36,7 +35,6 @@ pub struct AgentRunProjectOwnerFrameConstructionAdapter {
     availability: Arc<dyn BackendAvailability>,
     pub(super) platform_config: Arc<PlatformConfig>,
     pub(super) lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
-    pub(super) audit_bus: SharedContextAuditBus,
     hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
     pub(super) extra_skill_dirs: Vec<PathBuf>,
     pub(super) skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
@@ -51,7 +49,6 @@ pub struct AgentRunProjectOwnerFrameConstructionDeps {
     pub availability: Arc<dyn BackendAvailability>,
     pub platform_config: Arc<PlatformConfig>,
     pub lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
-    pub audit_bus: SharedContextAuditBus,
     pub hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
@@ -68,7 +65,6 @@ impl AgentRunProjectOwnerFrameConstructionAdapter {
             availability: deps.availability,
             platform_config: deps.platform_config,
             lifecycle_surface_projection: deps.lifecycle_surface_projection,
-            audit_bus: deps.audit_bus,
             hook_plan_compiler: deps.hook_plan_compiler,
             extra_skill_dirs: deps.extra_skill_dirs,
             skill_discovery_providers: deps.skill_discovery_providers,
@@ -84,7 +80,6 @@ impl AgentRunProjectOwnerFrameConstructionAdapter {
             availability: self.availability.as_ref(),
             platform_config: self.platform_config.as_ref(),
             lifecycle_surface_projection: self.lifecycle_surface_projection.as_ref(),
-            audit_bus: Some(self.audit_bus.clone()),
         }
     }
 }

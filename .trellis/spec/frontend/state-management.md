@@ -45,6 +45,9 @@
   hydration replay boundary 内的历史名称事件不重复执行该副作用。UI 不直接用事件 payload
   patch shell，原因是重新查询会统一应用 explicit workspace title 与 Runtime name 的后端
   优先级。
+- canonical `item_completed` 中成功完成的 `task_write` 通过统一control-plane effect planner
+  重新读取当前AgentRun的Task owner；进行中、失败及其他工具不触发。Task状态由owner read收敛，
+  因而live reducer不保存optimistic Task副本。
 - LifecycleGate waiting items作为Product事实单独展示；Agent input handoff不进入持久队列model。
   没有canonical endpoint的管理动作不进入model/intents。
 
@@ -186,5 +189,68 @@ workspaceStore.patchTitle(event.payload.threadName ?? "新会话");
 if (isLiveThreadNameUpdated(event, historyReplayBoundarySeq)) {
   refreshAgentRunWorkspaceState();
   refreshProjectAgentRunList();
+}
+```
+
+## Scenario: Task tool owner refresh
+
+### 1. Scope / Trigger
+
+修改canonical item事件、AgentRun control-plane effect planner、Task store或Session状态栏时适用。
+
+### 2. Signatures
+
+```ts
+type AgentRunControlPlaneEffectPlan = {
+  refreshTaskPlan: boolean;
+  // other typed effects
+};
+
+type AgentRunControlPlaneEffectExecutor = {
+  refreshTaskPlan(): Promise<void>;
+};
+```
+
+### 3. Contracts
+
+- 只有成功终结的`item_completed`，且item family为`dynamicToolCall`、tool name为`task_write`时，
+  planner才产生`refreshTaskPlan`。
+- executor使用事件所属的当前`run_id + agent_id`调用Task owner read；planner不解析tool output来
+  patch本地Task。
+- hydration replay不重复执行该effect；live重复记录仍由canonical sequence去重。
+- Task刷新与workspace、title等effect在同一typed plan中合并执行，Session组件不建立第二条事件扫描线。
+
+### 4. Validation & Error Matrix
+
+| 事件 | `refreshTaskPlan` |
+| --- | ---: |
+| successful completed `task_write` | true |
+| running/pending `task_write` | false |
+| failed completed `task_write` | false |
+| successful completed其他tool | false |
+| hydration boundary内历史记录 | false |
+
+### 5. Good / Base / Bad Cases
+
+- Good：Agent提交Task变更后，planner触发一次owner read，状态栏显示后端已提交状态。
+- Base：Task read暂时失败，现有Task snapshot保持；后续typed invalidation或重新进入页面可再次读取。
+- Bad：组件从tool result文本猜测Task状态并局部patch，会绕过Task owner校验并与重连结果漂移。
+
+### 6. Tests Required
+
+- planner单测覆盖表中五种事件。
+- executor单测断言只使用当前`run_id + agent_id`调用一次Task fetch。
+- control-plane组合测试断言Task effect与workspace/title effect可合并，且target切换后的旧异步结果
+  不覆盖新target。
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: Session组件维护第二条raw event扫描并猜测Task结果。
+if (tool.name === "task_write") taskStore.patch(parseToolOutput(tool.output));
+
+// Correct: canonical planner只发owner refresh effect。
+if (isSuccessfulCompletedTaskWrite(event)) {
+  plan.refreshTaskPlan = true;
 }
 ```

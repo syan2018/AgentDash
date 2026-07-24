@@ -11,6 +11,7 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunProductForkError, AgentRunProductForkMessageRef, AgentRunProductForkRequest,
     AgentRunProductForkResult, AgentRunProductForkService, AgentRunProductInputDeliveryError,
     AgentRunProductProjectionError, AgentRunTerminalChangeSequence, DeliverAgentRunProductInput,
+    project_managed_runtime_context,
 };
 use agentdash_contracts::agent_run_interaction::{
     AgentRunCommandOnlyRequest, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
@@ -52,6 +53,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/snapshot",
             axum::routing::get(get_managed_runtime_snapshot),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection",
+            axum::routing::get(get_managed_runtime_context_projection),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/live",
@@ -626,6 +631,28 @@ async fn get_managed_runtime_snapshot(
         .await
         .map(Json)
         .map_err(agent_run_product_projection_error)
+}
+
+async fn get_managed_runtime_context_projection(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<agentdash_contracts::session::SessionProjectionViewResponse>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let snapshot = state
+        .services
+        .agent_run_product_projection
+        .runtime_snapshot(&target)
+        .await
+        .map_err(agent_run_product_projection_error)?;
+    Ok(Json(project_managed_runtime_context(&snapshot)))
 }
 
 async fn get_agent_run_live_events(

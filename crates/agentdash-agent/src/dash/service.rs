@@ -347,6 +347,7 @@ pub struct DashAgentService {
     execution: Arc<tokio::sync::RwLock<DashExecutionDependencies>>,
     tool_callbacks: Arc<RoutableDashToolCallbacks>,
     cancellation: Arc<tokio::sync::Mutex<Option<(AgentTurnId, DashCancellation)>>>,
+    effect_updates: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Default)]
@@ -403,12 +404,24 @@ impl DurableDashExecutionCallbacks {
         turn_id: &AgentTurnId,
         round: u32,
         finish_reason: DashFinishReason,
+        input_tokens: u64,
+        output_tokens: u64,
+        context_window: u64,
     ) -> Result<(), DashCoreError> {
         let pending = self.rounds.lock().await.remove(&round).unwrap_or_default();
+        let mut history = vec![HistoryContribution {
+            entry_id: provider_round_entry_id(turn_id, round, "usage", "confirmed"),
+            payload: HistoryPayload::ProviderUsageConfirmed {
+                turn_id: turn_id.clone(),
+                round,
+                input_tokens,
+                output_tokens,
+                context_window,
+            },
+        }];
         if finish_reason == DashFinishReason::Stop && pending.tool_calls.is_empty() {
-            return Ok(());
+            return self.commit_history(history).await;
         }
-        let mut history = Vec::new();
         if !pending.assistant_text.is_empty() {
             history.extend(provider_round_assistant_history(
                 turn_id,
@@ -514,9 +527,19 @@ impl DashExecutionCallbacks for DurableDashExecutionCallbacks {
             DashCoreEvent::ProviderRoundCompleted {
                 round,
                 finish_reason,
+                input_tokens,
+                output_tokens,
+                context_window,
             } => {
-                self.commit_provider_round(&execution.turn_id, *round, *finish_reason)
-                    .await?;
+                self.commit_provider_round(
+                    &execution.turn_id,
+                    *round,
+                    *finish_reason,
+                    *input_tokens,
+                    *output_tokens,
+                    *context_window,
+                )
+                .await?;
             }
             DashCoreEvent::ToolCallCompleted {
                 round,
@@ -624,6 +647,7 @@ impl DashAgentService {
             execution: Arc::new(tokio::sync::RwLock::new(execution)),
             tool_callbacks,
             cancellation: Arc::new(tokio::sync::Mutex::new(None)),
+            effect_updates: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -855,7 +879,7 @@ impl DashAgentService {
         }
         match request.command.clone() {
             DashPublicCommand::SubmitInput { content } => {
-                self.execute_submit(request, content).await
+                self.execute_submit(request, content, false).await
             }
             DashPublicCommand::Steer { turn_id, content } => {
                 self.execute_steer(request, turn_id, content).await
@@ -874,6 +898,58 @@ impl DashAgentService {
                     .await
             }
             DashPublicCommand::Close => self.execute_close(request).await,
+        }
+    }
+
+    /// Admits a normal input turn synchronously and lets the Dash owner advance it in a
+    /// source-scoped background task. Non-submit commands keep their synchronous command
+    /// semantics because steer, interrupt, interaction and compaction are bounded control
+    /// operations.
+    pub async fn execute_admitted(
+        &self,
+        request: DashCommandRequest,
+    ) -> Result<DashCommandReceipt, DashServiceError> {
+        if let Some(existing) = self
+            .repository
+            .load()
+            .await?
+            .effects
+            .get(&request.effect_id)
+        {
+            return if existing.request == request {
+                Ok(existing.receipt.clone())
+            } else {
+                Err(DashServiceError::Conflict {
+                    message: "effect identity was reused by another Dash command".into(),
+                })
+            };
+        }
+        match request.command.clone() {
+            DashPublicCommand::SubmitInput { content } => {
+                self.execute_submit(request, content, true).await
+            }
+            _ => self.execute(request).await,
+        }
+    }
+
+    pub async fn wait_for_effect_terminal(
+        &self,
+        effect_id: &EffectId,
+    ) -> Result<DashEffectInspection, DashServiceError> {
+        loop {
+            let notified = self.effect_updates.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let inspection =
+                self.inspect(effect_id)
+                    .await?
+                    .ok_or_else(|| DashServiceError::InvalidState {
+                        message: "Dash Agent effect does not exist".into(),
+                    })?;
+            if matches!(inspection.state, DashReceiptState::Terminal(_)) {
+                return Ok(inspection);
+            }
+            notified.as_mut().await;
         }
     }
 
@@ -900,6 +976,7 @@ impl DashAgentService {
         &self,
         request: DashCommandRequest,
         content: String,
+        background: bool,
     ) -> Result<DashCommandReceipt, DashServiceError> {
         if content.trim().is_empty() {
             return Err(DashServiceError::InvalidArgument {
@@ -981,6 +1058,87 @@ impl DashAgentService {
             *handle = Some((turn_id.clone(), cancellation.clone()));
         }
 
+        if background {
+            let service = self.clone();
+            let background_request = request.clone();
+            let background_turn_id = turn_id.clone();
+            let background_accepted = accepted.clone();
+            tokio::spawn(async move {
+                let execution_service = service.clone();
+                let execution_request = background_request.clone();
+                let execution_turn_id = background_turn_id.clone();
+                let execution = tokio::spawn(async move {
+                    execution_service
+                        .advance_submit_execution(
+                            execution_request,
+                            content,
+                            execution_turn_id,
+                            effect_prefix,
+                            cancellation,
+                            background_accepted,
+                        )
+                        .await
+                })
+                .await;
+                let failure = match execution {
+                    Ok(Ok(_)) => None,
+                    Ok(Err(error)) => Some(super::DashExecutionFailure {
+                        code: "background_execution_failed".to_owned(),
+                        message: error.to_string(),
+                        retryable: error.retryable(),
+                    }),
+                    Err(error) => Some(super::DashExecutionFailure {
+                        code: "background_execution_panicked".to_owned(),
+                        message: error.to_string(),
+                        retryable: false,
+                    }),
+                };
+                if let Some(failure) = failure {
+                    let already_terminal = service
+                        .inspect(&background_request.effect_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some_and(|inspection| {
+                            matches!(inspection.state, DashReceiptState::Terminal(_))
+                        });
+                    if !already_terminal {
+                        let _ = service
+                            .finish_failed_turn(
+                                &background_request,
+                                &background_turn_id,
+                                DashTerminalOutcome::Failed,
+                                Some(failure),
+                            )
+                            .await;
+                    }
+                    service.clear_active(&background_turn_id).await;
+                    service.effect_updates.notify_waiters();
+                }
+            });
+            return Ok(accepted);
+        }
+
+        self.advance_submit_execution(
+            request,
+            content,
+            turn_id,
+            effect_prefix,
+            cancellation,
+            accepted,
+        )
+        .await
+    }
+
+    async fn advance_submit_execution(
+        &self,
+        request: DashCommandRequest,
+        content: String,
+        turn_id: AgentTurnId,
+        effect_prefix: String,
+        cancellation: DashCancellation,
+        accepted: DashCommandReceipt,
+    ) -> Result<DashCommandReceipt, DashServiceError> {
         let context = self.materialize_context(&turn_id).await?;
         let execution = self.execution_dependencies().await;
         let round_snapshots = DashProviderRoundSnapshots::default();
@@ -1118,6 +1276,7 @@ impl DashAgentService {
                 "Dash conversation naming failed after a terminal turn"
             );
         }
+        self.effect_updates.notify_waiters();
         Ok(receipt)
     }
 
@@ -1524,6 +1683,72 @@ impl DashAgentService {
         cancellation.cancel();
         let (_, receipt) = self
             .update_repository(|repository| {
+                let active =
+                    repository
+                        .active
+                        .as_ref()
+                        .ok_or_else(|| DashServiceError::InvalidState {
+                            message: "Dash Agent turn completed before interrupt was committed"
+                                .into(),
+                        })?;
+                if active.turn_id != turn_id {
+                    return Err(DashServiceError::InvalidState {
+                        message: "Dash Agent turn is not active".into(),
+                    });
+                }
+                let active_request = active.request.clone();
+                let pending_interactions = repository
+                    .store
+                    .history()
+                    .state()?
+                    .interactions
+                    .iter()
+                    .filter(|(_, interaction)| {
+                        interaction.turn_id == turn_id
+                            && interaction.response.is_none()
+                            && !interaction.cancelled
+                    })
+                    .map(|(interaction_id, _)| interaction_id.clone())
+                    .collect::<Vec<_>>();
+                let mut history = pending_interactions
+                    .into_iter()
+                    .map(|interaction_id| HistoryContribution {
+                        entry_id: HistoryEntryId::new(format!(
+                            "{}:interaction-cancelled:{}",
+                            request.effect_id.0, interaction_id.0
+                        )),
+                        payload: HistoryPayload::InteractionCancelled { interaction_id },
+                    })
+                    .collect::<Vec<_>>();
+                history.push(HistoryContribution {
+                    entry_id: HistoryEntryId::new(format!(
+                        "{}:turn-terminal",
+                        active_request.effect_id.0
+                    )),
+                    payload: HistoryPayload::TurnInterrupted {
+                        turn_id: turn_id.clone(),
+                        completed_at_ms: crate::model::message::now_millis(),
+                    },
+                });
+                repository.store.commit(DashAgentCommit {
+                    expected_head: repository.store.history().head().cloned(),
+                    command_settlement: Some(super::CommandSettlement {
+                        command_id: active_request.command_id.clone(),
+                        outcome: CommandOutcome::Failed,
+                    }),
+                    effect_settlements: vec![EffectSettlement {
+                        effect_id: active_request.effect_id.clone(),
+                        outcome: EffectOutcome::Failed,
+                    }],
+                    history,
+                    enqueue_commands: vec![],
+                })?;
+                terminalize_repository_effect(
+                    repository,
+                    &active_request.effect_id,
+                    DashTerminalOutcome::Interrupted,
+                    false,
+                )?;
                 let receipt = terminal_receipt(
                     &request,
                     DashTerminalOutcome::Succeeded,
@@ -1537,9 +1762,12 @@ impl DashAgentService {
                         retryable: false,
                     },
                 );
+                repository.active = None;
                 Ok(receipt)
             })
             .await?;
+        self.clear_active(&turn_id).await;
+        self.effect_updates.notify_waiters();
         Ok(receipt)
     }
 
@@ -1724,6 +1952,7 @@ impl DashAgentService {
             })
             .await?;
         self.clear_active(&active.turn_id).await;
+        self.effect_updates.notify_waiters();
         Ok(receipt)
     }
 

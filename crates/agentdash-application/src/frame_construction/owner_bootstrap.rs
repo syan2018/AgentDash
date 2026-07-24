@@ -24,8 +24,8 @@ use crate::capability::{
     load_available_presets, tool_directives_from_active_workflow,
 };
 use crate::context::{
-    AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
-    build_session_context_bundle, emit_bundle_fragments, resolve_workspace_declared_sources,
+    ContextBuildPhase, Contribution, SessionContextConfig, build_session_context_bundle,
+    resolve_workspace_declared_sources,
 };
 use crate::mcp_preset::McpRuntimeBindingContext;
 use crate::platform_config::PlatformConfig;
@@ -125,10 +125,6 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     pub launch_path: OwnerPromptLaunchPath,
     pub lifecycle_address: ports_agent_run_surface::AgentRunRuntimeAddress,
     pub lifecycle_message_stream: ports_lifecycle_surface::MessageStreamProjectionRef,
-    /// AgentRun run_id for audit bus keying.
-    pub audit_run_id: Option<String>,
-    /// AgentRun agent_id for audit bus keying.
-    pub audit_agent_id: Option<String>,
     pub caller_agent_id: Option<Uuid>,
 }
 
@@ -142,13 +138,6 @@ pub(crate) enum OwnerPromptLaunchPath {
     Plain,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OwnerAuditLaunchPath {
-    Bootstrap,
-    Rehydrate,
-    Plain,
-}
-
 pub(crate) struct OwnerBootstrapComposer<'a> {
     pub vfs_service: &'a VfsService,
     pub availability: &'a dyn BackendAvailability,
@@ -156,7 +145,6 @@ pub(crate) struct OwnerBootstrapComposer<'a> {
     pub platform_config: &'a PlatformConfig,
     pub lifecycle_surface_projection:
         &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
-    pub audit_bus: Option<SharedContextAuditBus>,
 }
 
 impl<'a> OwnerBootstrapComposer<'a> {
@@ -173,13 +161,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             repos,
             platform_config,
             lifecycle_surface_projection,
-            audit_bus: None,
         }
-    }
-
-    pub(crate) fn with_audit_bus(mut self, bus: SharedContextAuditBus) -> Self {
-        self.audit_bus = Some(bus);
-        self
     }
 
     pub(crate) async fn compose_owner_bootstrap_to_frame(
@@ -236,7 +218,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
                 subject_context_contributions,
             )
             .await?;
-        let audit_launch_path = owner_audit_launch_path(&spec.launch_path);
         let (user_input, effective_bundle) = match spec.launch_path {
             OwnerPromptLaunchPath::OwnerBootstrap => {
                 (spec.user_input.clone(), Some(context_bundle))
@@ -256,18 +237,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
             }
             OwnerPromptLaunchPath::Plain => (spec.user_input.clone(), None),
         };
-        if let (Some(bundle), Some(trigger)) = (
-            effective_bundle.as_ref(),
-            resolve_owner_audit_trigger(audit_launch_path, effective_bundle.is_some()),
-        ) {
-            self.audit_bundle(
-                bundle,
-                spec.audit_run_id.as_deref(),
-                spec.audit_agent_id.as_deref(),
-                trigger,
-            );
-        }
-
         let workspace_defaults = match &spec.owner {
             OwnerScope::Story { workspace, .. } => workspace.cloned(),
             OwnerScope::Project { workspace, .. } => spec
@@ -529,44 +498,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
             },
             contributions,
         ))
-    }
-
-    fn audit_bundle(
-        &self,
-        bundle: &SessionContextBundle,
-        run_id: Option<&str>,
-        agent_id: Option<&str>,
-        trigger: AuditTrigger,
-    ) {
-        let (Some(bus), Some(run_id), Some(agent_id)) =
-            (self.audit_bus.as_deref(), run_id, agent_id)
-        else {
-            return;
-        };
-        emit_bundle_fragments(bus, bundle, run_id, agent_id, trigger);
-    }
-}
-
-fn owner_audit_launch_path(launch_path: &OwnerPromptLaunchPath) -> OwnerAuditLaunchPath {
-    match launch_path {
-        OwnerPromptLaunchPath::OwnerBootstrap => OwnerAuditLaunchPath::Bootstrap,
-        OwnerPromptLaunchPath::RepositoryRehydrate { .. } => OwnerAuditLaunchPath::Rehydrate,
-        OwnerPromptLaunchPath::Plain => OwnerAuditLaunchPath::Plain,
-    }
-}
-
-fn resolve_owner_audit_trigger(
-    launch_path: OwnerAuditLaunchPath,
-    has_effective_bundle: bool,
-) -> Option<AuditTrigger> {
-    if !has_effective_bundle {
-        return None;
-    }
-
-    match launch_path {
-        OwnerAuditLaunchPath::Bootstrap => Some(AuditTrigger::SessionBootstrap),
-        OwnerAuditLaunchPath::Rehydrate => Some(AuditTrigger::ComposerRebuild),
-        OwnerAuditLaunchPath::Plain => None,
     }
 }
 
@@ -1165,42 +1096,6 @@ mod tests {
             !capability_state.tool.tool_policy.contains_key(
                 agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE
             )
-        );
-    }
-
-    #[test]
-    fn owner_bootstrap_audit_trigger_requires_effective_bundle() {
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Bootstrap, true),
-            Some(AuditTrigger::SessionBootstrap),
-        );
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Bootstrap, false),
-            None,
-        );
-    }
-
-    #[test]
-    fn owner_rehydrate_audit_trigger_maps_to_composer_rebuild() {
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Rehydrate, true),
-            Some(AuditTrigger::ComposerRebuild),
-        );
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Rehydrate, false),
-            None,
-        );
-    }
-
-    #[test]
-    fn owner_plain_launch_path_never_emits_owner_audit() {
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Plain, true),
-            None,
-        );
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Plain, false),
-            None,
         );
     }
 }

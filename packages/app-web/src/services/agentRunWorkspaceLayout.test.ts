@@ -58,23 +58,23 @@ describe("agentRunWorkspaceLayout service", () => {
       key: "ui.agentrun_workspace_tab_layout.agentrun:run-1:agent-1",
       value: {
         tabs: [{
-          type_id: "inspector",
-          uri: "inspector://session",
-          title: "审计",
+          type_id: "context",
+          uri: "context://overview",
+          title: "上下文",
           pinned: true,
         }],
-        active_tab_uri: "inspector://session",
+        active_tab_uri: "context://overview",
       },
     }]);
 
     await expect(loadWorkspaceTabLayout("agentrun:run-1:agent-1")).resolves.toEqual({
       tabs: [{
-        type_id: "inspector",
-        uri: "inspector://session",
-        title: "审计",
+        type_id: "context",
+        uri: "context://overview",
+        title: "上下文",
         pinned: true,
       }],
-      active_tab_uri: "inspector://session",
+      active_tab_uri: "context://overview",
     });
     expect(mocks.settingsListMock).toHaveBeenCalledWith({
       scope: "user",

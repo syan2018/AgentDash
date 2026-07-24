@@ -1,4 +1,4 @@
-import { api, type ApiHttpError } from "../api/client";
+import { api } from "../api/client";
 import type { SessionProjectionViewResponse } from "../generated/session-contracts";
 import type {
   AgentRunProductRuntimeCommand,
@@ -32,15 +32,10 @@ export async function fetchManagedRuntimeSnapshot(
 
 export async function fetchAgentRunRuntimeContextProjection(
   target: AgentRunRuntimeTarget,
-): Promise<SessionProjectionViewResponse | null> {
-  try {
-    return await api.get<SessionProjectionViewResponse>(
-      agentRunScopedPath(target, "/runtime/context/projection"),
-    );
-  } catch (error) {
-    if ((error as ApiHttpError).status === 404) return null;
-    throw error;
-  }
+): Promise<SessionProjectionViewResponse> {
+  return api.get<SessionProjectionViewResponse>(
+    agentRunScopedPath(target, "/runtime/context/projection"),
+  );
 }
 
 export interface AgentRunProductRuntimeCommandRequest {

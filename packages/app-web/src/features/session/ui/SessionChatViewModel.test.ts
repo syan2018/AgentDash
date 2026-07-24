@@ -9,21 +9,12 @@ import {
 } from "./SessionChatViewModel";
 
 describe("SessionChatView action state", () => {
-  it("shows the stop action as soon as the canonical feed has an active turn", () => {
-    expect(isAgentRunWorkspaceActionRunning({
-      executionStatus: "ready",
-      isReceiving: true,
-    })).toBe(true);
-  });
-
-  it("keeps authoritative workspace execution states as the non-stream fallback", () => {
+  it("only shows the stop action from the authoritative workspace execution state", () => {
     expect(isAgentRunWorkspaceActionRunning({
       executionStatus: "running_active",
-      isReceiving: false,
     })).toBe(true);
     expect(isAgentRunWorkspaceActionRunning({
       executionStatus: "ready",
-      isReceiving: false,
     })).toBe(false);
   });
 });

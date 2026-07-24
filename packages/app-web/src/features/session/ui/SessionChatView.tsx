@@ -278,7 +278,6 @@ export function SessionChatView({
     boundTargetKey,
     isConnected,
     isLoading,
-    isReceiving,
     error: wsError,
     reconnect,
     streamingEntryId,
@@ -312,7 +311,6 @@ export function SessionChatView({
 
   const isActionRunning = isAgentRunWorkspaceActionRunning({
     executionStatus: commandState.executionStatus,
-    isReceiving,
   });
 
   const onLiveEventRef = useRef(onLiveEvent);

@@ -46,6 +46,7 @@ fn product_control_plane_routes_expose_runtime_backed_capabilities() {
         routes::lifecycle_agents::router(),
         &[
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/snapshot",
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection",
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/live",
             "/agent-runs/{run_id}/agents/{agent_id}/workspace",
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/snapshot",

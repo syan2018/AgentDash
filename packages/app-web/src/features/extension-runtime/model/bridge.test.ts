@@ -750,7 +750,6 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
     executorSummary: null,
     runtimeSurface: runtimeSurface(),
     workspaceBackend: null,
-    hookRuntime: null,
     sessionCapabilities: null,
     ...overrides,
   };

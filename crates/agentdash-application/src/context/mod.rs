@@ -1,4 +1,3 @@
-mod audit;
 mod builder;
 mod builtins;
 pub mod rendering;
@@ -7,11 +6,6 @@ pub mod source_resolver;
 pub mod vfs_discovery;
 pub mod workspace_sources;
 
-pub use audit::{
-    AuditAgentRunKey, AuditFilter, AuditTrigger, ContextAuditBus, ContextAuditEvent,
-    InMemoryContextAuditBus, NoopContextAuditBus, SharedContextAuditBus, emit_bundle_fragments,
-    emit_fragment,
-};
 pub use builder::{
     ContextBuildPhase, Contribution, SessionContextConfig, TaskExecutionPhase,
     build_continuation_bundle_from_markdown, build_continuation_transcript_fragment,

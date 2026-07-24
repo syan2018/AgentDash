@@ -52,6 +52,10 @@
 21. **把当前snapshot直接当成change event发布**：provider恢复需要完整stable context，canonical
     timeline只需要相邻事实的真实变化。跨层对象同时服务两者时，必须明确previous/current投影边界，
     并让read、changes、live共用该比较；仅替换revision或digest不能制造业务变化。
+22. **统一dispatcher时只迁移展示归约**：live事件除更新feed外还可能使Product owner失效。收口事件入口时
+    要同时清点reducer、typed effect planner、executor与scoped store，否则Task等侧栏会静默停止收敛。
+23. **删除查询入口却保留process-local审计producer**：没有权威read consumer的审计bus不能证明可恢复状态，
+    只会形成持续写入但永远无法读取的第二事实源。端点演进应按producer、storage、API、UI与布局注册整体审计。
 
 ---
 
@@ -80,6 +84,10 @@
   delivery mode、initial/delta/revoke历史语义，并分别断言frame数量、真实变化section和最终模型原文
 - [ ] 若同一accepted对象同时服务“当前snapshot”和“变化事件”，分别定义消费方、比较identity与
   previous-state来源，并覆盖“仅revision变化不发事件、真实语义变化发事件、snapshot仍可完整恢复”
+- [ ] 若统一live-event dispatcher，列出每类事件的reducer与owner invalidation effect，并验证planner、
+  executor、scoped store到renderer的完整链路
+- [ ] 若删除查询/API入口，反向清点其producer、存储、轮询service、UI入口与布局注册；仅保留仍有
+  authoritative consumer且能在重连后恢复的事实链
 - [ ] 若schema被多个进程或数据根消费，列出每个持久实例并验证既有数据库升级，而不只验证空库或Dashboard数据库
 - [ ] 若跨Host/transport重写identity或generation，列出Product、Host binding、attachment/connection与remote target四个owner，并为出站改写、callback反向映射、disconnect retire和restart re-materialization各放一条回归
 

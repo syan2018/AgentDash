@@ -27,6 +27,7 @@ export interface AgentRunWorkspacePanelOpenPlan {
 export interface AgentRunControlPlaneEffectPlan {
   refreshWorkspaceState?: boolean;
   refreshAgentRunListReason?: string;
+  refreshTaskPlan?: boolean;
   openWorkspacePanel?: AgentRunWorkspacePanelOpenPlan;
 }
 
@@ -167,6 +168,15 @@ function planAgentRunEventEffects(
       refreshWorkspaceState: true,
       refreshAgentRunListReason: "thread_name_updated",
     };
+  }
+  if (
+    event.type === "item_completed"
+    && event.payload.item.type === "dynamicToolCall"
+    && event.payload.item.tool === "task_write"
+    && event.payload.item.status === "completed"
+    && event.payload.item.success !== false
+  ) {
+    return { refreshTaskPlan: true };
   }
   if (event.type !== "platform") {
     return {};

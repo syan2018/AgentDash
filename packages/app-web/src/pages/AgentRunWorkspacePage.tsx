@@ -44,7 +44,6 @@ import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
   AgentRunWorkspaceView,
-  SubjectRunContext,
   ProjectAgentSummary,
   ProjectAgentRunStartResult,
   Story,
@@ -76,6 +75,12 @@ function backendDisplayLabel(backend: BackendConfig): string {
     || backend.machine_label?.trim()
     || machineLabelFromDevice(backend.device)
     || "未命名 Backend";
+}
+
+function associationMetadataString(metadata: unknown, key: string): string | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const value = (metadata as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 export function AgentRunWorkspacePage({
@@ -195,12 +200,10 @@ export function AgentRunWorkspacePage({
     !isProjectAgentDraft
     && (identityAgentSource !== null || identitySubject !== null || lineageParent !== null || subagentChildCount > 0);
   const deliveryRuntimeSurface = agentRunWorkspaceState.runtime_surface;
-  const activeHookRuntime = agentRunWorkspaceState.hook_runtime;
   const sessionContextSnapshot = null;
   const sessionCapabilities = null;
   const taskExecutorSummary = null;
 
-  const runContext: SubjectRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
   const agentRunDetailRunId = workspaceControl?.run_ref.run_id ?? currentRunId;
   const agentRunDetailAgentId = workspaceControl?.agent_ref.agent_id ?? currentAgentId;
   const agentRunDetailFrameId = workspaceControl?.frame_runtime?.frame_ref.frame_id ?? null;
@@ -222,7 +225,10 @@ export function AgentRunWorkspacePage({
 
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
   const storiesByProjectId = useStoryStore((s) => s.storiesByProjectId);
-  const ownerStoryId = runContext?.story_id ?? null;
+  const ownerAssociation = workspaceControl?.subject_associations?.[0] ?? null;
+  const ownerStoryId = ownerAssociation?.subject_ref.kind === "story"
+    ? ownerAssociation.subject_ref.id
+    : associationMetadataString(ownerAssociation?.metadata, "story_id");
 
   useEffect(() => {
     const cached = ownerStoryId ? findStoryById(storiesByProjectId, ownerStoryId) : null;
@@ -250,18 +256,13 @@ export function AgentRunWorkspacePage({
     return null;
   }, [loadedOwnerStory, ownerStoryId, storiesByProjectId]);
   const ownerProjectId = workspaceControl?.project_id
-    ?? runContext?.project_id
     ?? ownerStory?.project_id
     ?? draftProjectIdValue
     ?? null;
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
-  const ownerProjectName = runContext?.scope === "project"
-    ? (ownerProject?.name?.trim() || runContext.project_id)
-    : isProjectAgentDraft
-      ? (ownerProject?.name?.trim() || "")
-    : "";
+  const ownerProjectName = ownerProject?.name?.trim() || ownerProjectId || "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
   const agentRunListState = useAgentRunListState(ownerProjectId);
   const companionSubagents = useMemo(
@@ -366,18 +367,26 @@ export function AgentRunWorkspacePage({
     if (isProjectAgentDraft && draftProjectIdValue) {
       return { owner_type: "project" as const, project_id: draftProjectIdValue };
     }
-    if (!runContext) return null;
-    if (runContext.scope === "project") {
-      return { owner_type: "project" as const, project_id: runContext.project_id };
+    if (ownerAssociation?.subject_ref.kind === "project") {
+      return { owner_type: "project" as const, project_id: ownerAssociation.subject_ref.id };
     }
-    if (runContext.scope === "story" && runContext.story_id) {
-      return { owner_type: "story" as const, story_id: runContext.story_id };
+    if (ownerAssociation?.subject_ref.kind === "story") {
+      return { owner_type: "story" as const, story_id: ownerAssociation.subject_ref.id };
     }
-    if (runContext.scope === "task" && runContext.story_id && runContext.task_id) {
-      return { owner_type: "task" as const, story_id: runContext.story_id, task_id: runContext.task_id };
+    if (ownerAssociation?.subject_ref.kind === "task") {
+      const storyId = associationMetadataString(ownerAssociation.metadata, "story_id");
+      if (storyId) {
+        return {
+          owner_type: "task" as const,
+          story_id: storyId,
+          task_id: ownerAssociation.subject_ref.id,
+        };
+      }
     }
-    return null;
-  }, [draftProjectIdValue, isProjectAgentDraft, runContext]);
+    return ownerProjectId
+      ? { owner_type: "project" as const, project_id: ownerProjectId }
+      : null;
+  }, [draftProjectIdValue, isProjectAgentDraft, ownerAssociation, ownerProjectId]);
 
   // ─── 页面级回调 ───────────────────────────────────────
 
@@ -535,7 +544,6 @@ export function AgentRunWorkspacePage({
     executorSummary: taskExecutorSummary,
     runtimeSurface: deliveryRuntimeSurface,
     workspaceBackend,
-    hookRuntime: activeHookRuntime,
     sessionCapabilities,
   }), [
     ownerProjectId,
@@ -551,43 +559,8 @@ export function AgentRunWorkspacePage({
     taskExecutorSummary,
     deliveryRuntimeSurface,
     workspaceBackend,
-    activeHookRuntime,
     sessionCapabilities,
   ]);
-
-  // ─── owner 信息条（作为 inputPrefix 传入 ChatView）
-
-  const runContextDisplayName = useMemo(() => {
-    if (!runContext) return "";
-    if (runContext.scope === "task") return runContext.task_title?.trim() || runContext.task_id || "";
-    if (runContext.scope === "story") return runContext.story_title?.trim() || runContext.story_id || "";
-    return ownerProject?.name?.trim() || runContext.project_id;
-  }, [runContext, ownerProject]);
-
-  const ownerBindingBar = runContext ? (
-    <div className="flex min-w-0 flex-wrap items-center gap-2">
-      <span className="rounded-[6px] bg-background/80 px-1.5 py-0.5 uppercase">
-        {runContext.scope}
-      </span>
-      <span className="min-w-0 truncate">
-        已绑定：{runContextDisplayName}
-      </span>
-      {effectiveReturnTarget && (
-        <button
-          type="button"
-          onClick={handleBackToOwner}
-          className="rounded-[6px] px-1.5 py-0.5 text-[11px] transition-colors hover:bg-background hover:text-foreground"
-        >
-          打开关联
-          {runContext.scope === "project"
-            ? "项目"
-            : runContext.scope === "task"
-              ? "任务"
-              : "Story"}
-        </button>
-      )}
-    </div>
-  ) : null;
   const backendSelectionBar = activeBackendAccesses.length > 0 ? (
     <InlineBackendSelector
       value={effectiveSelectedBackendId}
@@ -598,12 +571,6 @@ export function AgentRunWorkspacePage({
       onRefresh={() => { void fetchBackends(); }}
     />
   ) : null;
-  const chatInputPrefix = ownerBindingBar ? (
-    <>
-      {ownerBindingBar}
-    </>
-  ) : undefined;
-
   // ─── 路由 state 驱动自动展开右栏 ───────────────────────
   useEffect(() => {
     if (!routeState?.open_workspace_panel) return;
@@ -715,7 +682,6 @@ export function AgentRunWorkspacePage({
                 initialSubmit={routeState?.initial_submit}
                 onInitialSubmitConsumed={handleInitialSubmitConsumed}
                 onLiveEvent={handleAgentRunLiveEvent}
-                inputPrefix={chatInputPrefix}
                 inputToolbarSlot={backendSelectionBar}
                 openWorkspacePanel={({ typeId, uri, options }) => {
                   expandWorkspacePanel(typeId, uri, options);

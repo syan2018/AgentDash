@@ -72,8 +72,7 @@ packages/app-web/src/
 │   ├── canvas.ts                   # Canvas 管理
 │   ├── skillAsset.ts               # Skill 资产
 │   ├── mcpPreset.ts                # MCP Preset 管理
-│   ├── directory.ts                # 用户/组目录
-│   └── contextAudit.ts             # 上下文审计
+│   └── directory.ts                # 用户/组目录
 ├── stores/                         # 全局 Zustand stores
 │   ├── projectStore.ts             # Project CRUD + 选择
 │   ├── workspaceStore.ts           # Workspace CRUD + 状态

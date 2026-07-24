@@ -49,8 +49,7 @@ use crate::capability::{
 };
 use crate::companion::tools::CompanionSliceMode;
 use crate::context::{
-    AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
-    build_session_context_bundle, emit_bundle_fragments,
+    ContextBuildPhase, Contribution, SessionContextConfig, build_session_context_bundle,
 };
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -76,11 +75,6 @@ pub struct FrameRequestAssembler<'a> {
     pub platform_config: &'a PlatformConfig,
     pub lifecycle_surface_projection:
         &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
-    /// 可选审计总线 —— 每次 compose 产出 Bundle 后批量 emit。
-    ///
-    /// 为 `None` 时（例如单元测试 / routine 内部降级路径）跳过 emit；
-    /// 生产路径由 `AppState` 注入 `InMemoryContextAuditBus` 共享实例。
-    pub audit_bus: Option<SharedContextAuditBus>,
     pub companion_parent_facts_provider: Option<&'a dyn CompanionParentFactsProvider>,
 }
 
@@ -105,15 +99,8 @@ impl<'a> FrameRequestAssembler<'a> {
             product_runtime_bindings,
             platform_config,
             lifecycle_surface_projection,
-            audit_bus: None,
             companion_parent_facts_provider: None,
         }
-    }
-
-    /// 配置审计总线（生产路径由 `AppState` 注入）。
-    pub fn with_audit_bus(mut self, bus: SharedContextAuditBus) -> Self {
-        self.audit_bus = Some(bus);
-        self
     }
 
     pub fn with_companion_parent_facts_provider(
@@ -396,7 +383,7 @@ impl<'a> FrameRequestAssembler<'a> {
 
 /// lifecycle_node 的 frame builder 路径（free-standing 版本）。
 #[allow(clippy::too_many_arguments)]
-pub async fn compose_lifecycle_node_to_frame_with_audit(
+pub async fn compose_lifecycle_node_to_frame(
     frame_builder: crate::agent_run::frame::AgentFrameBuilder,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
@@ -404,10 +391,7 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
     product_runtime_bindings:
         &dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
     spec: LifecycleNodeSpec<'_>,
-    audit_bus: Option<SharedContextAuditBus>,
-    audit_session_key: Option<&str>,
-    audit_run_id: Option<&str>,
-    audit_agent_id: Option<&str>,
+    runtime_thread_id: Option<&str>,
 ) -> Result<
     (
         crate::agent_run::frame::AgentFrameBuilder,
@@ -415,33 +399,27 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
     ),
     String,
 > {
-    let prepared = compose_lifecycle_node_with_audit(
+    let prepared = compose_lifecycle_node(
         repos,
         platform_config,
         lifecycle_surface_projection,
         product_runtime_bindings,
         spec,
-        audit_bus,
-        audit_session_key,
-        audit_run_id,
-        audit_agent_id,
+        runtime_thread_id,
     )
     .await?;
     Ok(project_frame_assembly_to_frame(frame_builder, prepared))
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn compose_lifecycle_node_with_audit(
+async fn compose_lifecycle_node(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     lifecycle_surface_projection: &dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     product_runtime_bindings:
         &dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
     spec: LifecycleNodeSpec<'_>,
-    audit_bus: Option<SharedContextAuditBus>,
-    audit_session_key: Option<&str>,
-    audit_run_id: Option<&str>,
-    audit_agent_id: Option<&str>,
+    runtime_thread_id: Option<&str>,
 ) -> Result<FrameAssemblyBuilder, String> {
     let owner_ctx = CapabilityScopeCtx::Project {
         project_id: spec.run.project_id,
@@ -479,7 +457,7 @@ async fn compose_lifecycle_node_with_audit(
         },
         platform_config,
     )?;
-    if let Some((address, message_stream)) = match audit_session_key {
+    if let Some((address, message_stream)) = match runtime_thread_id {
         Some(session_id) => {
             resolve_existing_runtime_surface_refs(repos, product_runtime_bindings, session_id)
                 .await?
@@ -554,17 +532,6 @@ async fn compose_lifecycle_node_with_audit(
             Contribution::fragments_only(lifecycle_plan.fragments),
         ],
     );
-    if let (Some(bus), Some(run_id), Some(agent_id)) =
-        (audit_bus.as_ref(), audit_run_id, audit_agent_id)
-    {
-        emit_bundle_fragments(
-            bus.as_ref(),
-            &context_bundle,
-            run_id,
-            agent_id,
-            AuditTrigger::ComposerRebuild,
-        );
-    }
     Ok(FrameAssemblyBuilder::new()
         .apply_lifecycle_activation(&activation, spec.inherited_executor_config)
         .with_context_bundle(context_bundle)

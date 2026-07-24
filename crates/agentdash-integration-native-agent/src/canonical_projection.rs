@@ -10,11 +10,12 @@ use agentdash_agent_protocol::{
     CanonicalConversationRecord, ContextAgentConsumption, ContextAgentConsumptionMode,
     ContextConnectorProfile, ContextDeliveryChannel, ContextDeliveryMetadata,
     ContextDeliveryStatus, ContextFrame, ContextFrameChanged, ContextFrameKind,
-    ContextFrameSection, ContextFrameSource, ContextMessageRole, ItemCompletedNotification,
-    ItemStartedNotification, ItemUpdatedNotification, PlatformEvent, PresentationDurability,
-    SourceInfo, TraceInfo, Turn, TurnCompletedNotification, TurnStartedNotification,
-    UserInputSource, UserInputSubmissionKind, UserInputSubmittedNotification,
-    WorkspaceModulePresentation,
+    ContextFrameSection, ContextFrameSource, ContextMessageRole, ContextUsageSource,
+    ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification,
+    NormalizedContextUsage, PlatformEvent, PresentationDurability, SourceInfo, ThreadTokenUsage,
+    ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown, TraceInfo, Turn,
+    TurnCompletedNotification, TurnStartedNotification, UserInputSource, UserInputSubmissionKind,
+    UserInputSubmittedNotification, WorkspaceModulePresentation,
 };
 
 #[cfg(test)]
@@ -142,6 +143,25 @@ pub(crate) fn entry_records(
                 ));
             }
         }
+        HistoryPayload::ProviderUsageConfirmed {
+            turn_id,
+            input_tokens,
+            output_tokens,
+            context_window,
+            ..
+        } => {
+            events.push(BackboneEvent::TokenUsageUpdated(
+                provider_usage_notification(
+                    session_id,
+                    &turn_id.0,
+                    *input_tokens,
+                    *output_tokens,
+                    state.token_usage.total_input_tokens,
+                    state.token_usage.total_output_tokens,
+                    *context_window,
+                ),
+            ));
+        }
         HistoryPayload::ItemCompleted { turn_id, item_id } => {
             events.push(BackboneEvent::ItemCompleted(ItemCompletedNotification {
                 item: item(state, item_id)?,
@@ -201,6 +221,7 @@ pub(crate) fn entry_records(
         }
         HistoryPayload::InteractionRequested { .. }
         | HistoryPayload::InteractionResolved { .. }
+        | HistoryPayload::InteractionCancelled { .. }
         | HistoryPayload::Closed => {}
     }
 
@@ -482,6 +503,7 @@ fn turn_id(payload: &HistoryPayload) -> Option<&str> {
         | HistoryPayload::AgentOutput { turn_id, .. }
         | HistoryPayload::ToolCall { turn_id, .. }
         | HistoryPayload::ToolResult { turn_id, .. }
+        | HistoryPayload::ProviderUsageConfirmed { turn_id, .. }
         | HistoryPayload::InteractionRequested { turn_id, .. }
         | HistoryPayload::TurnCompleted { turn_id, .. }
         | HistoryPayload::TurnFailed { turn_id, .. }
@@ -496,8 +518,58 @@ fn turn_id(payload: &HistoryPayload) -> Option<&str> {
         | HistoryPayload::ThreadNameChanged { .. }
         | HistoryPayload::InputAccepted { .. }
         | HistoryPayload::InteractionResolved { .. }
+        | HistoryPayload::InteractionCancelled { .. }
         | HistoryPayload::Closed => None,
     }
+}
+
+fn provider_usage_notification(
+    thread_id: &str,
+    turn_id: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+    total_input_tokens: u64,
+    total_output_tokens: u64,
+    context_window: u64,
+) -> ThreadTokenUsageUpdatedNotification {
+    let last = token_breakdown(input_tokens, output_tokens);
+    let total = token_breakdown(total_input_tokens, total_output_tokens);
+    let current_context_tokens = last.total_tokens;
+    let cumulative_total_tokens = total.total_tokens;
+    let model_context_window = Some(saturating_i64(context_window));
+    ThreadTokenUsageUpdatedNotification {
+        thread_id: thread_id.to_owned(),
+        turn_id: turn_id.to_owned(),
+        token_usage: ThreadTokenUsage {
+            total,
+            last,
+            model_context_window,
+            context: NormalizedContextUsage {
+                provider_context_tokens: current_context_tokens,
+                pending_estimate_tokens: 0,
+                current_context_tokens,
+                cumulative_total_tokens,
+                model_context_window,
+                effective_context_window: model_context_window,
+                reserve_tokens: 0,
+                source: ContextUsageSource::Provider,
+            },
+        },
+    }
+}
+
+fn token_breakdown(input_tokens: u64, output_tokens: u64) -> TokenUsageBreakdown {
+    TokenUsageBreakdown {
+        total_tokens: saturating_i64(input_tokens.saturating_add(output_tokens)),
+        input_tokens: saturating_i64(input_tokens),
+        cached_input_tokens: 0,
+        output_tokens: saturating_i64(output_tokens),
+        reasoning_output_tokens: 0,
+    }
+}
+
+fn saturating_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]

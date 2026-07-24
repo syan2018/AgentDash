@@ -24,6 +24,7 @@ const DEFAULT_RETAINED_CONVERSATION_MESSAGES: usize = 8;
 pub struct BridgeDashProvider {
     bridge: Arc<dyn LlmBridge>,
     thinking_level: Option<ThinkingLevel>,
+    context_window: u64,
 }
 
 pub struct BridgeDashConversationNamer {
@@ -65,10 +66,15 @@ impl DashConversationNamer for BridgeDashConversationNamer {
 }
 
 impl BridgeDashProvider {
-    pub fn new(bridge: Arc<dyn LlmBridge>, thinking_level: Option<ThinkingLevel>) -> Self {
+    pub fn new(
+        bridge: Arc<dyn LlmBridge>,
+        thinking_level: Option<ThinkingLevel>,
+        context_window: u64,
+    ) -> Self {
         Self {
             bridge,
             thinking_level,
+            context_window,
         }
     }
 }
@@ -80,8 +86,9 @@ impl DashProvider for BridgeDashProvider {
         request: DashProviderRequest,
     ) -> Result<DashProviderEventStream, DashCoreError> {
         let request = bridge_request(request, self.thinking_level)?;
+        let context_window = self.context_window;
         let stream = self.bridge.stream_complete(request).await;
-        Ok(Box::pin(stream.flat_map(|chunk| {
+        Ok(Box::pin(stream.flat_map(move |chunk| {
             let events = match chunk {
                 StreamChunk::TextDelta(delta) => {
                     vec![Ok(DashProviderEvent::TextDelta { delta })]
@@ -123,6 +130,7 @@ impl DashProvider for BridgeDashProvider {
                         finish_reason,
                         input_tokens,
                         output_tokens,
+                        context_window,
                     }));
                     events
                 }
@@ -233,9 +241,14 @@ impl DashCompactor for BridgeDashCompactor {
 pub fn bridge_dash_execution_dependencies(
     bridge: Arc<dyn LlmBridge>,
     thinking_level: Option<ThinkingLevel>,
+    context_window: u64,
 ) -> DashExecutionDependencies {
     DashExecutionDependencies {
-        provider: Arc::new(BridgeDashProvider::new(bridge.clone(), thinking_level)),
+        provider: Arc::new(BridgeDashProvider::new(
+            bridge.clone(),
+            thinking_level,
+            context_window,
+        )),
         tools: Arc::new(UnboundDashToolCallbacks),
         callbacks: Arc::new(UnboundDashExecutionCallbacks),
         history_callbacks: Arc::new(NoopDashHistoryCallbacks),
@@ -637,7 +650,7 @@ mod tests {
 
     #[tokio::test]
     async fn finalized_bridge_response_is_the_complete_tool_call_fact() {
-        let provider = BridgeDashProvider::new(Arc::new(DeltaOnlyToolBridge), None);
+        let provider = BridgeDashProvider::new(Arc::new(DeltaOnlyToolBridge), None, 200_000);
         let events = provider
             .stream(DashProviderRequest {
                 system_prompt: String::new(),

@@ -162,6 +162,13 @@ pub enum HistoryPayload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         details: Option<serde_json::Value>,
     },
+    ProviderUsageConfirmed {
+        turn_id: AgentTurnId,
+        round: u32,
+        input_tokens: u64,
+        output_tokens: u64,
+        context_window: u64,
+    },
     InteractionRequested {
         turn_id: AgentTurnId,
         item_id: Option<AgentItemId>,
@@ -171,6 +178,9 @@ pub enum HistoryPayload {
     InteractionResolved {
         interaction_id: InteractionId,
         response: String,
+    },
+    InteractionCancelled {
+        interaction_id: InteractionId,
     },
     CompactionStarted {
         compaction_id: CompactionId,
@@ -489,6 +499,7 @@ pub struct InteractionState {
     pub item_id: Option<AgentItemId>,
     pub prompt: String,
     pub response: Option<String>,
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -499,6 +510,22 @@ pub struct CompactionState {
     pub summary: Option<String>,
     pub retained_from: Option<HistoryEntryId>,
     pub source_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderUsageState {
+    pub turn_id: AgentTurnId,
+    pub round: u32,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub context_window: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TokenUsageState {
+    pub last: Option<ProviderUsageState>,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -518,6 +545,7 @@ pub struct AgentHistoryState {
     pub items: BTreeMap<AgentItemId, ItemState>,
     pub interactions: BTreeMap<InteractionId, InteractionState>,
     pub compactions: BTreeMap<CompactionId, CompactionState>,
+    pub token_usage: TokenUsageState,
 }
 
 pub struct AgentHistoryReplayer {
@@ -545,6 +573,7 @@ impl AgentHistoryReplayer {
                 items: BTreeMap::new(),
                 interactions: BTreeMap::new(),
                 compactions: BTreeMap::new(),
+                token_usage: TokenUsageState::default(),
             },
             ids: BTreeSet::new(),
             digest: Sha256::new(),
@@ -779,6 +808,30 @@ fn apply_payload(
                 }),
             };
         }
+        HistoryPayload::ProviderUsageConfirmed {
+            turn_id,
+            round,
+            input_tokens,
+            output_tokens,
+            context_window,
+        } => {
+            ensure_active_turn(state, turn_id)?;
+            state.token_usage.total_input_tokens = state
+                .token_usage
+                .total_input_tokens
+                .saturating_add(*input_tokens);
+            state.token_usage.total_output_tokens = state
+                .token_usage
+                .total_output_tokens
+                .saturating_add(*output_tokens);
+            state.token_usage.last = Some(ProviderUsageState {
+                turn_id: turn_id.clone(),
+                round: *round,
+                input_tokens: *input_tokens,
+                output_tokens: *output_tokens,
+                context_window: *context_window,
+            });
+        }
         HistoryPayload::InteractionRequested {
             turn_id,
             item_id,
@@ -804,6 +857,7 @@ fn apply_payload(
                         item_id: item_id.clone(),
                         prompt: prompt.clone(),
                         response: None,
+                        cancelled: false,
                     },
                 )
                 .is_some()
@@ -819,12 +873,24 @@ fn apply_payload(
                 .interactions
                 .get_mut(interaction_id)
                 .ok_or_else(|| HistoryError::UnknownInteraction(interaction_id.clone()))?;
-            if interaction.response.is_some() {
+            if interaction.response.is_some() || interaction.cancelled {
                 return Err(HistoryError::InteractionAlreadyResolved(
                     interaction_id.clone(),
                 ));
             }
             interaction.response = Some(response.clone());
+        }
+        HistoryPayload::InteractionCancelled { interaction_id } => {
+            let interaction = state
+                .interactions
+                .get_mut(interaction_id)
+                .ok_or_else(|| HistoryError::UnknownInteraction(interaction_id.clone()))?;
+            if interaction.response.is_some() || interaction.cancelled {
+                return Err(HistoryError::InteractionAlreadyResolved(
+                    interaction_id.clone(),
+                ));
+            }
+            interaction.cancelled = true;
         }
         HistoryPayload::CompactionStarted {
             compaction_id,

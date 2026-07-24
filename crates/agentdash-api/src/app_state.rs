@@ -24,9 +24,7 @@ use agentdash_application::companion::{
     ApplicationCompanionContinuationEffects, ApplicationCompanionRuntimeToolService,
     ApplicationWorkflowScriptPreflightAdapter, CompanionRuntimeToolServiceDeps,
 };
-use agentdash_application::context::{
-    InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
-};
+use agentdash_application::context::VfsDiscoveryRegistry;
 use agentdash_application::frame_construction::{
     AgentRunProjectOwnerFrameConstructionAdapter, AgentRunProjectOwnerFrameConstructionDeps,
 };
@@ -216,7 +214,6 @@ pub struct ServiceSet {
     pub vfs_registry: VfsDiscoveryRegistry,
     pub mount_provider_registry: Arc<MountProviderRegistry>,
     pub auth_session_service: Arc<AuthSessionService>,
-    pub audit_bus: SharedContextAuditBus,
     pub extension_gateway: Arc<ExtensionGateway>,
     pub extension_runtime_channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
@@ -268,7 +265,6 @@ impl AppState {
         let auth_session_service = repository_bootstrap.auth_session_service;
         let extension_package_artifact_storage =
             repository_bootstrap.extension_package_artifact_storage;
-        let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
         let llm_provider_secret: Arc<dyn LlmSecretCodec> = Arc::new(
             agentdash_infrastructure::LlmProviderSecretCipher::from_env_or_create_default()?,
         );
@@ -519,7 +515,6 @@ impl AppState {
                 availability: backend_registry.clone(),
                 platform_config: platform_config.clone(),
                 lifecycle_surface_projection,
-                audit_bus: audit_bus.clone(),
                 hook_plan_compiler: hook_provider.clone(),
                 extra_skill_dirs: integration_registration.extra_skill_dirs.clone(),
                 skill_discovery_providers: integration_registration
@@ -795,7 +790,6 @@ impl AppState {
                 vfs_registry,
                 mount_provider_registry,
                 auth_session_service,
-                audit_bus,
                 extension_gateway,
                 extension_runtime_channel_invoker,
                 extension_package_artifact_storage,

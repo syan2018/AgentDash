@@ -47,7 +47,7 @@ use agentdash_integration_native_agent::{
 };
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Barrier, Notify, RwLock};
 
 struct RecordingDashRepository {
     source: String,
@@ -109,6 +109,7 @@ struct RecordingCompleteStore {
     durable: Arc<RwLock<RecordingCompleteDurableState>>,
     lose_next_commit_receipt: AtomicBool,
     fail_next_terminal_commit: AtomicBool,
+    accepted_commit_barrier: Mutex<Option<Arc<Barrier>>>,
 }
 
 impl RecordingCompleteStore {
@@ -118,6 +119,10 @@ impl RecordingCompleteStore {
 
     fn fail_next_terminal_commit(&self) {
         self.fail_next_terminal_commit.store(true, Ordering::SeqCst);
+    }
+
+    fn synchronize_next_accepted_commits(&self) {
+        *self.accepted_commit_barrier.lock().unwrap() = Some(Arc::new(Barrier::new(2)));
     }
 }
 
@@ -199,6 +204,15 @@ impl DashCompleteAgentStore for RecordingCompleteStore {
     }
 
     async fn commit(&self, commit: DashCompleteAtomicCommit) -> Result<(), AgentServiceError> {
+        if matches!(
+            commit.replacement_effect.inspection.state,
+            AgentEffectInspectionState::Accepted { .. }
+        ) {
+            let barrier = self.accepted_commit_barrier.lock().unwrap().clone();
+            if let Some(barrier) = barrier {
+                barrier.wait().await;
+            }
+        }
         if matches!(
             commit.replacement_effect.inspection.state,
             AgentEffectInspectionState::Applied { .. }
@@ -311,6 +325,7 @@ impl DashProvider for RecordingPromptProvider {
                 finish_reason: DashFinishReason::Stop,
                 input_tokens: 1,
                 output_tokens: 2,
+                context_window: 200_000,
             }),
         ])))
     }
@@ -345,6 +360,7 @@ impl DashProvider for FixtureProvider {
                 finish_reason: DashFinishReason::Stop,
                 input_tokens: 1,
                 output_tokens: 2,
+                context_window: 200_000,
             }),
         ])))
     }
@@ -422,6 +438,7 @@ impl DashProvider for HookRoundProvider {
                     finish_reason: DashFinishReason::ToolCalls,
                     input_tokens: 1,
                     output_tokens: 1,
+                    context_window: 200_000,
                 }),
             ])))
         } else {
@@ -433,6 +450,7 @@ impl DashProvider for HookRoundProvider {
                     finish_reason: DashFinishReason::Stop,
                     input_tokens: 1,
                     output_tokens: 1,
+                    context_window: 200_000,
                 }),
             ])))
         }
@@ -463,6 +481,7 @@ impl DashProvider for SurfaceGenerationProvider {
                     finish_reason: DashFinishReason::ToolCalls,
                     input_tokens: 1,
                     output_tokens: 1,
+                    context_window: 200_000,
                 }),
             ])))
         } else {
@@ -470,6 +489,7 @@ impl DashProvider for SurfaceGenerationProvider {
                 finish_reason: DashFinishReason::Stop,
                 input_tokens: 1,
                 output_tokens: 1,
+                context_window: 200_000,
             })])))
         }
     }
@@ -650,8 +670,9 @@ async fn successful_turn_commits_agent_owned_thread_name_and_projects_one_canoni
         })
         .await
         .unwrap();
-    service
-        .execute(AgentCommandEnvelope {
+    execute_and_wait(
+        &service,
+        AgentCommandEnvelope {
             meta: meta("name-input", "effect-name-input"),
             source: source.clone(),
             command: AgentCommand::SubmitInput {
@@ -661,9 +682,9 @@ async fn successful_turn_commits_agent_owned_thread_name_and_projects_one_canoni
                     }],
                 },
             },
-        })
-        .await
-        .unwrap();
+        },
+    )
+    .await;
 
     let snapshot = service
         .read(AgentReadQuery {
@@ -709,6 +730,24 @@ async fn successful_turn_commits_agent_owned_thread_name_and_projects_one_canoni
 
 fn service_with_provider(provider: Arc<dyn DashProvider>) -> DashAgentCompleteService {
     service_with(provider, Arc::new(FixtureCompactor))
+}
+
+fn service_with_provider_and_store(
+    provider: Arc<dyn DashProvider>,
+    store: Arc<dyn DashCompleteAgentStore>,
+) -> DashAgentCompleteService {
+    DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider,
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: Arc::new(FixtureCompactor),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
+        },
+        Arc::new(FixtureHostCallbacks),
+        store,
+    )
 }
 
 fn service_with(
@@ -767,6 +806,7 @@ impl DashProvider for SteerProvider {
                 finish_reason: DashFinishReason::Stop,
                 input_tokens: 1,
                 output_tokens: 1,
+                context_window: 200_000,
             })])),
         ))
     }
@@ -804,6 +844,18 @@ impl DashProvider for InteractionProvider {
             interaction_id: "interaction-1".into(),
             prompt: "approve?".into(),
         })
+    }
+}
+
+struct PanickingProvider;
+
+#[async_trait]
+impl DashProvider for PanickingProvider {
+    async fn stream(
+        &self,
+        _: DashProviderRequest,
+    ) -> Result<DashProviderEventStream, DashCoreError> {
+        panic!("provider worker panic");
     }
 }
 
@@ -870,6 +922,7 @@ impl DashProvider for OverflowProvider {
                 finish_reason: DashFinishReason::Stop,
                 input_tokens: 1,
                 output_tokens: 1,
+                context_window: 200_000,
             }),
         ])))
     }
@@ -1010,8 +1063,9 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
             ))
     );
 
-    let submit = service
-        .execute(AgentCommandEnvelope {
+    let submit = execute_and_wait(
+        &service,
+        AgentCommandEnvelope {
             meta: meta("input-1", "effect-input-1"),
             source: parent.clone(),
             command: AgentCommand::SubmitInput {
@@ -1021,16 +1075,16 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
                     }],
                 },
             },
-        })
-        .await
-        .unwrap();
+        },
+    )
+    .await;
     assert_eq!(
         submit.state,
         AgentReceiptState::Terminal {
             outcome: AgentTerminalOutcome::Succeeded
         }
     );
-    assert_eq!(submit.snapshot_revision, Some(AgentSnapshotRevision(7)));
+    assert_eq!(submit.snapshot_revision, Some(AgentSnapshotRevision(8)));
     assert!(matches!(
         service
             .inspect(AgentEffectIdentity::new("effect-input-1").unwrap())
@@ -1061,7 +1115,7 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
         })
         .await
         .unwrap();
-    assert_eq!(changes.changes.len(), 9);
+    assert_eq!(changes.changes.len(), 10);
     assert_eq!(changes.changes[0].cursor.as_str(), "1:0");
     assert_eq!(changes.changes[1].cursor.as_str(), "2:0");
     let parent_snapshot = service
@@ -1143,14 +1197,15 @@ async fn fork_profile_only_advertises_recoverable_exact_cutoffs() {
     let store = Arc::new(RecordingCompleteStore::default());
     let service = service_with_store(store.clone());
     let parent = create_source(&service, "dash-cutoff-parent").await;
-    service
-        .execute(submit_envelope(
+    execute_and_wait(
+        &service,
+        submit_envelope(
             parent.clone(),
             "cutoff-parent-input",
             "cutoff-parent-effect",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await;
     let parent_snapshot = service
         .read(AgentReadQuery {
             source: parent.clone(),
@@ -1247,15 +1302,12 @@ async fn fork_profile_only_advertises_recoverable_exact_cutoffs() {
     );
     assert!(child_snapshot.active_turn_id().is_none());
     assert!(matches!(
-        restarted
-            .execute(submit_envelope(
-                child.clone(),
-                "cutoff-child-input",
-                "cutoff-child-effect",
-            ))
-            .await
-            .unwrap()
-            .state,
+        execute_and_wait(
+            &restarted,
+            submit_envelope(child.clone(), "cutoff-child-input", "cutoff-child-effect",),
+        )
+        .await
+        .state,
         AgentReceiptState::Terminal {
             outcome: AgentTerminalOutcome::Succeeded
         }
@@ -1677,8 +1729,9 @@ async fn dash_intrinsic_prompt_is_one_accepted_fact_for_provider_and_context_fra
         "the concrete Agent materialization digest must not reuse the Product binding digest"
     );
 
-    service
-        .execute(AgentCommandEnvelope {
+    execute_and_wait(
+        &service,
+        AgentCommandEnvelope {
             meta: meta(
                 "execute-intrinsic-prompt",
                 "effect-execute-intrinsic-prompt",
@@ -1691,9 +1744,9 @@ async fn dash_intrinsic_prompt_is_one_accepted_fact_for_provider_and_context_fra
                     }],
                 },
             },
-        })
-        .await
-        .unwrap();
+        },
+    )
+    .await;
 
     let provider_system_prompt = {
         let requests = provider.requests.lock().unwrap();
@@ -2239,14 +2292,11 @@ async fn lost_surface_receipts_reconcile_live_callbacks_on_the_same_service() {
         .apply_surface(apply(1, 1, "live-apply-1"))
         .await
         .unwrap();
-    service
-        .execute(submit_envelope(
-            source.clone(),
-            "generation one",
-            "live-execute-1",
-        ))
-        .await
-        .unwrap();
+    execute_and_wait(
+        &service,
+        submit_envelope(source.clone(), "generation one", "live-execute-1"),
+    )
+    .await;
     assert_eq!(
         host.generations.lock().unwrap().as_slice(),
         &[AgentBindingGeneration(1)]
@@ -2270,14 +2320,11 @@ async fn lost_surface_receipts_reconcile_live_callbacks_on_the_same_service() {
         service.apply_surface(conflicting).await.unwrap_err().code,
         AgentServiceErrorCode::Conflict
     );
-    service
-        .execute(submit_envelope(
-            source.clone(),
-            "generation two",
-            "live-execute-2",
-        ))
-        .await
-        .unwrap();
+    execute_and_wait(
+        &service,
+        submit_envelope(source.clone(), "generation two", "live-execute-2"),
+    )
+    .await;
     assert_eq!(
         host.generations.lock().unwrap().as_slice(),
         &[AgentBindingGeneration(1), AgentBindingGeneration(2),]
@@ -2296,14 +2343,11 @@ async fn lost_surface_receipts_reconcile_live_callbacks_on_the_same_service() {
         store.clone(),
     );
     assert_eq!(reopened.apply_surface(apply_two).await.unwrap(), replayed);
-    reopened
-        .execute(submit_envelope(
-            source.clone(),
-            "generation two reopened",
-            "live-execute-3",
-        ))
-        .await
-        .unwrap();
+    execute_and_wait(
+        &reopened,
+        submit_envelope(source.clone(), "generation two reopened", "live-execute-3"),
+    )
+    .await;
     assert_eq!(
         host.generations.lock().unwrap().as_slice(),
         &[
@@ -2341,14 +2385,11 @@ async fn lost_surface_receipts_reconcile_live_callbacks_on_the_same_service() {
             .code,
         AgentServiceErrorCode::Conflict
     );
-    service
-        .execute(submit_envelope(
-            source.clone(),
-            "after revoke",
-            "live-execute-after-revoke",
-        ))
-        .await
-        .unwrap();
+    execute_and_wait(
+        &service,
+        submit_envelope(source.clone(), "after revoke", "live-execute-after-revoke"),
+    )
+    .await;
     assert_eq!(
         host.generations.lock().unwrap().as_slice(),
         &[
@@ -2521,7 +2562,7 @@ async fn exact_hooks_run_once_rewrite_and_do_not_retrigger_on_effect_replay() {
         .await
         .unwrap();
     let request = submit_envelope(source, "hook-input", "hook-effect-input");
-    let first = service.execute(request.clone()).await.unwrap();
+    let first = execute_and_wait(&service, request.clone()).await;
     let replay = service.execute(request).await.unwrap();
     assert_eq!(first, replay);
     assert_eq!(host.before.load(Ordering::SeqCst), 1);
@@ -2571,6 +2612,22 @@ async fn exact_hooks_run_once_rewrite_and_do_not_retrigger_on_effect_replay() {
                 ) if text == "hooked answer"
             )
     )));
+    let usage = snapshot
+        .conversation_history
+        .iter()
+        .filter_map(|record| match &record.presentation.envelope.event {
+            BackboneEvent::TokenUsageUpdated(notification) => Some(&notification.token_usage),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(usage.len(), 2);
+    assert_eq!(usage[0].last.total_tokens, 2);
+    assert_eq!(usage[0].total.total_tokens, 2);
+    assert_eq!(usage[1].last.total_tokens, 2);
+    assert_eq!(usage[1].total.total_tokens, 4);
+    assert_eq!(usage[1].context.current_context_tokens, 2);
+    assert_eq!(usage[1].context.cumulative_total_tokens, 4);
+    assert_eq!(usage[1].model_context_window, Some(200_000));
 }
 
 #[tokio::test]
@@ -2587,14 +2644,11 @@ async fn shared_durable_store_reopens_source_fork_tail_initial_context_and_effec
         })
         .await
         .unwrap();
-    let submitted = first
-        .execute(submit_envelope(
-            parent.clone(),
-            "durable-input",
-            "durable-effect-input",
-        ))
-        .await
-        .unwrap();
+    let submitted = execute_and_wait(
+        &first,
+        submit_envelope(parent.clone(), "durable-input", "durable-effect-input"),
+    )
+    .await;
 
     let second = service_with_store(store.clone());
     let reopened = second
@@ -2663,14 +2717,11 @@ async fn shared_durable_store_reopens_source_fork_tail_initial_context_and_effec
         })
         .await
         .unwrap();
-    third
-        .execute(submit_envelope(
-            child.clone(),
-            "durable-child-input",
-            "durable-child-effect",
-        ))
-        .await
-        .unwrap();
+    execute_and_wait(
+        &third,
+        submit_envelope(child.clone(), "durable-child-input", "durable-child-effect"),
+    )
+    .await;
     let parent_after = third
         .read(AgentReadQuery {
             source: parent,
@@ -2995,20 +3046,12 @@ async fn execute_reservation_survives_lost_response_and_reconciles_dash_once_aft
 
     store.lose_next_commit_receipt();
     assert_eq!(
-        service.execute(execute.clone()).await.unwrap_err().code,
-        AgentServiceErrorCode::Unavailable
+        service.execute(execute.clone()).await.unwrap().state,
+        AgentReceiptState::Accepted
     );
-    assert!(matches!(
-        service
-            .inspect(execute.meta.effect_id.clone())
-            .await
-            .unwrap()
-            .state,
-        AgentEffectInspectionState::Accepted { .. }
-    ));
 
     let reopened = service_with_store(store.clone());
-    let applied = reopened.execute(execute.clone()).await.unwrap();
+    let applied = execute_and_wait(&reopened, execute.clone()).await;
     assert!(matches!(
         applied.state,
         AgentReceiptState::Terminal {
@@ -3047,20 +3090,35 @@ async fn execute_reservation_survives_lost_response_and_reconciles_dash_once_aft
         reopened
             .execute(crash_gap_execute.clone())
             .await
-            .unwrap_err()
-            .code,
-        AgentServiceErrorCode::Unavailable
+            .unwrap()
+            .state,
+        AgentReceiptState::Accepted
     );
+    loop {
+        let snapshot = reopened
+            .read(AgentReadQuery {
+                source: source.clone(),
+                at_revision: None,
+            })
+            .await
+            .unwrap();
+        if snapshot.active_turn_id().is_none() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
     assert!(matches!(
         reopened
-            .inspect(crash_gap_execute.meta.effect_id.clone())
+            .inspect(AgentEffectIdentity::new("atomic-crash-gap-effect").unwrap())
             .await
             .unwrap()
             .state,
-        AgentEffectInspectionState::Accepted { .. }
+        AgentEffectInspectionState::Applied {
+            outcome: AgentAppliedEffectOutcome::Command { .. }
+        }
     ));
     let recovered = service_with_store(store);
-    let recovered_receipt = recovered.execute(crash_gap_execute.clone()).await.unwrap();
+    let recovered_receipt = execute_and_wait(&recovered, crash_gap_execute.clone()).await;
     assert_eq!(
         recovered.execute(crash_gap_execute).await.unwrap(),
         recovered_receipt
@@ -3206,22 +3264,60 @@ fn submit_envelope(
     }
 }
 
+async fn execute_and_wait(
+    service: &DashAgentCompleteService,
+    request: AgentCommandEnvelope,
+) -> agentdash_agent_service_api::AgentCommandReceipt {
+    for _ in 0..1_000 {
+        let receipt = service.execute(request.clone()).await.unwrap();
+        if matches!(receipt.state, AgentReceiptState::Terminal { .. }) {
+            return receipt;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("Complete Agent command did not reach a terminal receipt");
+}
+
+#[tokio::test]
+async fn concurrent_duplicate_submit_returns_the_same_accepted_receipt() {
+    let store = Arc::new(RecordingCompleteStore::default());
+    store.synchronize_next_accepted_commits();
+    let provider_started = Arc::new(Notify::new());
+    let service = Arc::new(service_with_provider_and_store(
+        Arc::new(BlockingProvider {
+            started: provider_started.clone(),
+        }),
+        store,
+    ));
+    let source = create_source(&service, "dash-concurrent-replay").await;
+    let request = submit_envelope(
+        source,
+        "concurrent-replay-input",
+        "concurrent-replay-effect",
+    );
+
+    let first_service = service.clone();
+    let first_request = request.clone();
+    let first = tokio::spawn(async move { first_service.execute(first_request).await });
+    provider_started.notified().await;
+    let second_service = service.clone();
+    let second = tokio::spawn(async move { second_service.execute(request).await });
+
+    let first = first.await.unwrap().unwrap();
+    let second = second.await.unwrap().unwrap();
+    assert_eq!(first, second);
+    assert_eq!(first.state, AgentReceiptState::Accepted);
+}
+
 #[tokio::test]
 async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persisting_a_tail() {
     let service = service();
     let source = create_source(&service, "dash-live-events").await;
     let mut live_events = service.live_events(source.clone()).await.unwrap();
 
-    let receipt = service
-        .execute(submit_envelope(source.clone(), "live-input", "live-effect"))
-        .await
-        .unwrap();
-    assert_eq!(
-        receipt.state,
-        AgentReceiptState::Terminal {
-            outcome: AgentTerminalOutcome::Succeeded
-        }
-    );
+    let request = submit_envelope(source.clone(), "live-input", "live-effect");
+    let receipt = service.execute(request.clone()).await.unwrap();
+    assert_eq!(receipt.state, AgentReceiptState::Accepted);
 
     let accepted_input = tokio::time::timeout(Duration::from_secs(1), live_events.next())
         .await
@@ -3269,6 +3365,13 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
     };
     assert_eq!(text_delta, "fixture answer");
     assert_eq!(live_item_id, "turn:live-input:provider-round:1:assistant");
+    let receipt = execute_and_wait(&service, request).await;
+    assert_eq!(
+        receipt.state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Succeeded
+        }
+    );
 
     let snapshot = service
         .read(AgentReadQuery {
@@ -3399,14 +3502,11 @@ async fn provider_failed_and_lost_are_terminal_and_inspectable() {
         let service = service_with_provider(Arc::new(ErrorProvider { error }));
         let source = create_source(&service, &format!("dash-{name}")).await;
         let effect = format!("effect-{name}");
-        let receipt = service
-            .execute(submit_envelope(
-                source.clone(),
-                &format!("input-{name}"),
-                &effect,
-            ))
-            .await
-            .unwrap();
+        let receipt = execute_and_wait(
+            &service,
+            submit_envelope(source.clone(), &format!("input-{name}"), &effect),
+        )
+        .await;
         assert_eq!(
             receipt.state,
             AgentReceiptState::Terminal { outcome: expected }
@@ -3456,14 +3556,11 @@ async fn resume_preserves_state_old_tail_digest_and_effect_owner_is_exact() {
     let service = service();
     let first = create_source(&service, "dash-resume-first").await;
     let second = create_source(&service, "dash-resume-second").await;
-    service
-        .execute(submit_envelope(
-            first.clone(),
-            "input-first",
-            "effect-shared",
-        ))
-        .await
-        .unwrap();
+    execute_and_wait(
+        &service,
+        submit_envelope(first.clone(), "input-first", "effect-shared"),
+    )
+    .await;
     let before = service
         .read(AgentReadQuery {
             source: first.clone(),
@@ -3488,14 +3585,11 @@ async fn resume_preserves_state_old_tail_digest_and_effect_owner_is_exact() {
         })
         .await
         .unwrap();
-    service
-        .execute(submit_envelope(
-            first.clone(),
-            "input-second",
-            "effect-second",
-        ))
-        .await
-        .unwrap();
+    execute_and_wait(
+        &service,
+        submit_envelope(first.clone(), "input-second", "effect-second"),
+    )
+    .await;
     let expanded = service
         .changes(AgentChangesQuery {
             source: first.clone(),
@@ -3540,17 +3634,9 @@ async fn steer_and_interrupt_orchestrate_the_active_turn() {
         release,
     })));
     let source = create_source(&service, "dash-steer").await;
-    let submit_service = service.clone();
-    let submit_source = source.clone();
-    let submit = tokio::spawn(async move {
-        submit_service
-            .execute(submit_envelope(
-                submit_source,
-                "input-steer",
-                "effect-input-steer",
-            ))
-            .await
-    });
+    let submit_request = submit_envelope(source.clone(), "input-steer", "effect-input-steer");
+    let submit = service.execute(submit_request.clone()).await.unwrap();
+    assert_eq!(submit.state, AgentReceiptState::Accepted);
     started.notified().await;
     let steer = service
         .execute(AgentCommandEnvelope {
@@ -3575,7 +3661,7 @@ async fn steer_and_interrupt_orchestrate_the_active_turn() {
         }
     ));
     assert!(matches!(
-        submit.await.unwrap().unwrap().state,
+        execute_and_wait(&service, submit_request).await.state,
         AgentReceiptState::Terminal {
             outcome: AgentTerminalOutcome::Succeeded
         }
@@ -3586,17 +3672,10 @@ async fn steer_and_interrupt_orchestrate_the_active_turn() {
         started: started.clone(),
     })));
     let source = create_source(&service, "dash-interrupt").await;
-    let submit_service = service.clone();
-    let submit_source = source.clone();
-    let submit = tokio::spawn(async move {
-        submit_service
-            .execute(submit_envelope(
-                submit_source,
-                "input-interrupt",
-                "effect-input-interrupt",
-            ))
-            .await
-    });
+    let submit_request =
+        submit_envelope(source.clone(), "input-interrupt", "effect-input-interrupt");
+    let submit = service.execute(submit_request.clone()).await.unwrap();
+    assert_eq!(submit.state, AgentReceiptState::Accepted);
     started.notified().await;
     service
         .execute(AgentCommandEnvelope {
@@ -3612,7 +3691,7 @@ async fn steer_and_interrupt_orchestrate_the_active_turn() {
         .await
         .unwrap();
     assert!(matches!(
-        submit.await.unwrap().unwrap().state,
+        execute_and_wait(&service, submit_request).await.state,
         AgentReceiptState::Terminal {
             outcome: AgentTerminalOutcome::Interrupted
         }
@@ -3634,22 +3713,26 @@ async fn steer_and_interrupt_orchestrate_the_active_turn() {
 async fn resolve_interaction_completes_the_suspended_turn() {
     let service = service_with_provider(Arc::new(InteractionProvider));
     let source = create_source(&service, "dash-interaction").await;
-    let submit = service
-        .execute(submit_envelope(
-            source.clone(),
-            "input-interaction",
-            "effect-input-interaction",
-        ))
-        .await
-        .unwrap();
+    let submit_request = submit_envelope(
+        source.clone(),
+        "input-interaction",
+        "effect-input-interaction",
+    );
+    let submit = service.execute(submit_request.clone()).await.unwrap();
     assert_eq!(submit.state, AgentReceiptState::Accepted);
-    let snapshot = service
-        .read(AgentReadQuery {
-            source: source.clone(),
-            at_revision: None,
-        })
-        .await
-        .unwrap();
+    let snapshot = loop {
+        let snapshot = service
+            .read(AgentReadQuery {
+                source: source.clone(),
+                at_revision: None,
+            })
+            .await
+            .unwrap();
+        if !snapshot.interactions.is_empty() {
+            break snapshot;
+        }
+        tokio::task::yield_now().await;
+    };
     assert_eq!(snapshot.interactions.len(), 1);
     service
         .execute(AgentCommandEnvelope {
@@ -3662,6 +3745,13 @@ async fn resolve_interaction_completes_the_suspended_turn() {
         })
         .await
         .unwrap();
+    let terminal = execute_and_wait(&service, submit_request).await;
+    assert_eq!(
+        terminal.state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Succeeded
+        }
+    );
     let resolved = service
         .read(AgentReadQuery {
             source,
@@ -3678,19 +3768,128 @@ async fn resolve_interaction_completes_the_suspended_turn() {
 }
 
 #[tokio::test]
+async fn interrupt_cancels_a_suspended_interaction_and_terminalizes_the_original_effect() {
+    let service = service_with_provider(Arc::new(InteractionProvider));
+    let source = create_source(&service, "dash-interaction-interrupt").await;
+    let submit_request = submit_envelope(
+        source.clone(),
+        "input-interaction-interrupt",
+        "effect-input-interaction-interrupt",
+    );
+    assert_eq!(
+        service.execute(submit_request.clone()).await.unwrap().state,
+        AgentReceiptState::Accepted
+    );
+    loop {
+        let snapshot = service
+            .read(AgentReadQuery {
+                source: source.clone(),
+                at_revision: None,
+            })
+            .await
+            .unwrap();
+        if !snapshot.interactions.is_empty() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+
+    let interrupt = service
+        .execute(AgentCommandEnvelope {
+            meta: meta("interrupt-interaction", "effect-interrupt-interaction"),
+            source: source.clone(),
+            command: AgentCommand::Interrupt {
+                expected_turn_id: agentdash_agent_service_api::AgentTurnId::new(
+                    "turn:input-interaction-interrupt",
+                )
+                .unwrap(),
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        interrupt.state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Succeeded
+        }
+    );
+    assert_eq!(
+        execute_and_wait(&service, submit_request).await.state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Interrupted
+        }
+    );
+    let snapshot = service
+        .read(AgentReadQuery {
+            source,
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert!(snapshot.active_turn_id().is_none());
+    assert_eq!(
+        snapshot.interactions[0].status,
+        agentdash_agent_service_api::AgentInteractionStatus::Cancelled
+    );
+    assert!(matches!(
+        snapshot.interactions[0].resolution,
+        Some(agentdash_agent_service_api::AgentInteractionResolution::Cancelled { .. })
+    ));
+}
+
+#[tokio::test]
+async fn background_worker_panic_becomes_a_typed_failed_terminal() {
+    let service = service_with_provider(Arc::new(PanickingProvider));
+    let source = create_source(&service, "dash-background-panic").await;
+    let request = submit_envelope(
+        source.clone(),
+        "input-background-panic",
+        "effect-background-panic",
+    );
+    assert_eq!(
+        service.execute(request.clone()).await.unwrap().state,
+        AgentReceiptState::Accepted
+    );
+    assert_eq!(
+        execute_and_wait(&service, request).await.state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Failed
+        }
+    );
+    let snapshot = service
+        .read(AgentReadQuery {
+            source,
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    let failure = snapshot
+        .conversation()
+        .completed_turn(None)
+        .expect("failed background turn")
+        .error
+        .as_ref()
+        .expect("background panic must retain typed terminal evidence");
+    assert!(
+        failure
+            .additional_details
+            .as_ref()
+            .and_then(Option::as_ref)
+            .is_some_and(|details| details.contains("background_execution_panicked"))
+    );
+}
+
+#[tokio::test]
 async fn automatic_overflow_runs_a_b_c_through_the_dash_worker() {
     let service = service_with_provider(Arc::new(OverflowProvider {
         calls: AtomicUsize::new(0),
     }));
     let source = create_source(&service, "dash-auto-compaction").await;
-    let receipt = service
-        .execute(submit_envelope(
-            source.clone(),
-            "input-auto",
-            "effect-input-auto",
-        ))
-        .await
-        .unwrap();
+    let receipt = execute_and_wait(
+        &service,
+        submit_envelope(source.clone(), "input-auto", "effect-input-auto"),
+    )
+    .await;
     assert_eq!(
         receipt.state,
         AgentReceiptState::Terminal {
@@ -3732,14 +3931,11 @@ async fn automatic_compaction_b_failure_and_lost_settle_original_and_block_c() {
         );
         let source = create_source(&service, &format!("dash-auto-b-{name}")).await;
         let effect = format!("effect-auto-b-{name}");
-        let receipt = service
-            .execute(submit_envelope(
-                source.clone(),
-                &format!("input-auto-b-{name}"),
-                &effect,
-            ))
-            .await
-            .unwrap();
+        let receipt = execute_and_wait(
+            &service,
+            submit_envelope(source.clone(), &format!("input-auto-b-{name}"), &effect),
+        )
+        .await;
         assert_eq!(
             receipt.state,
             AgentReceiptState::Terminal { outcome: expected }
@@ -3795,14 +3991,11 @@ async fn automatic_continuation_c_failure_and_lost_settle_original_and_clear_act
         }));
         let source = create_source(&service, &format!("dash-auto-c-{name}")).await;
         let effect = format!("effect-auto-c-{name}");
-        let receipt = service
-            .execute(submit_envelope(
-                source.clone(),
-                &format!("input-auto-c-{name}"),
-                &effect,
-            ))
-            .await
-            .unwrap();
+        let receipt = execute_and_wait(
+            &service,
+            submit_envelope(source.clone(), &format!("input-auto-c-{name}"), &effect),
+        )
+        .await;
         assert_eq!(
             receipt.state,
             AgentReceiptState::Terminal { outcome: expected }

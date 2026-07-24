@@ -14,6 +14,7 @@ vi.mock("../api/client", () => ({
 
 import {
   compactAgentRunContext,
+  fetchAgentRunRuntimeContextProjection,
   fetchManagedRuntimeSnapshot,
   respondAgentRunInteraction,
 } from "./agentRunRuntime";
@@ -69,6 +70,40 @@ describe("AgentRun runtime service", () => {
     ).resolves.toEqual(managedRuntimeTestFixtures.snapshots.started);
     expect(mocks.apiGetMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/runtime/snapshot",
+    );
+  });
+
+  it("loads context projection from the required AgentRun Runtime route", async () => {
+    const projection = {
+      session_id: "thread-1",
+      projection_kind: "managed_runtime_canonical_context",
+      projection_version: 7,
+      head_event_seq: 7,
+      token_estimate: 12,
+      message_count: 2,
+      segments: [],
+      context_usage: {
+        categories: [],
+        items: [],
+        messages: {
+          user_message_tokens: 4,
+          assistant_message_tokens: 8,
+          tool_call_tokens: 0,
+          tool_result_tokens: 0,
+          attachment_tokens: 0,
+        },
+        top_tools: [],
+        top_attachments: [],
+      },
+    };
+    mocks.apiGetMock.mockResolvedValue(projection);
+
+    await expect(fetchAgentRunRuntimeContextProjection({
+      runId: "run/1",
+      agentId: "agent/1",
+    })).resolves.toEqual(projection);
+    expect(mocks.apiGetMock).toHaveBeenCalledWith(
+      "/agent-runs/run%2F1/agents/agent%2F1/runtime/context/projection",
     );
   });
 

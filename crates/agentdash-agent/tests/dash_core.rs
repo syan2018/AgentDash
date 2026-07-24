@@ -23,6 +23,7 @@ impl DashProvider for Provider {
                 finish_reason: DashFinishReason::Stop,
                 input_tokens: 2,
                 output_tokens: 1,
+                context_window: 200_000,
             }),
         ])))
     }

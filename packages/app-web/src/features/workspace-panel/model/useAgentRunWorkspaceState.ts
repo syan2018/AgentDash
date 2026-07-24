@@ -1,7 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
-  AgentFrameHookRuntimeInfo,
   AgentFrameRuntimeView,
   AgentRunWorkspaceView,
 } from "../../../types";
@@ -17,7 +16,6 @@ export interface AgentRunWorkspaceState {
   status: WorkspaceRuntimeStateStatus;
   workspace: AgentRunWorkspaceView | null;
   runtime_surface: ResolvedVfsSurface | null;
-  hook_runtime: AgentFrameHookRuntimeInfo | null;
   frame: AgentFrameRuntimeView | null;
   runtime_surface_error: string | null;
   error: string | null;
@@ -39,7 +37,6 @@ export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceState {
     status: "idle",
     workspace: null,
     runtime_surface: null,
-    hook_runtime: null,
     frame: null,
     runtime_surface_error: null,
     error: null,
@@ -149,7 +146,6 @@ export function useAgentRunWorkspaceState({
         status: "ready",
         workspace,
         runtime_surface: runtimeSurface,
-        hook_runtime: null,
         frame: workspace.frame_runtime ?? null,
         runtime_surface_error: null,
         error: null,

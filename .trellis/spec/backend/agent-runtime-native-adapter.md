@@ -149,6 +149,14 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   receipt 属于 Dash Complete Agent，用于 `inspect`，不进入 Runtime/Host/Product。
 - `create/fork/execute/apply_surface` 使用稳定 effect identity。相同 identity + 相同 request
   返回原 receipt；不同 request 返回 typed conflict。
+- 普通 `SubmitInput` 在 `InputAccepted + TurnStarted`、active execution 与 effect `Accepted`
+  原子提交后立即返回；provider/tool loop由source owner后台推进。后台错误或panic必须提交typed
+  terminal，Interrupt必须原子终结原effect并取消同turn的pending interaction，因此HTTP生命周期、
+  worker生命周期和挂起交互不会形成彼此等待的第二状态机。
+- 每个provider round确认的input/output token与模型context window以
+  `ProviderUsageConfirmed`写入同一native history。folded state保存最新round并累计source totals，
+  canonical snapshot/changes/live从该entry统一投影`TokenUsageUpdated`，使重连恢复与实时展示使用
+  同一provider事实。
 - `read` 从 Dash document 投影 authoritative history/context/lifecycle。`changes` 只发布 Dash
   自己真正保存的 change evidence；平台不能替 Dash 发明 durable cursor。
 - Provider/Core 失败以真实 `code + message + retryable` 写入 Dash terminal history并通过
@@ -216,6 +224,11 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 | registration claim 与 verification template 构建摘要 | 两端使用同一 helper，摘要完全一致 |
 | effect identity相同且request相同 | 返回原 receipt |
 | effect identity相同但request不同 | typed idempotency conflict |
+| 普通Submit已完成admission但provider仍在运行 | 立即返回`Accepted`；active turn可被read/live观察，HTTP不等待terminal |
+| active turn等待interaction时收到Interrupt | 原effect提交`Interrupted`、pending interaction取消、active execution清空并唤醒等待者 |
+| source-owned后台worker返回错误或panic | 若回合尚未终态则提交typed Failed；不得遗留永久active turn |
+| Complete outer effect仍为Accepted但Dash effect已终态 | `inspect`按Dash权威终态收敛并持久化outer terminal |
+| provider完成一轮并报告usage | 同一history commit保存本轮input/output与context window；snapshot/changes/live投影一致 |
 | unsupported input family | Core side effect 前 typed unsupported |
 | 空输入 | side effect 前 rejected |
 | provider失败 | terminal history保留真实 code/message/retryable |
@@ -250,8 +263,14 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - Base：同一surface幂等重放不产生新的history entry，因此不产生重复ContextFrame。
 - Base：首回合在多轮工具执行后以Failed结束，但已保存Agent output；Dash仍生成会话标题，回合保持Failed。
 - Base：标题生成暂时失败，原回合terminal不变且source保持未命名；下一满足条件的terminal回合可以再次生成。
+- Base：Submit返回`Accepted`后客户端断开；source-owned worker继续执行，重连通过read恢复active或terminal，
+  不依赖原HTTP请求存活。
+- Good：每个provider round只提交一次`ProviderUsageConfirmed`，canonical live显示latest round，
+  authoritative read同时恢复latest与source cumulative totals。
 - Bad：Dash 同时写 repository JSONB 与 history/effect镜像，再逐次校验相等。镜像没有独立
   owner，只会制造 drift。
+- Bad：用tokio task推进回合却只记录`JoinError`日志。panic会让active execution永久存在，
+  UI持续显示运行且后续Interrupt无法完成原effect。
 - Bad：Product 从首条用户消息截断标题。该值没有 Agent 接纳与生成的证据，不能作为 AgentRun
   的首次标题。
 - Bad：生产 composition 注入 Noop execution callback。输入可能执行成功，但用户永远看不到
@@ -265,6 +284,9 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   原子性。
 - Complete Agent tests覆盖 create/resume/fork/execute/read/changes/inspect/apply surface及
   stable effect replay/conflict。
+- background admission测试覆盖Accepted立即返回、并发同effect只启动一次、interaction期间
+  Interrupt、worker error/panic终态，以及Complete effect在Dash已终态后的inspection收敛。
+- usage测试覆盖多provider round的last/total/context window，并断言read、changes与live投影一致。
 - failure tests断言 provider/Core code、message、retryable 在 terminal history与 Agent snapshot
   一致。
 - Core loop测试至少执行12轮工具调用后再返回`Stop`，断言不会由内部轮次计数终止；provider真实

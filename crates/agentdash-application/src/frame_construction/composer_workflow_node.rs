@@ -14,14 +14,14 @@ use crate::agent_run::frame::FrameLaunchEnvelope;
 use crate::agent_run::frame::FrameLaunchEnvelopeConstructionInput;
 
 use super::{
-    FrameConstructionService, LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit,
+    FrameConstructionService, LifecycleNodeSpec, compose_lifecycle_node_to_frame,
     connector_internal, frame_builder_from_existing,
 };
 
 pub(super) async fn compose(
     svc: &FrameConstructionService,
     frame: &AgentFrame,
-    agent: LifecycleAgent,
+    _agent: LifecycleAgent,
     run: LifecycleRun,
     input: &FrameLaunchEnvelopeConstructionInput,
 ) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
@@ -86,7 +86,7 @@ pub(super) async fn compose(
         .or_else(|| frame.typed_execution_profile());
     let base_vfs = frame.typed_vfs();
     let builder = frame_builder_from_existing(frame, command.reason_tag())?;
-    let (builder, extras) = compose_lifecycle_node_to_frame_with_audit(
+    let (builder, extras) = compose_lifecycle_node_to_frame(
         builder,
         &svc.repos,
         svc.platform_config.as_ref(),
@@ -104,10 +104,7 @@ pub(super) async fn compose(
             workflow_label: workflow_label.as_deref(),
             inherited_executor_config,
         },
-        Some(svc.audit_bus.clone()),
         Some(input.runtime_thread_id.as_str()),
-        Some(&run.id.to_string()),
-        Some(&agent.id.to_string()),
     )
     .await
     .map_err(PlatformRuntimeError::InvalidConfig)?;

@@ -71,14 +71,15 @@ pub async fn run_agent_loop(
                 ProviderEvent::Completed {
                     finish_reason,
                     usage,
+                    context_window,
                 } => {
-                    terminal = Some((finish_reason, usage));
+                    terminal = Some((finish_reason, usage, context_window));
                     break;
                 }
             }
         }
 
-        let Some((finish_reason, usage)) = terminal else {
+        let Some((finish_reason, usage, context_window)) = terminal else {
             return Err(CoreError::ProviderStreamDisconnected);
         };
         total_usage.accumulate(usage);
@@ -86,6 +87,8 @@ pub async fn run_agent_loop(
             .emit(CoreEvent::ProviderRoundCompleted {
                 round,
                 finish_reason,
+                usage,
+                context_window,
             })
             .await?;
 

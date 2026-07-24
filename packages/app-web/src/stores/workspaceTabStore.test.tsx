@@ -25,11 +25,11 @@ describe("workspaceTabStore extension tab layout", () => {
     const runtimeLayoutOptions: WorkspaceTabLayoutOptions = {
       tabTypes: [
         {
-          typeId: "inspector",
-          label: "审计",
+          typeId: "context",
+          label: "上下文",
           allowMultiple: false,
           pinned: true,
-          defaultUri: "inspector://session",
+          defaultUri: "context://overview",
         },
         {
           typeId: "canvas",

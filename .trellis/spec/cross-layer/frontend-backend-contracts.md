@@ -43,11 +43,10 @@ GET  /projects/{project_id}/agent-runs?limit={limit}&cursor={cursor}
 POST /projects/{project_id}/agents/{project_agent_id}/agent-runs
 POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit
 POST /agent-runs/{run_id}/agents/{agent_id}/cancel
-GET  /agent-runs/{run_id}/agents/{agent_id}/runtime
-GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/context
-GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/events/stream/ndjson
-POST /agent-runs/{run_id}/agents/{agent_id}/runtime/context/compact
-POST /agent-runs/{run_id}/agents/{agent_id}/runtime/interactions/{interaction_id}/respond
+GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/snapshot
+GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
+GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/live
+POST /agent-runs/{run_id}/agents/{agent_id}/runtime/commands
 ```
 
 ```rust
@@ -111,7 +110,9 @@ AgentRunCommandReceipt {
 - context、compaction、interaction 与 tool approval 均通过 Product/Agent facade，最终由
   concrete Agent command/inspection证明；不存在独立 session command 或 vendor DTO 路径。
 - Interaction response使用generated `InteractionResponse` union；approval、user input、MCP elicitation与dynamic tool result共用一个`/respond` route。UI只有在刷新后的Runtime snapshot声明`interaction_respond=available`时才启用对应控件。
-- Runtime context popup直接读取`RuntimeContextView`的active head、materialized checkpoint、blocks与fidelity；target切换以`run_id + agent_id`为request generation，旧target迟到响应不能覆盖当前popup。
+- Runtime context popup读取由`ManagedRuntimeSnapshot.conversation_history`无状态生成的
+  `SessionProjectionViewResponse`；target切换以`run_id + agent_id`为request generation，
+  旧target迟到响应不能覆盖当前popup。
 - RuntimeWire/Relay 只承载 Complete Agent transport；其 connection epoch、route 与 generation
   不进入浏览器合同或 Product persistence。
 - LifecycleGate 等 Product owner 的 waiting facts单独展示；Agent input handoff不形成 mailbox
@@ -144,6 +145,7 @@ AgentRunCommandReceipt {
 | broadcast Lagged | 输出typed retryable error并断流；浏览器重新读取authoritative snapshot |
 | presentation envelope合法但protected body无法通过generated validator | 拒绝该frame并显式报protocol error；不降级为文本消息或generic tool card |
 | workspace/list route在cutover中移除但service仍存在 | route ledger/contract test失败；同一变更迁移projection或删除consumer |
+| `runtime/context/projection` 未注册或没有 projection owner | 前端显式展示请求错误；不得把404降级为“暂无投影” |
 | Project list收到普通`StateChanged` | 不刷新列表；等待`projection=agent_run_list`的typed invalidation |
 | LifecycleAgent为`active` | 列表显示idle/ready；Agent实时turn状态由workspace live lane负责 |
 | LifecycleAgent为`running/suspended/cancelling` | 列表直接映射对应Product lifecycle presentation |
@@ -165,6 +167,8 @@ AgentRunCommandReceipt {
 - Stream state测试覆盖target切换、连接lane变化、重复sequence、terminal与Lagged后snapshot
   recovery。
 - Route ledger test至少枚举AgentRun list/workspace/composer/cancel/runtime/context/events/approval的前端consumer与Axum route，防止cutover静默删入口。
+- Context projection projector test覆盖用户/助手/工具token分类与最新compaction消息边界；
+  Runtime service test断言精确scoped URL，Axum route ledger断言生产router注册该入口。
 - Project列表测试覆盖service URL、generated DTO消费、Product lifecycle presentation与state分页；
   失效测试断言只有`agent_run_list` typed projection event刷新，普通`StateChanged`不重复查询；
   真实产品验证覆盖侧栏、完整列表、列表行导航及列表延迟不随Agent snapshot体积增长。
@@ -477,4 +481,88 @@ cargo run -p agentdash-agent-protocol-codegen -- check
 ```text
 Wrong: nullable_fields = { "durationMs" } -> 全局修改每个variant
 Correct: nullable_paths = { "CommandExecution.durationMs", ... } -> 只修改对应discriminator branch
+```
+
+## 10. Scenario: Managed Runtime 历史上下文投影
+
+### 10.1 Scope / Trigger
+
+修改Runtime context popup、canonical conversation history、context compaction、Managed Runtime
+snapshot或AgentRun Runtime router时适用。该投影只负责读取当前上下文构成，不拥有第二份会话状态。
+
+### 10.2 Signatures
+
+```text
+GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
+  -> SessionProjectionViewResponse
+```
+
+```rust
+pub fn project_managed_runtime_context(
+    snapshot: &ManagedRuntimeSnapshot,
+) -> SessionProjectionViewResponse;
+```
+
+### 10.3 Contracts
+
+- API先按`run_id + agent_id`完成`ProjectPermission::Use`授权，再通过
+  `AgentRunProductProjectionQueryPort::runtime_snapshot`读取concrete Agent权威快照。
+- projector只消费durable canonical records。用户输入、终态assistant/reasoning、终态工具item与
+  每个frame identity的最新`ContextFrameChanged`进入响应；ephemeral delta不计入可恢复投影。
+- 最新`ContextCompaction`是消息有效边界。更早消息仍保留在canonical history中用于审计，但不再
+  计入当前模型上下文；最新ContextFrame仍按frame identity投影。
+- `projection_version`来自Managed Runtime revision。projector不持久化segment、token估算或
+  category，因此不会产生与Complete Agent竞争的状态owner。
+- UI上下文环形用量仍读取provider确认的`token_usage_updated`；context projection负责解释
+  构成，字符token估算不能覆盖provider事实。
+
+### 10.4 Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| AgentRun target不存在、跨Project或无Use权限 | 在读取Runtime前返回对应授权/not found错误 |
+| target尚未建立committed Runtime binding | 返回conflict，不构造空投影 |
+| Runtime snapshot读取失败 | 映射typed Product projection错误，不使用旧Session Runtime |
+| canonical history为空 | 返回versioned空segments及全零message breakdown |
+| 只有ephemeral record | 不进入投影，等待durable snapshot收敛 |
+| 已发生ContextCompaction | 只统计边界后的消息，并返回`active_compaction_id` |
+| frontend收到404/5xx | 展示加载错误；不得静默转为null |
+
+### 10.5 Good / Base / Bad Cases
+
+- Good：Native会话历史包含用户消息、助手消息与工具终态，popup同时展示三类非零构成；刷新后结果
+  由同一snapshot稳定重建。
+- Base：空会话返回合法空投影；只有provider usage时环形用量可显示，但构成保持全零。
+- Bad：保留前端service却删除router，再捕获404返回null；这会把合同断链伪装成正常空状态。
+
+### 10.6 Tests Required
+
+- application projector unit test断言用户、助手、工具调用/结果进入对应breakdown和top tools。
+- compaction unit test断言边界前消息不计入segments，`active_compaction_id`保持最新item identity。
+- API route ledger断言生产`lifecycle_agents::router()`包含context projection入口。
+- frontend service test断言URL编码及精确route；错误透传测试不得接受404空投影。
+- popup rendering test以非零breakdown断言用户、助手、工具和附件数字可见。
+
+### 10.7 Wrong vs Correct
+
+```ts
+// Wrong：把消失的后端合同伪装成正常空数据。
+try {
+  return await api.get(path);
+} catch (error) {
+  if (error.status === 404) return null;
+  throw error;
+}
+
+// Correct：route是必需产品合同，断链必须直接暴露。
+return api.get<SessionProjectionViewResponse>(path);
+```
+
+```rust
+// Wrong：恢复一份独立Session Runtime历史镜像。
+let projection = legacy_session_runtime.load_projection(session_id).await?;
+
+// Correct：从Complete Agent权威快照无状态投影。
+let snapshot = product_projection.runtime_snapshot(&target).await?;
+let projection = project_managed_runtime_context(&snapshot);
 ```

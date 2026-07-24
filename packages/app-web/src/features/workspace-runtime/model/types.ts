@@ -1,6 +1,5 @@
 import type {
   ExtensionRuntimeProjectionResponse,
-  AgentFrameHookRuntimeInfo,
   AgentFrameRuntimeView,
   LifecycleRunView,
   AgentRunView,
@@ -59,6 +58,5 @@ export interface WorkspaceRuntimeData {
   executorSummary: TaskSessionExecutorSummary | null;
   runtimeSurface: ResolvedVfsSurface | null;
   workspaceBackend: WorkspaceBackendTarget | null;
-  hookRuntime: AgentFrameHookRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
 }

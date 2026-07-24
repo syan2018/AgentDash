@@ -122,7 +122,11 @@ impl ProductionCompleteAgentServiceSelector {
         let instance_id = dash_instance_id(profile)?;
         let contribution = native_complete_agent_registration(
             instance_id.clone(),
-            bridge_dash_execution_dependencies(resolved.bridge, thinking_level),
+            bridge_dash_execution_dependencies(
+                resolved.bridge,
+                thinking_level,
+                resolved.model.context_window,
+            ),
             self.complete_agent.host_callbacks(),
             self.dash_store.clone(),
         )

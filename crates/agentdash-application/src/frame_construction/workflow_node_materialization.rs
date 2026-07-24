@@ -10,7 +10,7 @@ use crate::agent_run::frame::AgentFrameBuilder;
 
 use super::{
     AgentRunProjectOwnerFrameConstructionAdapter, LifecycleNodeSpec,
-    compose_lifecycle_node_to_frame_with_audit,
+    compose_lifecycle_node_to_frame,
     launch_anchor_materialization::materialize_frame_context_discovery,
 };
 
@@ -41,7 +41,7 @@ impl WorkflowAgentNodeFrameMaterializationPort for AgentRunProjectOwnerFrameCons
             });
         }
         let builder = AgentFrameBuilder::new_launch_anchor(input.agent_id, input.created_by_id);
-        let (builder, _) = compose_lifecycle_node_to_frame_with_audit(
+        let (builder, _) = compose_lifecycle_node_to_frame(
             builder,
             &self.repos,
             self.platform_config.as_ref(),
@@ -59,10 +59,7 @@ impl WorkflowAgentNodeFrameMaterializationPort for AgentRunProjectOwnerFrameCons
                 workflow_label: None,
                 inherited_executor_config: input.inherited_executor_config,
             },
-            Some(self.audit_bus.clone()),
             Some(&runtime_thread_id),
-            Some(&run.id.to_string()),
-            Some(&input.agent_id.to_string()),
         )
         .await
         .map_err(|message| AgentRunFrameSurfaceError::ConstructionRejected { message })?;

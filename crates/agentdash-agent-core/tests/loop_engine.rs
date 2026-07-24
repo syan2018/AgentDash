@@ -77,6 +77,7 @@ async fn provider_tool_loop_has_only_explicit_state() {
                         input_tokens: 10,
                         output_tokens: 2,
                     },
+                    context_window: 200_000,
                 },
             ],
             vec![
@@ -89,6 +90,7 @@ async fn provider_tool_loop_has_only_explicit_state() {
                         input_tokens: 12,
                         output_tokens: 3,
                     },
+                    context_window: 200_000,
                 },
             ],
         ])),
@@ -149,6 +151,7 @@ async fn provider_tool_loop_is_not_terminated_by_an_internal_round_budget() {
             ProviderEvent::Completed {
                 finish_reason: FinishReason::ToolCalls,
                 usage: CoreTokenUsage::default(),
+                context_window: 200_000,
             },
         ]);
     }
@@ -159,6 +162,7 @@ async fn provider_tool_loop_is_not_terminated_by_an_internal_round_budget() {
         ProviderEvent::Completed {
             finish_reason: FinishReason::Stop,
             usage: CoreTokenUsage::default(),
+            context_window: 200_000,
         },
     ]);
     let provider = ScriptedProvider {

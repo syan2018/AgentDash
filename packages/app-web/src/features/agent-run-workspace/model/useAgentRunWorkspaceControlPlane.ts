@@ -4,6 +4,7 @@ import type { ExecutorConfig } from "../../../services/executor";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import { subscribeProjectEvents } from "../../../stores/eventStore";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
+import { useTaskPlanStore } from "../../../stores/taskPlanStore";
 import type {
   AgentRunWorkspaceView,
   CreateProjectAgentRunRequest,
@@ -76,6 +77,7 @@ export interface AgentRunControlPlaneEffectExecutor {
   refreshAgentRunWorkspaceState: () => Promise<AgentRunWorkspaceView | null>;
   openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
   refreshAgentRunList: (reason: string) => void;
+  refreshTaskPlan: () => Promise<unknown>;
   workspacePanelOpened?: () => void;
   workspacePanelOpenFailed?: (error: Error) => void;
 }
@@ -131,6 +133,9 @@ export function applyAgentRunControlPlaneEffectPlan(
   if (plan.refreshAgentRunListReason) {
     executor.refreshAgentRunList(plan.refreshAgentRunListReason);
   }
+  if (plan.refreshTaskPlan) {
+    void executor.refreshTaskPlan().catch(() => {});
+  }
 }
 
 export function useAgentRunWorkspaceControlPlane({
@@ -151,6 +156,7 @@ export function useAgentRunWorkspaceControlPlane({
   openWorkspacePanel,
 }: UseAgentRunWorkspaceControlPlaneOptions): UseAgentRunWorkspaceControlPlaneResult {
   const fetchAndIngestLifecycleRun = useLifecycleStore((state) => state.fetchAndIngestLifecycleRun);
+  const fetchAgentRunTasks = useTaskPlanStore((state) => state.fetchAgentRunTasks);
   const [explicitExecutorConfigOverrideState, setExplicitExecutorConfigOverrideState] = useState<{
     scopeKey: string | null;
     config: ExecutorConfig | null;
@@ -306,11 +312,18 @@ export function useAgentRunWorkspaceControlPlane({
       refreshAgentRunWorkspaceState,
       openWorkspacePanel,
       refreshAgentRunList,
+      refreshTaskPlan: async () => {
+        if (!currentRunId || !currentAgentId) return null;
+        return fetchAgentRunTasks(currentRunId, currentAgentId);
+      },
       workspacePanelOpened,
       workspacePanelOpenFailed,
     });
   }, [
     openWorkspacePanel,
+    currentAgentId,
+    currentRunId,
+    fetchAgentRunTasks,
     refreshAgentRunList,
     refreshAgentRunWorkspaceState,
   ]);

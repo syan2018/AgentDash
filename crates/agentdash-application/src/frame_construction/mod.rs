@@ -44,7 +44,6 @@ use crate::agent_run::frame::{
 };
 use crate::agent_run::merge_executor_config_fields;
 use crate::agent_run::{PromptLaunchPath, RuntimeTraceLaunchState, SessionRepositoryRehydrateMode};
-use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
 use crate::workspace::resolution::BackendAvailability;
 
@@ -58,7 +57,6 @@ pub struct FrameConstructionService {
     pub(crate) vfs_service: Arc<VfsService>,
     pub(crate) availability: Arc<dyn BackendAvailability>,
     pub(crate) platform_config: Arc<PlatformConfig>,
-    pub(crate) audit_bus: SharedContextAuditBus,
     pub(crate) companion_facts: Arc<dyn CompanionParentFactsProvider>,
     pub(crate) lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
     pub(crate) extra_skill_dirs: Vec<PathBuf>,
@@ -72,7 +70,6 @@ pub struct FrameConstructionDeps {
     pub vfs_service: Arc<VfsService>,
     pub availability: Arc<dyn BackendAvailability>,
     pub platform_config: Arc<PlatformConfig>,
-    pub audit_bus: SharedContextAuditBus,
     pub companion_facts: Arc<dyn CompanionParentFactsProvider>,
     pub lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
     pub extra_skill_dirs: Vec<PathBuf>,
@@ -90,7 +87,7 @@ pub(crate) use owner_bootstrap::{
 };
 pub(crate) use request_assembler::{
     CompanionParentFactsProvider, CompanionParentSpec, CompanionParentWorkflowSpec,
-    FrameRequestAssembler, LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit,
+    FrameRequestAssembler, LifecycleNodeSpec, compose_lifecycle_node_to_frame,
 };
 
 impl FrameConstructionService {
@@ -100,7 +97,6 @@ impl FrameConstructionService {
             vfs_service: deps.vfs_service,
             availability: deps.availability,
             platform_config: deps.platform_config,
-            audit_bus: deps.audit_bus,
             companion_facts: deps.companion_facts,
             lifecycle_surface_projection: deps.lifecycle_surface_projection,
             extra_skill_dirs: deps.extra_skill_dirs,
@@ -167,7 +163,6 @@ impl FrameConstructionService {
             self.lifecycle_surface_projection.as_ref(),
             self.product_runtime_bindings.as_ref(),
         )
-        .with_audit_bus(self.audit_bus.clone())
         .with_companion_parent_facts_provider(self.companion_facts.as_ref())
     }
 

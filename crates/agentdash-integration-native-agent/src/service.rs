@@ -494,6 +494,69 @@ impl DashAgentCompleteService {
             )),
         }
     }
+
+    async fn reconcile_accepted_command_record(
+        &self,
+        record: DashCompleteEffectRecord,
+    ) -> Result<DashCompleteEffectRecord, AgentServiceError> {
+        if !matches!(
+            record.inspection.state,
+            AgentEffectInspectionState::Accepted { .. }
+        ) {
+            return Ok(record);
+        }
+        let DashCompleteRecordedReceipt::Command(accepted_receipt) = &record.receipt else {
+            return Ok(record);
+        };
+        let (service, _) = self.open_source(&accepted_receipt.source).await?;
+        let Some(inspection) = service
+            .inspect(&agentdash_agent::dash::EffectId::new(
+                accepted_receipt.effect_id.as_str(),
+            ))
+            .await
+            .map_err(map_dash_error)?
+        else {
+            return Ok(record);
+        };
+        let DashReceiptState::Terminal(outcome) = inspection.state else {
+            return Ok(record);
+        };
+        let terminal = service_terminal(outcome);
+        let revision = service
+            .read()
+            .await
+            .map_err(map_dash_error)?
+            .state
+            .entry_count;
+        let terminal_receipt = AgentCommandReceipt {
+            command_id: accepted_receipt.command_id.clone(),
+            effect_id: accepted_receipt.effect_id.clone(),
+            source: accepted_receipt.source.clone(),
+            state: AgentReceiptState::Terminal { outcome: terminal },
+            snapshot_revision: Some(AgentSnapshotRevision(revision)),
+            initial_context: accepted_receipt.initial_context.clone(),
+        };
+        let effect_id = accepted_receipt.effect_id.clone();
+        let replacement = command_effect_record(
+            DashCompleteCommandEffectKind::Command,
+            record.request_fingerprint.clone(),
+            terminal_receipt,
+            Some(terminal),
+        );
+        match self
+            .store
+            .commit(DashCompleteAtomicCommit {
+                effect_id: effect_id.clone(),
+                expected_effect: Some(record),
+                replacement_effect: replacement.clone(),
+                source_mutations: Vec::new(),
+            })
+            .await
+        {
+            Ok(()) => Ok(replacement),
+            Err(error) => self.store.load_effect(&effect_id).await?.ok_or(error),
+        }
+    }
 }
 
 #[async_trait]
@@ -713,6 +776,7 @@ impl CompleteAgentService for DashAgentCompleteService {
         command: AgentCommandEnvelope,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
         let request_fingerprint = request_fingerprint(&command)?;
+        let dash_command = translate_public_command(&command.command)?;
         let accepted_record =
             if let Some(recorded) = self.store.load_effect(&command.meta.effect_id).await? {
                 let receipt = recorded.command_receipt_for(
@@ -723,38 +787,16 @@ impl CompleteAgentService for DashAgentCompleteService {
                 if matches!(receipt.state, AgentReceiptState::Terminal { .. }) {
                     return Ok(receipt);
                 }
-                recorded
+                Some(recorded)
             } else {
-                let accepted_receipt = AgentCommandReceipt {
-                    command_id: command.meta.command_id.clone(),
-                    effect_id: command.meta.effect_id.clone(),
-                    source: command.source.clone(),
-                    state: AgentReceiptState::Accepted,
-                    snapshot_revision: None,
-                    initial_context: None,
-                };
-                let accepted_record = command_effect_record(
-                    DashCompleteCommandEffectKind::Command,
-                    request_fingerprint.clone(),
-                    accepted_receipt,
-                    None,
-                );
-                self.store
-                    .commit(DashCompleteAtomicCommit {
-                        effect_id: command.meta.effect_id.clone(),
-                        expected_effect: None,
-                        replacement_effect: accepted_record.clone(),
-                        source_mutations: vec![],
-                    })
-                    .await?;
-                accepted_record
+                None
             };
         let (service, _) = self.open_source(&command.source).await?;
         let dash_receipt = service
-            .execute(DashCommandRequest {
+            .execute_admitted(DashCommandRequest {
                 command_id: CommandId::new(command.meta.command_id.as_str()),
                 effect_id: agentdash_agent::dash::EffectId::new(command.meta.effect_id.as_str()),
-                command: translate_public_command(&command.command)?,
+                command: dash_command,
             })
             .await
             .map_err(map_dash_error)?;
@@ -780,18 +822,38 @@ impl CompleteAgentService for DashAgentCompleteService {
         };
         let final_record = command_effect_record(
             DashCompleteCommandEffectKind::Command,
-            request_fingerprint,
+            request_fingerprint.clone(),
             receipt.clone(),
             terminal,
         );
-        self.store
+        if let Err(error) = self
+            .store
             .commit(DashCompleteAtomicCommit {
-                effect_id: command.meta.effect_id,
-                expected_effect: Some(accepted_record),
-                replacement_effect: final_record,
+                effect_id: command.meta.effect_id.clone(),
+                expected_effect: accepted_record,
+                replacement_effect: final_record.clone(),
                 source_mutations: vec![],
             })
-            .await?;
+            .await
+        {
+            if let Some(recorded) = self.store.load_effect(&command.meta.effect_id).await? {
+                return recorded.command_receipt_for(
+                    &command.source,
+                    &command.meta.command_id,
+                    &request_fingerprint,
+                );
+            }
+            return Err(error);
+        }
+        if terminal.is_none() {
+            tokio::spawn(settle_accepted_complete_command(
+                self.store.clone(),
+                service,
+                command,
+                request_fingerprint,
+                final_record,
+            ));
+        }
         Ok(receipt)
     }
 
@@ -937,7 +999,10 @@ impl CompleteAgentService for DashAgentCompleteService {
         identity: AgentEffectIdentity,
     ) -> Result<AgentEffectInspection, AgentServiceError> {
         if let Some(record) = self.store.load_effect(&identity).await? {
-            return Ok(record.inspection);
+            return Ok(self
+                .reconcile_accepted_command_record(record)
+                .await?
+                .inspection);
         }
         Ok(AgentEffectInspection {
             effect_id: identity,
@@ -1569,16 +1634,25 @@ fn interaction_snapshot(
             prompt: interaction.prompt.clone(),
             questions: Vec::new(),
         },
-        status: if interaction.response.is_some() {
+        status: if interaction.cancelled {
+            AgentInteractionStatus::Cancelled
+        } else if interaction.response.is_some() {
             AgentInteractionStatus::Resolved
         } else {
             AgentInteractionStatus::Pending
         },
-        resolution: interaction.response.as_ref().map(|response| {
-            AgentInteractionResolution::UserInput {
-                answers: serde_json::Value::String(response.clone()),
-            }
-        }),
+        resolution: if interaction.cancelled {
+            Some(AgentInteractionResolution::Cancelled {
+                reason: Some("Agent turn was interrupted".to_owned()),
+            })
+        } else {
+            interaction
+                .response
+                .as_ref()
+                .map(|response| AgentInteractionResolution::UserInput {
+                    answers: serde_json::Value::String(response.clone()),
+                })
+        },
     })
 }
 
@@ -1589,7 +1663,8 @@ fn change_payload(
 ) -> Result<Option<AgentChangePayload>, AgentServiceError> {
     match payload {
         HistoryPayload::InteractionRequested { interaction_id, .. }
-        | HistoryPayload::InteractionResolved { interaction_id, .. } => {
+        | HistoryPayload::InteractionResolved { interaction_id, .. }
+        | HistoryPayload::InteractionCancelled { interaction_id } => {
             Ok(Some(AgentChangePayload::InteractionChanged {
                 interaction: interaction_snapshot(
                     interaction_id,
@@ -1714,6 +1789,48 @@ fn command_effect_record(
         },
         receipt: DashCompleteRecordedReceipt::Command(receipt),
     }
+}
+
+async fn settle_accepted_complete_command(
+    store: Arc<dyn DashCompleteAgentStore>,
+    service: DashAgentService,
+    command: AgentCommandEnvelope,
+    request_fingerprint: String,
+    accepted_record: DashCompleteEffectRecord,
+) {
+    let dash_effect = agentdash_agent::dash::EffectId::new(command.meta.effect_id.as_str());
+    let Ok(inspection) = service.wait_for_effect_terminal(&dash_effect).await else {
+        return;
+    };
+    let DashReceiptState::Terminal(outcome) = inspection.state else {
+        return;
+    };
+    let terminal = service_terminal(outcome);
+    let Ok(read) = service.read().await else {
+        return;
+    };
+    let receipt = AgentCommandReceipt {
+        command_id: command.meta.command_id.clone(),
+        effect_id: command.meta.effect_id.clone(),
+        source: command.source,
+        state: AgentReceiptState::Terminal { outcome: terminal },
+        snapshot_revision: Some(AgentSnapshotRevision(read.state.entry_count)),
+        initial_context: None,
+    };
+    let replacement = command_effect_record(
+        DashCompleteCommandEffectKind::Command,
+        request_fingerprint,
+        receipt,
+        Some(terminal),
+    );
+    let _ = store
+        .commit(DashCompleteAtomicCommit {
+            effect_id: command.meta.effect_id,
+            expected_effect: Some(accepted_record),
+            replacement_effect: replacement,
+            source_mutations: Vec::new(),
+        })
+        .await;
 }
 
 fn request_fingerprint(request: &impl serde::Serialize) -> Result<String, AgentServiceError> {

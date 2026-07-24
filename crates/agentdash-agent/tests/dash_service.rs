@@ -205,6 +205,7 @@ impl DashProvider for SurfaceChangingProvider {
                     finish_reason: DashFinishReason::ToolCalls,
                     input_tokens: 1,
                     output_tokens: 1,
+                    context_window: 200_000,
                 }),
             ],
             2 => vec![
@@ -219,6 +220,7 @@ impl DashProvider for SurfaceChangingProvider {
                     finish_reason: DashFinishReason::ToolCalls,
                     input_tokens: 1,
                     output_tokens: 1,
+                    context_window: 200_000,
                 }),
             ],
             _ => vec![
@@ -229,6 +231,7 @@ impl DashProvider for SurfaceChangingProvider {
                     finish_reason: DashFinishReason::Stop,
                     input_tokens: 1,
                     output_tokens: 1,
+                    context_window: 200_000,
                 }),
             ],
         };
@@ -266,6 +269,7 @@ impl DashProvider for FailureAfterEightToolRoundsProvider {
                 finish_reason: DashFinishReason::ToolCalls,
                 input_tokens: 1,
                 output_tokens: 1,
+                context_window: 200_000,
             }),
         ])))
     }
@@ -698,6 +702,7 @@ impl DashProvider for CapturingProvider {
                 finish_reason: DashFinishReason::Stop,
                 input_tokens: 1,
                 output_tokens: 1,
+                context_window: 200_000,
             }),
         ])))
     }
@@ -718,6 +723,7 @@ impl DashProvider for CountingProvider {
                 finish_reason: DashFinishReason::Stop,
                 input_tokens: 1,
                 output_tokens: 1,
+                context_window: 200_000,
             }),
         ])))
     }

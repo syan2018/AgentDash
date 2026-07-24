@@ -10,7 +10,6 @@ use crate::agent_run::frame::{
     FrameLaunchEnvelopeConstructionInput,
 };
 use crate::agent_run::{build_project_agent_context, resolve_project_workspace};
-use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::workspace::BackendAvailability;
@@ -34,7 +33,6 @@ pub(super) struct ProjectAgentOwnerCompositionContext<'a> {
     pub availability: &'a dyn BackendAvailability,
     pub platform_config: &'a PlatformConfig,
     pub lifecycle_surface_projection: &'a dyn LifecycleSurfaceProjectionPort,
-    pub audit_bus: Option<SharedContextAuditBus>,
 }
 
 impl<'a> ProjectAgentOwnerCompositionContext<'a> {
@@ -45,22 +43,17 @@ impl<'a> ProjectAgentOwnerCompositionContext<'a> {
             availability: svc.availability.as_ref(),
             platform_config: svc.platform_config.as_ref(),
             lifecycle_surface_projection: svc.lifecycle_surface_projection.as_ref(),
-            audit_bus: Some(svc.audit_bus.clone()),
         }
     }
 
     fn owner_bootstrap_composer(&self) -> super::OwnerBootstrapComposer<'_> {
-        let composer = super::OwnerBootstrapComposer::new(
+        super::OwnerBootstrapComposer::new(
             self.vfs_service,
             self.availability,
             self.repos,
             self.platform_config,
             self.lifecycle_surface_projection,
-        );
-        match self.audit_bus.as_ref() {
-            Some(audit_bus) => composer.with_audit_bus(audit_bus.clone()),
-            None => composer,
-        }
+        )
     }
 }
 
@@ -232,8 +225,6 @@ pub(super) async fn compose_project_agent_owner_frame(
                 launch_path: input.launch_path,
                 lifecycle_address,
                 lifecycle_message_stream,
-                audit_run_id: Some(input.run.id.to_string()),
-                audit_agent_id: Some(input.agent.id.to_string()),
                 caller_agent_id: Some(project_agent.id),
             },
         )

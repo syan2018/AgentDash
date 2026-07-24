@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type {
   AgentRunOwnershipView,
@@ -24,6 +24,7 @@ import {
   planAgentRunTurnStarted,
   resolveAgentRunSubmitCommand,
 } from "./controlPlaneModel";
+import { applyAgentRunControlPlaneEffectPlan } from "./useAgentRunWorkspaceControlPlane";
 
 function staleGuard(commandId: string): ConversationCommandStaleGuardView {
   return {
@@ -292,6 +293,74 @@ describe("AgentRun control-plane model", () => {
     });
 
     expect(plan).toEqual({ effects: {} });
+  });
+
+  it("refreshes the Task owner after a successful completed task_write", () => {
+    const plan = planAgentRunLiveEvent({
+      type: "item_completed",
+      payload: {
+        threadId: "native-thread-1",
+        turnId: "turn-1",
+        completedAtMs: 10,
+        item: {
+          type: "dynamicToolCall",
+          id: "task-write-1",
+          tool: "task_write",
+          arguments: { operation: "update_status" },
+          status: "completed",
+          success: true,
+        },
+      },
+    });
+
+    expect(plan).toEqual({ effects: { refreshTaskPlan: true } });
+  });
+
+  it("does not refresh Task owner for failed or unrelated completed tools", () => {
+    for (const item of [
+      {
+        type: "dynamicToolCall" as const,
+        id: "task-write-failed",
+        tool: "task_write",
+        arguments: {},
+        status: "failed" as const,
+        success: false,
+      },
+      {
+        type: "dynamicToolCall" as const,
+        id: "task-read-completed",
+        tool: "task_read",
+        arguments: {},
+        status: "completed" as const,
+        success: true,
+      },
+    ]) {
+      expect(planAgentRunLiveEvent({
+        type: "item_completed",
+        payload: {
+          threadId: "native-thread-1",
+          turnId: "turn-1",
+          completedAtMs: 10,
+          item,
+        },
+      })).toEqual({ effects: {} });
+    }
+  });
+
+  it("executes the Task owner refresh effect exactly once", () => {
+    const refreshTaskPlan = vi.fn().mockResolvedValue(null);
+
+    applyAgentRunControlPlaneEffectPlan(
+      { refreshTaskPlan: true },
+      {
+        refreshAgentRunWorkspaceState: vi.fn().mockResolvedValue(null),
+        openWorkspacePanel: vi.fn(),
+        refreshAgentRunList: vi.fn(),
+        refreshTaskPlan,
+      },
+    );
+
+    expect(refreshTaskPlan).toHaveBeenCalledTimes(1);
   });
 
   it("opens the exact Workspace Module from the canonical presentation event", () => {

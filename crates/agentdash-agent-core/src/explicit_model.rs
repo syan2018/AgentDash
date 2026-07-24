@@ -195,6 +195,7 @@ pub enum ProviderEvent {
     Completed {
         finish_reason: FinishReason,
         usage: TokenUsage,
+        context_window: u64,
     },
 }
 
@@ -227,6 +228,8 @@ pub enum CoreEvent {
     ProviderRoundCompleted {
         round: u32,
         finish_reason: FinishReason,
+        usage: TokenUsage,
+        context_window: u64,
     },
 }
 

@@ -81,10 +81,8 @@ export type SessionTurnLifecycleEventType =
 
 export function isAgentRunWorkspaceActionRunning(input: {
   executionStatus: string;
-  isReceiving?: boolean;
 }): boolean {
-  return input.isReceiving === true ||
-    input.executionStatus === "starting_claimed" ||
+  return input.executionStatus === "starting_claimed" ||
     input.executionStatus === "running_active" ||
     input.executionStatus === "cancelling";
 }

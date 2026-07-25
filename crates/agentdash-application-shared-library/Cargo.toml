@@ -8,7 +8,7 @@ license.workspace = true
 agentdash-application-workflow = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-domain = { workspace = true }
-agentdash-spi = { workspace = true }
+agentdash-platform-spi = { workspace = true }
 base64 = "0.22"
 chrono = { workspace = true }
 serde_json = { workspace = true }

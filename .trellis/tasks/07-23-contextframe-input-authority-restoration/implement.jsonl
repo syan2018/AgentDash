@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/07-23-contextframe-input-authority-restoration/research/model-input-lane-audit.md", "reason": "提供当前分支模型输入旁路、main-reference差异、commit时间线与修复边界的直接证据。"}
+{"file": ".trellis/tasks/archive/2026-06/06-22-piagent-mcp-toolschema-contextframe-alignment/design.md", "reason": "继承已经实现并验证过的Application-owned ToolSchema PromptText、ContextFrame注入与provider工具表分责。"}
+{"file": ".trellis/tasks/archive/2026-06/06-20-context-frame-fact-domain-convergence/design.md", "reason": "继承ContextFrame事实域、模型投递、前端展示与usage同源的整体边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "Native Dash accepted surface、history、provider request与ContextFrame投影均在本任务重构范围。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "确保context owner、initial context、compaction与runtime delivery继续服从Complete Agent authority。"}
+{"file": ".trellis/spec/backend/agent-runtime-surface-tool-broker.md", "reason": "保持accepted tool surface、tool binding generation与active call生命周期边界。"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "工具schema、MCP provenance、capability visibility与PromptText必须由同一typed工具事实派生。"}
+{"file": ".trellis/spec/backend/hooks/architecture.md", "reason": "动态ContextFrame、turn-start/transform-context与hook add-context的投递语义需要统一。"}

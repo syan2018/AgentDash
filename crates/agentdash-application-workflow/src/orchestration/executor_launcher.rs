@@ -1,18 +1,21 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationPort;
 use agentdash_domain::workflow::{
-    AgentProcedureRepository, ArtifactAliasPolicy, ExecutorRunRef, LifecycleGateRepository,
-    LifecycleRun, LifecycleRunRepository, PlanNode, PlanNodeKind, RuntimeNodeError,
+    ArtifactAliasPolicy, ExecutorRunRef, LifecycleRun, LifecycleRunRepository,
+    LifecycleRunWriteError, PlanNode, PlanNodeKind, RuntimeNodeError, RuntimeNodeState,
+    RuntimeNodeStatus, WorkflowExecutorEffectIdentity, WorkflowExecutorEffectRepository,
+    WorkflowFunctionTerminalResult,
 };
-use agentdash_spi::FunctionRunner;
-use serde_json::Value;
+use agentdash_platform_spi::FunctionRunner;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{WorkflowApplicationError, WorkflowRepositorySet};
 
-use super::agent_node_launcher::{AgentNodeLaunchOutcome, AgentNodeLauncher};
-use super::function_node_runner::FunctionNodeRunner;
+use super::agent_call::{
+    WorkflowAgentCallDispatchPort, WorkflowAgentCallLaunchOutcome, WorkflowAgentCallLauncher,
+};
+use super::function_node_runner::{FunctionDispatchOutcome, FunctionNodeRunner};
 use super::human_gate_launcher::{HumanGateLauncher, HumanGateOpenOutcome};
 use super::ready_node::{ReadyNodeView, RuntimeNodeCoordinate};
 use super::runtime::{OrchestrationRuntimeEvent, apply_orchestration_event_to_run};
@@ -30,10 +33,11 @@ pub struct OrchestrationExecutorDrainResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchedAgentNode {
     pub run_id: Uuid,
+    pub agent_id: Uuid,
     pub orchestration_id: Uuid,
     pub node_path: String,
     pub attempt: u32,
-    pub runtime_session_id: String,
+    pub runtime_thread_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,56 +69,90 @@ pub struct SubmitHumanGateDecisionResult {
 #[derive(Clone)]
 pub struct OrchestrationExecutorLauncher {
     repos: OrchestrationExecutorRepositories,
-    agent_node_launcher: AgentNodeLauncher,
     function_node_runner: FunctionNodeRunner,
     human_gate_launcher: HumanGateLauncher,
+    agent_call_launcher: WorkflowAgentCallLauncher,
 }
 
 #[derive(Clone)]
 struct OrchestrationExecutorRepositories {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
-    lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
-    workflow_agent_node_materialization: Arc<dyn WorkflowAgentNodeMaterializationPort>,
+    executor_effect_repo: Arc<dyn WorkflowExecutorEffectRepository>,
+    agent_procedure_repo: Arc<dyn agentdash_domain::workflow::AgentProcedureRepository>,
 }
 
-impl From<WorkflowRepositorySet> for OrchestrationExecutorRepositories {
-    fn from(repos: WorkflowRepositorySet) -> Self {
+impl OrchestrationExecutorRepositories {
+    fn new(
+        repos: WorkflowRepositorySet,
+        executor_effect_repo: Arc<dyn WorkflowExecutorEffectRepository>,
+    ) -> Self {
         Self {
             lifecycle_run_repo: repos.lifecycle_run_repo,
+            executor_effect_repo,
             agent_procedure_repo: repos.agent_procedure_repo,
-            lifecycle_gate_repo: repos.lifecycle_gate_repo,
-            workflow_agent_node_materialization: repos.workflow_agent_node_materialization,
         }
     }
 }
 
 impl OrchestrationExecutorLauncher {
+    #[cfg(test)]
     pub fn new(repos: WorkflowRepositorySet) -> Self {
-        Self::from_executor_repositories(repos.into())
+        Self::new_for_test(
+            repos,
+            Arc::new(RecordingWorkflowExecutorEffectRepository::default()),
+        )
     }
 
     #[cfg(test)]
-    fn from_repositories(repos: OrchestrationExecutorRepositories) -> Self {
-        Self::from_executor_repositories(repos)
+    fn new_for_test(
+        repos: WorkflowRepositorySet,
+        executor_effect_repo: Arc<dyn WorkflowExecutorEffectRepository>,
+    ) -> Self {
+        Self::from_executor_repositories(OrchestrationExecutorRepositories::new(
+            repos,
+            executor_effect_repo,
+        ))
+    }
+
+    pub fn new_durable(
+        repos: WorkflowRepositorySet,
+        executor_effect_repo: Arc<dyn WorkflowExecutorEffectRepository>,
+        function_runner: Arc<dyn FunctionRunner>,
+    ) -> Self {
+        Self::from_executor_repositories(OrchestrationExecutorRepositories::new(
+            repos,
+            executor_effect_repo,
+        ))
+        .with_function_runner_inner(function_runner)
     }
 
     fn from_executor_repositories(repos: OrchestrationExecutorRepositories) -> Self {
-        let agent_node_launcher = AgentNodeLauncher::new(
-            repos.agent_procedure_repo.clone(),
-            repos.workflow_agent_node_materialization.clone(),
-        );
-        let human_gate_launcher = HumanGateLauncher::new(repos.lifecycle_gate_repo.clone());
+        let human_gate_launcher = HumanGateLauncher::new(repos.executor_effect_repo.clone());
+        let agent_call_launcher =
+            WorkflowAgentCallLauncher::new(repos.agent_procedure_repo.clone());
         Self {
             repos,
-            agent_node_launcher,
             function_node_runner: FunctionNodeRunner::new(),
             human_gate_launcher,
+            agent_call_launcher,
         }
     }
 
-    pub fn with_function_runner(mut self, runner: Arc<dyn FunctionRunner>) -> Self {
+    #[cfg(test)]
+    pub fn with_function_runner(self, runner: Arc<dyn FunctionRunner>) -> Self {
+        self.with_function_runner_inner(runner)
+    }
+
+    fn with_function_runner_inner(mut self, runner: Arc<dyn FunctionRunner>) -> Self {
         self.function_node_runner = self.function_node_runner.with_runner(runner);
+        self
+    }
+
+    pub fn with_agent_call_dispatch(
+        mut self,
+        dispatch: Arc<dyn WorkflowAgentCallDispatchPort>,
+    ) -> Self {
+        self.agent_call_launcher = self.agent_call_launcher.with_dispatch(dispatch);
         self
     }
 
@@ -123,8 +161,46 @@ impl OrchestrationExecutorLauncher {
         run_id: Uuid,
     ) -> Result<OrchestrationExecutorDrainResult, WorkflowApplicationError> {
         let mut result = OrchestrationExecutorDrainResult::default();
-        for _ in 0..MAX_DRAIN_STEPS {
+        'drain: for _ in 0..MAX_DRAIN_STEPS {
             let run = self.load_run(run_id).await?;
+            if let Some((coordinate, kind)) = next_recoverable_executor_node(&run) {
+                match kind {
+                    PlanNodeKind::Function | PlanNodeKind::LocalEffect => {
+                        let node_path = coordinate.node_path.clone();
+                        match self.resume_function_node(run, coordinate).await {
+                            Ok(Some(FunctionLaunchTerminal::Completed)) => {
+                                result.completed_effect_nodes.push(node_path);
+                                continue;
+                            }
+                            Ok(Some(FunctionLaunchTerminal::Failed)) => {
+                                result.failed_nodes.push(node_path);
+                                continue;
+                            }
+                            Ok(Some(FunctionLaunchTerminal::Blocked)) => {
+                                continue;
+                            }
+                            Ok(None) => return Ok(result),
+                            Err(WorkflowApplicationError::Conflict(_)) => continue,
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for coordinate in running_human_gate_coordinates(&run) {
+                if let Some(decision) = self
+                    .inspect_human_gate_resolution(&run, &coordinate)
+                    .await?
+                {
+                    match self
+                        .apply_human_gate_decision(run, &coordinate, &decision)
+                        .await
+                    {
+                        Ok(_) | Err(WorkflowApplicationError::Conflict(_)) => continue 'drain,
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
             let Some((coordinate, kind, attempt_policy)) = ReadyNodeView::next(&run).map(|view| {
                 (
                     view.coordinate.clone(),
@@ -142,25 +218,75 @@ impl OrchestrationExecutorLauncher {
                 continue;
             }
             match kind {
-                PlanNodeKind::AgentCall => {
-                    if let Some(launched) = self.launch_agent_node(run, coordinate).await? {
-                        result.launched_agent_nodes.push(launched);
+                PlanNodeKind::Function | PlanNodeKind::LocalEffect => {
+                    if !self.function_node_runner.is_composed() {
+                        let node_path = coordinate.node_path.clone();
+                        self.block_ready_node(
+                            run,
+                            coordinate,
+                            "function_effect_protocol_not_composed",
+                            "Workflow Function durable effect protocol 未注入",
+                            true,
+                        )
+                        .await?;
+                        result.failed_nodes.push(node_path);
+                        continue;
+                    }
+                    match self.start_function_node(run, coordinate).await {
+                        Ok(_) | Err(WorkflowApplicationError::Conflict(_)) => continue,
+                        Err(error) => return Err(error),
                     }
                 }
-                PlanNodeKind::Function | PlanNodeKind::LocalEffect => {
-                    let node_path = coordinate.node_path.clone();
-                    match self.launch_function_node(run, coordinate).await? {
-                        FunctionLaunchTerminal::Completed => {
-                            result.completed_effect_nodes.push(node_path);
+                PlanNodeKind::HumanGate => match self.open_human_gate(run, coordinate).await {
+                    Ok(Some(opened)) => result.opened_human_gates.push(opened),
+                    Ok(None) => {}
+                    Err(WorkflowApplicationError::Conflict(_)) => continue,
+                    Err(error) => return Err(error),
+                },
+                PlanNodeKind::AgentCall => {
+                    match self.agent_call_launcher.launch(&run, &coordinate).await? {
+                        WorkflowAgentCallLaunchOutcome::Prepared { event } => {
+                            match self
+                                .apply_event(run, coordinate.orchestration_id, event)
+                                .await
+                            {
+                                Ok(_) => {}
+                                Err(WorkflowApplicationError::Conflict(_)) => continue,
+                                Err(error) => return Err(error),
+                            }
                         }
-                        FunctionLaunchTerminal::Failed => {
+                        WorkflowAgentCallLaunchOutcome::Accepted {
+                            target,
+                            runtime_thread_id,
+                            dispatch_event,
+                        } => {
+                            match self
+                                .apply_event(run, coordinate.orchestration_id, dispatch_event)
+                                .await
+                            {
+                                Ok(_) => {}
+                                Err(WorkflowApplicationError::Conflict(_)) => continue,
+                                Err(error) => return Err(error),
+                            }
+                            result.launched_agent_nodes.push(LaunchedAgentNode {
+                                run_id: target.run_id,
+                                agent_id: target.agent_id,
+                                orchestration_id: coordinate.orchestration_id,
+                                node_path: coordinate.node_path,
+                                attempt: coordinate.attempt,
+                                runtime_thread_id,
+                            });
+                        }
+                        WorkflowAgentCallLaunchOutcome::Blocked {
+                            code,
+                            message,
+                            retryable,
+                        } => {
+                            let node_path = coordinate.node_path.clone();
+                            self.block_ready_node(run, coordinate, &code, &message, retryable)
+                                .await?;
                             result.failed_nodes.push(node_path);
                         }
-                    }
-                }
-                PlanNodeKind::HumanGate => {
-                    if let Some(opened) = self.open_human_gate(run, coordinate).await? {
-                        result.opened_human_gates.push(opened);
                     }
                 }
                 _ => {
@@ -186,30 +312,72 @@ impl OrchestrationExecutorLauncher {
         &self,
         input: SubmitHumanGateDecisionInput,
     ) -> Result<SubmitHumanGateDecisionResult, WorkflowApplicationError> {
-        let run = self.load_run(input.run_id).await?;
         let coordinate = RuntimeNodeCoordinate::new(
             input.run_id,
             input.orchestration_id,
             input.node_path.clone(),
             input.attempt,
         );
-        let decision = self
-            .human_gate_launcher
-            .resolve_decision(&run, &input, &coordinate)
-            .await?;
-
-        let run = self
-            .apply_event(
-                run,
-                coordinate.orchestration_id,
-                OrchestrationRuntimeEvent::NodeCompleted {
-                    node_path: coordinate.node_path.clone(),
-                    attempt: coordinate.attempt,
-                    outputs: decision.outputs,
-                    timestamp: chrono::Utc::now(),
-                },
+        let (run, decision) = loop {
+            let run = self.load_run(input.run_id).await?;
+            let orchestration = run
+                .orchestrations
+                .iter()
+                .find(|orchestration| orchestration.orchestration_id == coordinate.orchestration_id)
+                .ok_or_else(|| {
+                    WorkflowApplicationError::NotFound(format!(
+                        "orchestration 不存在: {}",
+                        coordinate.orchestration_id
+                    ))
+                })?;
+            let runtime_node = find_runtime_node(
+                &orchestration.node_tree,
+                &coordinate.node_path,
+                coordinate.attempt,
             )
-            .await?;
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(format!(
+                    "HumanGate runtime node 不存在: {}#{}",
+                    coordinate.node_path, coordinate.attempt
+                ))
+            })?;
+            let terminal_gate_id = is_executor_terminal(runtime_node.status)
+                .then(|| super::human_gate_launcher::human_gate_id_from_node(runtime_node))
+                .transpose()?;
+            let decision = if let Some(gate_id) = terminal_gate_id {
+                self.human_gate_launcher
+                    .inspect_resolution(gate_id)
+                    .await?
+                    .ok_or_else(|| {
+                        WorkflowApplicationError::Conflict(
+                            "HumanGate 已终结但缺少 durable resolution receipt".to_owned(),
+                        )
+                    })
+                    .and_then(|decision| {
+                        if decision.decision != input.decision
+                            || decision.resolved_by != input.resolved_by
+                        {
+                            return Err(WorkflowApplicationError::Conflict(
+                                "HumanGate decision replay payload conflicts with durable receipt"
+                                    .to_owned(),
+                            ));
+                        }
+                        Ok(decision)
+                    })?
+            } else {
+                self.human_gate_launcher
+                    .resolve_decision(&run, &input, &coordinate)
+                    .await?
+            };
+            match self
+                .apply_human_gate_decision(run, &coordinate, &decision)
+                .await
+            {
+                Ok(run) => break (run, decision),
+                Err(WorkflowApplicationError::Conflict(_)) => continue,
+                Err(error) => return Err(error),
+            }
+        };
         let drain_result = self.drain_ready_nodes(run.id).await?;
         let final_run = self.load_run(run.id).await?;
         Ok(SubmitHumanGateDecisionResult {
@@ -219,94 +387,105 @@ impl OrchestrationExecutorLauncher {
         })
     }
 
-    async fn launch_agent_node(
+    async fn start_function_node(
         &self,
         run: LifecycleRun,
         coordinate: RuntimeNodeCoordinate,
-    ) -> Result<Option<LaunchedAgentNode>, WorkflowApplicationError> {
-        match self.agent_node_launcher.launch(&run, &coordinate).await? {
-            AgentNodeLaunchOutcome::Launched { launched, event } => {
-                self.apply_event(run, coordinate.orchestration_id, *event)
-                    .await?;
-                Ok(Some(launched))
-            }
-            AgentNodeLaunchOutcome::Blocked {
-                code,
-                message,
-                retryable,
-            } => {
-                self.block_ready_node(run, coordinate, &code, &message, retryable)
-                    .await?;
-                Ok(None)
-            }
-        }
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
+        let identity = function_effect_identity(&coordinate);
+        let prepared = self
+            .function_node_runner
+            .prepare_ready(&run, &coordinate, identity.clone())
+            .map_err(|error| WorkflowApplicationError::Conflict(error.message))?;
+        self.repos
+            .executor_effect_repo
+            .prepare_function(prepared.request)
+            .await
+            .map_err(executor_effect_error)?;
+        self.apply_event(
+            run,
+            coordinate.orchestration_id,
+            OrchestrationRuntimeEvent::NodeStarted {
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
+                executor_run_ref: Some(ExecutorRunRef::FunctionRun {
+                    run_id: identity.effect_id,
+                }),
+                timestamp: chrono::Utc::now(),
+            },
+        )
+        .await
     }
 
-    async fn launch_function_node(
+    async fn resume_function_node(
         &self,
         run: LifecycleRun,
         coordinate: RuntimeNodeCoordinate,
-    ) -> Result<FunctionLaunchTerminal, WorkflowApplicationError> {
-        let function_run_id = Uuid::new_v4().to_string();
-        let run = self
-            .apply_event(
-                run,
-                coordinate.orchestration_id,
-                OrchestrationRuntimeEvent::NodeStarted {
-                    node_path: coordinate.node_path.clone(),
-                    attempt: coordinate.attempt,
-                    executor_run_ref: Some(ExecutorRunRef::FunctionRun {
-                        run_id: function_run_id.clone(),
-                    }),
-                    timestamp: chrono::Utc::now(),
-                },
-            )
-            .await?;
-
-        let terminal = match self.function_node_runner.execute(&run, &coordinate).await {
-            Ok(outputs) => OrchestrationRuntimeEvent::NodeCompleted {
-                node_path: coordinate.node_path.clone(),
-                attempt: coordinate.attempt,
-                outputs,
-                timestamp: chrono::Utc::now(),
-            },
-            Err(error) => OrchestrationRuntimeEvent::NodeFailed {
-                node_path: coordinate.node_path.clone(),
-                attempt: coordinate.attempt,
-                error,
-                timestamp: chrono::Utc::now(),
-            },
-        };
-        let completed = matches!(terminal, OrchestrationRuntimeEvent::NodeCompleted { .. });
-        let run_id = run.id;
-        if let Err(error) = self
-            .apply_event(run, coordinate.orchestration_id, terminal)
+    ) -> Result<Option<FunctionLaunchTerminal>, WorkflowApplicationError> {
+        let identity = function_effect_identity(&coordinate);
+        let record = self
+            .repos
+            .executor_effect_repo
+            .get_function(&identity.effect_id)
             .await
-        {
-            let latest_run = self.load_run(run_id).await?;
-            self.apply_event(
-                latest_run,
-                coordinate.orchestration_id,
-                OrchestrationRuntimeEvent::NodeFailed {
-                    node_path: coordinate.node_path.clone(),
-                    attempt: coordinate.attempt,
-                    error: RuntimeNodeError {
-                        code: "terminal_materialization_failed".to_string(),
-                        message: error.to_string(),
-                        retryable: false,
-                        detail: Some(coordinate.detail()),
-                    },
-                    timestamp: chrono::Utc::now(),
-                },
-            )
-            .await?;
-            return Ok(FunctionLaunchTerminal::Failed);
-        }
-        Ok(if completed {
+            .map_err(executor_effect_error)?
+            .ok_or_else(|| {
+                WorkflowApplicationError::Conflict(format!(
+                    "Running Function node 缺少 durable Prepared effect: {}",
+                    identity.effect_id
+                ))
+            })?;
+        let prepared = self
+            .function_node_runner
+            .prepare_recovery(&run, &coordinate, record.request.clone())
+            .map_err(|error| WorkflowApplicationError::Conflict(error.message))?;
+        let terminal = match record.terminal {
+            Some(terminal) => terminal,
+            None => {
+                let terminal = match self
+                    .function_node_runner
+                    .dispatch(&prepared)
+                    .await
+                    .map_err(|error| WorkflowApplicationError::Internal(error.message))?
+                {
+                    FunctionDispatchOutcome::Pending => return Ok(None),
+                    FunctionDispatchOutcome::Terminal(terminal) => terminal,
+                    FunctionDispatchOutcome::Lost { reason, evidence } => {
+                        self.apply_event(
+                            run,
+                            coordinate.orchestration_id,
+                            function_lost_event(
+                                &coordinate,
+                                &prepared.request.payload_digest,
+                                reason,
+                                evidence,
+                            ),
+                        )
+                        .await?;
+                        return Ok(Some(FunctionLaunchTerminal::Blocked));
+                    }
+                };
+                self.repos
+                    .executor_effect_repo
+                    .commit_function_terminal(prepared.request, terminal)
+                    .await
+                    .map_err(executor_effect_error)?
+                    .terminal
+                    .expect("committed Function terminal receipt")
+            }
+        };
+        let completed = matches!(terminal, WorkflowFunctionTerminalResult::Completed { .. });
+        self.apply_event(
+            run,
+            coordinate.orchestration_id,
+            function_terminal_event(&coordinate, terminal),
+        )
+        .await?;
+        Ok(Some(if completed {
             FunctionLaunchTerminal::Completed
         } else {
             FunctionLaunchTerminal::Failed
-        })
+        }))
     }
 
     async fn open_human_gate(
@@ -330,6 +509,52 @@ impl OrchestrationExecutorLauncher {
                 Ok(None)
             }
         }
+    }
+
+    async fn inspect_human_gate_resolution(
+        &self,
+        run: &LifecycleRun,
+        coordinate: &RuntimeNodeCoordinate,
+    ) -> Result<Option<super::human_gate_launcher::HumanGateDecision>, WorkflowApplicationError>
+    {
+        let node = run
+            .orchestrations
+            .iter()
+            .find(|orchestration| orchestration.orchestration_id == coordinate.orchestration_id)
+            .and_then(|orchestration| {
+                find_runtime_node(
+                    &orchestration.node_tree,
+                    &coordinate.node_path,
+                    coordinate.attempt,
+                )
+            })
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(format!(
+                    "HumanGate runtime node 不存在: {}",
+                    coordinate.node_path
+                ))
+            })?;
+        let gate_id = super::human_gate_launcher::human_gate_id_from_node(node)?;
+        self.human_gate_launcher.inspect_resolution(gate_id).await
+    }
+
+    async fn apply_human_gate_decision(
+        &self,
+        run: LifecycleRun,
+        coordinate: &RuntimeNodeCoordinate,
+        decision: &super::human_gate_launcher::HumanGateDecision,
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
+        self.apply_event(
+            run,
+            coordinate.orchestration_id,
+            OrchestrationRuntimeEvent::NodeCompleted {
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
+                outputs: decision.outputs.clone(),
+                timestamp: chrono::Utc::now(),
+            },
+        )
+        .await
     }
 
     async fn block_ready_node(
@@ -365,9 +590,25 @@ impl OrchestrationExecutorLauncher {
         orchestration_id: Uuid,
         event: OrchestrationRuntimeEvent,
     ) -> Result<LifecycleRun, WorkflowApplicationError> {
-        let (run, _) = apply_orchestration_event_to_run(run, orchestration_id, event)
+        let expected_revision = run.revision;
+        let (run, outcome) = apply_orchestration_event_to_run(run, orchestration_id, event)
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
-        self.repos.lifecycle_run_repo.update(&run).await?;
+        if outcome.idempotent_replay {
+            return Ok(run);
+        }
+        self.repos
+            .lifecycle_run_repo
+            .compare_and_swap(expected_revision, &run)
+            .await
+            .map_err(|error| match error {
+                LifecycleRunWriteError::RevisionConflict { .. } => {
+                    WorkflowApplicationError::Conflict(error.to_string())
+                }
+                LifecycleRunWriteError::Persistence(error) => error.into(),
+                LifecycleRunWriteError::CasNotImplemented => {
+                    WorkflowApplicationError::Internal(error.to_string())
+                }
+            })?;
         Ok(run)
     }
 
@@ -386,6 +627,179 @@ impl OrchestrationExecutorLauncher {
 enum FunctionLaunchTerminal {
     Completed,
     Failed,
+    Blocked,
+}
+
+fn function_effect_id(coordinate: &RuntimeNodeCoordinate) -> String {
+    format!(
+        "workflow-function:{}:{}#{}",
+        coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
+    )
+}
+
+pub(super) fn function_effect_identity(
+    coordinate: &RuntimeNodeCoordinate,
+) -> WorkflowExecutorEffectIdentity {
+    WorkflowExecutorEffectIdentity {
+        effect_id: function_effect_id(coordinate),
+        lifecycle_run_id: coordinate.run_id,
+        orchestration_id: coordinate.orchestration_id,
+        node_path: coordinate.node_path.clone(),
+        attempt: coordinate.attempt,
+    }
+}
+
+fn function_terminal_event(
+    coordinate: &RuntimeNodeCoordinate,
+    terminal: WorkflowFunctionTerminalResult,
+) -> OrchestrationRuntimeEvent {
+    match terminal {
+        WorkflowFunctionTerminalResult::Completed { outputs } => {
+            OrchestrationRuntimeEvent::NodeCompleted {
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
+                outputs,
+                timestamp: chrono::Utc::now(),
+            }
+        }
+        WorkflowFunctionTerminalResult::Failed { error } => OrchestrationRuntimeEvent::NodeFailed {
+            node_path: coordinate.node_path.clone(),
+            attempt: coordinate.attempt,
+            error,
+            timestamp: chrono::Utc::now(),
+        },
+    }
+}
+
+fn function_lost_event(
+    coordinate: &RuntimeNodeCoordinate,
+    payload_digest: &str,
+    reason: String,
+    evidence: Value,
+) -> OrchestrationRuntimeEvent {
+    OrchestrationRuntimeEvent::NodeBlocked {
+        node_path: coordinate.node_path.clone(),
+        attempt: coordinate.attempt,
+        error: RuntimeNodeError {
+            code: "function_effect_outcome_lost".to_owned(),
+            message: reason.clone(),
+            retryable: false,
+            detail: Some(coordinate.detail_with([
+                ("effect_id", json!(function_effect_id(coordinate))),
+                ("payload_digest", json!(payload_digest)),
+                ("reason", json!(reason)),
+                ("evidence", evidence),
+            ])),
+        },
+        timestamp: chrono::Utc::now(),
+    }
+}
+
+fn next_recoverable_executor_node(
+    run: &LifecycleRun,
+) -> Option<(RuntimeNodeCoordinate, PlanNodeKind)> {
+    for orchestration in &run.orchestrations {
+        if let Some(node) = find_recoverable_node(&orchestration.node_tree) {
+            return Some((
+                RuntimeNodeCoordinate::new(
+                    run.id,
+                    orchestration.orchestration_id,
+                    node.node_path.clone(),
+                    node.attempt,
+                ),
+                node.kind,
+            ));
+        }
+    }
+    None
+}
+
+fn find_recoverable_node(nodes: &[RuntimeNodeState]) -> Option<&RuntimeNodeState> {
+    for node in nodes {
+        if node.status == RuntimeNodeStatus::Running
+            && matches!(
+                node.kind,
+                PlanNodeKind::Function | PlanNodeKind::LocalEffect
+            )
+        {
+            return Some(node);
+        }
+        if let Some(found) = find_recoverable_node(&node.children) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn running_human_gate_coordinates(run: &LifecycleRun) -> Vec<RuntimeNodeCoordinate> {
+    let mut coordinates = Vec::new();
+    for orchestration in &run.orchestrations {
+        collect_running_human_gates(
+            run.id,
+            orchestration.orchestration_id,
+            &orchestration.node_tree,
+            &mut coordinates,
+        );
+    }
+    coordinates
+}
+
+fn collect_running_human_gates(
+    run_id: Uuid,
+    orchestration_id: Uuid,
+    nodes: &[RuntimeNodeState],
+    coordinates: &mut Vec<RuntimeNodeCoordinate>,
+) {
+    for node in nodes {
+        if node.status == RuntimeNodeStatus::Running && node.kind == PlanNodeKind::HumanGate {
+            coordinates.push(RuntimeNodeCoordinate::new(
+                run_id,
+                orchestration_id,
+                node.node_path.clone(),
+                node.attempt,
+            ));
+        }
+        collect_running_human_gates(run_id, orchestration_id, &node.children, coordinates);
+    }
+}
+
+fn find_runtime_node<'a>(
+    nodes: &'a [RuntimeNodeState],
+    node_path: &str,
+    attempt: u32,
+) -> Option<&'a RuntimeNodeState> {
+    for node in nodes {
+        if node.node_path == node_path && node.attempt == attempt {
+            return Some(node);
+        }
+        if let Some(found) = find_runtime_node(&node.children, node_path, attempt) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn is_executor_terminal(status: RuntimeNodeStatus) -> bool {
+    matches!(
+        status,
+        RuntimeNodeStatus::Completed
+            | RuntimeNodeStatus::Failed
+            | RuntimeNodeStatus::Cancelled
+            | RuntimeNodeStatus::Skipped
+    )
+}
+
+fn executor_effect_error(
+    error: agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+) -> WorkflowApplicationError {
+    match error {
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::PayloadConflict {
+            ..
+        } => WorkflowApplicationError::Conflict(error.to_string()),
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::Persistence(_) => {
+            WorkflowApplicationError::Internal(error.to_string())
+        }
+    }
 }
 
 fn unsupported_attempt_policy(plan_node: &PlanNode) -> Option<(&'static str, String)> {
@@ -424,815 +838,1555 @@ fn unsupported_attempt_policy(plan_node: &PlanNode) -> Option<(&'static str, Str
 }
 
 #[cfg(test)]
-mod launcher_drain_tests {
-    use std::sync::{Arc, Mutex};
+#[derive(Default)]
+struct RecordingWorkflowExecutorEffectRepository {
+    functions: tokio::sync::Mutex<
+        std::collections::BTreeMap<
+            String,
+            agentdash_domain::workflow::WorkflowFunctionEffectRecord,
+        >,
+    >,
+    gate_opens: tokio::sync::Mutex<
+        std::collections::BTreeMap<
+            String,
+            agentdash_domain::workflow::WorkflowHumanGateOpenReceipt,
+        >,
+    >,
+    gate_resolutions: tokio::sync::Mutex<
+        std::collections::BTreeMap<
+            Uuid,
+            agentdash_domain::workflow::WorkflowHumanGateResolutionReceipt,
+        >,
+    >,
+    gates: tokio::sync::Mutex<
+        std::collections::BTreeMap<Uuid, agentdash_domain::workflow::LifecycleGate>,
+    >,
+}
 
-    use agentdash_domain::DomainError;
-    use agentdash_domain::workflow::{
-        ActivationRule, ActivityCompletionPolicy, ActivityIterationPolicy, AgentFrame,
-        AgentFrameRepository, AgentProcedure, AgentProcedureContract, AgentProcedureExecutionSpec,
-        AgentProcedureRepository, AgentReusePolicy, AgentRuntimeRefs, ApiRequestExecutorSpec,
-        BashExecExecutorSpec, DefinitionSource, ExecutorSpec, FunctionActivityExecutorSpec,
-        GateStrategy, HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleRunRepository,
-        OrchestrationLimits, OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition,
-        RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
-        RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy, RuntimeTraceRef,
-        WorkflowInjectionSpec,
+#[cfg(test)]
+#[async_trait::async_trait]
+impl WorkflowExecutorEffectRepository for RecordingWorkflowExecutorEffectRepository {
+    async fn prepare_function(
+        &self,
+        request: agentdash_domain::workflow::WorkflowFunctionEffectRequest,
+    ) -> Result<
+        agentdash_domain::workflow::WorkflowFunctionEffectRecord,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        let mut functions = self.functions.lock().await;
+        if let Some(existing) = functions.get(&request.identity.effect_id) {
+            if existing.request != request {
+                return Err(
+                    agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::PayloadConflict {
+                        effect_id: request.identity.effect_id,
+                    },
+                );
+            }
+            return Ok(existing.clone());
+        }
+        let now = chrono::Utc::now();
+        let record = agentdash_domain::workflow::WorkflowFunctionEffectRecord {
+            request,
+            terminal: None,
+            created_at: now,
+            updated_at: now,
+        };
+        functions.insert(record.request.identity.effect_id.clone(), record.clone());
+        Ok(record)
+    }
+
+    async fn commit_function_terminal(
+        &self,
+        request: agentdash_domain::workflow::WorkflowFunctionEffectRequest,
+        terminal: WorkflowFunctionTerminalResult,
+    ) -> Result<
+        agentdash_domain::workflow::WorkflowFunctionEffectRecord,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        let mut functions = self.functions.lock().await;
+        let Some(existing) = functions.get_mut(&request.identity.effect_id) else {
+            return Err(
+                agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::Persistence(
+                    "Function effect was not prepared".to_owned(),
+                ),
+            );
+        };
+        if existing.request != request
+            || existing
+                .terminal
+                .as_ref()
+                .is_some_and(|stored| stored != &terminal)
+        {
+            return Err(
+                    agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::PayloadConflict {
+                    effect_id: request.identity.effect_id,
+                },
+            );
+        }
+        existing.terminal = Some(terminal);
+        existing.updated_at = chrono::Utc::now();
+        Ok(existing.clone())
+    }
+
+    async fn get_function(
+        &self,
+        effect_id: &str,
+    ) -> Result<
+        Option<agentdash_domain::workflow::WorkflowFunctionEffectRecord>,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        Ok(self.functions.lock().await.get(effect_id).cloned())
+    }
+
+    async fn open_human_gate(
+        &self,
+        effect: agentdash_domain::workflow::WorkflowHumanGateOpenEffect,
+    ) -> Result<
+        agentdash_domain::workflow::WorkflowHumanGateOpenReceipt,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        let mut opens = self.gate_opens.lock().await;
+        if let Some(existing) = opens.get(&effect.identity.effect_id) {
+            if existing.effect.identity != effect.identity
+                || existing.effect.payload_digest != effect.payload_digest
+                || existing.effect.gate.id != effect.gate.id
+            {
+                return Err(
+                    agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::PayloadConflict {
+                        effect_id: effect.identity.effect_id,
+                    },
+                );
+            }
+            return Ok(existing.clone());
+        }
+        let receipt = agentdash_domain::workflow::WorkflowHumanGateOpenReceipt {
+            effect: effect.clone(),
+            committed_at: chrono::Utc::now(),
+        };
+        self.gates.lock().await.insert(effect.gate.id, effect.gate);
+        opens.insert(receipt.effect.identity.effect_id.clone(), receipt.clone());
+        Ok(receipt)
+    }
+
+    async fn get_human_gate_open(
+        &self,
+        effect_id: &str,
+    ) -> Result<
+        Option<agentdash_domain::workflow::WorkflowHumanGateOpenReceipt>,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        Ok(self.gate_opens.lock().await.get(effect_id).cloned())
+    }
+
+    async fn resolve_human_gate(
+        &self,
+        effect: agentdash_domain::workflow::WorkflowHumanGateResolutionEffect,
+    ) -> Result<
+        agentdash_domain::workflow::WorkflowHumanGateResolutionReceipt,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        let mut resolutions = self.gate_resolutions.lock().await;
+        if let Some(existing) = resolutions.get(&effect.gate_id) {
+            if existing.effect != effect {
+                return Err(
+                    agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::PayloadConflict {
+                        effect_id: effect.identity.effect_id,
+                    },
+                );
+            }
+            return Ok(existing.clone());
+        }
+        let mut gates = self.gates.lock().await;
+        let gate = gates.get_mut(&effect.gate_id).ok_or_else(|| {
+            agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError::Persistence(
+                "HumanGate open receipt does not exist".to_owned(),
+            )
+        })?;
+        gate.payload_json = Some(effect.decision.clone());
+        gate.resolve(effect.resolved_by.clone());
+        let receipt = agentdash_domain::workflow::WorkflowHumanGateResolutionReceipt {
+            effect: effect.clone(),
+            committed_at: chrono::Utc::now(),
+        };
+        resolutions.insert(effect.gate_id, receipt.clone());
+        Ok(receipt)
+    }
+
+    async fn get_human_gate_resolution(
+        &self,
+        gate_id: Uuid,
+    ) -> Result<
+        Option<agentdash_domain::workflow::WorkflowHumanGateResolutionReceipt>,
+        agentdash_domain::workflow::WorkflowExecutorEffectRepositoryError,
+    > {
+        Ok(self.gate_resolutions.lock().await.get(&gate_id).cloned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use agentdash_domain::{
+        DomainError,
+        workflow::{
+            ActivationRule, ActivityCompletionPolicy, ActivityJoinPolicy, AgentProcedure,
+            AgentProcedureContract, AgentProcedureExecutionSpec, AgentProcedureRepository,
+            AgentReusePolicy, ApiRequestExecutorSpec, ExecutorSpec, FunctionActivityExecutorSpec,
+            HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleGate,
+            LifecycleGateRepository, OrchestrationLimits, OrchestrationPlanSnapshot,
+            OrchestrationSourceRef, OutputPortDefinition, PlanNode, RuntimeNodeStatus,
+            RuntimeThreadPolicy, TransitionCondition, WorkflowAgentCallRuntimeState,
+        },
     };
-    use agentdash_spi::{ApiRequestOutcome, BashExecOutcome};
-    use agentdash_test_support::workflow::{
-        MemoryAgentFrameRepository, MemoryAgentProcedureRepository, MemoryLifecycleGateRepository,
-        MemoryLifecycleRunRepository, MemoryRuntimeSessionExecutionAnchorRepository,
+    use agentdash_platform_spi::{
+        ApiRequestOutcome, BashExecOutcome, FunctionEffectObservation, FunctionEffectRawOutcome,
+        FunctionEffectRequest,
     };
     use async_trait::async_trait;
     use chrono::Utc;
-    use serde_json::json;
-
-    use crate::orchestration::runtime::activate_root_orchestration;
+    use tokio::sync::Mutex;
 
     use super::*;
+    use crate::orchestration::{
+        WorkflowAgentCallDispatchError, WorkflowAgentCallDispatchOutcome,
+        WorkflowAgentCallDispatchPort, WorkflowAgentCallRequest, WorkflowAgentCallTargetIntent,
+        activate_root_orchestration,
+    };
 
-    struct RejectingProcedureRepo;
+    #[derive(Default)]
+    struct RunRepo {
+        run: Mutex<Option<LifecycleRun>>,
+        fail_cas_at_expected_revision: Mutex<Option<u64>>,
+        conflict_cas_at_expected_revision: Mutex<Option<u64>>,
+        attempted_claim_ids: Mutex<Vec<String>>,
+    }
 
     #[async_trait]
-    impl AgentProcedureRepository for RejectingProcedureRepo {
+    impl LifecycleRunRepository for RunRepo {
+        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            *self.run.lock().await = Some(run.clone());
+            Ok(())
+        }
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
+            Ok(self.run.lock().await.clone().filter(|run| run.id == id))
+        }
+        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .get_by_id(ids.first().copied().unwrap_or_default())
+                .await?
+                .into_iter()
+                .collect())
+        }
+        async fn list_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .run
+                .lock()
+                .await
+                .clone()
+                .filter(|run| run.project_id == project_id)
+                .into_iter()
+                .collect())
+        }
+        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            *self.run.lock().await = Some(run.clone());
+            Ok(())
+        }
+        async fn compare_and_swap(
+            &self,
+            expected_revision: u64,
+            run: &LifecycleRun,
+        ) -> Result<(), LifecycleRunWriteError> {
+            if let Some(claim_id) = run
+                .orchestrations
+                .iter()
+                .flat_map(|orchestration| orchestration.node_tree.iter())
+                .find_map(|node| node.agent_call.as_ref()?.claim_id.clone())
+            {
+                self.attempted_claim_ids.lock().await.push(claim_id);
+            }
+            let mut conflict_at = self.conflict_cas_at_expected_revision.lock().await;
+            if *conflict_at == Some(expected_revision) {
+                *conflict_at = None;
+                return Err(LifecycleRunWriteError::RevisionConflict {
+                    run_id: run.id,
+                    expected_revision,
+                    actual_revision: expected_revision + 1,
+                });
+            }
+            drop(conflict_at);
+            let mut fail_at = self.fail_cas_at_expected_revision.lock().await;
+            if *fail_at == Some(expected_revision) {
+                *fail_at = None;
+                return Err(LifecycleRunWriteError::Persistence(
+                    DomainError::InvalidConfig("injected CAS commit failure".to_owned()),
+                ));
+            }
+            drop(fail_at);
+            let mut stored = self.run.lock().await;
+            let actual_revision = stored.as_ref().map_or(0, |item| item.revision);
+            if actual_revision != expected_revision || run.revision != expected_revision + 1 {
+                return Err(LifecycleRunWriteError::RevisionConflict {
+                    run_id: run.id,
+                    expected_revision,
+                    actual_revision,
+                });
+            }
+            *stored = Some(run.clone());
+            Ok(())
+        }
+        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    struct UnusedProcedureRepo;
+
+    #[async_trait]
+    impl AgentProcedureRepository for UnusedProcedureRepo {
         async fn create(&self, _procedure: &AgentProcedure) -> Result<(), DomainError> {
-            Err(repo_lookup_error())
+            Ok(())
         }
-
         async fn get_by_id(&self, _id: Uuid) -> Result<Option<AgentProcedure>, DomainError> {
-            Err(repo_lookup_error())
+            Ok(None)
         }
-
         async fn get_by_key(&self, _key: &str) -> Result<Option<AgentProcedure>, DomainError> {
-            Err(repo_lookup_error())
+            Ok(None)
         }
-
         async fn get_by_project_and_key(
             &self,
             _project_id: Uuid,
             _key: &str,
         ) -> Result<Option<AgentProcedure>, DomainError> {
-            Err(repo_lookup_error())
+            Ok(None)
         }
-
         async fn list_all(&self) -> Result<Vec<AgentProcedure>, DomainError> {
-            Err(repo_lookup_error())
+            Ok(Vec::new())
         }
-
         async fn list_by_project(
             &self,
             _project_id: Uuid,
         ) -> Result<Vec<AgentProcedure>, DomainError> {
-            Err(repo_lookup_error())
+            Ok(Vec::new())
         }
-
         async fn update(&self, _procedure: &AgentProcedure) -> Result<(), DomainError> {
-            Err(repo_lookup_error())
+            Ok(())
         }
-
         async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            Err(repo_lookup_error())
+            Ok(())
         }
     }
 
-    fn repo_lookup_error() -> DomainError {
-        DomainError::InvalidConfig("snapshot procedure must not query repository".to_string())
-    }
+    struct UnusedGateRepo;
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    struct CapturedAgentNodeComposition {
-        node_path: String,
-        attempt: u32,
-        runtime_session_id: Option<String>,
-        contract_output_ports: Vec<String>,
-    }
-
-    struct CapturingLifecycleFrameMaterializer {
-        frame_repo: Arc<MemoryAgentFrameRepository>,
-        anchor_repo: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
-        calls: Mutex<Vec<CapturedAgentNodeComposition>>,
-    }
-
-    impl CapturingLifecycleFrameMaterializer {
-        fn new(
-            frame_repo: Arc<MemoryAgentFrameRepository>,
-            anchor_repo: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
-        ) -> Self {
-            Self {
-                frame_repo,
-                anchor_repo,
-                calls: Mutex::new(Vec::new()),
-            }
+    #[async_trait]
+    impl LifecycleGateRepository for UnusedGateRepo {
+        async fn create(&self, _gate: &LifecycleGate) -> Result<(), DomainError> {
+            Ok(())
         }
-
-        fn calls(&self) -> Vec<CapturedAgentNodeComposition> {
-            self.calls.lock().unwrap().clone()
+        async fn get(&self, _id: Uuid) -> Result<Option<LifecycleGate>, DomainError> {
+            Ok(None)
         }
+        async fn list_open_for_agent(
+            &self,
+            _agent_id: Uuid,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(Vec::new())
+        }
+        async fn list_open_gate_wait_policies(
+            &self,
+            _limit: usize,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(Vec::new())
+        }
+        async fn list_by_wait_producer(
+            &self,
+            _producer: &agentdash_domain::workflow::WaitProducerRef,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(Vec::new())
+        }
+        async fn find_by_agent_and_correlation(
+            &self,
+            _agent_id: Uuid,
+            _correlation_id: &str,
+        ) -> Result<Option<LifecycleGate>, DomainError> {
+            Ok(None)
+        }
+        async fn update(&self, _gate: &LifecycleGate) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingDispatch {
+        calls: AtomicUsize,
+        requests: Mutex<Vec<WorkflowAgentCallRequest>>,
     }
 
     #[async_trait]
-    impl WorkflowAgentNodeMaterializationPort for CapturingLifecycleFrameMaterializer {
-        async fn materialize_workflow_agent_node(
+    impl WorkflowAgentCallDispatchPort for RecordingDispatch {
+        async fn dispatch(
             &self,
-            input: agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationRequest,
-        ) -> Result<
-            agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationResult,
-            agentdash_application_ports::lifecycle_materialization::LifecycleMaterializationError,
-        >{
-            let agent_id = Uuid::new_v4();
-            let runtime_session_id = Uuid::new_v4();
-            self.calls
-                .lock()
-                .unwrap()
-                .push(CapturedAgentNodeComposition {
-                    node_path: input.orchestration_binding.node_path.clone(),
-                    attempt: input.orchestration_binding.attempt,
-                    runtime_session_id: Some(runtime_session_id.to_string()),
-                    contract_output_ports: input
-                        .workflow_contract
-                        .as_ref()
-                        .map(|contract| {
-                            contract
-                                .output_ports
-                                .iter()
-                                .map(|port| port.key.clone())
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                });
-            let mut frame =
-                AgentFrame::new_revision(agent_id, 1, "workflow_agent_node_materialization");
-            frame.created_by_id = input.frame_created_by_id;
-            frame.vfs_surface_json = Some(serde_json::json!({
-                "mounts": [{
-                    "id": "lifecycle",
-                    "provider": "lifecycle_vfs"
-                }]
-            }));
-            self.frame_repo.create(&frame).await.map_err(|error| {
-                agentdash_application_ports::lifecycle_materialization::LifecycleMaterializationError::Repository {
-                    operation: "create_agent_frame",
-                    message: error.to_string(),
-                }
-            })?;
-            let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-                runtime_session_id.to_string(),
-                input.run_id,
-                frame.id,
-                agent_id,
-                input.orchestration_binding.orchestration_ref,
-                input.orchestration_binding.node_path.clone(),
-                input.orchestration_binding.attempt,
-            );
-            self.anchor_repo.create_once(&anchor).await.map_err(|error| {
-                agentdash_application_ports::lifecycle_materialization::LifecycleMaterializationError::Repository {
-                    operation: "create_runtime_session_execution_anchor",
-                    message: error.to_string(),
-                }
-            })?;
-            Ok(
-                agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationResult {
-                    runtime_refs: AgentRuntimeRefs::new(
-                        input.run_id,
-                        agent_id,
-                        frame.id,
-                        Some(input.orchestration_binding),
-                    ),
-                    delivery_runtime_ref: runtime_session_id,
-                },
-            )
-        }
-    }
-
-    struct TestFunctionRunner {
-        api_outcome: ApiRequestOutcome,
-        contexts: Mutex<Vec<Value>>,
-    }
-
-    #[async_trait]
-    impl FunctionRunner for TestFunctionRunner {
-        async fn run_api_request(
-            &self,
-            _spec: &ApiRequestExecutorSpec,
-            context: &Value,
-        ) -> Result<ApiRequestOutcome, String> {
-            self.contexts.lock().unwrap().push(context.clone());
-            Ok(self.api_outcome.clone())
-        }
-
-        async fn run_bash(
-            &self,
-            _spec: &BashExecExecutorSpec,
-            context: &Value,
-        ) -> Result<BashExecOutcome, String> {
-            self.contexts.lock().unwrap().push(context.clone());
-            Ok(BashExecOutcome {
-                exit_code: Some(0),
-                stdout: "ok".to_string(),
-                stderr: String::new(),
-                success: true,
+            request: WorkflowAgentCallRequest,
+        ) -> Result<WorkflowAgentCallDispatchOutcome, WorkflowAgentCallDispatchError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let target = request.target_intent.target().clone();
+            let authority = match &request.target_intent {
+                crate::orchestration::WorkflowAgentCallTargetIntent::CreateNew { .. } => (
+                    "runtime-thread-workflow-1".to_owned(),
+                    agentdash_domain::workflow::WorkflowAgentCallSourceBindingRef {
+                        service_instance_id: "dash:workflow-agent".to_owned(),
+                        source_ref: "source:workflow-agent".to_owned(),
+                    },
+                ),
+                crate::orchestration::WorkflowAgentCallTargetIntent::ContinueCurrent {
+                    runtime_thread_id,
+                    source_binding,
+                    ..
+                } => (runtime_thread_id.clone(), source_binding.clone()),
+            };
+            self.requests.lock().await.push(request);
+            Ok(WorkflowAgentCallDispatchOutcome::Accepted {
+                target,
+                runtime_thread_id: authority.0,
+                source_binding: authority.1,
             })
         }
     }
 
-    fn launcher(
-        run_repo: Arc<MemoryLifecycleRunRepository>,
-        gate_repo: Arc<MemoryLifecycleGateRepository>,
-    ) -> OrchestrationExecutorLauncher {
-        launcher_with_procedure_repo(
-            run_repo,
-            gate_repo,
-            Arc::new(MemoryAgentProcedureRepository::default()),
-        )
+    struct RecordingStableFunctionRunner {
+        executions: AtomicUsize,
+        observations: Mutex<std::collections::BTreeMap<String, FunctionEffectObservation>>,
+        execute_observation: FunctionEffectObservation,
+        lose_receipt_after_side_effect: bool,
     }
 
-    fn launcher_with_procedure_repo(
-        run_repo: Arc<MemoryLifecycleRunRepository>,
-        gate_repo: Arc<MemoryLifecycleGateRepository>,
-        procedure_repo: Arc<dyn AgentProcedureRepository>,
-    ) -> OrchestrationExecutorLauncher {
-        launcher_with_procedure_and_frame_repo(run_repo, gate_repo, procedure_repo).0
-    }
-
-    fn launcher_with_procedure_and_frame_repo(
-        run_repo: Arc<MemoryLifecycleRunRepository>,
-        gate_repo: Arc<MemoryLifecycleGateRepository>,
-        procedure_repo: Arc<dyn AgentProcedureRepository>,
-    ) -> (
-        OrchestrationExecutorLauncher,
-        Arc<MemoryAgentFrameRepository>,
-        Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
-    ) {
-        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
-        let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
-        let frame_materializer = Arc::new(CapturingLifecycleFrameMaterializer::new(
-            frame_repo.clone(),
-            anchor_repo.clone(),
-        ));
-        launcher_with_procedure_frame_repo_and_materializer(
-            run_repo,
-            gate_repo,
-            procedure_repo,
-            frame_repo,
-            anchor_repo,
-            frame_materializer,
-        )
-    }
-
-    fn launcher_with_procedure_frame_repo_and_materializer(
-        run_repo: Arc<MemoryLifecycleRunRepository>,
-        gate_repo: Arc<MemoryLifecycleGateRepository>,
-        procedure_repo: Arc<dyn AgentProcedureRepository>,
-        frame_repo: Arc<MemoryAgentFrameRepository>,
-        anchor_repo: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
-        frame_materializer: Arc<dyn WorkflowAgentNodeMaterializationPort>,
-    ) -> (
-        OrchestrationExecutorLauncher,
-        Arc<MemoryAgentFrameRepository>,
-        Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
-    ) {
-        let launcher =
-            OrchestrationExecutorLauncher::from_repositories(OrchestrationExecutorRepositories {
-                lifecycle_run_repo: run_repo,
-                agent_procedure_repo: procedure_repo,
-                lifecycle_gate_repo: gate_repo,
-                workflow_agent_node_materialization: frame_materializer,
-            });
-        (launcher, frame_repo, anchor_repo)
-    }
-
-    fn workflow_source(graph_id: Uuid) -> OrchestrationSourceRef {
-        OrchestrationSourceRef::WorkflowGraph {
-            graph_id,
-            graph_version: Some(1),
+    impl Default for RecordingStableFunctionRunner {
+        fn default() -> Self {
+            Self {
+                executions: AtomicUsize::new(0),
+                observations: Mutex::new(std::collections::BTreeMap::new()),
+                execute_observation: FunctionEffectObservation::Succeeded(
+                    FunctionEffectRawOutcome::ApiRequest(ApiRequestOutcome {
+                        status: 200,
+                        body_text: "ok".to_owned(),
+                        body_json: Some(serde_json::json!({"value": 7})),
+                    }),
+                ),
+                lose_receipt_after_side_effect: false,
+            }
         }
     }
 
-    fn output_port(key: &str) -> OutputPortDefinition {
-        OutputPortDefinition {
-            key: key.to_string(),
-            description: String::new(),
-            gate_strategy: GateStrategy::Existence,
-            gate_params: None,
+    impl RecordingStableFunctionRunner {
+        fn observing(effect_id: String, observation: FunctionEffectObservation) -> Self {
+            Self {
+                observations: Mutex::new(std::collections::BTreeMap::from([(
+                    effect_id,
+                    observation,
+                )])),
+                ..Self::default()
+            }
+        }
+
+        fn returning(execute_observation: FunctionEffectObservation) -> Self {
+            Self {
+                execute_observation,
+                ..Self::default()
+            }
+        }
+
+        fn losing_receipt() -> Self {
+            Self {
+                lose_receipt_after_side_effect: true,
+                ..Self::default()
+            }
         }
     }
 
-    fn contract_output_port(key: &str) -> OutputPortDefinition {
-        OutputPortDefinition {
-            key: key.to_string(),
-            description: format!("{key} output"),
-            gate_strategy: GateStrategy::Existence,
-            gate_params: None,
+    #[async_trait]
+    impl FunctionRunner for RecordingStableFunctionRunner {
+        async fn run_api_request(
+            &self,
+            _spec: &ApiRequestExecutorSpec,
+            _context: &Value,
+        ) -> Result<ApiRequestOutcome, String> {
+            panic!("legacy raw FunctionRunner path must not be called")
+        }
+
+        async fn run_bash(
+            &self,
+            _spec: &agentdash_domain::workflow::BashExecExecutorSpec,
+            _context: &Value,
+        ) -> Result<BashExecOutcome, String> {
+            panic!("legacy raw FunctionRunner path must not be called")
+        }
+
+        async fn execute_effect(
+            &self,
+            request: FunctionEffectRequest,
+        ) -> Result<FunctionEffectObservation, String> {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            if self.lose_receipt_after_side_effect {
+                self.observations
+                    .lock()
+                    .await
+                    .insert(request.effect_id, FunctionEffectObservation::InFlight);
+                return Err("runner receipt lost after external side effect".to_owned());
+            }
+            let outcome = self.execute_observation.clone();
+            self.observations
+                .lock()
+                .await
+                .insert(request.effect_id, outcome.clone());
+            Ok(outcome)
+        }
+
+        async fn inspect_effect(
+            &self,
+            effect_id: &str,
+        ) -> Result<FunctionEffectObservation, String> {
+            Ok(self
+                .observations
+                .lock()
+                .await
+                .get(effect_id)
+                .cloned()
+                .unwrap_or(FunctionEffectObservation::NotApplied))
         }
     }
 
-    fn plan_node(node_id: &str, kind: PlanNodeKind, executor: Option<ExecutorSpec>) -> PlanNode {
-        PlanNode {
-            node_id: node_id.to_string(),
-            node_path: node_id.to_string(),
-            parent_node_id: None,
-            kind,
-            label: Some(node_id.to_string()),
-            executor,
-            input_ports: Vec::new(),
-            output_ports: vec![output_port("result")],
-            completion_policy: None,
-            iteration_policy: None,
-            join_policy: None,
-            result_contract: None,
-            metadata: None,
-        }
-    }
-
-    fn run_with_node(plan_node: PlanNode) -> LifecycleRun {
-        let graph_id = Uuid::new_v4();
-        let source_ref = workflow_source(graph_id);
-        let plan_snapshot = agentdash_domain::workflow::OrchestrationPlanSnapshot {
-            plan_digest: format!("sha256:{}", plan_node.node_id),
+    fn run_with_agent_policy(
+        reuse: AgentReusePolicy,
+        session: RuntimeThreadPolicy,
+    ) -> LifecycleRun {
+        let source_ref = OrchestrationSourceRef::Inline {
+            source_digest: "sha256:agent-call-test".to_owned(),
+        };
+        let plan = OrchestrationPlanSnapshot {
+            plan_digest: "sha256:agent-call-plan".to_owned(),
             plan_version: 1,
             source_ref: source_ref.clone(),
-            nodes: vec![plan_node.clone()],
-            entry_node_ids: vec![plan_node.node_id.clone()],
-            activation_rules: vec![ActivationRule::Entry {
-                node_id: plan_node.node_id.clone(),
+            nodes: vec![PlanNode {
+                node_id: "agent".to_owned(),
+                node_path: "agent".to_owned(),
+                parent_node_id: None,
+                kind: PlanNodeKind::AgentCall,
+                label: None,
+                executor: Some(ExecutorSpec::AgentProcedure {
+                    procedure: AgentProcedureExecutionSpec::Snapshot {
+                        procedure_key: Some("review".to_owned()),
+                        name: Some("Review".to_owned()),
+                        contract: Box::new(AgentProcedureContract::default()),
+                        source_ref: None,
+                        contract_digest: None,
+                    },
+                    agent_reuse_policy: reuse,
+                    runtime_thread_policy: session,
+                }),
+                input_ports: Vec::new(),
+                output_ports: Vec::new(),
+                completion_policy: None,
+                iteration_policy: None,
+                join_policy: None,
+                result_contract: None,
+                metadata: None,
             }],
+            entry_node_ids: vec!["agent".to_owned()],
+            activation_rules: Vec::new(),
             state_exchange_rules: Vec::new(),
             limits: OrchestrationLimits::default(),
             metadata: None,
             created_at: Utc::now(),
         };
-        let orchestration = activate_root_orchestration(source_ref, plan_snapshot);
         let mut run = LifecycleRun::new_control(Uuid::new_v4());
-        assert!(run.add_orchestration(orchestration));
+        run.add_orchestration(activate_root_orchestration(source_ref, plan));
         run
     }
 
-    async fn latest_run(repo: &MemoryLifecycleRunRepository, run_id: Uuid) -> LifecycleRun {
-        repo.get_by_id(run_id)
-            .await
-            .expect("read run")
-            .expect("run persisted")
-    }
-
-    async fn latest_frame(repo: &MemoryAgentFrameRepository) -> AgentFrame {
-        repo.debug_list()
-            .await
-            .last()
-            .cloned()
-            .expect("frame persisted")
-    }
-
-    async fn persisted_anchor(
-        repo: &MemoryRuntimeSessionExecutionAnchorRepository,
-        runtime_session_id: &str,
-    ) -> RuntimeSessionExecutionAnchor {
-        repo.find_by_session(runtime_session_id)
-            .await
-            .expect("read anchor")
-            .expect("runtime session execution anchor persisted")
-    }
-
-    fn runtime_node<'a>(run: &'a LifecycleRun, node_id: &str) -> &'a RuntimeNodeState {
-        run.orchestrations[0]
-            .node_tree
-            .iter()
-            .find(|node| node.node_id == node_id)
-            .expect("runtime node")
-    }
-
-    fn api_executor() -> ExecutorSpec {
-        ExecutorSpec::Function {
-            spec: FunctionActivityExecutorSpec::ApiRequest(ApiRequestExecutorSpec {
-                method: "POST".to_string(),
-                url_template: "https://example.test/workflow".to_string(),
-                body_template: None,
-            }),
-        }
-    }
-
-    fn function_runner() -> Arc<TestFunctionRunner> {
-        Arc::new(TestFunctionRunner {
-            api_outcome: ApiRequestOutcome {
-                status: 201,
-                body_text: "{\"ok\":true}".to_string(),
-                body_json: Some(json!({"ok": true})),
+    fn run_with_function_node() -> LifecycleRun {
+        run_with_single_executor_node(
+            PlanNodeKind::Function,
+            ExecutorSpec::Function {
+                spec: FunctionActivityExecutorSpec::ApiRequest(ApiRequestExecutorSpec {
+                    method: "POST".to_owned(),
+                    url_template: "https://example.invalid".to_owned(),
+                    body_template: Some(serde_json::json!({"input": true})),
+                }),
             },
-            contexts: Mutex::new(Vec::new()),
+            Some(ActivityCompletionPolicy::OutputPorts {
+                required_ports: vec!["result".to_owned()],
+            }),
+            vec![OutputPortDefinition {
+                key: "result".to_owned(),
+                description: "result".to_owned(),
+                gate_strategy: agentdash_domain::workflow::GateStrategy::Existence,
+                gate_params: None,
+            }],
+        )
+    }
+
+    fn run_with_human_gate_node() -> LifecycleRun {
+        run_with_single_executor_node(
+            PlanNodeKind::HumanGate,
+            ExecutorSpec::Human {
+                spec: HumanActivityExecutorSpec::Approval(HumanApprovalExecutorSpec {
+                    form_schema_key: "approval.test".to_owned(),
+                    title: Some("Approve".to_owned()),
+                }),
+            },
+            Some(ActivityCompletionPolicy::HumanDecision {
+                decision_port: "decision".to_owned(),
+            }),
+            vec![OutputPortDefinition {
+                key: "decision".to_owned(),
+                description: "decision".to_owned(),
+                gate_strategy: agentdash_domain::workflow::GateStrategy::Existence,
+                gate_params: None,
+            }],
+        )
+    }
+
+    fn nest_only_runtime_node(run: &mut LifecycleRun) {
+        let orchestration = &mut run.orchestrations[0];
+        let child = orchestration.node_tree.remove(0);
+        orchestration.node_tree.push(RuntimeNodeState {
+            node_id: "phase".to_owned(),
+            node_path: "phase".to_owned(),
+            kind: PlanNodeKind::Phase,
+            status: RuntimeNodeStatus::Running,
+            attempt: 1,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            executor_run_ref: None,
+            agent_call: None,
+            children: vec![child],
+            phase_path: Vec::new(),
+            started_at: Some(Utc::now()),
+            completed_at: None,
+            error: None,
+            trace_refs: Vec::new(),
+            cache: None,
+        });
+    }
+
+    fn run_with_single_executor_node(
+        kind: PlanNodeKind,
+        executor: ExecutorSpec,
+        completion_policy: Option<ActivityCompletionPolicy>,
+        output_ports: Vec<OutputPortDefinition>,
+    ) -> LifecycleRun {
+        let source_ref = OrchestrationSourceRef::Inline {
+            source_digest: "sha256:executor-effect-test".to_owned(),
+        };
+        let plan = OrchestrationPlanSnapshot {
+            plan_digest: "sha256:executor-effect-plan".to_owned(),
+            plan_version: 1,
+            source_ref: source_ref.clone(),
+            nodes: vec![PlanNode {
+                node_id: "effect".to_owned(),
+                node_path: "effect".to_owned(),
+                parent_node_id: None,
+                kind,
+                label: Some("Effect".to_owned()),
+                executor: Some(executor),
+                input_ports: Vec::new(),
+                output_ports,
+                completion_policy,
+                iteration_policy: None,
+                join_policy: None,
+                result_contract: None,
+                metadata: None,
+            }],
+            entry_node_ids: vec!["effect".to_owned()],
+            activation_rules: Vec::new(),
+            state_exchange_rules: Vec::new(),
+            limits: OrchestrationLimits::default(),
+            metadata: None,
+            created_at: Utc::now(),
+        };
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        run.add_orchestration(activate_root_orchestration(source_ref, plan));
+        run
+    }
+
+    fn launcher(
+        repo: Arc<RunRepo>,
+        dispatch: Arc<RecordingDispatch>,
+    ) -> OrchestrationExecutorLauncher {
+        OrchestrationExecutorLauncher::new(WorkflowRepositorySet {
+            lifecycle_run_repo: repo,
+            lifecycle_gate_repo: Arc::new(UnusedGateRepo),
+            agent_procedure_repo: Arc::new(UnusedProcedureRepo),
         })
+        .with_agent_call_dispatch(dispatch)
     }
 
-    fn agent_executor(procedure_key: &str) -> ExecutorSpec {
-        ExecutorSpec::AgentProcedure {
-            procedure: AgentProcedureExecutionSpec::by_key(procedure_key),
-            agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
-            runtime_session_policy: RuntimeSessionPolicy::CreateNew,
-        }
+    fn launcher_with_effects(
+        repo: Arc<RunRepo>,
+        effects: Arc<RecordingWorkflowExecutorEffectRepository>,
+    ) -> OrchestrationExecutorLauncher {
+        OrchestrationExecutorLauncher::new_for_test(
+            WorkflowRepositorySet {
+                lifecycle_run_repo: repo,
+                lifecycle_gate_repo: Arc::new(UnusedGateRepo),
+                agent_procedure_repo: Arc::new(UnusedProcedureRepo),
+            },
+            effects,
+        )
     }
 
-    fn snapshot_agent_executor() -> ExecutorSpec {
-        ExecutorSpec::AgentProcedure {
+    fn run_with_continue_successor() -> LifecycleRun {
+        let mut run = run_with_agent_policy(
+            AgentReusePolicy::CreateActivityAgent,
+            RuntimeThreadPolicy::CreateNew,
+        );
+        let orchestration = &mut run.orchestrations[0];
+        let mut plan_node = orchestration.plan_snapshot.nodes[0].clone();
+        plan_node.node_id = "continue".to_owned();
+        plan_node.node_path = "continue".to_owned();
+        plan_node.executor = Some(ExecutorSpec::AgentProcedure {
             procedure: AgentProcedureExecutionSpec::Snapshot {
-                procedure_key: None,
-                name: Some("Inline Review".to_string()),
+                procedure_key: Some("continue".to_owned()),
+                name: Some("Continue".to_owned()),
                 contract: Box::new(AgentProcedureContract::default()),
                 source_ref: None,
-                contract_digest: Some("sha256:inline".to_string()),
+                contract_digest: None,
             },
-            agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
-            runtime_session_policy: RuntimeSessionPolicy::CreateNew,
-        }
-    }
-
-    fn procedure(project_id: Uuid, key: &str) -> AgentProcedure {
-        procedure_with_contract(project_id, key, AgentProcedureContract::default())
-    }
-
-    fn procedure_with_contract(
-        project_id: Uuid,
-        key: &str,
-        contract: AgentProcedureContract,
-    ) -> AgentProcedure {
-        AgentProcedure::new(
-            project_id,
-            key,
-            "Agent Review",
-            "Agent review procedure used by orchestration launcher tests.",
-            DefinitionSource::UserAuthored,
-            contract,
-        )
-        .expect("agent procedure")
-    }
-
-    #[tokio::test]
-    async fn launcher_runs_function_node_through_started_then_completed_state() {
-        let mut node = plan_node("function", PlanNodeKind::Function, Some(api_executor()));
-        node.completion_policy = Some(ActivityCompletionPolicy::OutputPorts {
-            required_ports: vec!["result".to_string()],
+            agent_reuse_policy: AgentReusePolicy::ContinueCurrentAgent,
+            runtime_thread_policy: RuntimeThreadPolicy::DeliverToCurrentThread,
         });
-        let run = run_with_node(node);
-        let run_id = run.id;
-        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
-        run_repo.create(&run).await.expect("seed run");
-        let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
-        let runner = function_runner();
-        let launcher = launcher(run_repo.clone(), gate_repo).with_function_runner(runner.clone());
-
-        let result = launcher
-            .drain_ready_nodes(run_id)
-            .await
-            .expect("drain ready nodes");
-
-        assert_eq!(result.completed_effect_nodes, vec!["function"]);
-        let latest = latest_run(&run_repo, run_id).await;
-        let orchestration = &latest.orchestrations[0];
-        assert!(orchestration.dispatch.ready_node_ids.is_empty());
-        let node = runtime_node(&latest, "function");
-        assert_eq!(node.status, RuntimeNodeStatus::Completed);
-        assert!(node.started_at.is_some());
-        assert!(node.completed_at.is_some());
-        assert!(matches!(
-            node.executor_run_ref,
-            Some(ExecutorRunRef::FunctionRun { .. })
-        ));
-        assert!(matches!(
-            node.trace_refs.as_slice(),
-            [RuntimeTraceRef::FunctionRun { .. }]
-        ));
-        assert_eq!(node.outputs[0].port_key, "result");
-        assert_eq!(node.outputs[0].value["body_json"], json!({"ok": true}));
-        assert_eq!(
-            runner.contexts.lock().unwrap()[0]["node"]["path"],
-            json!("function")
-        );
+        orchestration.plan_snapshot.nodes.push(plan_node);
+        orchestration
+            .plan_snapshot
+            .activation_rules
+            .push(ActivationRule::Transition {
+                rule_id: "create-to-continue".to_owned(),
+                from_node_id: "agent".to_owned(),
+                to_node_id: "continue".to_owned(),
+                condition: TransitionCondition::Always,
+                join_policy: ActivityJoinPolicy::All,
+                max_traversals: None,
+                source_path: None,
+            });
+        let mut runtime_node = orchestration.node_tree[0].clone();
+        runtime_node.node_id = "continue".to_owned();
+        runtime_node.node_path = "continue".to_owned();
+        runtime_node.status = RuntimeNodeStatus::Pending;
+        runtime_node.executor_run_ref = None;
+        runtime_node.agent_call = None;
+        runtime_node.started_at = None;
+        runtime_node.trace_refs.clear();
+        orchestration.node_tree.push(runtime_node);
+        run
     }
 
-    #[tokio::test]
-    async fn launcher_records_local_effect_as_started_then_failed_with_node_coordinate() {
-        let mut node = plan_node(
-            "effect",
-            PlanNodeKind::LocalEffect,
-            Some(ExecutorSpec::LocalEffect {
-                capability_key: "workspace.write".to_string(),
-                input: Some(json!({"path": "result.txt"})),
-            }),
-        );
-        node.node_path = "effects.workspace_write".to_string();
-        let run = run_with_node(node);
+    fn run_with_ambiguous_predecessor_authorities() -> LifecycleRun {
+        let mut run = run_with_continue_successor();
         let run_id = run.id;
-        let orchestration_id = run.orchestrations[0].orchestration_id;
-        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
-        run_repo.create(&run).await.expect("seed run");
-        let launcher = launcher(
-            run_repo.clone(),
-            Arc::new(MemoryLifecycleGateRepository::default()),
-        )
-        .with_function_runner(function_runner());
-
-        let result = launcher
-            .drain_ready_nodes(run_id)
-            .await
-            .expect("drain ready nodes");
-
-        assert_eq!(result.failed_nodes, vec!["effects.workspace_write"]);
-        let latest = latest_run(&run_repo, run_id).await;
-        let node = runtime_node(&latest, "effect");
-        assert_eq!(node.status, RuntimeNodeStatus::Failed);
-        assert!(node.started_at.is_some());
-        assert!(node.completed_at.is_some());
-        assert!(matches!(
-            node.executor_run_ref,
-            Some(ExecutorRunRef::FunctionRun { .. })
-        ));
-        let error = node.error.as_ref().expect("local effect error");
-        assert_eq!(error.code, "local_effect_capability_not_supported");
-        assert_eq!(
-            error.detail.as_ref().expect("detail")["contract"],
-            json!("orchestration_node_coordinate.v1")
-        );
-        assert_eq!(
-            error.detail.as_ref().expect("detail")["run_id"],
-            json!(run_id)
-        );
-        assert_eq!(
-            error.detail.as_ref().expect("detail")["orchestration_id"],
-            json!(orchestration_id)
-        );
-        assert_eq!(
-            error.detail.as_ref().expect("detail")["node_path"],
-            json!("effects.workspace_write")
-        );
-    }
-
-    #[tokio::test]
-    async fn launcher_launches_agent_call_and_records_runtime_session_start() {
-        let procedure_key = "agent.review";
-        let node = plan_node(
-            "agent",
-            PlanNodeKind::AgentCall,
-            Some(agent_executor(procedure_key)),
-        );
-        let run = run_with_node(node);
-        let run_id = run.id;
-        let project_id = run.project_id;
-        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
-        run_repo.create(&run).await.expect("seed run");
-        let procedure_repo = Arc::new(MemoryAgentProcedureRepository::default());
-        let procedure = procedure(project_id, procedure_key);
-        procedure_repo
-            .create(&procedure)
-            .await
-            .expect("seed procedure");
-        let (launcher, frame_repo, anchor_repo) = launcher_with_procedure_and_frame_repo(
-            run_repo.clone(),
-            Arc::new(MemoryLifecycleGateRepository::default()),
-            procedure_repo,
-        );
-
-        let result = launcher
-            .drain_ready_nodes(run_id)
-            .await
-            .expect("drain ready nodes");
-
-        assert_eq!(result.launched_agent_nodes.len(), 1);
-        assert_eq!(result.launched_agent_nodes[0].node_path, "agent");
-        let latest = latest_run(&run_repo, run_id).await;
-        let node = runtime_node(&latest, "agent");
-        assert_eq!(node.status, RuntimeNodeStatus::Claiming);
-        assert!(node.started_at.is_none());
-        assert_eq!(node.executor_run_ref, None);
-        assert!(node.trace_refs.is_empty());
-        assert!(latest.orchestrations[0].dispatch.ready_node_ids.is_empty());
-
-        let frame = latest_frame(&frame_repo).await;
-        let anchor = persisted_anchor(
-            &anchor_repo,
-            &result.launched_agent_nodes[0].runtime_session_id,
-        )
-        .await;
-        assert_eq!(anchor.launch_frame_id, frame.id);
-        assert_eq!(anchor.run_id, run_id);
-        assert_eq!(
-            anchor.orchestration_id,
-            Some(latest.orchestrations[0].orchestration_id)
-        );
-        assert_eq!(anchor.node_path.as_deref(), Some("agent"));
-        assert_eq!(anchor.node_attempt, Some(1));
-
-        let mounts = frame
-            .vfs_surface_json
-            .as_ref()
-            .and_then(|surface| surface.get("mounts"))
-            .and_then(serde_json::Value::as_array)
-            .expect("agent call frame should persist lifecycle VFS mounts");
-        assert!(mounts.iter().any(|mount| {
-            mount.get("id").and_then(serde_json::Value::as_str) == Some("lifecycle")
-                && mount.get("provider").and_then(serde_json::Value::as_str)
-                    == Some("lifecycle_vfs")
-        }));
-    }
-
-    #[tokio::test]
-    async fn launcher_materializes_agent_call_contract_through_frame_materializer_and_node_claimed()
-    {
-        let procedure_key = "agent.contract.review";
-        let node = plan_node(
-            "agent",
-            PlanNodeKind::AgentCall,
-            Some(agent_executor(procedure_key)),
-        );
-        let run = run_with_node(node);
-        let run_id = run.id;
-        let project_id = run.project_id;
-        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
-        run_repo.create(&run).await.expect("seed run");
-        let procedure_repo = Arc::new(MemoryAgentProcedureRepository::default());
-        let contract = AgentProcedureContract {
-            injection: WorkflowInjectionSpec {
-                guidance: Some("Use the review contract.".to_string()),
-                ..WorkflowInjectionSpec::default()
-            },
-            output_ports: vec![contract_output_port("contract_result")],
-            ..AgentProcedureContract::default()
+        let orchestration = &mut run.orchestrations[0];
+        let first_target = agentdash_domain::agent_run_target::AgentRunTarget {
+            run_id,
+            agent_id: Uuid::new_v4(),
         };
-        let procedure = procedure_with_contract(project_id, procedure_key, contract);
-        procedure_repo
-            .create(&procedure)
-            .await
-            .expect("seed procedure");
-        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
-        let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
-        let materializer = Arc::new(CapturingLifecycleFrameMaterializer::new(
-            frame_repo.clone(),
-            anchor_repo.clone(),
-        ));
-        let (launcher, frame_repo, anchor_repo) =
-            launcher_with_procedure_frame_repo_and_materializer(
-                run_repo.clone(),
-                Arc::new(MemoryLifecycleGateRepository::default()),
-                procedure_repo,
-                frame_repo,
-                anchor_repo,
-                materializer.clone(),
-            );
+        let first = &mut orchestration.node_tree[0];
+        first.status = RuntimeNodeStatus::Completed;
+        first.started_at = Some(Utc::now());
+        first.executor_run_ref = Some(ExecutorRunRef::AgentRun {
+            run_id: first_target.run_id,
+            agent_id: first_target.agent_id,
+        });
+        first.agent_call = Some(WorkflowAgentCallRuntimeState {
+            request_id: "first".to_owned(),
+            payload_digest: "sha256:first".to_owned(),
+            target: first_target,
+            request: serde_json::json!({}),
+            prepared_at: Utc::now(),
+            dispatched_at: Some(Utc::now()),
+            runtime_thread_id: Some("thread:first".to_owned()),
+            source_binding: Some(
+                agentdash_domain::workflow::WorkflowAgentCallSourceBindingRef {
+                    service_instance_id: "dash:first".to_owned(),
+                    source_ref: "source:first".to_owned(),
+                },
+            ),
+            claim_id: Some("claim:first".to_owned()),
+        });
 
-        let result = launcher
+        let mut second_plan = orchestration.plan_snapshot.nodes[0].clone();
+        second_plan.node_id = "agent-2".to_owned();
+        second_plan.node_path = "agent-2".to_owned();
+        orchestration.plan_snapshot.nodes.push(second_plan);
+        orchestration
+            .plan_snapshot
+            .activation_rules
+            .push(ActivationRule::Transition {
+                rule_id: "second-to-continue".to_owned(),
+                from_node_id: "agent-2".to_owned(),
+                to_node_id: "continue".to_owned(),
+                condition: TransitionCondition::Always,
+                join_policy: ActivityJoinPolicy::All,
+                max_traversals: None,
+                source_path: None,
+            });
+        let mut second = orchestration.node_tree[0].clone();
+        let second_target = agentdash_domain::agent_run_target::AgentRunTarget {
+            run_id,
+            agent_id: Uuid::new_v4(),
+        };
+        second.node_id = "agent-2".to_owned();
+        second.node_path = "agent-2".to_owned();
+        second.executor_run_ref = Some(ExecutorRunRef::AgentRun {
+            run_id: second_target.run_id,
+            agent_id: second_target.agent_id,
+        });
+        let history = second.agent_call.as_mut().expect("second history");
+        history.target = second_target;
+        history.runtime_thread_id = Some("thread:second".to_owned());
+        history.source_binding.as_mut().expect("binding").source_ref = "source:second".to_owned();
+        orchestration.node_tree.push(second);
+        orchestration.node_tree[1].status = RuntimeNodeStatus::Ready;
+        orchestration.dispatch.ready_node_ids = vec!["continue".to_owned()];
+        orchestration.status = agentdash_domain::workflow::OrchestrationStatus::Running;
+        run
+    }
+
+    #[tokio::test]
+    async fn drain_persists_prepared_dispatched_and_agent_run_identity() {
+        let run = run_with_agent_policy(
+            AgentReusePolicy::CreateActivityAgent,
+            RuntimeThreadPolicy::CreateNew,
+        );
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let result = launcher(repo.clone(), dispatch.clone())
             .drain_ready_nodes(run_id)
             .await
-            .expect("drain ready nodes");
+            .expect("drain");
 
         assert_eq!(result.launched_agent_nodes.len(), 1);
         let launched = &result.launched_agent_nodes[0];
-        let calls = materializer.calls();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].node_path, "agent");
-        assert_eq!(calls[0].attempt, 1);
+        assert_eq!(launched.runtime_thread_id, "runtime-thread-workflow-1");
+        assert_eq!(dispatch.calls.load(Ordering::SeqCst), 1);
+        let run = repo.get_by_id(run_id).await.unwrap().unwrap();
+        let node = &run.orchestrations[0].node_tree[0];
         assert_eq!(
-            calls[0].runtime_session_id.as_deref(),
-            Some(launched.runtime_session_id.as_str())
+            node.status,
+            agentdash_domain::workflow::RuntimeNodeStatus::Running
         );
         assert_eq!(
-            calls[0].contract_output_ports,
-            vec!["contract_result".to_string()]
+            node.executor_run_ref,
+            Some(ExecutorRunRef::AgentRun {
+                run_id,
+                agent_id: launched.agent_id,
+            })
         );
-
-        let latest = latest_run(&run_repo, run_id).await;
-        let node = runtime_node(&latest, "agent");
-        assert_eq!(node.status, RuntimeNodeStatus::Claiming);
-        assert_eq!(node.executor_run_ref, None);
-        assert!(node.trace_refs.is_empty());
-
-        let frame = latest_frame(&frame_repo).await;
-        let anchor = persisted_anchor(&anchor_repo, &launched.runtime_session_id).await;
-        assert_eq!(anchor.launch_frame_id, frame.id);
-        assert_eq!(anchor.run_id, run_id);
+        let history = node.agent_call.as_ref().expect("AgentCall history");
+        assert_eq!(history.target.agent_id, launched.agent_id);
+        assert!(history.dispatched_at.is_some());
         assert_eq!(
-            anchor.orchestration_id,
-            Some(latest.orchestrations[0].orchestration_id)
+            history.runtime_thread_id.as_deref(),
+            Some("runtime-thread-workflow-1")
         );
-        assert_eq!(anchor.node_path.as_deref(), Some("agent"));
-        assert_eq!(anchor.node_attempt, Some(1));
     }
 
     #[tokio::test]
-    async fn launcher_launches_snapshot_agent_without_procedure_repository_lookup() {
-        let node = plan_node(
-            "agent",
-            PlanNodeKind::AgentCall,
-            Some(snapshot_agent_executor()),
+    async fn unsupported_policy_is_rejected_before_dispatch_side_effect() {
+        let run = run_with_agent_policy(
+            AgentReusePolicy::CreateActivityAgent,
+            RuntimeThreadPolicy::DeliverToCurrentThread,
         );
-        let run = run_with_node(node);
         let run_id = run.id;
-        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
-        run_repo.create(&run).await.expect("seed run");
-        let launcher = launcher_with_procedure_repo(
-            run_repo.clone(),
-            Arc::new(MemoryLifecycleGateRepository::default()),
-            Arc::new(RejectingProcedureRepo),
-        );
-
-        let result = launcher
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let result = launcher(repo, dispatch.clone())
             .drain_ready_nodes(run_id)
             .await
-            .expect("snapshot agent should launch without repository lookup");
+            .expect("drain");
 
-        assert_eq!(result.launched_agent_nodes.len(), 1);
-        let latest = latest_run(&run_repo, run_id).await;
-        let node = runtime_node(&latest, "agent");
-        assert_eq!(node.status, RuntimeNodeStatus::Claiming);
-        assert_eq!(node.executor_run_ref, None);
+        assert_eq!(dispatch.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(result.failed_nodes, vec!["agent"]);
     }
 
     #[tokio::test]
-    async fn launcher_opens_human_gate_with_orchestration_node_contract() {
-        let mut node = plan_node(
-            "review",
-            PlanNodeKind::HumanGate,
-            Some(ExecutorSpec::Human {
-                spec: HumanActivityExecutorSpec::Approval(HumanApprovalExecutorSpec {
-                    form_schema_key: "approval.review".to_string(),
-                    title: Some("Review".to_string()),
-                }),
-            }),
+    async fn continue_current_missing_authority_blocks_before_product_effect() {
+        let run = run_with_agent_policy(
+            AgentReusePolicy::ContinueCurrentAgent,
+            RuntimeThreadPolicy::DeliverToCurrentThread,
         );
-        node.output_ports = vec![output_port("decision")];
-        node.completion_policy = Some(ActivityCompletionPolicy::HumanDecision {
-            decision_port: "decision".to_string(),
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
         });
-        let run = run_with_node(node);
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let result = launcher(repo, dispatch.clone())
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("drain");
+
+        assert_eq!(result.failed_nodes, vec!["agent"]);
+        assert_eq!(dispatch.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn continue_current_ambiguous_authority_blocks_before_product_effect() {
+        let run = run_with_ambiguous_predecessor_authorities();
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let result = launcher(repo, dispatch.clone())
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("drain");
+
+        assert_eq!(result.failed_nodes, vec!["continue"]);
+        assert_eq!(dispatch.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn continue_current_traces_unique_started_predecessor_authority() {
+        let run = run_with_continue_successor();
         let run_id = run.id;
         let orchestration_id = run.orchestrations[0].orchestration_id;
-        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
-        run_repo.create(&run).await.expect("seed run");
-        let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
-        let launcher = launcher(run_repo.clone(), gate_repo.clone());
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let launcher = launcher(repo.clone(), dispatch.clone());
 
-        let result = launcher
-            .drain_ready_nodes(run_id)
+        let first = launcher.drain_ready_nodes(run_id).await.expect("create");
+        assert_eq!(first.launched_agent_nodes.len(), 1);
+        let stored = repo.get_by_id(run_id).await.unwrap().unwrap();
+        let expected_revision = stored.revision;
+        let (completed, _) = apply_orchestration_event_to_run(
+            stored,
+            orchestration_id,
+            OrchestrationRuntimeEvent::NodeCompleted {
+                node_path: "agent".to_owned(),
+                attempt: 1,
+                outputs: Vec::new(),
+                timestamp: Utc::now(),
+            },
+        )
+        .expect("complete predecessor");
+        repo.compare_and_swap(expected_revision, &completed)
             .await
-            .expect("drain ready nodes");
+            .expect("commit completion");
 
-        assert_eq!(result.opened_human_gates.len(), 1);
-        let latest = latest_run(&run_repo, run_id).await;
-        let node = runtime_node(&latest, "review");
-        assert_eq!(node.status, RuntimeNodeStatus::Running);
-        assert!(node.started_at.is_some());
-        assert!(matches!(
-            node.executor_run_ref,
-            Some(ExecutorRunRef::HumanDecision { .. })
-        ));
-        assert!(matches!(
-            node.trace_refs.as_slice(),
-            [RuntimeTraceRef::HumanDecision { .. }]
-        ));
-        assert!(latest.orchestrations[0].dispatch.ready_node_ids.is_empty());
-
-        let gates = gate_repo.debug_list().await;
-        assert_eq!(gates.len(), 1);
-        let payload = gates[0].payload_json.as_ref().expect("gate payload");
-        assert_eq!(payload["contract"], json!("orchestration_human_gate.v1"));
-        assert_eq!(payload["orchestration_id"], json!(orchestration_id));
-        assert_eq!(payload["node_path"], json!("review"));
-        assert_eq!(payload["attempt"], json!(1));
-        assert_eq!(gates[0].gate_kind, "orchestration_human_gate");
+        let second = launcher.drain_ready_nodes(run_id).await.expect("continue");
+        assert_eq!(second.launched_agent_nodes.len(), 1, "{second:?}");
+        let requests = dispatch.requests.lock().await;
+        let first_target = requests[0].target_intent.target().clone();
+        let WorkflowAgentCallTargetIntent::ContinueCurrent {
+            target,
+            runtime_thread_id,
+            source_binding,
+        } = &requests[1].target_intent
+        else {
+            panic!("successor must continue current authority");
+        };
+        assert_eq!(target, &first_target);
+        assert_eq!(runtime_thread_id, "runtime-thread-workflow-1");
+        assert_eq!(source_binding.source_ref, "source:workflow-agent");
     }
 
     #[tokio::test]
-    async fn launcher_blocks_unsupported_attempt_policy_before_executor_side_effects() {
-        let mut node = plan_node("retrying", PlanNodeKind::Function, Some(api_executor()));
-        node.iteration_policy = Some(ActivityIterationPolicy {
-            max_attempts: Some(2),
-            artifact_alias: ArtifactAliasPolicy::Latest,
-        });
-        let run = run_with_node(node);
-        let run_id = run.id;
-        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
-        run_repo.create(&run).await.expect("seed run");
-        let launcher = launcher(
-            run_repo.clone(),
-            Arc::new(MemoryLifecycleGateRepository::default()),
+    async fn concurrent_drains_commit_one_atomic_agent_start() {
+        let run = run_with_agent_policy(
+            AgentReusePolicy::CreateActivityAgent,
+            RuntimeThreadPolicy::CreateNew,
         );
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let first_launcher = launcher(repo.clone(), dispatch.clone());
+        let second_launcher = launcher(repo.clone(), dispatch);
 
-        let result = launcher
+        let (first, second) = tokio::join!(
+            first_launcher.drain_ready_nodes(run_id),
+            second_launcher.drain_ready_nodes(run_id)
+        );
+        let launched = first.expect("first drain").launched_agent_nodes.len()
+            + second.expect("second drain").launched_agent_nodes.len();
+        assert_eq!(launched, 1);
+        let stored = repo.get_by_id(run_id).await.unwrap().unwrap();
+        let node = &stored.orchestrations[0].node_tree[0];
+        assert_eq!(node.status, RuntimeNodeStatus::Running);
+        assert!(node.agent_call.as_ref().unwrap().claim_id.is_some());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_run_cas_rejects_stale_writer() {
+        let run = run_with_agent_policy(
+            AgentReusePolicy::CreateActivityAgent,
+            RuntimeThreadPolicy::CreateNew,
+        );
+        let repo = RunRepo {
+            run: Mutex::new(Some(run.clone())),
+            ..Default::default()
+        };
+        let mut winner = run.clone();
+        winner.revision += 1;
+        repo.compare_and_swap(0, &winner).await.expect("winner");
+        let mut stale = run;
+        stale.revision += 1;
+        let error = repo
+            .compare_and_swap(0, &stale)
+            .await
+            .expect_err("stale writer");
+        assert!(matches!(
+            error,
+            LifecycleRunWriteError::RevisionConflict {
+                expected_revision: 0,
+                actual_revision: 1,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn accepted_product_effect_replays_with_stable_claim_after_cas_failure() {
+        let run = run_with_agent_policy(
+            AgentReusePolicy::CreateActivityAgent,
+            RuntimeThreadPolicy::CreateNew,
+        );
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            fail_cas_at_expected_revision: Mutex::new(Some(1)),
+            ..Default::default()
+        });
+        let dispatch = Arc::new(RecordingDispatch::default());
+        let launcher = launcher(repo.clone(), dispatch.clone());
+
+        let first_error = launcher
             .drain_ready_nodes(run_id)
             .await
-            .expect("drain ready nodes");
-
-        assert_eq!(result.failed_nodes, vec!["retrying"]);
-        let latest = latest_run(&run_repo, run_id).await;
-        assert_eq!(
-            latest.status,
-            agentdash_domain::workflow::LifecycleRunStatus::Blocked
+            .expect_err("atomic start CAS failure");
+        assert!(matches!(first_error, WorkflowApplicationError::Internal(_)));
+        let prepared = repo.get_by_id(run_id).await.unwrap().unwrap();
+        assert_eq!(prepared.revision, 1);
+        assert!(
+            prepared.orchestrations[0].node_tree[0]
+                .agent_call
+                .as_ref()
+                .unwrap()
+                .claim_id
+                .is_none()
         );
-        let orchestration = &latest.orchestrations[0];
-        assert_eq!(orchestration.status, OrchestrationStatus::Paused);
-        assert!(orchestration.dispatch.ready_node_ids.is_empty());
-        let node = runtime_node(&latest, "retrying");
+
+        let replay = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("replay accepted Product saga");
+        assert_eq!(replay.launched_agent_nodes.len(), 1);
+        let claim_ids = repo.attempted_claim_ids.lock().await;
+        assert_eq!(claim_ids.len(), 2);
+        assert_eq!(claim_ids[0], claim_ids[1]);
+        let requests = dispatch.requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            serde_json::to_vec(&requests[0]).unwrap(),
+            serde_json::to_vec(&requests[1]).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn function_not_applied_dispatches_once_then_terminal_receipt_reapplies() {
+        let run = run_with_function_node();
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            conflict_cas_at_expected_revision: Mutex::new(Some(1)),
+            ..Default::default()
+        });
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
+        let runner = Arc::new(RecordingStableFunctionRunner::default());
+        let launcher = launcher_with_effects(repo.clone(), effects.clone())
+            .with_function_runner(runner.clone());
+
+        let result = launcher.drain_ready_nodes(run_id).await.expect("drain");
+
+        assert_eq!(result.completed_effect_nodes, vec!["effect"]);
+        assert_eq!(runner.executions.load(Ordering::SeqCst), 1);
+        assert!(
+            effects
+                .get_function(&format!(
+                    "workflow-function:{}:effect#1",
+                    repo.get_by_id(run_id)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .orchestrations[0]
+                        .orchestration_id
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .terminal
+                .is_some()
+        );
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn function_accepted_recovery_only_inspects_without_execution() {
+        let run = run_with_function_node();
+        let run_id = run.id;
+        let orchestration_id = run.orchestrations[0].orchestration_id;
+        let effect_id = function_effect_id(&RuntimeNodeCoordinate::new(
+            run_id,
+            orchestration_id,
+            "effect",
+            1,
+        ));
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
+        let runner = Arc::new(RecordingStableFunctionRunner::observing(
+            effect_id.clone(),
+            FunctionEffectObservation::Accepted,
+        ));
+        let launcher =
+            launcher_with_effects(repo.clone(), effects).with_function_runner(runner.clone());
+
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("accepted effect remains pending");
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("accepted recovery remains inspect-only");
+        runner
+            .observations
+            .lock()
+            .await
+            .insert(effect_id, FunctionEffectObservation::InFlight);
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("in-flight recovery remains inspect-only");
+
+        assert_eq!(runner.executions.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Running
+        );
+    }
+
+    #[tokio::test]
+    async fn function_lost_observation_blocks_after_receipt_loss_without_reexecution() {
+        let run = run_with_function_node();
+        let run_id = run.id;
+        let orchestration_id = run.orchestrations[0].orchestration_id;
+        let effect_id = function_effect_id(&RuntimeNodeCoordinate::new(
+            run_id,
+            orchestration_id,
+            "effect",
+            1,
+        ));
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
+        let first_runner = Arc::new(RecordingStableFunctionRunner::losing_receipt());
+        let first_launcher = launcher_with_effects(repo.clone(), effects.clone())
+            .with_function_runner(first_runner.clone());
+
+        first_launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("receipt loss leaves effect inspect-only");
+        assert_eq!(first_runner.executions.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Running
+        );
+
+        *repo.fail_cas_at_expected_revision.lock().await = Some(1);
+        let recovery_runner = Arc::new(RecordingStableFunctionRunner::observing(
+            effect_id,
+            FunctionEffectObservation::Lost {
+                reason: "HTTP source has no idempotency receipt to inspect".to_owned(),
+                evidence: serde_json::json!({
+                    "transport": "http",
+                    "dispatch_intent_revision": 9,
+                }),
+            },
+        ));
+        let recovery_launcher = launcher_with_effects(repo.clone(), effects)
+            .with_function_runner(recovery_runner.clone());
+        recovery_launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect_err("injected Blocked projection crash");
+        let recovered = recovery_launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("Lost observation reapplies as Blocked");
+        assert!(recovered.failed_nodes.is_empty());
+        let duplicate = recovery_launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("duplicate drain");
+        assert!(duplicate.failed_nodes.is_empty());
+        assert_eq!(first_runner.executions.load(Ordering::SeqCst), 1);
+        assert_eq!(recovery_runner.executions.load(Ordering::SeqCst), 0);
+        let stored = repo.get_by_id(run_id).await.unwrap().unwrap();
+        let node = &stored.orchestrations[0].node_tree[0];
         assert_eq!(node.status, RuntimeNodeStatus::Blocked);
-        assert!(node.started_at.is_none());
+        let error = node.error.as_ref().expect("Lost evidence");
+        assert_eq!(error.code, "function_effect_outcome_lost");
+        assert!(!error.retryable);
+        assert_eq!(
+            error
+                .detail
+                .as_ref()
+                .and_then(|detail| detail.pointer("/evidence/dispatch_intent_revision")),
+            Some(&serde_json::json!(9))
+        );
+    }
+
+    #[tokio::test]
+    async fn function_failed_terminal_receipt_reapplies_without_reexecution() {
+        let run = run_with_function_node();
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            fail_cas_at_expected_revision: Mutex::new(Some(1)),
+            ..Default::default()
+        });
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
+        let runner = Arc::new(RecordingStableFunctionRunner::returning(
+            FunctionEffectObservation::Failed {
+                message: "remote command rejected".to_owned(),
+                retryable: false,
+            },
+        ));
+        let launcher =
+            launcher_with_effects(repo.clone(), effects).with_function_runner(runner.clone());
+
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect_err("injected Failed projection crash");
+        let replay = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("Failed receipt replay");
+
+        assert_eq!(replay.failed_nodes, vec!["effect"]);
+        assert_eq!(runner.executions.load(Ordering::SeqCst), 1);
+        let stored = repo.get_by_id(run_id).await.unwrap().unwrap();
+        let node = &stored.orchestrations[0].node_tree[0];
+        assert_eq!(node.status, RuntimeNodeStatus::Failed);
         assert_eq!(
             node.error.as_ref().map(|error| error.code.as_str()),
-            Some("attempt_policy_not_supported")
+            Some("function_effect_failed")
         );
+    }
+
+    #[tokio::test]
+    async fn function_terminal_receipt_survives_crash_before_lifecycle_projection() {
+        let run = run_with_function_node();
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            fail_cas_at_expected_revision: Mutex::new(Some(1)),
+            ..Default::default()
+        });
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
+        let runner = Arc::new(RecordingStableFunctionRunner::default());
+        let launcher =
+            launcher_with_effects(repo.clone(), effects).with_function_runner(runner.clone());
+
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect_err("injected projection crash");
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Running
+        );
+        let replay = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("receipt replay");
+        assert_eq!(replay.completed_effect_nodes, vec!["effect"]);
+        assert_eq!(runner.executions.load(Ordering::SeqCst), 1);
+        let duplicate = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("duplicate drain");
+        assert!(duplicate.completed_effect_nodes.is_empty());
+        assert_eq!(runner.executions.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_human_gate_open_uses_one_stable_gate_receipt() {
+        let run = run_with_human_gate_node();
+        let run_id = run.id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
+        let first = launcher_with_effects(repo.clone(), effects.clone());
+        let second = launcher_with_effects(repo.clone(), effects.clone());
+
+        let (first, second) = tokio::join!(
+            first.drain_ready_nodes(run_id),
+            second.drain_ready_nodes(run_id)
+        );
+        let opened = first.expect("first").opened_human_gates.len()
+            + second.expect("second").opened_human_gates.len();
+        assert_eq!(opened, 1);
+        assert_eq!(effects.gate_opens.lock().await.len(), 1);
+        assert_eq!(effects.gates.lock().await.len(), 1);
+        let node = &repo
+            .get_by_id(run_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .orchestrations[0]
+            .node_tree[0];
+        assert_eq!(node.status, RuntimeNodeStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn human_gate_resolution_receipt_recovers_running_node_after_cas_crash() {
+        let run = run_with_human_gate_node();
+        let run_id = run.id;
+        let orchestration_id = run.orchestrations[0].orchestration_id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
+        let launcher = launcher_with_effects(repo.clone(), effects.clone());
+        let opened = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("open gate")
+            .opened_human_gates
+            .pop()
+            .expect("gate");
+        *repo.fail_cas_at_expected_revision.lock().await = Some(1);
+        let input = SubmitHumanGateDecisionInput {
+            run_id,
+            orchestration_id,
+            node_path: "effect".to_owned(),
+            attempt: 1,
+            decision: serde_json::json!({"approved": true}),
+            resolved_by: "reviewer".to_owned(),
+        };
+
+        launcher
+            .submit_human_gate_decision(input.clone())
+            .await
+            .expect_err("injected projection crash");
+        assert_eq!(effects.gate_resolutions.lock().await.len(), 1);
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Running
+        );
+
+        launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("recover resolution");
+        let replay = launcher
+            .submit_human_gate_decision(input.clone())
+            .await
+            .expect("idempotent decision replay");
+        assert_eq!(replay.gate_id, opened.gate_id);
+        assert_eq!(effects.gate_resolutions.lock().await.len(), 1);
+        let conflicting = SubmitHumanGateDecisionInput {
+            decision: serde_json::json!({"approved": false}),
+            ..input
+        };
+        launcher
+            .submit_human_gate_decision(conflicting)
+            .await
+            .expect_err("different terminal decision must conflict");
+        assert_eq!(effects.gate_resolutions.lock().await.len(), 1);
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .status,
+            RuntimeNodeStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_human_gate_terminal_decision_replay_uses_durable_receipt() {
+        let mut run = run_with_human_gate_node();
+        nest_only_runtime_node(&mut run);
+        let run_id = run.id;
+        let orchestration_id = run.orchestrations[0].orchestration_id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
+        let launcher = launcher_with_effects(repo.clone(), effects.clone());
+        let opened = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("open nested gate")
+            .opened_human_gates
+            .pop()
+            .expect("nested gate");
+        let input = SubmitHumanGateDecisionInput {
+            run_id,
+            orchestration_id,
+            node_path: "effect".to_owned(),
+            attempt: 1,
+            decision: serde_json::json!({"approved": true}),
+            resolved_by: "reviewer".to_owned(),
+        };
+
+        launcher
+            .submit_human_gate_decision(input.clone())
+            .await
+            .expect("complete nested gate");
+        let replay = launcher
+            .submit_human_gate_decision(input)
+            .await
+            .expect("replay nested terminal decision");
+
+        assert_eq!(replay.gate_id, opened.gate_id);
+        assert_eq!(effects.gate_resolutions.lock().await.len(), 1);
+        assert_eq!(
+            repo.get_by_id(run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .orchestrations[0]
+                .node_tree[0]
+                .children[0]
+                .status,
+            RuntimeNodeStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn same_node_path_in_distinct_orchestrations_keeps_gate_receipts_isolated() {
+        let mut run = run_with_human_gate_node();
+        let mut other = run_with_human_gate_node().orchestrations.remove(0);
+        other.orchestration_id = Uuid::new_v4();
+        run.orchestrations.push(other);
+        let run_id = run.id;
+        let first_orchestration_id = run.orchestrations[0].orchestration_id;
+        let second_orchestration_id = run.orchestrations[1].orchestration_id;
+        let repo = Arc::new(RunRepo {
+            run: Mutex::new(Some(run)),
+            ..Default::default()
+        });
+        let effects = Arc::new(RecordingWorkflowExecutorEffectRepository::default());
+        let launcher = launcher_with_effects(repo.clone(), effects.clone());
+        let opened = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("open both gates")
+            .opened_human_gates;
+        assert_eq!(opened.len(), 2);
+        let second_gate_id = opened
+            .iter()
+            .find(|gate| gate.orchestration_id == second_orchestration_id)
+            .expect("second gate")
+            .gate_id;
+        let second_input = SubmitHumanGateDecisionInput {
+            run_id,
+            orchestration_id: second_orchestration_id,
+            node_path: "effect".to_owned(),
+            attempt: 1,
+            decision: serde_json::json!({"approved": true}),
+            resolved_by: "second-reviewer".to_owned(),
+        };
+
+        launcher
+            .submit_human_gate_decision(second_input.clone())
+            .await
+            .expect("resolve second gate");
+        let replay = launcher
+            .submit_human_gate_decision(second_input)
+            .await
+            .expect("replay second gate");
+
+        assert_eq!(replay.gate_id, second_gate_id);
+        assert_eq!(effects.gate_resolutions.lock().await.len(), 1);
+        let stored = repo.get_by_id(run_id).await.unwrap().unwrap();
+        let first = stored
+            .orchestrations
+            .iter()
+            .find(|item| item.orchestration_id == first_orchestration_id)
+            .expect("first orchestration");
+        let second = stored
+            .orchestrations
+            .iter()
+            .find(|item| item.orchestration_id == second_orchestration_id)
+            .expect("second orchestration");
+        assert_eq!(first.node_tree[0].status, RuntimeNodeStatus::Running);
+        assert_eq!(second.node_tree[0].status, RuntimeNodeStatus::Completed);
     }
 }

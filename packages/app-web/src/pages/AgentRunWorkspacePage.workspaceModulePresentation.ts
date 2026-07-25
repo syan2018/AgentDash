@@ -1,7 +1,7 @@
 export {
   isConcreteCanvasPresentationUri,
+  isWorkspaceModulePresentationCurrent,
   workspaceModulePresentationFromPlatformEventData,
-  workspaceModulePresentedTabTarget,
   workspaceModulePresentationTabTarget,
-  type WorkspaceModulePresentedTabTarget,
+  type WorkspaceModuleTabTarget,
 } from "../features/workspace-module/model/presentation";

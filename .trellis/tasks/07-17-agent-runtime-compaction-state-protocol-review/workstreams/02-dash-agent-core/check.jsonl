@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"检查 FP2、FP3、FP9、R4、R7 与 AC6/AC9/AC10。"}
+{"file":".trellis/spec/backend/architecture.md","reason":"检查 Dash Agent/Core 依赖纯度。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 replay/property/concurrency tests。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/pi-mono-agentcore-crate-convergence.md","reason":"核对 Core/Agent ownership 未漂移。"}

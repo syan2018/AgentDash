@@ -187,7 +187,7 @@ function parseCollabSpawnAgent(
     title,
     childAgentId,
     status: normalizeCollabStatus(item, childState?.status),
-    summary: childState?.message ?? item.prompt,
+    summary: childState?.message ?? item.prompt ?? null,
     resultPreview: null,
     resultSummary: null,
     resultDetails: null,

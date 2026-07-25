@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/session/architecture.md","reason":"切换AgentRun/Application到统一Runtime facade"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"迁移mailbox与产品投递到canonical thread/operation语义"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"删除application对driver/connector知识"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"UI消费snapshot/profile/availability/durable cursor"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"切换API/UI contract"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/architecture-baseline.md","reason":"最终清点旧模块、反向依赖与重复事实源"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/design-option-agentrun-first.md","reason":"AgentRun facade接口与产品边界"}

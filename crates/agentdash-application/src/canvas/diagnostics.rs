@@ -1,15 +1,14 @@
 use agentdash_application_agentrun::agent_run::{
-    AgentFrameSurfaceExt, DeliveryRuntimeSelectionPolicy, DeliveryRuntimeSelectionRepositories,
-    DeliveryRuntimeSelectionService,
+    AgentFrameSurfaceExt, AgentRunProductRuntimeBindingRepository,
 };
 use agentdash_application_vfs::PROVIDER_CANVAS_FS;
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::canvas::{
     Canvas, CanvasInteractionEvent, CanvasInteractionSnapshot, CanvasRuntimeDiagnostic,
     CanvasRuntimeDocumentState, CanvasRuntimeObservation, CanvasRuntimeObservationStatus,
     CanvasRuntimeViewport,
 };
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
-use agentdash_workspace_module::canvas::canvas_module_id;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
@@ -23,7 +22,7 @@ pub struct CanvasAgentRunContext {
     pub agent: LifecycleAgent,
     pub canvas: Canvas,
     pub delivery_trace_ref: Option<String>,
-    pub runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub current_agent_frame: AgentFrame,
     pub agent_run_canvas_ref: String,
 }
@@ -51,6 +50,7 @@ pub struct CanvasInteractionSnapshotInput {
 
 pub async fn resolve_agent_run_canvas_context(
     repos: &RepositorySet,
+    runtime_bindings: &dyn AgentRunProductRuntimeBindingRepository,
     run_id: Uuid,
     agent_id: Uuid,
     canvas_mount_id: &str,
@@ -96,31 +96,41 @@ pub async fn resolve_agent_run_canvas_context(
         )));
     }
 
-    let delivery = DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
-        lifecycle_runs: repos.lifecycle_run_repo.as_ref(),
-        lifecycle_agents: repos.lifecycle_agent_repo.as_ref(),
-        agent_frames: repos.agent_frame_repo.as_ref(),
-        execution_anchors: repos.execution_anchor_repo.as_ref(),
-        delivery_bindings: repos.agent_run_delivery_binding_repo.as_ref(),
-    })
-    .select(DeliveryRuntimeSelectionPolicy::CurrentDelivery { run_id, agent_id })
-    .await
-    .map_err(agent_run_selection_error)?;
+    let target = AgentRunTarget { run_id, agent_id };
+    let binding = runtime_bindings
+        .load_product_binding(&target)
+        .await
+        .map_err(|error| ApplicationError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            ApplicationError::NotFound(format!(
+                "AgentRun Runtime binding 不存在: run={run_id}, agent={agent_id}"
+            ))
+        })?;
     let current_agent_frame = repos
         .agent_frame_repo
-        .get(delivery.current_frame_id)
+        .get(binding.launch_frame.frame_id)
         .await?
         .ok_or_else(|| {
-            ApplicationError::NotFound(format!("AgentFrame 不存在: {}", delivery.current_frame_id))
+            ApplicationError::NotFound(format!(
+                "AgentRun Product binding 指向的 AgentFrame {} 不存在",
+                binding.launch_frame.frame_id
+            ))
         })?;
+    if current_agent_frame.agent_id != agent_id
+        || u64::try_from(current_agent_frame.revision).ok() != Some(binding.launch_frame.revision)
+    {
+        return Err(ApplicationError::Conflict(
+            "Canvas Product binding 与 immutable launch frame 不一致".to_string(),
+        ));
+    }
     ensure_canvas_visible_in_frame(&current_agent_frame, canvas_mount_id)?;
 
     Ok(CanvasAgentRunContext {
         run,
         agent,
         canvas,
-        delivery_trace_ref: Some(format!("runtime_session:{}", delivery.runtime_session_id)),
-        runtime_session_id: delivery.runtime_session_id,
+        delivery_trace_ref: Some(format!("runtime_thread:{}", binding.runtime_thread_id)),
+        runtime_thread_id: binding.runtime_thread_id.to_string(),
         current_agent_frame,
         agent_run_canvas_ref: format!("{run_id}:{agent_id}:{}", canvas_mount_id),
     })
@@ -209,50 +219,15 @@ fn ensure_canvas_visible_in_frame(
     frame: &AgentFrame,
     canvas_mount_id: &str,
 ) -> Result<(), ApplicationError> {
-    let module_ref = canvas_module_id(canvas_mount_id);
-    let listed_as_canvas = frame
-        .visible_canvas_mount_ids()
-        .iter()
-        .any(|mount_id| mount_id == canvas_mount_id);
-    let listed_as_module = frame
-        .visible_workspace_module_refs()
-        .iter()
-        .any(|module| module == &module_ref);
     let mounted_in_vfs = frame.typed_vfs().is_some_and(|vfs| {
         vfs.mounts
             .iter()
             .any(|mount| mount.id == canvas_mount_id && mount.provider == PROVIDER_CANVAS_FS)
     });
-    if listed_as_canvas || listed_as_module || mounted_in_vfs {
+    if mounted_in_vfs {
         return Ok(());
     }
     Err(ApplicationError::Forbidden(format!(
-        "Canvas {canvas_mount_id} 不在当前 AgentRun delivery frame 的可见 Canvas/module surface 中"
+        "Canvas {canvas_mount_id} 不在当前 AgentRun delivery frame 的 canonical VFS 中"
     )))
-}
-
-fn agent_run_selection_error(
-    error: agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError,
-) -> ApplicationError {
-    match error {
-        agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::RunNotFound {
-            ..
-        }
-        | agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::AgentNotFound {
-            ..
-        }
-        | agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::CurrentFrameNotFound {
-            ..
-        }
-        | agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::LaunchFrameNotFound {
-            ..
-        }
-        | agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::SubjectNotFound {
-            ..
-        } => ApplicationError::NotFound(error.to_string()),
-        agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::Repository(
-            source,
-        ) => ApplicationError::from(source),
-        other => ApplicationError::Conflict(other.to_string()),
-    }
 }

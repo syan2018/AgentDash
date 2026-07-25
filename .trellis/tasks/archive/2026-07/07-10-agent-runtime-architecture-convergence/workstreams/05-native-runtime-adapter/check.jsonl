@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/shared-library.md","reason":"复核Clean Core无产品与vendor依赖"}
+{"file":".trellis/spec/backend/agent-runtime-native-adapter.md","reason":"复核Native streaming与terminal"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"复核exact checkpoint/compaction"}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"复核Core callback不读取workflow/repository"}
+{"file":".trellis/spec/backend/agent-runtime-native-adapter.md","reason":"复核profile真实性、bind/inspect/compaction、active fence与Core依赖"}

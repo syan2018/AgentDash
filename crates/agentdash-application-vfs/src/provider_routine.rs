@@ -17,7 +17,7 @@ use super::provider::{
 };
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 use agentdash_domain::common::Mount;
-use agentdash_spi::platform::mount::RuntimeFileEntry;
+use agentdash_platform_spi::platform::mount::RuntimeFileEntry;
 
 const MEMORY_CONTAINER_ID: &str = "memory";
 const MEMORY_FILES: &[&str] = &[
@@ -675,6 +675,20 @@ mod tests {
             _offset: u32,
         ) -> Result<Vec<RoutineExecution>, DomainError> {
             Ok(vec![self.execution.clone()])
+        }
+
+        async fn list_recoverable(
+            &self,
+            _limit: u32,
+        ) -> Result<Vec<RoutineExecution>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn find_by_runtime_operation_id(
+            &self,
+            _runtime_operation_id: &str,
+        ) -> Result<Option<RoutineExecution>, DomainError> {
+            Ok(None)
         }
 
         async fn find_latest_by_entity_key(

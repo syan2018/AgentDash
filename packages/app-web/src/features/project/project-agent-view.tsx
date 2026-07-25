@@ -513,20 +513,6 @@ export function ProjectAgentView({
                             思考: {THINKING_LEVEL_OPTIONS.find((o) => o.value === agent.executor.thinking_level)?.label ?? agent.executor.thinking_level}
                           </span>
                         )}
-                        {agent.executor.permission_policy && (
-                          <span
-                            className={`rounded-[6px] border px-1.5 py-0.5 ${
-                              agent.executor.permission_policy === "AUTO"
-                                ? "border-success/30 bg-success/10 text-success"
-                                : agent.executor.permission_policy === "SUPERVISED"
-                                  ? "border-info/30 bg-info/10 text-info"
-                                  : "border-border bg-secondary/40 text-muted-foreground"
-                            }`}
-                            title="权限策略"
-                          >
-                            {agent.executor.permission_policy}
-                          </span>
-                        )}
                       </div>
 
                       {/* 能力标签 */}

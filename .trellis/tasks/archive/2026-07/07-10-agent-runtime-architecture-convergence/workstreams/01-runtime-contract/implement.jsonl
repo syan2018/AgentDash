@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/architecture.md","reason":"约束dependency-light contract与依赖方向"}
+{"file":".trellis/spec/backend/domain-payload-typing.md","reason":"定义typed IDs、commands、events与errors"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"同源生成Rust/TypeScript/JSON Schema"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"重建owned Runtime Wire"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/codex-app-server-l4-vocabulary.md","reason":"提取Thread/Turn/Item/Interaction词汇与不变量"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/external-agent-feature-integration-matrix.md","reason":"定义正交profiles与availability predicates"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"定义HookPoint/Requirement/Profile/Run与semantic strength"}

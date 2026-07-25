@@ -1,8 +1,7 @@
-//! AgentRun current/resource surface, frame construction/update, mailbox, and admission.
+//! AgentRun Product protocol, Runtime projection and terminal projection boundary.
 
 pub mod agent_run;
 pub mod error;
-#[cfg(test)]
-pub(crate) mod test_support;
+pub mod runtime_task_tools;
 
 pub use error::{ApplicationError, WorkflowApplicationError};

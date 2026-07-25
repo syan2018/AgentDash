@@ -1,12 +1,10 @@
-use agentdash_domain::workflow::{ExecutorSpec, GateWaitPolicyTemplate};
+use agentdash_domain::workflow::GateWaitPolicyTemplate;
 use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub enum LifecycleGateCommand {
     OpenCompanionGate(OpenCompanionGateCommand),
-    OpenWorkflowHumanGate(OpenWorkflowHumanGateCommand),
-    ResolveWorkflowHumanGate(ResolveWorkflowHumanGateCommand),
     RespondHuman(RespondHumanGateCommand),
     OpenParentRequest(OpenParentRequestGateCommand),
     ResolveParentRequest(ResolveParentRequestGateCommand),
@@ -26,24 +24,6 @@ pub struct OpenCompanionGateCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct OpenWorkflowHumanGateCommand {
-    pub run_id: Uuid,
-    pub orchestration_id: Uuid,
-    pub node_path: String,
-    pub attempt: u32,
-    pub plan_node_id: String,
-    pub label: Option<String>,
-    pub executor: Option<ExecutorSpec>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolveWorkflowHumanGateCommand {
-    pub gate_id: Uuid,
-    pub decision: Value,
-    pub resolved_by: String,
-}
-
-#[derive(Debug, Clone)]
 pub struct RespondHumanGateCommand {
     pub gate_id: Uuid,
     pub payload: Value,
@@ -55,10 +35,10 @@ pub struct OpenParentRequestGateCommand {
     pub run_id: Uuid,
     pub parent_agent_id: Uuid,
     pub parent_frame_id: Uuid,
-    pub parent_delivery_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub child_agent_id: Uuid,
     pub child_frame_id: Uuid,
-    pub child_delivery_runtime_session_id: String,
+    pub child_runtime_thread_id: String,
     pub turn_id: String,
     pub wait: bool,
     pub companion_label: String,
@@ -72,10 +52,10 @@ pub struct ResolveParentRequestGateCommand {
     pub run_id: Uuid,
     pub parent_agent_id: Uuid,
     pub parent_frame_id: Uuid,
-    pub parent_delivery_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub child_agent_id: Uuid,
     pub child_frame_id: Uuid,
-    pub child_delivery_runtime_session_id: String,
+    pub child_runtime_thread_id: String,
     pub resolved_turn_id: String,
     pub payload: Value,
     pub resolved_by: String,
@@ -87,9 +67,9 @@ pub struct CompleteChildResultGateCommand {
     pub request_id: String,
     pub run_id: Uuid,
     pub parent_agent_id: Uuid,
-    pub parent_delivery_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub child_agent_id: Uuid,
-    pub child_delivery_runtime_session_id: Option<String>,
+    pub child_runtime_thread_id: Option<String>,
     pub resolved_turn_id: String,
     pub companion_label: String,
     pub payload: Value,

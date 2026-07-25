@@ -9,6 +9,7 @@ import {
   toFileUri,
 } from "../../file-reference/fileReferenceUi";
 import { SessionUserImageBlock } from "./SessionUserImageBlock";
+import { DisclosureRow } from "../../../components/ui/disclosure";
 import type { UserMessageImage } from "../model/types";
 import { ST } from "./bodies/cardBodyTokens";
 
@@ -79,19 +80,30 @@ export const SessionMessageCard = memo(function SessionMessageCard({
   if (type === "thinking") {
     const canExpand = hasText;
     const label = isStreaming ? "正在思考" : "思考";
+    const rowContent = (
+      <>
+        <span className={ST.badge}>THINK</span>
+        <span className={ST.hint}>{label}</span>
+      </>
+    );
     return (
       <div>
-        <button
-          type="button"
-          onClick={() => {
-            if (canExpand) setIsCollapsed(!isCollapsed);
-          }}
-          className={ST.groupRow}
-        >
-          <span className={ST.chevron}>{canExpand ? (isCollapsed ? "▶" : "▼") : "•"}</span>
-          <span className={ST.badge}>THINK</span>
-          <span className={ST.hint}>{label}</span>
-        </button>
+        {canExpand ? (
+          <DisclosureRow
+            expanded={!isCollapsed}
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className={ST.groupRow}
+          >
+            {rowContent}
+          </DisclosureRow>
+        ) : (
+          <div className={ST.groupRow}>
+            <span className="flex h-4 w-3 shrink-0 items-center justify-center text-muted-foreground/50">
+              •
+            </span>
+            {rowContent}
+          </div>
+        )}
 
         {canExpand && !isCollapsed && (
           <div className={ST.itemList}>

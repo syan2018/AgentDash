@@ -38,3 +38,12 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 - 小规模迭代时不要过度、为了不会有影响的修改重复测试，这只会浪费时间，不会带来任何真实的安全性
 - 任何时候禁止为了完成自己的任务碰工作区存在的修改，即使这些修改导致测试失败。不要摧毁并行会话的工作成果
 - VS Code / rust-analyzer 可能自动运行 `cargo check --workspace --all-targets` 并长时间占用 Cargo build directory 锁；手动 Cargo 命令看似卡住时，先观察当前 `cargo` / `rustc` / `rust-analyzer` 进程，因为等待锁通常比强行终止更能保留 IDE 与并行会话的缓存状态
+- Windows 上 `pnpm dev:desktop` 可能出现 WebView2 `0x80070057` 创建失败但 `agentdash-local-tauri` 进程仍存活；此时 renderer 和登录桥接并未运行，不能以壳进程存在判断 Desktop Runtime credential claim 已触发，应结合窗口内容、Tauri日志与server端`last_claimed_at`确认真实链路
+- `postgresql_embedded` 测试若并发复用同一 data root，多个 PostgreSQL 启动流程可能在初始化阶段相互竞争并失败，且不会进入业务断言；需要让共享 data root 的 embedded PostgreSQL 测试串行启动，或为测试分配隔离的数据目录。
+- `cargo fmt --all` 会解析 workspace 内所有 crate；若 `agentdash-agent-runtime-test-support` 的 `#[path]` 指向本机不存在的 `AgentDash-main-reference` checkout，格式化会在读取模块前失败。此时应先确认 reference checkout 配置，任务内文件可使用相同 toolchain 的 `rustfmt --edition 2024 <files>` 做定向格式化。
+- Windows 上 `cargo fmt --all` 可能因源码文件被用户映射区域短暂占用而报 `os error 1224`；未格式化文件可使用相同 toolchain 的 `rustfmt --edition 2024 <files>` 定向完成，随后再用 diff 与编译检查确认结果。
+- Windows 工作区中的 Playwright skill wrapper 可能以 CRLF 保存，直接交给 WSL `bash` 会在 `set -o pipefail` 处把 `\r` 识别为选项名；本机已有 Node/npm 时可直接使用 `npx --yes --package @playwright/cli playwright-cli ...`，保持同一 CLI session 语义且不改写共享 skill 文件。
+- `lifecycle_agents.runtime_binding` 与 concrete Agent authority（例如 `dash_complete_source`）共同构成可打开会话的 owner invariant；重塑或重置 concrete Agent authority 的迁移需要在同一迁移链中收敛对应 Product owner，因为 Runtime snapshot 与 live subscription 会严格沿 committed binding 解析 source。
+- Dash Surface 在撤销后可以用相同 revision/digest 再次绑定，因此 Surface 历史条目 ID 需要包含本次发生位置；revision/digest 只标识 Surface 内容，不能单独充当历史事件身份。
+- Complete Agent 的 durable live record 可能先于紧随其后的权威快照读取可见；前端以 presentation ID 保留 durable overlay，直到快照确认同一记录，才能避免 terminal/title 等边界被短暂旧快照覆盖。
+- `file_change_patch_updated` 等 item 过程事件只携带增量状态；Session reducer 需要按 item ID 合并回已存在的工具卡，才能让 apply_patch 在终态到达前持续展示最新 diff。

@@ -146,6 +146,8 @@ export interface VfsDeltaSection {
 export interface ToolSchemaDeltaSection {
   kind: "tool_schema_delta";
   added_tools: RuntimeToolSchemaEntry[];
+  removed_tools: string[];
+  changed_tools: RuntimeToolSchemaEntry[];
 }
 
 export interface RuntimeToolSchemaEntry {
@@ -322,7 +324,9 @@ export interface RuntimeHookInjectionEntry {
   context_usage_kind?: string;
 }
 
-export function parseContextFrame(value: Record<string, unknown>): ContextFrame | null {
+export function parseContextFrame(input: unknown): ContextFrame | null {
+  if (!isRecord(input)) return null;
+  const value = input;
   const id = readString(value.id);
   const kind = readString(value.kind);
   const source = readString(value.source);
@@ -535,9 +539,12 @@ function parseSection(value: unknown): ContextFrameSection | null {
   }
   if (kind === "tool_schema_delta") {
     const addedTools = Array.isArray(value.added_tools) ? value.added_tools : [];
+    const changedTools = Array.isArray(value.changed_tools) ? value.changed_tools : [];
     return {
       kind,
       added_tools: addedTools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
+      removed_tools: readStringArray(value.removed_tools),
+      changed_tools: changedTools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
     };
   }
   if (kind === "skill_delta") {
@@ -873,7 +880,12 @@ function readRenderedText(value: unknown): string | null {
 }
 
 function readNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "bigint") {
+    const converted = Number(value);
+    return Number.isSafeInteger(converted) ? converted : null;
+  }
+  return null;
 }
 
 function readStringArray(value: unknown): string[] {

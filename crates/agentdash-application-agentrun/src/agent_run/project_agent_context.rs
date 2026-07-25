@@ -12,7 +12,7 @@ pub struct ResolvedProjectAgentContext {
     pub key: String,
     pub display_name: String,
     pub description: String,
-    pub executor_config: agentdash_spi::AgentConfig,
+    pub executor_config: agentdash_platform_spi::AgentConfig,
     pub preset_config: AgentPresetConfig,
     pub preset_name: Option<String>,
     pub source: String,
@@ -62,4 +62,33 @@ pub async fn build_project_agent_context(
         source: format!("project_agents[{}]", agent.id),
         project_agent: agent.clone(),
     })
+}
+
+pub fn merge_executor_config_fields(
+    mut base: agentdash_platform_spi::AgentConfig,
+    override_config: &agentdash_platform_spi::AgentConfig,
+) -> agentdash_platform_spi::AgentConfig {
+    base.executor = override_config.executor.clone();
+    if override_config.provider_id.is_some() {
+        base.provider_id = normalize_option_string(override_config.provider_id.clone());
+    }
+    if override_config.model_id.is_some() {
+        base.model_id = normalize_option_string(override_config.model_id.clone());
+    }
+    if override_config.agent_id.is_some() {
+        base.agent_id = normalize_option_string(override_config.agent_id.clone());
+    }
+    if override_config.thinking_level.is_some() {
+        base.thinking_level = override_config.thinking_level;
+    }
+    if override_config.system_prompt.is_some() {
+        base.system_prompt = normalize_option_string(override_config.system_prompt.clone());
+    }
+    base
+}
+
+fn normalize_option_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }

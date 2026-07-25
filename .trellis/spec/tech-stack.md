@@ -48,7 +48,7 @@
 - **前端↔云端**：REST（业务 CRUD）+ NDJSON（实时推送），会话流用 `fetch + ReadableStream`
 - **增量恢复**：Project 流和会话流统一使用 `x-stream-since-id`
 - **云端↔本机**：WebSocket（本机主动连接），JSON over WebSocket
-- **内部事件流**：Backbone Protocol，所有 connector 输出统一映射
+- **Agent执行协议**：Agent Runtime Contract + RuntimeWire；Backbone只承载产品/资源presentation事件
 - **对外能力**：MCP
 - **DTO 格式**：JSON / NDJSON，统一 `snake_case`
 
@@ -64,7 +64,7 @@ crates/
 ├── agentdash-infrastructure/      # 基础设施层（PostgreSQL + SQLite 实现）
 ├── agentdash-api/                 # 接口层（HTTP 路由、DTO、中间件）
 ├── agentdash-executor/            # 执行器（连接器、hook runtime）
-├── agentdash-spi/                 # SPI（Connector / Hook trait）
+├── agentdash-platform-spi/                 # 平台能力、工具与 Hook SPI
 ├── agentdash-agent/               # Agent Loop 引擎
 ├── agentdash-agent-types/         # Agent 领域通用类型
 ├── agentdash-mcp/                 # MCP Server 实现

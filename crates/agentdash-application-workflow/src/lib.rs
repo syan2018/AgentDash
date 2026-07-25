@@ -9,7 +9,7 @@ mod repository_set;
 pub mod script;
 
 pub use agentdash_domain::workflow::{
-    AgentReusePolicy, RuntimeSessionPolicy, WorkflowSessionTerminalState,
+    AgentReusePolicy, RuntimeThreadPolicy, WorkflowSessionTerminalState,
 };
 pub use catalog::{ActivityLifecycleCatalogService, WorkflowCatalogService};
 pub use definition::{
@@ -21,8 +21,11 @@ pub use error::WorkflowApplicationError;
 pub use graph_planner::ApplicationWorkflowGraphPlanner;
 pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
 pub use orchestration::{
-    OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher, SubmitHumanGateDecisionInput,
-    SubmitHumanGateDecisionResult,
+    LaunchedAgentNode, OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher,
+    SubmitHumanGateDecisionInput, SubmitHumanGateDecisionResult, WorkflowAgentCallContentBlock,
+    WorkflowAgentCallDispatchError, WorkflowAgentCallDispatchOutcome,
+    WorkflowAgentCallDispatchPort, WorkflowAgentCallIdentity, WorkflowAgentCallRequest,
+    WorkflowAgentCallTargetIntent,
 };
 pub use orchestration::{
     ScriptCompileDiagnostic, ScriptCompileInput, ScriptCompileOutput, ScriptCompiler,

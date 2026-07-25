@@ -1,5 +1,6 @@
 pub mod agent;
-pub mod agent_run_mailbox;
+pub mod agent_input;
+pub mod agent_run_target;
 pub mod auth_session;
 pub mod backend;
 pub mod canvas;
@@ -14,7 +15,6 @@ pub mod identity;
 pub mod inline_file;
 pub mod llm_provider;
 pub mod mcp_preset;
-pub mod permission;
 pub mod project;
 pub mod project_vfs_mount;
 pub mod routine;

@@ -1,0 +1,72 @@
+{
+  "scenario_id": "frontend_tool_progress_interaction",
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "source_path": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/tool-contributions.json",
+    "source_sha256": "b861da61c1cb737f8fef74623918b618139ff61663d098cd658bcd2e06c09ff2",
+    "source_capture_sha256": "a9e23017bd2e57ed3acaf4f8441af859abfc163f63b651c1feeef4f69693fbd7",
+    "source_case": "main_tool_fs_read_lifecycle",
+    "capture_method": "The fixed Main validator, stream reducer, and SessionEntry renderer execute these exact protected_events through scripts/session-parity/mainFrontendEvidence.test.tsx; no event normalization.",
+    "source_files": [
+      {
+        "path": "packages/app-web/src/features/session/model/sessionNdjsonEnvelopeValidator.ts",
+        "sha256": "fbdffa0793b45504f07ff033f6c119ae7171f0b2ea4f9621544e84d0476a2ecb",
+        "git_blob_sha": "79139888416bf68e8d4c3ef07809d3615bec4bba"
+      },
+      {
+        "path": "packages/app-web/src/features/session/model/sessionStreamReducer.ts",
+        "sha256": "1788c06eaf05c2c73674d77743d4f3ae8c1a7a2797c7e43ea32fb6b481111764",
+        "git_blob_sha": "c204495b89bbde14ae83a393f956c8d0afd934ba"
+      },
+      {
+        "path": "packages/app-web/src/features/session/ui/SessionEntry.tsx",
+        "sha256": "210e542a9cfaca0cc6d0a6ec1c87313632bcee58ca9f7653a3f0ee7264e34186",
+        "git_blob_sha": "868cedcfe153471c86e83cfa4eb7193593884ad6"
+      }
+    ]
+  },
+  "protected_events": [
+    {
+      "type": "item_started",
+      "payload": {
+        "item": { "type": "fsRead", "id": "turn_001:tool_001", "path": "README.md", "offset": 4, "limit": 12, "arguments": { "path": "README.md", "offset": 4, "limit": 12 }, "status": "inProgress", "contentItems": null, "success": null },
+        "threadId": "session-fixture",
+        "turnId": "turn-fixture",
+        "startedAtMs": 1720000000000
+      }
+    },
+    {
+      "type": "item_updated",
+      "payload": {
+        "item": { "type": "fsRead", "id": "turn_001:tool_001", "path": "README.md", "offset": 4, "limit": 12, "arguments": { "path": "README.md", "offset": 4, "limit": 12 }, "status": "inProgress", "contentItems": [{ "type": "inputText", "text": "fs_read fixture result" }], "success": null },
+        "threadId": "session-fixture",
+        "turnId": "turn-fixture",
+        "updatedAtMs": 1720000000001
+      }
+    },
+    {
+      "type": "item_completed",
+      "payload": {
+        "item": { "type": "fsRead", "id": "turn_001:tool_001", "path": "README.md", "offset": 4, "limit": 12, "arguments": { "path": "README.md", "offset": 4, "limit": 12 }, "status": "completed", "contentItems": [{ "type": "inputText", "text": "fs_read fixture result" }], "success": true },
+        "threadId": "session-fixture",
+        "turnId": "turn-fixture",
+        "completedAtMs": 1720000000002
+      }
+    }
+  ],
+  "interaction_route_evidence": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "main_oracle_status": "The pinned Main service has no Runtime interaction-response route; this current canonical Runtime seam remains planned until its cross-layer contract is reviewed independently.",
+    "target": { "runId": "run/1", "agentId": "agent/1" },
+    "interaction_id": "interaction/1",
+    "response": { "kind": "denied", "reason": null },
+    "request_path": "/agent-runs/run%2F1/agents/agent%2F1/runtime/interactions/interaction%2F1/respond"
+  },
+  "expected": {
+    "event_types": ["item_started", "item_updated", "item_completed"],
+    "tool_item_id": "turn_001:tool_001",
+    "display_entry_count": 1,
+    "terminal_status": "completed",
+    "terminal_success": true
+  }
+}

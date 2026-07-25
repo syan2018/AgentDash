@@ -1,7 +1,6 @@
 import type {
   WorkspaceModuleDescriptor,
 } from "../../../generated/workspace-module-contracts";
-import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 import {
   isConcreteCanvasPresentationUri,
   workspaceModulePresentationTabTarget,
@@ -25,30 +24,8 @@ export function canvasMountIdFromPresentationUri(uri: string): string | null {
   return trimmed.slice("canvas://".length).trim() || null;
 }
 
-export function activeCanvasMountIdsFromRuntimeSurface(
-  runtimeSurface: ResolvedVfsSurface | null,
-): Set<string> {
-  const ids = new Set<string>();
-  for (const mount of runtimeSurface?.mounts ?? []) {
-    if (mount.purpose !== "canvas") continue;
-    const rawId = mount.id.trim();
-    if (!rawId) continue;
-    ids.add(rawId);
-  }
-  return ids;
-}
-
-export function isActiveCanvasPresentationUri(
-  uri: string,
-  activeCanvasMountIds: ReadonlySet<string>,
-): boolean {
-  const mountId = canvasMountIdFromPresentationUri(uri);
-  return mountId !== null && activeCanvasMountIds.has(mountId);
-}
-
 export function selectCanvasModuleOpenOptions(
   modules: WorkspaceModuleDescriptor[],
-  activeCanvasMountIds?: ReadonlySet<string> | null,
 ): CanvasModuleOpenOption[] {
   const options: CanvasModuleOpenOption[] = [];
   for (const module of modules) {
@@ -58,11 +35,6 @@ export function selectCanvasModuleOpenOptions(
       if (entry.renderer_kind !== "canvas") continue;
       const presentationUri = entry.presentation_uri?.trim() ?? "";
       if (!isConcreteCanvasPresentationUri(presentationUri)) continue;
-      const mountId = canvasMountIdFromPresentationUri(presentationUri);
-      if (activeCanvasMountIds === null) continue;
-      if (activeCanvasMountIds && (!mountId || !activeCanvasMountIds.has(mountId))) {
-        continue;
-      }
       const title = entry.title.trim() || module.summary.title.trim() || module.summary.module_id;
       options.push({
         module_id: module.summary.module_id,
@@ -89,5 +61,5 @@ export async function openUserCanvasModule({
   if (target?.typeId !== "canvas" || !target.uri) {
     throw new Error("当前 Canvas 没有可打开的 presentation。");
   }
-  openOrActivate(target.typeId, target.uri, target.refreshRuntime);
+  openOrActivate(target.typeId, target.uri, true);
 }

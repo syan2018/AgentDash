@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "复核 command receipt、inspection、live 与 snapshot 是否仍为单一权威"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "复核 Native durable history、usage 与 background execution"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "复核 Product handoff 和 command snapshot 行为"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "复核 refresh/reconnect 竞争与 committed state 保留"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "复核 typed event 与 task_write/usage 投影"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "执行跨层数据流质量检查"}
+{"file": ".trellis/tasks/07-24-native-session-live-state-audit/research/root-cause.md", "reason": "按已确认断点验证修复没有遗漏或恢复旁路"}

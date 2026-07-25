@@ -1,11 +1,9 @@
 use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
-use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{
-    AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, RuntimeVfsOperation,
-    ToolUpdateCallback,
-};
+use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_platform_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_platform_spi::{AgentTool, CapabilityState, RuntimeVfsOperation, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -14,8 +12,12 @@ use tokio_util::sync::CancellationToken;
 use super::platform_shell::{PlatformShell, PlatformShellCwd};
 use crate::inline_persistence::InlineContentOverlay;
 use crate::rewrite::find_mount_uri_candidates;
+use crate::runtime_tool_execution::{
+    VfsToolContent, VfsToolExecutionError, VfsToolExecutionResult, VfsToolUpdateSink,
+};
 use crate::service::{VfsService, ensure_runtime_vfs_access};
 use crate::tools::common::{SharedRuntimeVfs, resolve_uri_path};
+use crate::tools::{legacy_error, legacy_result, legacy_update_sink};
 use crate::{
     ExecRequest, MaterializationRewrite, RewriteShellCommandOutput, ShellSessionReadRequest,
     ShellSessionResizeRequest, ShellSessionSnapshot, ShellSessionTerminateRequest,
@@ -28,51 +30,60 @@ const SHELL_EXEC_RESULT_OUTPUT_MAX_BYTES: usize = 1024 * 1024;
 // shell_exec
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellTerminalOwner {
+    pub run_id: uuid::Uuid,
+    pub agent_id: uuid::Uuid,
+    pub runtime_thread_id: RuntimeThreadId,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShellTerminalRegistration {
-    pub session_id: String,
+    pub owner: ShellTerminalOwner,
     pub terminal_id: String,
     pub mount_id: String,
     pub backend_id: String,
     pub cwd: String,
     pub capability: String,
-    /// AgentRun scope identity — provided when the tool executes within an AgentRun context.
-    pub run_id: Option<String>,
-    /// AgentRun scope identity — provided when the tool executes within an AgentRun context.
-    pub agent_id: Option<String>,
+}
+
+pub struct ShellTerminalOutputSnapshot<'a> {
+    pub terminal_id: &'a str,
+    pub state: &'a str,
+    pub exit_code: Option<i32>,
+    pub stdout: &'a str,
+    pub stderr: &'a str,
+    pub pty: &'a str,
+    pub next_seq: Option<u64>,
+    pub truncated: bool,
+    pub omitted_bytes: usize,
+    /// `Some` means the output came from a cursor-based control read and contains incremental
+    /// chunks. `None` means stdout/stderr/pty are a complete snapshot (the start response).
+    pub chunks: Option<&'a [crate::ShellSessionOutputChunk]>,
 }
 
 pub trait ShellTerminalRegistry: Send + Sync {
     fn register_shell_terminal(&self, registration: ShellTerminalRegistration);
     fn resolve_shell_terminal(&self, terminal_id: &str) -> Option<ShellTerminalRegistration>;
-    fn record_shell_terminal_output_snapshot(
-        &self,
-        _terminal_id: &str,
-        _stdout: &str,
-        _stderr: &str,
-        _pty: &str,
-        _next_seq: Option<u64>,
-        _truncated: bool,
-        _omitted_bytes: usize,
-    ) {
-    }
+    fn record_shell_terminal_output_snapshot(&self, snapshot: ShellTerminalOutputSnapshot<'_>);
     fn remove_shell_terminal(&self, terminal_id: &str);
 }
 
 #[derive(Clone)]
-pub struct ShellExecTool {
+pub struct ShellExecExecutor {
     service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
     terminal_registry: Option<Arc<dyn ShellTerminalRegistry>>,
     materialization: Option<Arc<VfsMaterializationService>>,
+    terminal_owner: Option<ShellTerminalOwner>,
     session_id: String,
     turn_id: Option<String>,
     overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+    identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     capability_state: CapabilityState,
 }
-impl ShellExecTool {
+impl ShellExecExecutor {
     pub fn new(service: Arc<VfsService>, vfs: SharedRuntimeVfs) -> Self {
         Self {
             service,
@@ -80,12 +91,17 @@ impl ShellExecTool {
             shell_output_registry: None,
             terminal_registry: None,
             materialization: None,
+            terminal_owner: None,
             session_id: "session".to_string(),
             turn_id: None,
             overlay: None,
             identity: None,
             capability_state: CapabilityState::default(),
         }
+    }
+
+    pub fn parameters_schema() -> serde_json::Value {
+        schema_value::<ShellExecParams>()
     }
 
     pub fn with_shell_output_registry(
@@ -101,13 +117,18 @@ impl ShellExecTool {
         self
     }
 
+    pub fn with_terminal_owner(mut self, owner: ShellTerminalOwner) -> Self {
+        self.terminal_owner = Some(owner);
+        self
+    }
+
     pub fn with_materialization_context(
         mut self,
         materialization: Option<Arc<VfsMaterializationService>>,
         session_id: String,
         turn_id: Option<String>,
         overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         self.materialization = materialization;
         self.session_id = session_id;
@@ -122,28 +143,57 @@ impl ShellExecTool {
         self
     }
 
+    fn record_shell_session_snapshot(&self, terminal_id: &str, snapshot: &ShellSessionSnapshot) {
+        let (stdout, stderr, pty) = shell_session_output_streams(&snapshot.chunks);
+        if let Some(registry) = &self.terminal_registry {
+            registry.record_shell_terminal_output_snapshot(ShellTerminalOutputSnapshot {
+                terminal_id,
+                state: &snapshot.state,
+                exit_code: snapshot.exit_code,
+                stdout: &stdout,
+                stderr: &stderr,
+                pty: &pty,
+                next_seq: Some(snapshot.next_seq),
+                truncated: snapshot.truncated,
+                omitted_bytes: snapshot.omitted_bytes,
+                chunks: Some(&snapshot.chunks),
+            });
+        }
+    }
+
     async fn execute_control_operation(
         &self,
         params: &ShellExecParams,
-        vfs: &agentdash_spi::Vfs,
-        access_policy: &agentdash_spi::RuntimeVfsAccessPolicy,
-    ) -> Result<AgentToolResult, AgentToolError> {
+        vfs: &agentdash_platform_spi::Vfs,
+        access_policy: &agentdash_platform_spi::RuntimeVfsAccessPolicy,
+        cancel: &CancellationToken,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
         let terminal_id = required_terminal_id(params)?;
         let registration = self
             .terminal_registry
             .as_ref()
             .and_then(|registry| registry.resolve_shell_terminal(&terminal_id))
             .ok_or_else(|| {
-                AgentToolError::ExecutionFailed(format!(
+                VfsToolExecutionError::ExecutionFailed(format!(
                     "shell_exec 未找到可续接终端: {terminal_id}"
                 ))
             })?;
+        let owner = self.terminal_owner.as_ref().ok_or_else(|| {
+            VfsToolExecutionError::ExecutionFailed(
+                "shell_exec continuation missing canonical AgentRun owner".to_string(),
+            )
+        })?;
+        if &registration.owner != owner {
+            return Err(VfsToolExecutionError::ExecutionFailed(format!(
+                "shell_exec terminal {terminal_id} does not belong to the current AgentRun"
+            )));
+        }
 
         match params.operation {
             ShellExecOperation::Read => {
-                let snapshot = self
-                    .service
-                    .shell_session_read_with_policy(
+                let snapshot = cancellable(
+                    cancel,
+                    self.service.shell_session_read_with_policy(
                         vfs,
                         Some(access_policy),
                         &registration.mount_id,
@@ -153,9 +203,10 @@ impl ShellExecTool {
                             wait_ms: params.wait_ms,
                             max_bytes: params.max_bytes,
                         },
-                    )
-                    .await
-                    .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+                    ),
+                )
+                .await?;
+                self.record_shell_session_snapshot(&terminal_id, &snapshot);
                 Ok(shell_session_snapshot_result(
                     "read",
                     &terminal_id,
@@ -165,9 +216,9 @@ impl ShellExecTool {
                 ))
             }
             ShellExecOperation::Write => {
-                let write = self
-                    .service
-                    .shell_session_write_with_policy(
+                let write = cancellable(
+                    cancel,
+                    self.service.shell_session_write_with_policy(
                         vfs,
                         Some(access_policy),
                         &registration.mount_id,
@@ -178,9 +229,10 @@ impl ShellExecTool {
                             wait_ms: params.wait_ms,
                             max_bytes: params.max_bytes,
                         },
-                    )
-                    .await
-                    .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+                    ),
+                )
+                .await?;
+                self.record_shell_session_snapshot(&terminal_id, &write.snapshot);
                 Ok(shell_session_snapshot_result(
                     "write",
                     &terminal_id,
@@ -193,9 +245,9 @@ impl ShellExecTool {
                 ))
             }
             ShellExecOperation::Status => {
-                let snapshot = self
-                    .service
-                    .shell_session_read_with_policy(
+                let snapshot = cancellable(
+                    cancel,
+                    self.service.shell_session_read_with_policy(
                         vfs,
                         Some(access_policy),
                         &registration.mount_id,
@@ -205,9 +257,10 @@ impl ShellExecTool {
                             wait_ms: Some(0),
                             max_bytes: Some(0),
                         },
-                    )
-                    .await
-                    .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+                    ),
+                )
+                .await?;
+                self.record_shell_session_snapshot(&terminal_id, &snapshot);
                 Ok(shell_session_snapshot_result(
                     "status",
                     &terminal_id,
@@ -218,13 +271,18 @@ impl ShellExecTool {
             }
             ShellExecOperation::Resize => {
                 let cols = params.cols.ok_or_else(|| {
-                    AgentToolError::InvalidArguments("shell_exec.resize requires cols".to_string())
+                    VfsToolExecutionError::InvalidArguments(
+                        "shell_exec.resize requires cols".to_string(),
+                    )
                 })?;
                 let rows = params.rows.ok_or_else(|| {
-                    AgentToolError::InvalidArguments("shell_exec.resize requires rows".to_string())
+                    VfsToolExecutionError::InvalidArguments(
+                        "shell_exec.resize requires rows".to_string(),
+                    )
                 })?;
-                self.service
-                    .shell_session_resize_with_policy(
+                cancellable(
+                    cancel,
+                    self.service.shell_session_resize_with_policy(
                         vfs,
                         Some(access_policy),
                         &registration.mount_id,
@@ -233,11 +291,11 @@ impl ShellExecTool {
                             cols,
                             rows,
                         },
-                    )
-                    .await
-                    .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-                Ok(AgentToolResult {
-                    content: vec![ContentPart::text(format!(
+                    ),
+                )
+                .await?;
+                Ok(VfsToolExecutionResult {
+                    content: vec![VfsToolContent::text(format!(
                         "operation: resize\nterminal_id: {terminal_id}\ncols: {cols}\nrows: {rows}\nstatus: resized"
                     ))],
                     is_error: false,
@@ -252,20 +310,20 @@ impl ShellExecTool {
                 })
             }
             ShellExecOperation::Terminate => {
-                let result = self
-                    .service
-                    .shell_session_terminate_with_policy(
+                let result = cancellable(
+                    cancel,
+                    self.service.shell_session_terminate_with_policy(
                         vfs,
                         Some(access_policy),
                         &registration.mount_id,
                         &ShellSessionTerminateRequest {
                             terminal_id: terminal_id.clone(),
                         },
-                    )
-                    .await
-                    .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-                Ok(AgentToolResult {
-                    content: vec![ContentPart::text(shell_session_terminate_text(
+                    ),
+                )
+                .await?;
+                Ok(VfsToolExecutionResult {
+                    content: vec![VfsToolContent::text(shell_session_terminate_text(
                         &terminal_id,
                         &result.status,
                         &result.state,
@@ -287,6 +345,60 @@ impl ShellExecTool {
     }
 }
 
+#[derive(Clone)]
+pub struct ShellExecTool {
+    executor: ShellExecExecutor,
+}
+
+impl ShellExecTool {
+    pub fn new(service: Arc<VfsService>, vfs: SharedRuntimeVfs) -> Self {
+        Self {
+            executor: ShellExecExecutor::new(service, vfs),
+        }
+    }
+
+    pub fn with_shell_output_registry(
+        mut self,
+        registry: Arc<agentdash_relay::ShellOutputRegistry>,
+    ) -> Self {
+        self.executor = self.executor.with_shell_output_registry(registry);
+        self
+    }
+
+    pub fn with_terminal_registry(mut self, registry: Arc<dyn ShellTerminalRegistry>) -> Self {
+        self.executor = self.executor.with_terminal_registry(registry);
+        self
+    }
+
+    pub fn with_terminal_owner(mut self, owner: ShellTerminalOwner) -> Self {
+        self.executor = self.executor.with_terminal_owner(owner);
+        self
+    }
+
+    pub fn with_materialization_context(
+        mut self,
+        materialization: Option<Arc<VfsMaterializationService>>,
+        session_id: String,
+        turn_id: Option<String>,
+        overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_platform_spi::platform::auth::AuthIdentity>,
+    ) -> Self {
+        self.executor = self.executor.with_materialization_context(
+            materialization,
+            session_id,
+            turn_id,
+            overlay,
+            identity,
+        );
+        self
+    }
+
+    pub fn with_capability_state(mut self, capability_state: CapabilityState) -> Self {
+        self.executor = self.executor.with_capability_state(capability_state);
+        self
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ShellExecOperation {
@@ -300,6 +412,7 @@ pub enum ShellExecOperation {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ShellExecParams {
     /// Instruction-style operation. Defaults to `start` for backwards-compatible command execution.
     #[serde(default)]
@@ -332,56 +445,33 @@ pub struct ShellExecParams {
     pub rows: Option<u16>,
 }
 
-#[async_trait]
-impl AgentTool for ShellExecTool {
-    fn name(&self) -> &str {
-        "shell_exec"
-    }
-    fn description(&self) -> &str {
-        "Execute and control a shell command through one instruction-style tool.\n\
-         \n\
-         Usage:\n\
-         - operation defaults to `start`; use `read`, `write`, `status`, `resize`, or `terminate` to continue a running command.\n\
-         - Omit cwd to run the platform shell: a restricted VFS-backed command set that supports pwd, ls, cat, cp, mv, rm, and echo.\n\
-         - Use cwd=`platform://` to explicitly run the same platform shell.\n\
-         - Use cwd=`mount_id://relative/path` to run the command in the real OS shell environment of an exec-capable mount.\n\
-         - start returns terminal_id; pass that same terminal_id to read/write/status/resize/terminate. Do not look for a separate session id.\n\
-         - start and read default to a 10000 ms wait window so quick commands usually return completed output directly.\n\
-         - read returns retained output chunks after after_seq and may wait up to wait_ms.\n\
-         - write sends data to stdin, optionally close_stdin=true, then returns newly available output.\n\
-         - status is a zero-output state snapshot for the terminal_id.\n\
-         - Platform shell commands operate on VFS paths and never start an OS process.\n\
-         - Platform shell supports VFS command primitives plus narrow `>` redirection for `echo` and `cat`; shell operators, variables, globbing, and command substitution are not expanded or executed.\n\
-         - stdout and stderr are returned separately, labeled as [stdout] and [stderr].\n\
-         - The exit code is included in the output; non-zero exit codes are flagged as errors.\n\
-         - timeout_secs is a hard process timeout for real OS shell execution; long-running commands return a background session after the initial yield.\n\
-         - Prefer dedicated tools (fs_read, fs_glob, fs_grep) for focused read/search work."
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        schema_value::<ShellExecParams>()
-    }
-    async fn execute(
+impl ShellExecExecutor {
+    pub async fn execute(
         &self,
-        _tool_call_id: &str,
+        tool_call_id: &str,
         args: serde_json::Value,
-        _cancel: CancellationToken,
-        on_update: Option<ToolUpdateCallback>,
-    ) -> Result<AgentToolResult, AgentToolError> {
-        let params: ShellExecParams = serde_json::from_value(args)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
+        cancel: CancellationToken,
+        on_update: Option<VfsToolUpdateSink>,
+    ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
+        if cancel.is_cancelled() {
+            return Err(VfsToolExecutionError::Cancelled);
+        }
+        let params: ShellExecParams = serde_json::from_value(args).map_err(|error| {
+            VfsToolExecutionError::InvalidArguments(format!("invalid arguments: {error}"))
+        })?;
         let state = self.vfs.snapshot_state().await;
         let vfs = state.vfs;
         let access_policy = state.access_policy;
         if params.operation != ShellExecOperation::Start {
             return self
-                .execute_control_operation(&params, &vfs, &access_policy)
+                .execute_control_operation(&params, &vfs, &access_policy, &cancel)
                 .await;
         }
         let command = required_start_command(&params)?;
         if let Some(platform_cwd) = PlatformShellCwd::from_param(params.cwd.as_deref())
-            .map_err(AgentToolError::ExecutionFailed)?
+            .map_err(VfsToolExecutionError::ExecutionFailed)?
         {
-            let result = PlatformShell::new(
+            let platform_shell = PlatformShell::new(
                 self.service.clone(),
                 &vfs,
                 &access_policy,
@@ -389,11 +479,30 @@ impl AgentTool for ShellExecTool {
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
                 self.identity.as_ref(),
                 &self.capability_state,
-            )
-            .execute(&command)
-            .await;
-            return Ok(AgentToolResult {
-                content: vec![ContentPart::text(platform_shell_result_text(
+            );
+            let result = tokio::select! {
+                _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
+                result = platform_shell.execute(&command) => result,
+            };
+            let aggregated_output = if result.stderr.is_empty() {
+                result.stdout.clone()
+            } else if result.stdout.is_empty() {
+                result.stderr.clone()
+            } else {
+                format!("[stdout]\n{}\n\n[stderr]\n{}", result.stdout, result.stderr)
+            };
+            let mut details = result.details.clone();
+            if let Some(object) = details.as_object_mut() {
+                object.insert("original_command".to_string(), serde_json::json!(command));
+                object.insert("cwd".to_string(), serde_json::json!(result.cwd));
+                object.insert("exit_code".to_string(), serde_json::json!(result.exit_code));
+                object.insert(
+                    "aggregated_output".to_string(),
+                    serde_json::json!(aggregated_output),
+                );
+            }
+            return Ok(VfsToolExecutionResult {
+                content: vec![VfsToolContent::text(platform_shell_result_text(
                     &command,
                     &result.cwd,
                     Some(result.exit_code),
@@ -404,7 +513,7 @@ impl AgentTool for ShellExecTool {
                     &result.stderr,
                 ))],
                 is_error: result.exit_code != 0,
-                details: Some(result.details),
+                details: Some(details),
             });
         }
         let cwd_param = params
@@ -413,52 +522,57 @@ impl AgentTool for ShellExecTool {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
+                VfsToolExecutionError::ExecutionFailed(
                     "shell_exec.cwd 留空时应进入 platform shell；真实 OS shell cwd 必须显式使用 mount_id://relative/path"
                         .to_string(),
                 )
             })?;
         if !cwd_param.contains("://") {
-            return Err(AgentToolError::ExecutionFailed(format!(
+            return Err(VfsToolExecutionError::ExecutionFailed(format!(
                 "shell_exec.cwd 必须留空使用 platform shell，或显式使用 mount_id://relative/path 指向 exec mount；收到 `{cwd_param}`"
             )));
         }
-        let target = resolve_uri_path(&vfs, cwd_param).map_err(AgentToolError::ExecutionFailed)?;
+        let target =
+            resolve_uri_path(&vfs, cwd_param).map_err(VfsToolExecutionError::ExecutionFailed)?;
         let cwd = if target.path.is_empty() {
             ".".to_string()
         } else {
             target.path.clone()
         };
         let display_cwd = format_mount_uri(&target.mount_id, &cwd_for_display(&cwd));
-        let exec_mount =
-            resolve_mount(&vfs, &target.mount_id, agentdash_spi::MountCapability::Exec)
-                .map_err(AgentToolError::ExecutionFailed)?;
+        let exec_mount = resolve_mount(
+            &vfs,
+            &target.mount_id,
+            agentdash_platform_spi::MountCapability::Exec,
+        )
+        .map_err(VfsToolExecutionError::ExecutionFailed)?;
         ensure_runtime_vfs_access(
             &access_policy,
             &target.mount_id,
             &target.path,
             RuntimeVfsOperation::Exec,
         )
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        .map_err(|error| VfsToolExecutionError::ExecutionFailed(error.to_string()))?;
 
         let rewrite_output = if let Some(materialization) = &self.materialization {
-            materialization
-                .rewrite_shell_command_with_policy(
+            cancellable(
+                &cancel,
+                materialization.rewrite_shell_command_with_policy(
                     crate::RewriteShellCommandInput {
                         vfs: &vfs,
                         exec_mount_id: &target.mount_id,
                         command: &command,
                         session_id: &self.session_id,
                         turn_id: self.turn_id.as_deref(),
-                        tool_call_id: Some(_tool_call_id),
+                        tool_call_id: Some(tool_call_id),
                         overlay: self.overlay.as_ref().map(|arc| arc.as_ref()),
                         identity: self.identity.as_ref(),
                     },
                     &access_policy,
                     &cwd,
-                )
-                .await
-                .map_err(AgentToolError::ExecutionFailed)?
+                ),
+            )
+            .await?
         } else {
             RewriteShellCommandOutput {
                 command: command.clone(),
@@ -482,7 +596,7 @@ impl AgentTool for ShellExecTool {
         }
         let rewritten_command = rewrite_output.command.clone();
         if let Some(message) = unresolved_vfs_uri_message(&rewritten_command, &vfs) {
-            return Err(AgentToolError::ExecutionFailed(message));
+            return Err(VfsToolExecutionError::ExecutionFailed(message));
         }
 
         let streaming_call_id = self
@@ -501,8 +615,8 @@ impl AgentTool for ShellExecTool {
                 while let Some(chunk) = rx.recv().await {
                     let truncated = chunk.truncation.truncated;
                     let omitted_bytes = chunk.truncation.omitted_bytes;
-                    cb(AgentToolResult {
-                        content: vec![ContentPart::text(chunk.delta)],
+                    cb(VfsToolExecutionResult {
+                        content: vec![VfsToolContent::text(chunk.delta)],
                         is_error: false,
                         details: Some(serde_json::json!({
                             "type": "shell_output",
@@ -517,27 +631,33 @@ impl AgentTool for ShellExecTool {
             None
         };
 
+        let registry = self.terminal_registry.as_ref().ok_or_else(|| {
+            VfsToolExecutionError::ExecutionFailed(
+                "shell_exec start missing terminal continuation registry".to_string(),
+            )
+        })?;
+        let owner = self.terminal_owner.clone().ok_or_else(|| {
+            VfsToolExecutionError::ExecutionFailed(
+                "shell_exec start missing canonical AgentRun owner".to_string(),
+            )
+        })?;
         let terminal_id = agentdash_relay::RelayMessage::new_id("term");
-        if let Some(registry) = &self.terminal_registry {
-            registry.register_shell_terminal(ShellTerminalRegistration {
-                session_id: self.session_id.clone(),
-                terminal_id: terminal_id.clone(),
-                mount_id: target.mount_id.clone(),
-                backend_id: exec_mount.backend_id.clone(),
-                cwd: display_cwd.clone(),
-                capability: if params.tty {
-                    "interactive".to_string()
-                } else {
-                    "read_only_output".to_string()
-                },
-                run_id: None,
-                agent_id: None,
-            });
-        }
+        registry.register_shell_terminal(ShellTerminalRegistration {
+            owner,
+            terminal_id: terminal_id.clone(),
+            mount_id: target.mount_id.clone(),
+            backend_id: exec_mount.backend_id.clone(),
+            cwd: display_cwd.clone(),
+            capability: if params.tty {
+                "interactive".to_string()
+            } else {
+                "read_only_output".to_string()
+            },
+        });
 
-        let result = match self
-            .service
-            .exec_with_policy(
+        let exec_result = cancellable(
+            &cancel,
+            self.service.exec_with_policy(
                 &vfs,
                 Some(&access_policy),
                 &ExecRequest {
@@ -553,17 +673,9 @@ impl AgentTool for ShellExecTool {
                     cols: params.cols,
                     rows: params.rows,
                 },
-            )
-            .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                if let Some(registry) = &self.terminal_registry {
-                    registry.remove_shell_terminal(&terminal_id);
-                }
-                return Err(AgentToolError::ExecutionFailed(error.to_string()));
-            }
-        };
+            ),
+        )
+        .await;
 
         // 清理通道
         if let Some(ref call_id) = streaming_call_id
@@ -574,6 +686,13 @@ impl AgentTool for ShellExecTool {
         if let Some(handle) = forward_handle {
             handle.abort();
         }
+        let result = match exec_result {
+            Ok(result) => result,
+            Err(error) => {
+                registry.remove_shell_terminal(&terminal_id);
+                return Err(error);
+            }
+        };
 
         let exit_code = result.exit_code;
         let merged = if !result.pty.trim().is_empty() {
@@ -592,18 +711,21 @@ impl AgentTool for ShellExecTool {
             .omitted_bytes
             .saturating_add(extra_truncation.omitted_bytes);
         if let Some(registry) = &self.terminal_registry {
-            registry.record_shell_terminal_output_snapshot(
-                &terminal_id,
-                &result.stdout,
-                &result.stderr,
-                &result.pty,
-                result.next_seq,
-                result_truncated,
-                result_omitted_bytes,
-            );
+            registry.record_shell_terminal_output_snapshot(ShellTerminalOutputSnapshot {
+                terminal_id: &terminal_id,
+                state: &result.state,
+                exit_code: result.exit_code,
+                stdout: &result.stdout,
+                stderr: &result.stderr,
+                pty: &result.pty,
+                next_seq: result.next_seq,
+                truncated: result_truncated,
+                omitted_bytes: result_omitted_bytes,
+                chunks: None,
+            });
         }
-        Ok(AgentToolResult {
-            content: vec![ContentPart::text(shell_exec_result_text(
+        Ok(VfsToolExecutionResult {
+            content: vec![VfsToolContent::text(shell_exec_result_text(
                 &command,
                 &rewritten_command,
                 &display_cwd,
@@ -622,6 +744,8 @@ impl AgentTool for ShellExecTool {
                 &rewritten_command,
                 &rewrite_output.rewrites,
                 &result,
+                &display_cwd,
+                &merged,
                 result_truncated,
                 result_omitted_bytes,
             ),
@@ -629,7 +753,74 @@ impl AgentTool for ShellExecTool {
     }
 }
 
-fn required_start_command(params: &ShellExecParams) -> Result<String, AgentToolError> {
+#[async_trait]
+impl AgentTool for ShellExecTool {
+    fn name(&self) -> &str {
+        "shell_exec"
+    }
+
+    fn description(&self) -> &str {
+        "Execute and control a shell command through one instruction-style tool.\n\
+         \n\
+         Usage:\n\
+         - operation defaults to `start`; use `read`, `write`, `status`, `resize`, or `terminate` to continue a running command.\n\
+         - Omit cwd to run the platform shell: a restricted VFS-backed command set that supports pwd, ls, cat, cp, mv, rm, and echo.\n\
+         - Use cwd=`platform://` to explicitly run the same platform shell.\n\
+         - Use cwd=`mount_id://relative/path` to run the command in the real OS shell environment of an exec-capable mount.\n\
+         - start returns terminal_id; pass that same terminal_id to read/write/status/resize/terminate. Do not look for a separate session id.\n\
+         - start and read default to a 10000 ms wait window so quick commands usually return completed output directly.\n\
+         - read returns retained output chunks after after_seq and may wait up to wait_ms.\n\
+         - write sends data to stdin, optionally close_stdin=true, then returns newly available output.\n\
+         - status is a zero-output state snapshot for the terminal_id.\n\
+         - Platform shell commands operate on VFS paths and never start an OS process.\n\
+         - Platform shell supports VFS command primitives plus narrow `>` redirection for `echo` and `cat`; shell operators, variables, globbing, and command substitution are not expanded or executed.\n\
+         - stdout and stderr are returned separately, labeled as [stdout] and [stderr].\n\
+         - The exit code is included in the output; non-zero exit codes are flagged as errors.\n\
+         - timeout_secs is a hard process timeout for real OS shell execution; long-running commands return a background session after the initial yield.\n\
+         - Prefer dedicated tools (fs_read, fs_glob, fs_grep) for focused read/search work."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        ShellExecExecutor::parameters_schema()
+    }
+
+    fn protocol_projector(&self) -> Option<agentdash_agent::ToolProtocolProjector> {
+        Some(agentdash_agent::ToolProtocolProjector::Command)
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_shell_exec_lifecycle".to_string())
+    }
+
+    async fn execute(
+        &self,
+        tool_call_id: &str,
+        args: serde_json::Value,
+        cancel: CancellationToken,
+        on_update: Option<ToolUpdateCallback>,
+    ) -> Result<agentdash_agent::AgentToolResult, agentdash_agent::AgentToolError> {
+        self.executor
+            .execute(tool_call_id, args, cancel, legacy_update_sink(on_update))
+            .await
+            .map(legacy_result)
+            .map_err(legacy_error)
+    }
+}
+
+async fn cancellable<T, E>(
+    cancel: &CancellationToken,
+    future: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, VfsToolExecutionError>
+where
+    E: std::fmt::Display,
+{
+    tokio::select! {
+        _ = cancel.cancelled() => Err(VfsToolExecutionError::Cancelled),
+        result = future => result.map_err(|error| VfsToolExecutionError::ExecutionFailed(error.to_string())),
+    }
+}
+
+fn required_start_command(params: &ShellExecParams) -> Result<String, VfsToolExecutionError> {
     params
         .command
         .as_deref()
@@ -637,13 +828,13 @@ fn required_start_command(params: &ShellExecParams) -> Result<String, AgentToolE
         .filter(|command| !command.is_empty())
         .map(str::to_string)
         .ok_or_else(|| {
-            AgentToolError::InvalidArguments(
+            VfsToolExecutionError::InvalidArguments(
                 "shell_exec.start requires non-empty command".to_string(),
             )
         })
 }
 
-fn required_terminal_id(params: &ShellExecParams) -> Result<String, AgentToolError> {
+fn required_terminal_id(params: &ShellExecParams) -> Result<String, VfsToolExecutionError> {
     params
         .terminal_id
         .as_deref()
@@ -651,7 +842,7 @@ fn required_terminal_id(params: &ShellExecParams) -> Result<String, AgentToolErr
         .filter(|terminal_id| !terminal_id.is_empty())
         .map(str::to_string)
         .ok_or_else(|| {
-            AgentToolError::InvalidArguments(
+            VfsToolExecutionError::InvalidArguments(
                 "shell_exec continuation operation requires terminal_id".to_string(),
             )
         })
@@ -661,9 +852,9 @@ fn vfs_uri_rewrite_notice(
     original_command: &str,
     rewritten_command: &str,
     rewrites: &[MaterializationRewrite],
-) -> AgentToolResult {
-    AgentToolResult {
-        content: vec![ContentPart::text(format_vfs_uri_rewrite_notice(
+) -> VfsToolExecutionResult {
+    VfsToolExecutionResult {
+        content: vec![VfsToolContent::text(format_vfs_uri_rewrite_notice(
             rewritten_command,
             rewrites,
         ))],
@@ -717,7 +908,7 @@ fn shell_session_snapshot_result(
     cwd: &str,
     snapshot: &ShellSessionSnapshot,
     extra_lines: Vec<String>,
-) -> AgentToolResult {
+) -> VfsToolExecutionResult {
     let merged = merge_shell_session_chunks(&snapshot.chunks);
     let (merged, extra_truncation) =
         agentdash_relay::truncate_live_output_text(&merged, SHELL_EXEC_RESULT_OUTPUT_MAX_BYTES);
@@ -742,10 +933,11 @@ fn shell_session_snapshot_result(
         ));
     }
     if !merged.is_empty() {
-        lines.push(merged);
+        lines.push(String::new());
+        lines.push(merged.clone());
     }
-    AgentToolResult {
-        content: vec![ContentPart::text(lines.join("\n"))],
+    VfsToolExecutionResult {
+        content: vec![VfsToolContent::text(lines.join("\n"))],
         is_error: snapshot.exit_code.is_some_and(|code| code != 0),
         details: Some(serde_json::json!({
             "type": "shell_exec",
@@ -753,6 +945,7 @@ fn shell_session_snapshot_result(
             "terminal_id": terminal_id,
             "cwd": cwd,
             "state": snapshot.state.as_str(),
+            "aggregated_output": merged,
             "exit_code": snapshot.exit_code,
             "next_seq": snapshot.next_seq,
             "truncated": truncated,
@@ -781,6 +974,22 @@ fn merge_shell_session_chunks(chunks: &[crate::ShellSessionOutputChunk]) -> Stri
     } else {
         format!("[stdout]\n{stdout}\n\n[stderr]\n{stderr}")
     }
+}
+
+fn shell_session_output_streams(
+    chunks: &[crate::ShellSessionOutputChunk],
+) -> (String, String, String) {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut pty = Vec::new();
+    for chunk in chunks {
+        match chunk.stream.as_str() {
+            "stderr" => stderr.push(chunk.data.as_str()),
+            "pty" => pty.push(chunk.data.as_str()),
+            _ => stdout.push(chunk.data.as_str()),
+        }
+    }
+    (stdout.concat(), stderr.concat(), pty.concat())
 }
 
 fn shell_session_terminate_text(
@@ -815,7 +1024,10 @@ fn shell_exec_result_text(
     truncated: bool,
     omitted_bytes: usize,
 ) -> String {
-    let mut lines = vec![format!("command: {original_command}")];
+    let mut lines = vec![
+        "operation: start".to_string(),
+        format!("command: {original_command}"),
+    ];
     if has_rewrite {
         lines.push(format!("executed_command: {rewritten_command}"));
     }
@@ -836,6 +1048,7 @@ fn shell_exec_result_text(
         ));
     }
     if !merged_output.is_empty() {
+        lines.push(String::new());
         lines.push(merged_output.to_string());
     }
     lines.join("\n")
@@ -888,31 +1101,29 @@ fn shell_exec_result_details(
     rewritten_command: &str,
     rewrites: &[MaterializationRewrite],
     result: &crate::ExecResult,
+    cwd: &str,
+    aggregated_output: &str,
     truncated: bool,
     omitted_bytes: usize,
 ) -> Option<serde_json::Value> {
-    (!rewrites.is_empty()
-        || result.terminal_id.is_some()
-        || truncated
-        || omitted_bytes > 0)
-        .then(|| {
-        serde_json::json!({
-            "type": "shell_exec",
-            "operation": "start",
-            "original_command": original_command,
-            "executed_command": rewritten_command,
-            "state": result.state.as_str(),
-            "exit_code": result.exit_code,
-            "terminal_id": result.terminal_id.as_deref(),
-            "next_seq": result.next_seq,
-            "truncated": truncated,
-            "omitted_bytes": omitted_bytes,
-            "rewrite": (!rewrites.is_empty()).then(|| vfs_uri_rewrite_details(original_command, rewritten_command, rewrites)),
-        })
-    })
+    Some(serde_json::json!({
+        "type": "shell_exec",
+        "operation": "start",
+        "original_command": original_command,
+        "executed_command": rewritten_command,
+        "state": result.state.as_str(),
+        "exit_code": result.exit_code,
+        "cwd": cwd,
+        "aggregated_output": aggregated_output,
+        "terminal_id": result.terminal_id.as_deref(),
+        "next_seq": result.next_seq,
+        "truncated": truncated,
+        "omitted_bytes": omitted_bytes,
+        "rewrite": (!rewrites.is_empty()).then(|| vfs_uri_rewrite_details(original_command, rewritten_command, rewrites)),
+    }))
 }
 
-fn unresolved_vfs_uri_message(command: &str, vfs: &agentdash_spi::Vfs) -> Option<String> {
+fn unresolved_vfs_uri_message(command: &str, vfs: &agentdash_platform_spi::Vfs) -> Option<String> {
     let mut unresolved = unresolved_current_mount_uris(command, vfs);
     unresolved.extend(unresolved_reserved_vfs_uris(command));
     unresolved.sort();
@@ -927,7 +1138,7 @@ fn unresolved_vfs_uri_message(command: &str, vfs: &agentdash_spi::Vfs) -> Option
     ))
 }
 
-fn unresolved_current_mount_uris(command: &str, vfs: &agentdash_spi::Vfs) -> Vec<String> {
+fn unresolved_current_mount_uris(command: &str, vfs: &agentdash_platform_spi::Vfs) -> Vec<String> {
     let mount_ids = vfs
         .mounts
         .iter()
@@ -953,10 +1164,188 @@ fn unresolved_reserved_vfs_uris(command: &str) -> Vec<String> {
 #[cfg(test)]
 mod shell_exec_rewrite_tests {
     use super::*;
-    use crate::MountProviderRegistryBuilder;
-    use agentdash_spi::{Mount, Vfs};
+    use crate::{
+        ListOptions, ListResult, MountError, MountOperationContext, MountProvider,
+        MountProviderRegistryBuilder, ReadResult, SearchQuery, SearchResult,
+        ShellSessionOutputChunk, ShellSessionWriteResult,
+    };
+    use agentdash_platform_spi::{Mount, Vfs};
+    use std::sync::Mutex;
 
-    fn test_shell_tool() -> ShellExecTool {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct CapturedTerminalSnapshot {
+        state: String,
+        stdout: String,
+        stderr: String,
+        pty: String,
+        next_seq: Option<u64>,
+    }
+
+    #[derive(Default)]
+    struct RecordingShellTerminalRegistry {
+        registration: Mutex<Option<ShellTerminalRegistration>>,
+        snapshots: Mutex<Vec<CapturedTerminalSnapshot>>,
+    }
+
+    impl ShellTerminalRegistry for RecordingShellTerminalRegistry {
+        fn register_shell_terminal(&self, registration: ShellTerminalRegistration) {
+            *self.registration.lock().expect("registration lock") = Some(registration);
+        }
+
+        fn resolve_shell_terminal(&self, terminal_id: &str) -> Option<ShellTerminalRegistration> {
+            self.registration
+                .lock()
+                .expect("registration lock")
+                .as_ref()
+                .filter(|registration| registration.terminal_id == terminal_id)
+                .cloned()
+        }
+
+        fn record_shell_terminal_output_snapshot(&self, snapshot: ShellTerminalOutputSnapshot<'_>) {
+            self.snapshots
+                .lock()
+                .expect("snapshot lock")
+                .push(CapturedTerminalSnapshot {
+                    state: snapshot.state.to_string(),
+                    stdout: snapshot.stdout.to_string(),
+                    stderr: snapshot.stderr.to_string(),
+                    pty: snapshot.pty.to_string(),
+                    next_seq: snapshot.next_seq,
+                });
+        }
+
+        fn remove_shell_terminal(&self, terminal_id: &str) {
+            let mut registration = self.registration.lock().expect("registration lock");
+            if registration
+                .as_ref()
+                .is_some_and(|registration| registration.terminal_id == terminal_id)
+            {
+                *registration = None;
+            }
+        }
+    }
+
+    struct ShellLifecycleProvider;
+
+    #[async_trait::async_trait]
+    impl MountProvider for ShellLifecycleProvider {
+        fn provider_id(&self) -> &str {
+            "shell_lifecycle"
+        }
+
+        fn supported_capabilities(&self) -> Vec<&str> {
+            vec!["read", "list", "exec"]
+        }
+
+        async fn read_text(
+            &self,
+            _mount: &Mount,
+            _path: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<ReadResult, MountError> {
+            Err(MountError::NotSupported(
+                "shell lifecycle fixture".to_string(),
+            ))
+        }
+
+        async fn write_text(
+            &self,
+            _mount: &Mount,
+            _path: &str,
+            _content: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<(), MountError> {
+            Err(MountError::NotSupported(
+                "shell lifecycle fixture".to_string(),
+            ))
+        }
+
+        async fn list(
+            &self,
+            _mount: &Mount,
+            _options: &ListOptions,
+            _ctx: &MountOperationContext,
+        ) -> Result<ListResult, MountError> {
+            Ok(ListResult {
+                entries: Vec::new(),
+            })
+        }
+
+        async fn search_text(
+            &self,
+            _mount: &Mount,
+            _query: &SearchQuery,
+            _ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            Ok(SearchResult::default())
+        }
+
+        async fn exec(
+            &self,
+            _mount: &Mount,
+            request: &ExecRequest,
+            _ctx: &MountOperationContext,
+        ) -> Result<crate::ExecResult, MountError> {
+            Ok(crate::ExecResult {
+                state: "running".to_string(),
+                exit_code: None,
+                stdout: "started\n".to_string(),
+                stderr: String::new(),
+                pty: String::new(),
+                session_id: request.terminal_id.clone(),
+                terminal_id: request.terminal_id.clone(),
+                next_seq: Some(1),
+                truncated: false,
+                omitted_bytes: 0,
+            })
+        }
+
+        async fn shell_session_read(
+            &self,
+            _mount: &Mount,
+            _request: &ShellSessionReadRequest,
+            _ctx: &MountOperationContext,
+        ) -> Result<ShellSessionSnapshot, MountError> {
+            Ok(ShellSessionSnapshot {
+                state: "completed".to_string(),
+                exit_code: Some(0),
+                chunks: vec![ShellSessionOutputChunk {
+                    seq: 2,
+                    stream: "stdout".to_string(),
+                    data: "retained completion\n".to_string(),
+                }],
+                next_seq: 3,
+                truncated: false,
+                omitted_bytes: 0,
+            })
+        }
+
+        async fn shell_session_write(
+            &self,
+            _mount: &Mount,
+            _request: &ShellSessionWriteRequest,
+            _ctx: &MountOperationContext,
+        ) -> Result<ShellSessionWriteResult, MountError> {
+            Ok(ShellSessionWriteResult {
+                accepted: true,
+                stdin_closed: false,
+                snapshot: ShellSessionSnapshot {
+                    state: "running".to_string(),
+                    exit_code: None,
+                    chunks: vec![ShellSessionOutputChunk {
+                        seq: 1,
+                        stream: "pty".to_string(),
+                        data: "input accepted\n".to_string(),
+                    }],
+                    next_seq: 2,
+                    truncated: false,
+                    omitted_bytes: 0,
+                },
+            })
+        }
+    }
+
+    fn test_shell_tool() -> ShellExecExecutor {
         let vfs = Vfs {
             mounts: vec![Mount {
                 id: "main".to_string(),
@@ -964,8 +1353,8 @@ mod shell_exec_rewrite_tests {
                 backend_id: "local-dev-1".to_string(),
                 root_ref: "D:\\workspace".to_string(),
                 capabilities: vec![
-                    agentdash_spi::MountCapability::Read,
-                    agentdash_spi::MountCapability::Exec,
+                    agentdash_platform_spi::MountCapability::Read,
+                    agentdash_platform_spi::MountCapability::Exec,
                 ],
                 default_write: true,
                 display_name: "main".to_string(),
@@ -976,12 +1365,19 @@ mod shell_exec_rewrite_tests {
             source_story_id: None,
             links: Vec::new(),
         };
-        ShellExecTool::new(
+        ShellExecExecutor::new(
             Arc::new(VfsService::new(Arc::new(
                 MountProviderRegistryBuilder::new().build(),
             ))),
             SharedRuntimeVfs::new(vfs),
         )
+        .with_terminal_owner(ShellTerminalOwner {
+            run_id: uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").expect("run id"),
+            agent_id: uuid::Uuid::parse_str("22222222-2222-2222-2222-222222222222")
+                .expect("agent id"),
+            runtime_thread_id: "runtime-thread-shell".parse().expect("runtime thread"),
+        })
+        .with_terminal_registry(Arc::new(RecordingShellTerminalRegistry::default()))
     }
 
     fn rewrite() -> MaterializationRewrite {
@@ -1084,6 +1480,10 @@ mod shell_exec_rewrite_tests {
 
         assert!(text.contains("terminal_id: term-123"));
         assert!(!text.contains("session_id:"));
+        assert!(
+            text.contains("next_seq: 4\n\nready"),
+            "terminal metadata and retained output must have an explicit separator: {text}"
+        );
     }
 
     #[test]
@@ -1093,6 +1493,36 @@ mod shell_exec_rewrite_tests {
 
         assert_eq!(params.operation, ShellExecOperation::Start);
         assert_eq!(params.command.as_deref(), Some("echo ok"));
+    }
+
+    #[test]
+    fn shell_exec_schema_and_parser_share_operation_and_unknown_field_policy() {
+        let schema = ShellExecExecutor::parameters_schema();
+        assert!(schema_contains_enum_value(
+            &schema["properties"]["operation"],
+            "start"
+        ));
+        assert!(schema_contains_enum_value(
+            &schema["properties"]["operation"],
+            "terminate"
+        ));
+        assert_eq!(schema["additionalProperties"], false);
+
+        serde_json::from_value::<ShellExecParams>(serde_json::json!({
+            "operation": "start",
+            "command": "echo ok"
+        }))
+        .expect("schema-advertised operation should parse");
+        serde_json::from_value::<ShellExecParams>(serde_json::json!({
+            "operation": "start",
+            "command": "echo ok",
+            "unexpected": true
+        }))
+        .expect_err("schema-forbidden field must be rejected by parser");
+        serde_json::from_value::<ShellExecParams>(serde_json::json!({
+            "operation": "not_an_operation"
+        }))
+        .expect_err("operation outside the schema enum must be rejected by parser");
     }
 
     #[tokio::test]
@@ -1110,6 +1540,11 @@ mod shell_exec_rewrite_tests {
         assert!(!result.is_error);
         let text = result.content[0].extract_text().expect("text content");
         assert!(text.contains("cwd: platform://"));
+        let details = result.details.expect("platform shell protocol details");
+        assert_eq!(details["original_command"], "pwd");
+        assert_eq!(details["cwd"], "platform://");
+        assert_eq!(details["exit_code"], 0);
+        assert!(details["aggregated_output"].as_str().is_some());
     }
 
     #[tokio::test]
@@ -1142,12 +1577,210 @@ mod shell_exec_rewrite_tests {
         assert!(error.to_string().contains("mount_id://relative/path"));
     }
 
+    #[tokio::test]
+    async fn direct_shell_executor_honors_pre_cancelled_execution() {
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let error = test_shell_tool()
+            .execute(
+                "tool-cancelled",
+                serde_json::json!({ "command": "pwd", "cwd": "" }),
+                cancel,
+                None,
+            )
+            .await
+            .expect_err("pre-cancelled direct execution should stop before dispatch");
+
+        assert_eq!(error, VfsToolExecutionError::Cancelled);
+    }
+
     #[test]
-    fn shell_exec_result_details_are_absent_without_rewrite() {
-        assert!(
-            shell_exec_result_details("echo ok", "echo ok", &[], &exec_result_fixture(), false, 0)
-                .is_none()
+    fn direct_update_sink_preserves_typed_rewrite_payload() {
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let captured = updates.clone();
+        let sink: VfsToolUpdateSink = Arc::new(move |update| {
+            captured.lock().expect("updates lock").push(update);
+        });
+
+        sink(vfs_uri_rewrite_notice(
+            "python skill-assets://skills/abc-user-lookup/scripts/lookup.py",
+            "python C:\\materialized\\lookup.py",
+            &[rewrite()],
+        ));
+
+        let updates = updates.lock().expect("updates lock");
+        assert_eq!(updates.len(), 1);
+        assert!(!updates[0].is_error);
+        assert_eq!(
+            updates[0].details.as_ref().unwrap()["type"],
+            "vfs_uri_rewrite"
         );
+    }
+
+    fn schema_contains_enum_value(schema: &serde_json::Value, expected: &str) -> bool {
+        match schema {
+            serde_json::Value::Array(values) => values
+                .iter()
+                .any(|value| schema_contains_enum_value(value, expected)),
+            serde_json::Value::Object(object) => {
+                object.get("enum").is_some_and(|values| {
+                    values
+                        .as_array()
+                        .is_some_and(|values| values.iter().any(|value| value == expected))
+                }) || object
+                    .values()
+                    .any(|value| schema_contains_enum_value(value, expected))
+            }
+            _ => false,
+        }
+    }
+
+    #[tokio::test]
+    async fn shell_exec_running_handle_continues_and_projects_retained_output() {
+        let owner = ShellTerminalOwner {
+            run_id: uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").expect("run id"),
+            agent_id: uuid::Uuid::parse_str("22222222-2222-2222-2222-222222222222")
+                .expect("agent id"),
+            runtime_thread_id: "runtime-thread-shell".parse().expect("runtime thread"),
+        };
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "main".to_string(),
+                provider: "shell_lifecycle".to_string(),
+                backend_id: "backend-local".to_string(),
+                root_ref: "D:\\workspace".to_string(),
+                capabilities: vec![agentdash_platform_spi::MountCapability::Exec],
+                default_write: true,
+                display_name: "main".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let service = Arc::new(VfsService::new(Arc::new(
+            MountProviderRegistryBuilder::new()
+                .register(Arc::new(ShellLifecycleProvider))
+                .build(),
+        )));
+        let registry = Arc::new(RecordingShellTerminalRegistry::default());
+        let shared_vfs = SharedRuntimeVfs::new(vfs);
+        let tool = ShellExecExecutor::new(service.clone(), shared_vfs.clone())
+            .with_terminal_owner(owner.clone())
+            .with_terminal_registry(registry.clone());
+
+        let started = tool
+            .execute(
+                "call-start",
+                serde_json::json!({
+                    "operation": "start",
+                    "cwd": "main://",
+                    "command": "long-running"
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("start shell");
+        let terminal_id = started
+            .details
+            .as_ref()
+            .and_then(|details| details["terminal_id"].as_str())
+            .expect("terminal id")
+            .to_string();
+        let registration = registry
+            .registration
+            .lock()
+            .expect("registration lock")
+            .clone()
+            .expect("registration");
+        assert_eq!(registration.owner, owner);
+        assert_eq!(registration.terminal_id, terminal_id);
+
+        tool.execute(
+            "call-write",
+            serde_json::json!({
+                "operation": "write",
+                "terminal_id": terminal_id,
+                "data": "continue\n"
+            }),
+            CancellationToken::new(),
+            None,
+        )
+        .await
+        .expect("write continued shell");
+        let completed = tool
+            .execute(
+                "call-read",
+                serde_json::json!({
+                    "operation": "read",
+                    "terminal_id": terminal_id,
+                    "after_seq": 1
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("read retained completed output");
+
+        assert_eq!(completed.details.as_ref().unwrap()["state"], "completed");
+        assert_eq!(
+            completed.details.as_ref().unwrap()["aggregated_output"],
+            "retained completion\n"
+        );
+        let snapshots = registry.snapshots.lock().expect("snapshot lock");
+        assert_eq!(snapshots.len(), 3, "start/write/read all project snapshots");
+        assert_eq!(snapshots[0].state, "running");
+        assert_eq!(snapshots[1].pty, "input accepted\n");
+        assert_eq!(snapshots[2].stdout, "retained completion\n");
+        assert_eq!(snapshots[2].next_seq, Some(3));
+        drop(snapshots);
+
+        let other_owner_tool = ShellExecExecutor::new(service, shared_vfs)
+            .with_terminal_owner(ShellTerminalOwner {
+                run_id: uuid::Uuid::parse_str("33333333-3333-3333-3333-333333333333")
+                    .expect("other run id"),
+                agent_id: owner.agent_id,
+                runtime_thread_id: owner.runtime_thread_id,
+            })
+            .with_terminal_registry(registry);
+        let error = other_owner_tool
+            .execute(
+                "call-cross-owner-read",
+                serde_json::json!({
+                    "operation": "read",
+                    "terminal_id": terminal_id,
+                    "after_seq": 1
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect_err("cross-owner continuation must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("does not belong to the current AgentRun")
+        );
+    }
+
+    #[test]
+    fn shell_exec_result_details_preserve_plain_terminal_fields() {
+        let plain = shell_exec_result_details(
+            "echo ok",
+            "echo ok",
+            &[],
+            &exec_result_fixture(),
+            "main://",
+            "ok",
+            false,
+            0,
+        )
+        .expect("plain command details");
+        assert_eq!(plain["cwd"], "main://");
+        assert_eq!(plain["aggregated_output"], "ok");
 
         let rewrites = vec![rewrite()];
         let details = shell_exec_result_details(
@@ -1155,6 +1788,8 @@ mod shell_exec_rewrite_tests {
             "python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao",
             &rewrites,
             &exec_result_fixture(),
+            "main://",
+            "ok",
             false,
             0,
         )
@@ -1174,6 +1809,8 @@ mod shell_exec_rewrite_tests {
             "echo lots",
             &[],
             &exec_result_fixture(),
+            "main://",
+            "lots",
             true,
             1234,
         )
@@ -1192,7 +1829,7 @@ mod shell_exec_rewrite_tests {
                 provider: crate::PROVIDER_RELAY_FS.to_string(),
                 backend_id: "local-dev-1".to_string(),
                 root_ref: "D:\\workspace".to_string(),
-                capabilities: vec![agentdash_spi::MountCapability::Exec],
+                capabilities: vec![agentdash_platform_spi::MountCapability::Exec],
                 default_write: true,
                 display_name: "main".to_string(),
                 metadata: serde_json::Value::Null,

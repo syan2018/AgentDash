@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use agentdash_relay::*;
 use codex_utils_output_truncation::{
@@ -36,6 +36,8 @@ struct ShellSession {
     session_id: String,
     call_id: Option<String>,
     terminal_id: Option<String>,
+    terminal_owner_epoch_id: String,
+    latest_source_sequence: u64,
     tty: bool,
     state: ToolShellSessionState,
     exit_code: Option<i32>,
@@ -319,14 +321,22 @@ impl ShellSessionManager {
             rows: payload.rows,
             call_id: None,
             terminal_id: Some(payload.terminal_id.clone()),
-            max_output_bytes: DEFAULT_OUTPUT_BYTES_CAP,
+            max_output_bytes: payload.max_output_bytes,
             timeout_ms: None,
         };
-        self.spawn_session(session_id, spec)
+        self.spawn_session(session_id.clone(), spec)
             .await
             .map_err(|error| error.to_string())?;
+        let table = self.inner.lock().await;
+        let session = table
+            .sessions
+            .get(&session_id)
+            .ok_or_else(|| format!("terminal not found after spawn: {session_id}"))?;
         Ok(TerminalSpawnResponse {
             terminal_id: payload.terminal_id.clone(),
+            terminal_owner_epoch_id: session.terminal_owner_epoch_id.clone(),
+            latest_source_sequence: session.latest_source_sequence,
+            max_output_bytes: session.buffer.max_bytes,
             process_id: None,
         })
     }
@@ -454,8 +464,10 @@ impl ShellSessionManager {
                 session.updated_at = Instant::now();
                 session.notify.notify_waiters();
                 if let Some(terminal_id) = session.terminal_id.clone() {
+                    let source = advance_terminal_source(session);
                     event = Some(PtyTerminalStateChangedPayload {
                         terminal_id,
+                        source,
                         state: PtyTerminalProcessState::Killed,
                         exit_code: None,
                         message: Some("terminate requested".to_string()),
@@ -499,6 +511,41 @@ impl ShellSessionManager {
                 cols: payload.cols,
             })
             .map_err(|error| format!("resize failed: {error}"))
+    }
+
+    pub async fn terminal_inventory(
+        &self,
+        _request: &TerminalInventoryRequest,
+    ) -> TerminalInventoryResponse {
+        let table = self.inner.lock().await;
+        let mut terminals = table
+            .sessions
+            .values()
+            .filter_map(|session| {
+                let terminal_id = session.terminal_id.clone()?;
+                Some(TerminalSourceSnapshot {
+                    terminal_id,
+                    terminal_owner_epoch_id: session.terminal_owner_epoch_id.clone(),
+                    latest_source_sequence: session.latest_source_sequence,
+                    max_output_bytes: session.buffer.max_bytes,
+                    state: terminal_process_state(session.state),
+                    exit_code: session.exit_code,
+                    chunks: session.buffer.chunks_after(None, None),
+                    next_output_sequence: session.buffer.next_seq,
+                    truncation: session.buffer.truncation(),
+                })
+            })
+            .collect::<Vec<_>>();
+        terminals.sort_by(|left, right| left.terminal_id.cmp(&right.terminal_id));
+        TerminalInventoryResponse {
+            captured_at_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock must be after Unix epoch")
+                .as_millis()
+                .try_into()
+                .unwrap_or(i64::MAX),
+            terminals,
+        }
     }
 
     async fn spawn_session(
@@ -549,6 +596,8 @@ impl ShellSessionManager {
             session_id: session_id.clone(),
             call_id: spec.call_id.clone(),
             terminal_id: terminal_id.clone(),
+            terminal_owner_epoch_id: RelayMessage::new_id("terminal-owner"),
+            latest_source_sequence: u64::from(terminal_id.is_some()),
             tty: spec.tty,
             state: ToolShellSessionState::Running,
             exit_code: None,
@@ -560,6 +609,10 @@ impl ShellSessionManager {
             updated_at: now,
             exited_at: None,
         };
+        let initial_terminal_source = terminal_id.as_ref().map(|_| TerminalSourceFence {
+            terminal_owner_epoch_id: session.terminal_owner_epoch_id.clone(),
+            source_sequence: session.latest_source_sequence,
+        });
         self.inner
             .lock()
             .await
@@ -573,6 +626,8 @@ impl ShellSessionManager {
                     id: RelayMessage::new_id("term-state"),
                     payload: PtyTerminalStateChangedPayload {
                         terminal_id,
+                        source: initial_terminal_source
+                            .expect("terminal sessions always have an initial source fence"),
                         state: PtyTerminalProcessState::Running,
                         exit_code: None,
                         message: None,
@@ -619,7 +674,7 @@ impl ShellSessionManager {
 
     async fn push_output(&self, session_id: &str, stream: ShellOutputStream, bytes: Vec<u8>) {
         let data = String::from_utf8_lossy(&bytes).to_string();
-        let (chunk, live_output, call_id, terminal_id, notify) = {
+        let (chunk, live_output, call_id, terminal_event, notify) = {
             let mut table = self.inner.lock().await;
             let Some(session) = table.sessions.get_mut(session_id) else {
                 return;
@@ -635,11 +690,35 @@ impl ShellSessionManager {
             let chunk = session.buffer.push(stream, data.clone());
             let live_output = session.live_output.push(&chunk.data);
             session.updated_at = Instant::now();
+            let terminal_event = session.terminal_id.clone().map(|terminal_id| {
+                let source = advance_terminal_source(session);
+                let delta = match &live_output {
+                    Some((data, truncation)) if !truncation.truncated => {
+                        TerminalOutputDelta::Appended {
+                            stream: terminal_output_stream(chunk.stream),
+                            data: data.clone(),
+                        }
+                    }
+                    Some((retained_output, truncation)) => TerminalOutputDelta::Omitted {
+                        omitted_bytes: truncation.omitted_bytes,
+                        retained_output: retained_output.clone(),
+                    },
+                    None => TerminalOutputDelta::Omitted {
+                        omitted_bytes: chunk.data.len(),
+                        retained_output: String::new(),
+                    },
+                };
+                TerminalOutputPayload {
+                    terminal_id,
+                    source,
+                    delta,
+                }
+            });
             (
                 chunk,
                 live_output,
                 session.call_id.clone(),
-                session.terminal_id.clone(),
+                terminal_event,
                 Arc::clone(&session.notify),
             )
         };
@@ -655,14 +734,10 @@ impl ShellSessionManager {
                 },
             });
         }
-        if let (Some(terminal_id), Some((data, truncation))) = (terminal_id, live_output) {
+        if let Some(payload) = terminal_event {
             let _ = self.event_tx.send(RelayMessage::EventTerminalOutput {
                 id: RelayMessage::new_id("term-out"),
-                payload: TerminalOutputPayload {
-                    terminal_id,
-                    data,
-                    truncation,
-                },
+                payload,
             });
         }
         notify.notify_waiters();
@@ -695,8 +770,10 @@ impl ShellSessionManager {
                     ToolShellSessionState::Killed => PtyTerminalProcessState::Killed,
                     _ => PtyTerminalProcessState::Exited,
                 };
+                let source = advance_terminal_source(session);
                 PtyTerminalStateChangedPayload {
                     terminal_id,
+                    source,
                     state,
                     exit_code: Some(code),
                     message: None,
@@ -727,15 +804,16 @@ impl ShellSessionManager {
             session.exited_at = Some(Instant::now());
             session.updated_at = Instant::now();
             session.notify.notify_waiters();
-            session
-                .terminal_id
-                .clone()
-                .map(|terminal_id| PtyTerminalStateChangedPayload {
+            session.terminal_id.clone().map(|terminal_id| {
+                let source = advance_terminal_source(session);
+                PtyTerminalStateChangedPayload {
                     terminal_id,
+                    source,
                     state: PtyTerminalProcessState::Killed,
                     exit_code: None,
                     message: Some("timeout reached".to_string()),
-                })
+                }
+            })
         };
         if let Some(payload) = event {
             let _ = self
@@ -799,6 +877,38 @@ fn shell_read_snapshot(
         chunks: session.buffer.chunks_after(after_seq, max_bytes),
         next_seq: session.buffer.next_seq,
         truncation: session.buffer.truncation(),
+    }
+}
+
+fn advance_terminal_source(session: &mut ShellSession) -> TerminalSourceFence {
+    session.latest_source_sequence = session.latest_source_sequence.saturating_add(1);
+    TerminalSourceFence {
+        terminal_owner_epoch_id: session.terminal_owner_epoch_id.clone(),
+        source_sequence: session.latest_source_sequence,
+    }
+}
+
+fn terminal_output_stream(stream: ShellOutputStream) -> TerminalOutputStream {
+    match stream {
+        ShellOutputStream::Stdout => TerminalOutputStream::Stdout,
+        ShellOutputStream::Stderr => TerminalOutputStream::Stderr,
+        ShellOutputStream::Pty => TerminalOutputStream::Pty,
+    }
+}
+
+fn terminal_process_state(state: ToolShellSessionState) -> PtyTerminalProcessState {
+    match state {
+        ToolShellSessionState::Starting => PtyTerminalProcessState::Starting,
+        ToolShellSessionState::Running => PtyTerminalProcessState::Running,
+        ToolShellSessionState::Completed | ToolShellSessionState::Failed => {
+            PtyTerminalProcessState::Exited
+        }
+        ToolShellSessionState::Killed | ToolShellSessionState::TimedOut => {
+            PtyTerminalProcessState::Killed
+        }
+        ToolShellSessionState::Lost | ToolShellSessionState::Closed => {
+            PtyTerminalProcessState::Lost
+        }
     }
 }
 

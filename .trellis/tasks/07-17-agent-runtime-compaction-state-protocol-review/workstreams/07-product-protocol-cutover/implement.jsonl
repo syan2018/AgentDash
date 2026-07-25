@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md","reason":"AgentRun/Fork/Companion/protocol/UI 最终 data flow。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-runtime-fork-state-boundaries.md","reason":"当前 AgentRun fork、visible journal 与 Companion 真实链路。"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"Application ↔ Runtime seam 当前基线。"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"App Server projection identity/order。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"snapshot+change reducer 与 cursor gap。"}

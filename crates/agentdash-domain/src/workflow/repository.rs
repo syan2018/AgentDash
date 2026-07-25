@@ -2,16 +2,29 @@ use uuid::Uuid;
 
 use super::agent_frame::AgentFrame;
 use super::agent_lineage::AgentLineage;
-use super::agent_run_delivery_binding::AgentRunDeliveryBinding;
-use super::agent_run_lineage::AgentRunLineage;
 use super::entity::{AgentProcedure, LifecycleRun, WorkflowGraph};
 use super::gate_wait_policy::WaitProducerRef;
 use super::lifecycle_agent::LifecycleAgent;
 use super::lifecycle_gate::LifecycleGate;
 use super::lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
-use super::runtime_session_anchor::RuntimeSessionExecutionAnchor;
 use crate::channel::{ChannelRegistryDocument, ChannelRegistryMutation};
 use crate::common::error::DomainError;
+
+#[derive(Debug, thiserror::Error)]
+pub enum LifecycleRunWriteError {
+    #[error(
+        "LifecycleRun revision conflict: run_id={run_id}, expected={expected_revision}, actual={actual_revision}"
+    )]
+    RevisionConflict {
+        run_id: Uuid,
+        expected_revision: u64,
+        actual_revision: u64,
+    },
+    #[error("LifecycleRun CAS persistence failed: {0}")]
+    Persistence(#[from] DomainError),
+    #[error("LifecycleRun repository does not implement the required revision CAS contract")]
+    CasNotImplemented,
+}
 
 #[async_trait::async_trait]
 pub trait AgentProcedureRepository: Send + Sync {
@@ -71,6 +84,21 @@ pub trait LifecycleRunRepository: Send + Sync {
     async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
+    /// Atomically replaces the aggregate iff the stored revision equals
+    /// `expected_revision`.
+    ///
+    /// Implementations must require `run.revision == expected_revision + 1`
+    /// and persist the aggregate body plus revision in one transaction.
+    /// Product Workflow execution must not compose the default implementation.
+    /// The write set is the executor aggregate plus revision; it must preserve
+    /// `channel_registry`, whose independent mutation method owns that column.
+    async fn compare_and_swap(
+        &self,
+        _expected_revision: u64,
+        _run: &LifecycleRun,
+    ) -> Result<(), LifecycleRunWriteError> {
+        Err(LifecycleRunWriteError::CasNotImplemented)
+    }
     async fn load_channel_registry(
         &self,
         run_id: Uuid,
@@ -102,29 +130,38 @@ pub trait LifecycleAgentRepository: Send + Sync {
     async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError>;
     async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError>;
     async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError>;
-}
 
-#[async_trait::async_trait]
-pub trait AgentRunDeliveryBindingRepository: Send + Sync {
-    async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError>;
-    async fn upsert_if_current_runtime_session(
+    /// Atomically initializes the Product-owned AgentRun title when it is still absent.
+    async fn initialize_title_from_agent(
         &self,
-        binding: &AgentRunDeliveryBinding,
-    ) -> Result<bool, DomainError>;
-    async fn get_current(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-    ) -> Result<Option<AgentRunDeliveryBinding>, DomainError>;
-    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentRunDeliveryBinding>, DomainError>;
-    async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError>;
+        target: &crate::agent_run_target::AgentRunTarget,
+        title: &str,
+    ) -> Result<bool, DomainError> {
+        let Some(mut agent) = self.get(target.agent_id).await? else {
+            return Err(DomainError::NotFound {
+                entity: "lifecycle_agent",
+                id: target.agent_id.to_string(),
+            });
+        };
+        if agent.run_id != target.run_id {
+            return Err(DomainError::NotFound {
+                entity: "lifecycle_agent",
+                id: target.agent_id.to_string(),
+            });
+        }
+        if !agent.initialize_title_from_agent(title) {
+            return Ok(false);
+        }
+        self.update(&agent).await?;
+        Ok(true)
+    }
 }
 
 #[async_trait::async_trait]
 pub trait AgentFrameRepository: Send + Sync {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError>;
     async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
-    async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
+    async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError>;
 }
 
@@ -176,51 +213,4 @@ pub trait AgentLineageRepository: Send + Sync {
     /// 一次取回某 run 下的全部 lineage 边，供 UI 在内存构建控制树 forest，
     /// 避免按 agent 逐个 `list_children` 的 N 次往返。
     async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError>;
-}
-
-#[async_trait::async_trait]
-pub trait AgentRunLineageRepository: Send + Sync {
-    async fn create(&self, lineage: &AgentRunLineage) -> Result<(), DomainError>;
-    async fn find_parent(
-        &self,
-        child_run_id: Uuid,
-        child_agent_id: Uuid,
-    ) -> Result<Option<AgentRunLineage>, DomainError>;
-    async fn list_children(
-        &self,
-        parent_run_id: Uuid,
-        parent_agent_id: Uuid,
-    ) -> Result<Vec<AgentRunLineage>, DomainError>;
-    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentRunLineage>, DomainError>;
-}
-
-/// RuntimeSession → 控制面锚点的 repository。
-#[async_trait::async_trait]
-pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
-    /// 创建 runtime_session 到 lifecycle / agent / frame / orchestration node 的锚点。
-    ///
-    /// 同一 runtime_session_id 已存在且控制面坐标一致时幂等成功；坐标不一致时返回 conflict。
-    async fn create_once(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError>;
-    /// 按 runtime_session_id 删除锚点。
-    async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError>;
-    /// 按 runtime_session_id 查找锚点。
-    async fn find_by_session(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError>;
-    /// 按 run 查询该控制面账本关联的 runtime sessions。
-    async fn list_by_run(
-        &self,
-        run_id: Uuid,
-    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError>;
-    /// 按 agent 查询该 agent 关联的 runtime sessions。
-    async fn list_by_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError>;
-    /// 批量按 runtime_session_id 查询 anchors。
-    async fn list_by_project_session_ids(
-        &self,
-        runtime_session_ids: &[String],
-    ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError>;
 }

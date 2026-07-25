@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
 use agentdash_domain::workflow::WorkflowHookTrigger;
-use agentdash_spi::HookTrigger;
+use agentdash_platform_spi::HookTrigger;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -58,24 +58,6 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             description: "处理 Companion 回流结果，根据 adoption_mode 注入约束或 follow-up 要求",
             param_schema: None,
             script: include_str!("../scripts/hook-presets/companion_result_channel.rhai"),
-            source: PresetSource::Builtin,
-        },
-        HookRulePreset {
-            key: "supervised_tool_gate",
-            trigger: WorkflowHookTrigger::BeforeTool,
-            label: "受监管工具审批",
-            description: "在 SUPERVISED 权限策略下，执行/编辑类工具需要用户审批。支持通过 params.allowlist 配置白名单",
-            param_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "allowlist": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "不需要审批的工具白名单"
-                    }
-                }
-            })),
-            script: include_str!("../scripts/hook-presets/supervised_tool_gate.rhai"),
             source: PresetSource::Builtin,
         },
         HookRulePreset {

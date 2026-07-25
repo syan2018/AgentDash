@@ -107,8 +107,8 @@ AgentFrame revision 的 MCP surface。
 ## 运行态工具策略
 
 声明式与 frame surface 内的工具级策略字段是 `CapabilityState.tool_policy`。运行期执行准入由
-AgentRun effective capability/admission 服务基于 `CapabilityState.tool_policy` 与 AgentRun Grant
-projection 输出。
+AgentRun effective capability/admission 服务基于 `CapabilityState.tool_policy` 输出；执行权限由
+独立的 AgentRun permission facade 判定。
 
 边界定义：
 - `ToolCapabilityDirective`：配置层输入 DSL（workflow/step 的 add/remove 意图）
@@ -118,10 +118,9 @@ projection 输出。
 工具 schema 构建使用 AgentRun 输出的 final visible capability view；单个工具执行使用 AgentRun
 admission decision。
 
-RuntimeSession 的 schema-visible capability projection 只服务工具 schema assembly，不是 Grant
-authorization。工具执行准入必须在 `tool.execute` 前通过 AgentRun admission bridge 执行，原因是
-tool-level PermissionGrant 需要同时依赖 runtime session anchor、anchored AgentFrame surface 与
-frame-scoped grant projection，provider-local `CapabilityState` guard 不具备这些业务坐标。
+Bound Agent Surface 的 schema-visible capability projection只服务工具 catalog/materialization，
+不是权限事实。工具执行在 `tool.execute` 前分别通过 AgentRun capability admission 与 permission
+facade，原因是工具存在性、VFS 可达性和执行授权是不同 owner 的约束，不能合并成同一 projection。
 
 Application tool assembly 必须保留 MCP discovery provenance 并生成 `RuntimeToolSchemaEntry`。
 Project MCP 的 `server_name/tool_name/runtime_name/description/parameters_schema` 来自 discovery 结果，
@@ -267,7 +266,7 @@ companion_request(target="sub", payload.agent_key="<CompanionAgentEntry.name>", 
 - `CompanionRequestTool` 解析 `agent_key` 时必须先在当前 frame roster 中匹配，再按 `project_id + name` 读取 selected ProjectAgent identity。
 - companion child launch source 必须携带 selected ProjectAgent id 和 canonical agent_key；child `LifecycleAgent.project_agent_id` 绑定 selected ProjectAgent。这样 frame construction、AgentRun 展示与实际 child executor/capability/VFS/skill facts 使用同一个身份来源。
 - companion child frame construction 在 parent slice 上叠加 selected ProjectAgent preset facts：executor config、capability directives、MCP presets、Project VFS mount exposure、skill assets 与 companion return-channel baseline。
-- `project_id` 来自当前 delivery runtime session 的 `RuntimeSessionExecutionAnchor`，原因是 hook snapshot 的 `run_context` 只表达 active workflow 投影，不是通用 owner 事实源。
+- `project_id` 来自 `AgentRunRuntimeTarget -> LifecycleRun` 产品授权坐标；Runtime binding只提供thread/binding identity，不替代Project ownership。
 - `AuthorityState.companion.dispatch` 是 roster 投影与 `companion_request(target="sub")` 执行 guard 的上游事实；`AuthorityState.companion.respond` 由 child lineage / gate runtime channel 提供，不依赖 parent dispatch authority。这样禁止发起新 sub companion 不会切断已启动 child 的 `companion_respond` 回流通道。
 - `AuthorityState.workspace_module.present`、`AuthorityState.dynamic_workflow.author` 是当前已接入 capability projection 的静态边界：workspace module 展示和 dynamic workflow authoring 默认只面向 main/root ProjectAgent。
 - background companion child 默认隐藏 human route；该 guard 当前由 companion tool 根据 child source fail-closed 执行，后续需要在 execution context 携带用户主动进入 companion run 的 provenance 后再统一纳入 Authority projection。
@@ -435,13 +434,25 @@ Correct: task runtime capability exposes task_read/task_write and execution arti
 
 ## 工具 schema 与模型可见说明
 
-运行时工具更新必须同时维护两条链路：
+运行时工具更新从Agent实际接纳的tool definition派生两个消费者不同、identity相同的投影：
 
 - Provider `tools[]` 携带完整机器 schema，用于 OpenAI/Codex Responses 等服务解析工具调用。
-- `tool_schema_delta` 的模型可见文本携带可调用说明，用工具名、用途、来源、参数名、必填性、类型和关键嵌套字段摘要指导模型调用。
+- 一个`CapabilityStateDelta` ContextFrame同时携带capability各维度变化与
+  `ToolSchemaDelta` added/removed/changed结构化证据，以及完整可读`rendered_text`；Complete Agent
+  以`context/system_append`投递该文本，并把精确同一frame发布给平台展示。首次投递是
+  empty→current，运行中revision只包含真正变化的section，语义无变化时不生成frame。
 
-模型可见文本禁止直接 dump 完整 pretty JSON Schema。复杂工具应输出结构化参数摘要，并依赖 provider
-`tools[]` 保留完整机器契约。
+可读renderer必须覆盖名称、description、capability/source/path、required/optional、object/array
+嵌套、enum/const与schema constraints，并附带无损完整JSON Schema；section中的
+`parameters_schema`保持原样，前端可按需展开。
+provider bridge只做vendor structured field映射，不追加工具PromptText，原因是ContextFrame owner
+需要独立管理context更新、缓存与compaction。Dash从native history恢复当前active surface的append
+序列，而不是要求最新surface重放完整schema；这样增量语义、热更新顺序与revoke都由平台控制。
+
+`RuntimeToolDefinition.provenance`是capability/source/tool path/context usage的typed来源：
+静态平台工具从统一`ToolDescriptor`注册表取得，动态MCP在discovery时按真实server/tool identity
+构造，并随`AgentSurfaceContributionPayload::Tool`无损传入concrete Agent。这样delta identity、
+ContextFrame展示和工具执行表都不依赖runtime name前缀或adapter route猜测。
 
 进入 Responses API 的工具 schema 必须先经过 sanitizer：递归内联本地 `$ref`，移除 `$defs` /
 `definitions` 与装饰性关键字，确保 object/array 结构、nullable 与组合器表达在目标 provider
@@ -451,10 +462,10 @@ sanitizer 必须保留来源 schema 的 `required` 语义，原因是模型可�
 
 ## CapabilityResolver
 
-- 协议类型：`agentdash-spi/src/tool_capability.rs`
+- 协议类型：`agentdash-platform-spi/src/tool_capability.rs`
 - Resolver 实现：`agentdash-application/src/capability/resolver.rs`
 - 纯函数式设计，所有依赖通过 input 传入。
-- 输出声明式 / frame construction 基线 `CapabilityState`；不读取 PermissionGrant，不承担 AgentRun runtime admission。
+- 输出声明式 / frame construction 基线 `CapabilityState`；AgentRun runtime admission 由对应 application facade 独立完成。
 
 ## 调用规范
 
@@ -488,7 +499,7 @@ visibility baseline。这样做的原因是 capability visibility、auto-grant �
 
 - Trigger: workflow capability editor 需要展示 key、label、description、allowed scopes、auto grant
   和 tools。
-- Scope: `agentdash-spi::platform::tool_capability` → application catalog projection →
+- Scope: `agentdash-platform-spi::platform::tool_capability` → application catalog projection →
   `agentdash-contracts::workflow::CapabilityCatalogResponse` → frontend editor。
 
 #### 2. Signatures

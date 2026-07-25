@@ -8,7 +8,7 @@ use agentdash_domain::workflow::{
     OrchestrationSourceRef, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
     workflow_script_source_digest,
 };
-use agentdash_spi::WorkflowScriptEvaluator;
+use agentdash_platform_spi::WorkflowScriptEvaluator;
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -20,7 +20,7 @@ pub struct CompanionWorkflowScriptPreflightRequest {
     pub source_text: String,
     pub args: Option<Value>,
     pub ctx: Option<Value>,
-    pub runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
 }
 
 #[async_trait]
@@ -55,7 +55,7 @@ impl CompanionWorkflowScriptPreflightPort for ApplicationWorkflowScriptPreflight
         let mut provenance =
             WorkflowScriptProvenance::new(WorkflowScriptProvenanceSource::UserAuthored);
         provenance.created_by = request.user_id.clone();
-        provenance.runtime_session_id = request.runtime_session_id.clone();
+        provenance.runtime_thread_id = request.runtime_thread_id.clone();
 
         let compiler = ScriptCompiler;
         Ok(WorkflowScriptPreflightService::preflight(

@@ -1,5 +1,10 @@
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { extractPlatformEventData, extractPlatformEventType, isRecord } from "./platformEvent";
+import {
+  extractContextFrameValue,
+  extractPlatformEventData,
+  extractPlatformEventType,
+  isRecord,
+} from "./platformEvent";
 
 export type PlatformFeedBoundary = "hard" | "soft" | "neutral";
 export type NotificationVisibility = "renderable" | "all";
@@ -18,7 +23,6 @@ export interface PlatformEventPolicy {
 }
 
 const RENDERABLE_SYSTEM_EVENT_TYPES = new Set<string>([
-  "executor_session_bound",
   "turn_interrupted",
   "hook_event",
   "system_message",
@@ -31,6 +35,7 @@ const RENDERABLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "user_feedback",
   "user_answered_questions",
   "workspace_module_present_failed",
+  "workspace_module_presentation_requested",
   "context_frame",
   "session_branch_forked",
   "session_rewound",
@@ -109,11 +114,7 @@ function isSignificantHookEvent(data: Record<string, unknown> | null): boolean {
 }
 
 function isContextFrameEvent(event: BackboneEvent): boolean {
-  return (
-    event.type === "platform" &&
-    event.payload.kind === "session_meta_update" &&
-    event.payload.data.key === "context_frame"
-  );
+  return extractContextFrameValue(event) != null;
 }
 
 export function getPlatformEventPolicy(

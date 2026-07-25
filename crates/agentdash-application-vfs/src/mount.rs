@@ -17,7 +17,7 @@ pub(crate) const CONTEXT_OWNER_ID_METADATA_KEY: &str = "agentdash_context_owner_
 pub(crate) const CONTEXT_CONTAINER_ID_METADATA_KEY: &str = "agentdash_context_container_id";
 pub(crate) const PROJECT_VFS_MOUNT_METADATA_KEY: &str = "agentdash_project_vfs_mount";
 pub(crate) const SKILL_ASSET_PROJECT_ID_METADATA_KEY: &str = "skill_asset_project_id";
-pub(crate) const SKILL_ASSET_KEYS_METADATA_KEY: &str = "skill_asset_keys";
+pub const SKILL_ASSET_KEYS_METADATA_KEY: &str = "skill_asset_keys";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionMountTarget {
@@ -26,12 +26,12 @@ pub enum SessionMountTarget {
     Task,
 }
 
-impl From<agentdash_spi::CapabilityScope> for SessionMountTarget {
-    fn from(scope: agentdash_spi::CapabilityScope) -> Self {
+impl From<agentdash_platform_spi::CapabilityScope> for SessionMountTarget {
+    fn from(scope: agentdash_platform_spi::CapabilityScope) -> Self {
         match scope {
-            agentdash_spi::CapabilityScope::Project => Self::Project,
-            agentdash_spi::CapabilityScope::Story => Self::Story,
-            agentdash_spi::CapabilityScope::Task => Self::Task,
+            agentdash_platform_spi::CapabilityScope::Project => Self::Project,
+            agentdash_platform_spi::CapabilityScope::Story => Self::Story,
+            agentdash_platform_spi::CapabilityScope::Task => Self::Task,
         }
     }
 }

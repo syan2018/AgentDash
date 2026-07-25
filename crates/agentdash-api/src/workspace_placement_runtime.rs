@@ -6,25 +6,25 @@ use agentdash_application::ApplicationError;
 use agentdash_application::workspace::{
     WorkspaceDetectionResult, WorkspacePlacementDetectInput, WorkspacePlacementRuntime,
 };
-use agentdash_application_runtime_gateway::{
-    RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeGateway, RuntimeInvocationError,
+use agentdash_application_extension_gateway::{
+    ExtensionGateway, RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationError,
     RuntimeInvocationErrorKind, RuntimeInvocationRequest, WORKSPACE_DETECT_ACTION,
     WorkspaceDetectInput,
 };
 
 #[derive(Clone)]
-pub struct RuntimeGatewayWorkspacePlacementRuntime {
-    runtime_gateway: Arc<RuntimeGateway>,
+pub struct ExtensionGatewayWorkspacePlacementRuntime {
+    extension_gateway: Arc<ExtensionGateway>,
 }
 
-impl RuntimeGatewayWorkspacePlacementRuntime {
-    pub fn new(runtime_gateway: Arc<RuntimeGateway>) -> Self {
-        Self { runtime_gateway }
+impl ExtensionGatewayWorkspacePlacementRuntime {
+    pub fn new(extension_gateway: Arc<ExtensionGateway>) -> Self {
+        Self { extension_gateway }
     }
 }
 
 #[async_trait]
-impl WorkspacePlacementRuntime for RuntimeGatewayWorkspacePlacementRuntime {
+impl WorkspacePlacementRuntime for ExtensionGatewayWorkspacePlacementRuntime {
     async fn detect_workspace(
         &self,
         input: WorkspacePlacementDetectInput,
@@ -52,17 +52,17 @@ impl WorkspacePlacementRuntime for RuntimeGatewayWorkspacePlacementRuntime {
             gateway_input,
         );
         let invocation = self
-            .runtime_gateway
+            .extension_gateway
             .invoke(request)
             .await
-            .map_err(application_error_from_runtime_gateway)?;
+            .map_err(application_error_from_extension_gateway)?;
         serde_json::from_value::<WorkspaceDetectionResult>(invocation.output.output).map_err(
             |error| ApplicationError::Internal(format!("workspace.detect 返回值解析失败: {error}")),
         )
     }
 }
 
-fn application_error_from_runtime_gateway(error: RuntimeInvocationError) -> ApplicationError {
+fn application_error_from_extension_gateway(error: RuntimeInvocationError) -> ApplicationError {
     let message = error.to_string();
     match error.kind() {
         RuntimeInvocationErrorKind::InvalidRequest => ApplicationError::BadRequest(message),

@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查最终 dependency direction 与四层 ownership 是否一致"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "检查 owner-local JSONB、repository transaction 与删除生命周期"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查 migration hard cut、空库与既有开发库升级"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查 Agent/provider 真实错误没有在 Runtime/Host 边界被吞掉"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "执行受影响 Rust crates 的最终质量检查"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "检查 Product 只保存业务定义、关联与允许的 pending input"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "检查 Dash read/stream/inspect/reconnect 的真实生产组合"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查生成协议、前端 snapshot/live stream 与断线重连一致"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查所有 producer、mapper、worker、consumer 与 composition tracer bullet"}
+{"file": ".trellis/tasks/07-20-agent-runtime-persistence-authority-convergence/research/current-architecture-audit.md", "reason": "以审计证据执行负向搜索并防止退回三写模型"}

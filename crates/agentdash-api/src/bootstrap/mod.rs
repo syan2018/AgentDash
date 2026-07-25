@@ -1,10 +1,8 @@
 pub mod auth;
 pub mod background_workers;
-pub mod frame_launch_envelope_provider;
+pub mod extension_gateway;
 pub mod relay;
 pub mod repositories;
-pub mod runtime_gateway;
-pub mod session;
 pub mod vfs;
 
 #[cfg(test)]

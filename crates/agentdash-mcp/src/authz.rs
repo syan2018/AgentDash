@@ -2,7 +2,7 @@ use agentdash_application::project::project_authorization_context_from_identity;
 use agentdash_domain::project::{
     Project, ProjectAuthorizationService, ProjectPermission as ApplicationProjectPermission,
 };
-use agentdash_spi::platform::auth::AuthIdentity;
+use agentdash_platform_spi::platform::auth::AuthIdentity;
 use uuid::Uuid;
 
 use crate::error::McpError;

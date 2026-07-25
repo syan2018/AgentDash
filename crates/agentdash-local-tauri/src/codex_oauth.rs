@@ -34,14 +34,14 @@ pub enum DesktopCodexOAuthTarget {
 #[derive(Debug, Clone, Deserialize)]
 pub struct DesktopCodexOAuthStartRequest {
     pub api_origin: String,
-    pub access_token: String,
+    pub access_token: Option<String>,
     pub provider_id: String,
     pub target: DesktopCodexOAuthTarget,
 }
 
 struct LocalCodexOAuthFlow {
     api_origin: String,
-    access_token: String,
+    access_token: Option<String>,
     cancel_tx: oneshot::Sender<()>,
 }
 
@@ -50,10 +50,12 @@ pub async fn codex_oauth_start(
     request: DesktopCodexOAuthStartRequest,
 ) -> Result<StartCodexOAuthResponse, String> {
     let api_origin = normalize_api_origin(&request.api_origin)?;
-    let access_token = request.access_token.trim().to_string();
-    if access_token.is_empty() {
-        return Err("Codex OAuth 需要当前登录 token".to_string());
-    }
+    let access_token = request
+        .access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string);
     if request.provider_id.trim().is_empty() {
         return Err("Codex OAuth provider_id 不能为空".to_string());
     }
@@ -78,7 +80,7 @@ pub async fn codex_oauth_start(
         code_challenge: challenge,
         redirect_uri: CODEX_OAUTH_REDIRECT_URI.to_string(),
     };
-    let flow = prepare_remote_flow(&api_origin, &access_token, &request, prepare).await?;
+    let flow = prepare_remote_flow(&api_origin, access_token.as_deref(), &request, prepare).await?;
     let flow_id = flow.flow_id.clone();
     let (cancel_tx, cancel_rx) = oneshot::channel();
 
@@ -112,13 +114,13 @@ pub async fn codex_oauth_cancel(flow_id: String) -> Result<CodexOAuthStatusRespo
         return Err(format!("Codex OAuth flow {flow_id} 不存在"));
     };
     let _ = flow.cancel_tx.send(());
-    cancel_remote_flow(&flow.api_origin, &flow.access_token, &flow_id).await
+    cancel_remote_flow(&flow.api_origin, flow.access_token.as_deref(), &flow_id).await
 }
 
 struct LocalCodexOAuthFlowTask {
     flow_id: String,
     api_origin: String,
-    access_token: String,
+    access_token: Option<String>,
     expected_state: String,
     verifier: String,
     ipv4_listener: TcpListener,
@@ -154,11 +156,13 @@ async fn run_local_codex_oauth_flow(task: LocalCodexOAuthFlowTask) {
                 code_verifier: verifier,
                 redirect_uri: CODEX_OAUTH_REDIRECT_URI.to_string(),
             };
-            let _ = complete_remote_flow(&api_origin, &access_token, &flow_id, complete).await;
+            let _ = complete_remote_flow(&api_origin, access_token.as_deref(), &flow_id, complete)
+                .await;
         }
         Err(message) if message == "Codex 登录已取消" => {}
         Err(message) => {
-            let _ = fail_remote_flow(&api_origin, &access_token, &flow_id, &message).await;
+            let _ =
+                fail_remote_flow(&api_origin, access_token.as_deref(), &flow_id, &message).await;
         }
     }
 
@@ -246,7 +250,7 @@ async fn handle_callback_stream(
 
 async fn prepare_remote_flow(
     api_origin: &str,
-    access_token: &str,
+    access_token: Option<&str>,
     request: &DesktopCodexOAuthStartRequest,
     prepare: PrepareCodexOAuthRequest,
 ) -> Result<StartCodexOAuthResponse, String> {
@@ -274,7 +278,7 @@ async fn prepare_remote_flow(
 
 async fn complete_remote_flow(
     api_origin: &str,
-    access_token: &str,
+    access_token: Option<&str>,
     flow_id: &str,
     complete: CompleteCodexOAuthRequest,
 ) -> Result<CodexOAuthStatusResponse, String> {
@@ -290,7 +294,7 @@ async fn complete_remote_flow(
 
 async fn fail_remote_flow(
     api_origin: &str,
-    access_token: &str,
+    access_token: Option<&str>,
     flow_id: &str,
     message: &str,
 ) -> Result<CodexOAuthStatusResponse, String> {
@@ -308,16 +312,15 @@ async fn fail_remote_flow(
 
 async fn cancel_remote_flow(
     api_origin: &str,
-    access_token: &str,
+    access_token: Option<&str>,
     flow_id: &str,
 ) -> Result<CodexOAuthStatusResponse, String> {
     let client = reqwest::Client::new();
-    let response = client
-        .post(build_api_url(
-            api_origin,
-            &format!("/api/llm-providers/codex-oauth/{flow_id}/cancel"),
-        )?)
-        .bearer_auth(access_token)
+    let request = client.post(build_api_url(
+        api_origin,
+        &format!("/api/llm-providers/codex-oauth/{flow_id}/cancel"),
+    )?);
+    let response = with_optional_bearer(request, access_token)
         .send()
         .await
         .map_err(|error| format!("取消 Codex OAuth 请求失败: {error}"))?;
@@ -326,7 +329,7 @@ async fn cancel_remote_flow(
 
 async fn post_json<TRequest, TResponse>(
     api_origin: &str,
-    access_token: &str,
+    access_token: Option<&str>,
     path: &str,
     body: &TRequest,
     operation: &str,
@@ -336,14 +339,23 @@ where
     TResponse: serde::de::DeserializeOwned,
 {
     let client = reqwest::Client::new();
-    let response = client
-        .post(build_api_url(api_origin, path)?)
-        .bearer_auth(access_token)
+    let request = client.post(build_api_url(api_origin, path)?);
+    let response = with_optional_bearer(request, access_token)
         .json(body)
         .send()
         .await
         .map_err(|error| format!("{operation} 请求失败: {error}"))?;
     response_json(response, operation).await
+}
+
+fn with_optional_bearer(
+    request: reqwest::RequestBuilder,
+    access_token: Option<&str>,
+) -> reqwest::RequestBuilder {
+    match access_token {
+        Some(access_token) => request.bearer_auth(access_token),
+        None => request,
+    }
 }
 
 async fn response_json<TResponse>(
@@ -439,6 +451,34 @@ fn local_codex_oauth_flows() -> LocalCodexOAuthStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::header::AUTHORIZATION;
+
+    #[test]
+    fn optional_bearer_omits_authorization_when_token_is_absent() {
+        let request = with_optional_bearer(
+            reqwest::Client::new().post("http://localhost/prepare"),
+            None,
+        )
+        .build()
+        .expect("request should build");
+
+        assert!(!request.headers().contains_key(AUTHORIZATION));
+    }
+
+    #[test]
+    fn optional_bearer_adds_authorization_when_token_exists() {
+        let request = with_optional_bearer(
+            reqwest::Client::new().post("http://localhost/prepare"),
+            Some("token-1"),
+        )
+        .build()
+        .expect("request should build");
+
+        assert_eq!(
+            request.headers().get(AUTHORIZATION),
+            Some(&"Bearer token-1".parse().expect("header should parse"))
+        );
+    }
 
     async fn exercise_callback_request(
         request: &'static str,

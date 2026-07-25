@@ -4,7 +4,7 @@
 //! serializable builder documents and do not execute workflow side effects.
 
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
-use agentdash_spi::WorkflowScriptEvaluator;
+use agentdash_platform_spi::WorkflowScriptEvaluator;
 use rhai::{Dynamic, Engine};
 
 use crate::script_runtime::RhaiScriptRuntime;
@@ -207,7 +207,7 @@ fn merge_options(mut base: rhai::Map, options: rhai::Map, reserved_keys: &[&str]
 
 #[cfg(test)]
 mod tests {
-    use agentdash_spi::WorkflowScriptEvaluator;
+    use agentdash_platform_spi::WorkflowScriptEvaluator;
     use serde_json::json;
 
     use super::*;

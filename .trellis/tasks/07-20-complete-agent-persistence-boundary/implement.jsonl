@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "确认 API composition、Infrastructure 与 Runtime Host 的依赖方向和职责边界。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "遵守 PostgreSQL migration 历史、顺序升级和最终 schema 契约。"}
+{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "实现 Complete Agent service、binding、generation、lease、source 与 recovery 的权威合同。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "保持 Managed Runtime 与 Host-owned persistence 的事务和 ownership 分离。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "保持 Product execution profile、Runtime target 与生产装配切换语义。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "区分 optional adapter unavailable、typed integrity error 与 durable Host invariant。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "执行 Rust 质量、测试和跨层 DTO 基线。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "审计 Product、API、Host、Integration、数据库与恢复的完整数据流。"}
+{"file": ".trellis/tasks/07-20-complete-agent-persistence-boundary/research/current-model-evidence.md", "reason": "保留精确复现、数据库证据、矛盾 invariant 与禁止补丁方案。"}

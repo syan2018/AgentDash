@@ -1,0 +1,113 @@
+{
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "scenario": "user_submit_text",
+    "capture_method": "fixed_main_contract_golden",
+    "source_contract": "crates/agentdash-contracts/src/runtime/session.rs",
+    "source_event_contract": "crates/agentdash-agent-protocol/src/backbone/event.rs",
+    "source_producers": [
+      {
+        "path": "crates/agentdash-application-runtime-session/src/session/hub_support.rs",
+        "git_blob_sha": "8ecdf70d9783574d9f5fb30e6852d71519423d52"
+      },
+      {
+        "path": "crates/agentdash-application-runtime-session/src/session/launch/commit.rs",
+        "git_blob_sha": "d454dd2980a8f7eb99a25cb424c7c46d0444bbda"
+      }
+    ],
+    "clock": "2026-07-10T12:00:00Z",
+    "session_id": "session-main-0001",
+    "turn_id": "turn-main-0001"
+  },
+  "input": {
+    "kind": "prompt",
+    "content": [
+      {
+        "type": "text",
+        "text": "hello"
+      }
+    ]
+  },
+  "frames": [
+    {
+      "type": "event",
+      "session_id": "session-main-0001",
+      "event_seq": 1,
+      "occurred_at_ms": 1783684800000,
+      "committed_at_ms": 1783684800000,
+      "session_update_type": "user_input_submitted",
+      "turn_id": "turn-main-0001",
+      "entry_index": 0,
+      "notification": {
+        "sessionId": "session-main-0001",
+        "source": {
+          "connectorId": "fixture-connector",
+          "connectorType": "native"
+        },
+        "trace": {
+          "turnId": "turn-main-0001",
+          "entryIndex": 0
+        },
+        "observedAt": "2026-07-10T12:00:00Z",
+        "event": {
+          "type": "user_input_submitted",
+          "payload": {
+            "threadId": "session-main-0001",
+            "turnId": "turn-main-0001",
+            "itemId": "turn-main-0001:user-input:0",
+            "submissionKind": "prompt",
+            "source": {
+              "namespace": "core",
+              "kind": "composer",
+              "actor": "user",
+              "displayLabelKey": "mailbox.source.core.composer"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "hello",
+                "text_elements": []
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "event",
+      "session_id": "session-main-0001",
+      "event_seq": 2,
+      "occurred_at_ms": 1783684800001,
+      "committed_at_ms": 1783684800001,
+      "session_update_type": "turn_started",
+      "turn_id": "turn-main-0001",
+      "notification": {
+        "sessionId": "session-main-0001",
+        "source": {
+          "connectorId": "fixture-connector",
+          "connectorType": "native"
+        },
+        "trace": {
+          "turnId": "turn-main-0001"
+        },
+        "observedAt": "2026-07-10T12:00:00.001Z",
+        "event": {
+          "type": "turn_started",
+          "payload": {
+            "threadId": "session-main-0001",
+            "turn": {
+              "id": "turn-main-0001",
+              "items": [],
+              "itemsView": "notLoaded",
+              "status": "inProgress",
+              "error": null,
+              "startedAt": 1783684800,
+              "completedAt": null,
+              "durationMs": null
+            }
+          }
+        }
+      }
+    }
+  ]
+}

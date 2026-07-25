@@ -7,6 +7,7 @@ import type { ThreadItem } from "../../../../generated/backbone-protocol";
 import { DiffCardBody } from "./DiffCardBody";
 import { parseUnifiedDiff } from "./diffPayload";
 import { CB } from "./cardBodyTokens";
+import { DisclosureChevron } from "../../../../components/ui/disclosure";
 
 type FileChangeItem = Extract<ThreadItem, { type: "fileChange" }>;
 
@@ -63,9 +64,7 @@ function FileChangeBlock({
             )}
           </span>
         )}
-        <span className={CB.expandToggle}>
-          {expanded ? "▲" : "▼"}
-        </span>
+        <DisclosureChevron expanded={expanded} className={CB.expandToggle} />
       </button>
       {expanded && change.diff && (
         <div className="border-t border-border/30 p-2">

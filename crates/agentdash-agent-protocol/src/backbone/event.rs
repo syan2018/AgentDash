@@ -1,4 +1,5 @@
-use codex_app_server_protocol as codex;
+use crate::codex_app_server_protocol as codex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -7,6 +8,7 @@ use crate::backbone::item::{
     ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification,
 };
 use crate::backbone::platform::PlatformEvent;
+use crate::backbone::turn::{TurnCompletedNotification, TurnStartedNotification};
 use crate::backbone::usage::ThreadTokenUsageUpdatedNotification;
 use crate::backbone::user_input::UserInputSubmittedNotification;
 
@@ -16,7 +18,7 @@ use crate::backbone::user_input::UserInputSubmittedNotification;
 /// 所有 connector（codex_bridge / pi_agent 等）都必须映射到同一套变体，
 /// 不设"通用退化变体"。Codex 原生协议没有覆盖的 item 语义通过
 /// `AgentDashThreadItem` 扩展，平台能力通过 `Platform` 扩展。
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum BackboneEvent {
     // ── 文本 / 推理流 ──
@@ -31,15 +33,20 @@ pub enum BackboneEvent {
     /// 的 create-once 语义，`ItemUpdated` 表达同一 item_id 的后续刷新。
     ItemUpdated(ItemUpdatedNotification),
     ItemCompleted(ItemCompletedNotification),
+    AutoApprovalReviewStarted(codex::ItemGuardianApprovalReviewStartedNotification),
+    AutoApprovalReviewCompleted(codex::ItemGuardianApprovalReviewCompletedNotification),
 
     // ── Item 过程增量 ──
     CommandOutputDelta(codex::CommandExecutionOutputDeltaNotification),
     FileChangeDelta(codex::FileChangeOutputDeltaNotification),
     McpToolCallProgress(codex::McpToolCallProgressNotification),
+    TerminalInteraction(codex::TerminalInteractionNotification),
+    FileChangePatchUpdated(codex::FileChangePatchUpdatedNotification),
+    ServerRequestResolved(codex::ServerRequestResolvedNotification),
 
     // ── Turn 生命周期 ──
-    TurnStarted(codex::TurnStartedNotification),
-    TurnCompleted(codex::TurnCompletedNotification),
+    TurnStarted(TurnStartedNotification),
+    TurnCompleted(TurnCompletedNotification),
     TurnDiffUpdated(codex::TurnDiffUpdatedNotification),
 
     // ── 用户输入（Codex UserInput + AgentDash submission 标注）──
@@ -48,13 +55,23 @@ pub enum BackboneEvent {
     // ── Plan ──
     TurnPlanUpdated(codex::TurnPlanUpdatedNotification),
     PlanDelta(codex::PlanDeltaNotification),
+    ReasoningSummaryPartAdded(codex::ReasoningSummaryPartAddedNotification),
 
     // ── 资源 / 状态 ──
     TokenUsageUpdated(ThreadTokenUsageUpdatedNotification),
     ThreadStatusChanged(codex::ThreadStatusChangedNotification),
+    ThreadNameUpdated(codex::ThreadNameUpdatedNotification),
     /// 外部 executor 自行完成的 compact 标记。该事件没有 AgentDash-owned
     /// summary/boundary/replacement provenance，只能作为遥测与审计事实。
     ExecutorContextCompacted(codex::ContextCompactedNotification),
+    ModelRerouted(codex::ModelReroutedNotification),
+    ModelVerification(codex::ModelVerificationNotification),
+    TurnModerationMetadata(codex::TurnModerationMetadataNotification),
+    ModelSafetyBufferingUpdated(codex::ModelSafetyBufferingUpdatedNotification),
+    Warning(codex::WarningNotification),
+    GuardianWarning(codex::GuardianWarningNotification),
+    DeprecationNotice(codex::DeprecationNoticeNotification),
+    ConfigWarning(codex::ConfigWarningNotification),
 
     // ── 审批请求（server → client，需要平台决策后回传）──
     ApprovalRequest(ApprovalRequest),

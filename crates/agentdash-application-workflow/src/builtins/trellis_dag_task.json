@@ -76,7 +76,7 @@
           "kind": "agent",
           "procedure_key": "trellis_dag_task_research",
           "agent_reuse_policy": "create_activity_agent",
-          "runtime_session_policy": "create_new"
+          "runtime_thread_policy": "create_new"
         },
         "output_ports": [
           {
@@ -97,7 +97,7 @@
           "kind": "agent",
           "procedure_key": "trellis_dag_task_implement",
           "agent_reuse_policy": "create_activity_agent",
-          "runtime_session_policy": "create_new"
+          "runtime_thread_policy": "create_new"
         },
         "input_ports": [
           {

@@ -1,0 +1,15 @@
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"约束 Integration definition、instance、offer 与 Driver Host 的职责边界。"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"约束 ProjectAgent、AgentRun facade 与 runtime provision 的控制面边界。"}
+{"file":".trellis/spec/backend/capability/llm-model-config.md","reason":"约束全局 Provider、用户 BYOK、ChatGPT OAuth 与凭据所有权。"}
+{"file":".trellis/spec/backend/capability/integration-api.md","reason":"约束 Integration contribution 与平台装配入口。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"约束 discovery、availability 与认证错误的跨层 DTO。"}
+{"file":".trellis/spec/frontend/architecture.md","reason":"约束前端控制面只消费后端 canonical projection。"}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"约束 VFS default mount、provider、root_ref 与 backend 坐标必须来自 canonical surface。"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"约束 Project/workspace mount resolution 与 runtime placement 的访问边界。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"约束 Lifecycle dispatch 先建立 immutable AgentFrame Business Surface，再进入 AgentRun product delivery。"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"约束 AgentFrame/Business Surface 与 Managed Runtime conversation 的映射。"}
+{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"约束 canonical tool descriptor、稀疏 tool_policy 与 runtime admission 的职责。"}
+{"file":".trellis/spec/backend/agent-runtime-kernel.md","reason":"实现 SurfaceAdopt 的Managed Runtime CAS、operation与current snapshot权威。"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"实现AgentFrame candidate、Business Surface compile与presentation同源约束。"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"删除跨repository拼装current语义，保持显式command/UoW边界。"}
+{"file":".trellis/tasks/07-11-agent-runtime-debug-regression-tracking/design.md","reason":"实现ARD-015 exact candidate/adopted snapshot目标数据流。"}

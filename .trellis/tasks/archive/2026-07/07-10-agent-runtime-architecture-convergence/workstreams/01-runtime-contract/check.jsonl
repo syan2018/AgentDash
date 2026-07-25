@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/domain-payload-typing.md","reason":"复核contract类型安全与vendor隔离"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"复核跨层schema同源生成"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"复核wire lifecycle与critical frame语义"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"复核Hook不是bool capability且weak delivery不可满足exact requirement"}

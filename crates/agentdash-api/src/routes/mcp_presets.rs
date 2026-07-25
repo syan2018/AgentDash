@@ -13,7 +13,7 @@ use agentdash_application::mcp_preset::{
     CloneMcpPresetInput, CreateMcpPresetInput, McpPresetApplicationError, McpPresetService,
     UpdateMcpPresetInput,
 };
-use agentdash_application_runtime_gateway::{
+use agentdash_application_extension_gateway::{
     MCP_PROBE_TRANSPORT_ACTION, McpProbeTarget, McpProbeTransportInput, RuntimeActionKey,
     RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
 };
@@ -278,7 +278,7 @@ pub async fn probe_mcp_transport_handler(
         },
         input,
     );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
+    let invocation = state.services.extension_gateway.invoke(request).await?;
     let result = serde_json::from_value::<ProbeMcpPresetResponse>(invocation.output.output)
         .map_err(|error| ApiError::Internal(format!("MCP probe 返回值解析失败: {error}")))?;
     Ok(Json(result))

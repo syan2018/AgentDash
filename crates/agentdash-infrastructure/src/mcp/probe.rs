@@ -4,8 +4,8 @@
 //! returns the advertised tool list. Timeout / latency / result shaping are
 //! owned by the application caller.
 
-use agentdash_spi::McpHttpHeader;
-use agentdash_spi::platform::mcp_probe::{McpProbeTransport, McpProbedTool};
+use agentdash_platform_spi::McpHttpHeader;
+use agentdash_platform_spi::platform::mcp_probe::{McpProbeTransport, McpProbedTool};
 use async_trait::async_trait;
 use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::{

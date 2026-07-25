@@ -11,8 +11,8 @@ use crate::WorkflowApplicationError;
 use super::child_evidence::child_evidence_result_refs;
 use super::commands::{
     CompleteChildResultGateCommand, LifecycleGateCommand, OpenCompanionGateCommand,
-    OpenParentRequestGateCommand, OpenWorkflowHumanGateCommand, ResolveGatePayloadCommand,
-    ResolveParentRequestGateCommand, ResolveWorkflowHumanGateCommand, RespondHumanGateCommand,
+    OpenParentRequestGateCommand, ResolveGatePayloadCommand, ResolveParentRequestGateCommand,
+    RespondHumanGateCommand,
 };
 use super::outcome::{
     CompanionChildResultDeliveryIntent, CompanionHumanResponseDeliveryIntent,
@@ -20,7 +20,6 @@ use super::outcome::{
     GateDeliveryIntent, GateTransitionKind, GateTransitionOutcome,
 };
 
-const WORKFLOW_HUMAN_GATE_KIND: &str = "orchestration_human_gate";
 const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";
 
 #[derive(Clone)]
@@ -40,12 +39,6 @@ impl LifecycleGateResolver {
         match command {
             LifecycleGateCommand::OpenCompanionGate(command) => {
                 self.open_companion_gate(command).await
-            }
-            LifecycleGateCommand::OpenWorkflowHumanGate(command) => {
-                self.open_workflow_human_gate(command).await
-            }
-            LifecycleGateCommand::ResolveWorkflowHumanGate(command) => {
-                self.resolve_workflow_human_gate(command).await
             }
             LifecycleGateCommand::RespondHuman(command) => self.respond_human(command).await,
             LifecycleGateCommand::OpenParentRequest(command) => {
@@ -94,62 +87,6 @@ impl LifecycleGateResolver {
         Ok(GateTransitionOutcome {
             gate,
             transition: GateTransitionKind::Opened,
-            delivery_intents: Vec::new(),
-        })
-    }
-
-    pub async fn open_workflow_human_gate(
-        &self,
-        command: OpenWorkflowHumanGateCommand,
-    ) -> Result<GateTransitionOutcome, WorkflowApplicationError> {
-        let gate = LifecycleGate::open(
-            command.run_id,
-            None,
-            None,
-            WORKFLOW_HUMAN_GATE_KIND,
-            workflow_human_gate_correlation_id(
-                command.orchestration_id,
-                &command.node_path,
-                command.attempt,
-            ),
-            Some(json!({
-                "contract": "orchestration_human_gate.v1",
-                "run_id": command.run_id,
-                "orchestration_id": command.orchestration_id,
-                "node_path": command.node_path,
-                "attempt": command.attempt,
-                "plan_node_id": command.plan_node_id,
-                "label": command.label,
-                "executor": command.executor,
-            })),
-        );
-        self.gate_repo.create(&gate).await?;
-
-        Ok(GateTransitionOutcome {
-            gate,
-            transition: GateTransitionKind::Opened,
-            delivery_intents: Vec::new(),
-        })
-    }
-
-    pub async fn resolve_workflow_human_gate(
-        &self,
-        command: ResolveWorkflowHumanGateCommand,
-    ) -> Result<GateTransitionOutcome, WorkflowApplicationError> {
-        let mut gate = self.load_open_gate(command.gate_id).await?;
-        if gate.gate_kind != WORKFLOW_HUMAN_GATE_KIND {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "gate {} 不是 workflow HumanGate",
-                gate.id
-            )));
-        }
-        gate.payload_json = Some(command.decision);
-        gate.resolve(command.resolved_by);
-        self.gate_repo.update(&gate).await?;
-
-        Ok(GateTransitionOutcome {
-            gate,
-            transition: GateTransitionKind::Resolved,
             delivery_intents: Vec::new(),
         })
     }
@@ -222,12 +159,12 @@ impl LifecycleGateResolver {
             "parent_agent_id": command.parent_agent_id.to_string(),
             "parent_frame_id": command.parent_frame_id.to_string(),
             "companion_label": command.companion_label,
-            "companion_session_id": command.child_delivery_runtime_session_id,
-            "child_delivery_runtime_session_id": command.child_delivery_runtime_session_id,
-            "parent_session_id": command.parent_delivery_runtime_session_id,
-            "parent_delivery_runtime_session_id": command.parent_delivery_runtime_session_id,
+            "companion_session_id": command.child_runtime_thread_id,
+            "child_runtime_thread_id": command.child_runtime_thread_id,
+            "parent_session_id": command.parent_runtime_thread_id,
+            "parent_runtime_thread_id": command.parent_runtime_thread_id,
             "request_type": "review",
-            "adoption_mode": agentdash_spi::action_type::FOLLOW_UP_REQUIRED,
+            "adoption_mode": agentdash_platform_spi::action_type::FOLLOW_UP_REQUIRED,
             "status": "pending",
             "summary": command.message,
             "turn_id": command.turn_id,
@@ -243,11 +180,9 @@ impl LifecycleGateResolver {
                 request_id: gate.id.to_string(),
                 run_id: command.run_id,
                 parent_agent_id: command.parent_agent_id,
-                parent_delivery_runtime_session_id: command
-                    .parent_delivery_runtime_session_id
-                    .clone(),
+                parent_runtime_thread_id: command.parent_runtime_thread_id.clone(),
                 child_agent_id: command.child_agent_id,
-                child_delivery_runtime_session_id: command.child_delivery_runtime_session_id,
+                child_runtime_thread_id: command.child_runtime_thread_id,
                 turn_id: command.turn_id.clone(),
                 wait: command.wait,
                 payload: payload.clone(),
@@ -299,8 +234,8 @@ impl LifecycleGateResolver {
             json!(command.parent_frame_id.to_string()),
         );
         object.insert(
-            "parent_delivery_runtime_session_id".to_string(),
-            json!(command.parent_delivery_runtime_session_id.clone()),
+            "parent_runtime_thread_id".to_string(),
+            json!(command.parent_runtime_thread_id.clone()),
         );
         object.insert(
             "child_agent_id".to_string(),
@@ -311,8 +246,8 @@ impl LifecycleGateResolver {
             json!(command.child_frame_id.to_string()),
         );
         object.insert(
-            "child_delivery_runtime_session_id".to_string(),
-            json!(command.child_delivery_runtime_session_id.clone()),
+            "child_runtime_thread_id".to_string(),
+            json!(command.child_runtime_thread_id.clone()),
         );
 
         gate.payload_json = Some(payload.clone());
@@ -325,11 +260,9 @@ impl LifecycleGateResolver {
                 request_id: gate.id.to_string(),
                 run_id: command.run_id,
                 parent_agent_id: command.parent_agent_id,
-                parent_delivery_runtime_session_id: command
-                    .parent_delivery_runtime_session_id
-                    .clone(),
+                parent_runtime_thread_id: command.parent_runtime_thread_id.clone(),
                 child_agent_id: command.child_agent_id,
-                child_delivery_runtime_session_id: command.child_delivery_runtime_session_id,
+                child_runtime_thread_id: command.child_runtime_thread_id,
                 resolved_turn_id: command.resolved_turn_id.clone(),
                 payload: payload.clone(),
             },
@@ -380,7 +313,7 @@ impl LifecycleGateResolver {
             command.run_id,
             command.child_agent_id,
             gate.frame_id,
-            command.child_delivery_runtime_session_id.as_deref(),
+            command.child_runtime_thread_id.as_deref(),
         );
         let mut payload = json!({
             "gate_id": gate.id.to_string(),
@@ -413,13 +346,9 @@ impl LifecycleGateResolver {
                 request_id: command.request_id,
                 run_id: command.run_id,
                 parent_agent_id: command.parent_agent_id,
-                parent_delivery_runtime_session_id: command
-                    .parent_delivery_runtime_session_id
-                    .clone(),
+                parent_runtime_thread_id: command.parent_runtime_thread_id.clone(),
                 child_agent_id: command.child_agent_id,
-                child_delivery_runtime_session_id: command
-                    .child_delivery_runtime_session_id
-                    .clone(),
+                child_runtime_thread_id: command.child_runtime_thread_id.clone(),
                 resolved_turn_id: command.resolved_turn_id.clone(),
                 payload: payload.clone(),
             });
@@ -445,14 +374,6 @@ impl LifecycleGateResolver {
         }
         Ok(gate)
     }
-}
-
-fn workflow_human_gate_correlation_id(
-    orchestration_id: Uuid,
-    node_path: &str,
-    attempt: u32,
-) -> String {
-    format!("orchestration:{orchestration_id}:node:{node_path}:attempt:{attempt}")
 }
 
 fn normalize_companion_result_status(
@@ -622,7 +543,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn respond_human_resolves_gate_without_mailbox_payload_blob() {
+    async fn respond_human_resolves_gate_without_input_handoff_payload_blob() {
         let repo = Arc::new(FixtureGateRepo::default());
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
@@ -664,7 +585,7 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("human_mailbox_delivery"))
+                .and_then(|payload| payload.get("human_input_handoff_delivery"))
                 .is_none()
         );
     }
@@ -709,7 +630,7 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("human_mailbox_delivery")),
+                .and_then(|payload| payload.get("human_input_handoff_delivery")),
             None
         );
     }
@@ -728,10 +649,10 @@ mod tests {
                 run_id,
                 parent_agent_id,
                 parent_frame_id,
-                parent_delivery_runtime_session_id: "parent-session".to_string(),
+                parent_runtime_thread_id: "parent-session".to_string(),
                 child_agent_id,
                 child_frame_id,
-                child_delivery_runtime_session_id: "child-session".to_string(),
+                child_runtime_thread_id: "child-session".to_string(),
                 turn_id: "turn-1".to_string(),
                 wait: true,
                 companion_label: "child:test".to_string(),
@@ -745,7 +666,7 @@ mod tests {
         assert_eq!(outcome.delivery_intents.len(), 1);
         let payload = outcome.gate.payload_json.as_ref().expect("payload");
         assert_eq!(payload["status"], json!("pending"));
-        assert!(payload.get("parent_mailbox_delivery").is_none());
+        assert!(payload.get("parent_input_handoff_delivery").is_none());
     }
 
     #[tokio::test]
@@ -772,9 +693,9 @@ mod tests {
                 request_id: "dispatch-1".to_string(),
                 run_id,
                 parent_agent_id,
-                parent_delivery_runtime_session_id: "parent-session".to_string(),
+                parent_runtime_thread_id: "parent-session".to_string(),
                 child_agent_id,
-                child_delivery_runtime_session_id: Some("child-session".to_string()),
+                child_runtime_thread_id: Some("child-session".to_string()),
                 resolved_turn_id: "child-turn".to_string(),
                 companion_label: "reviewer".to_string(),
                 payload: json!({
@@ -804,7 +725,7 @@ mod tests {
             json!(child_frame_id.to_string())
         );
         assert_eq!(
-            payload["result_refs"]["child"]["delivery_runtime_session_id"],
+            payload["result_refs"]["child"]["runtime_thread_id"],
             json!("child-session")
         );
         let evidence = payload["result_refs"]["evidence"]

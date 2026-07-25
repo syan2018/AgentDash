@@ -10,6 +10,7 @@ use agentdash_integration_api::{
     MemoryDiscoveryOutput, MemoryDiscoveryProvider, MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule,
     MemoryIndexStatus, MemorySourceFormat, MemorySourceScope, MemorySourceTrustLevel,
 };
+use agentdash_integration_codex::CodexCompleteAgentIntegration;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -336,6 +337,7 @@ fn fixture_mcp_listing() -> MarketplaceAssetListing {
 pub fn builtin_integrations() -> Vec<Box<dyn AgentDashIntegration>> {
     vec![
         Box::new(PersonalAuthIntegration),
+        Box::new(CodexCompleteAgentIntegration),
         Box::new(ConnectorCatalogIntegration),
         Box::new(ProjectAgentMemoryIntegration),
     ]
@@ -483,6 +485,7 @@ mod tests {
             names,
             vec![
                 "builtin.personal_auth".to_string(),
+                "builtin.codex_runtime".to_string(),
                 "builtin.connector_catalog".to_string(),
                 "builtin.project_agent_memory".to_string()
             ]
@@ -497,6 +500,39 @@ mod tests {
         assert_eq!(seeds.len(), 1);
         assert_eq!(seeds[0].asset_type, LibraryAssetType::ExtensionTemplate);
         assert_eq!(seeds[0].key, "builtin-session-notes");
+    }
+
+    #[test]
+    fn codex_runtime_is_a_complete_agent_registration_contribution() {
+        let integration = CodexCompleteAgentIntegration;
+        let contributions = integration.complete_agent_registrations();
+        assert_eq!(contributions.len(), 1);
+        assert_eq!(
+            contributions[0]
+                .facts()
+                .declared_descriptor()
+                .definition_id
+                .as_str(),
+            "builtin.codex-app-server"
+        );
+        assert_eq!(
+            contributions[0]
+                .facts()
+                .declared_descriptor()
+                .protocol_revision,
+            144
+        );
+        assert_eq!(
+            contributions[0]
+                .facts()
+                .registration_claim()
+                .claimed_conformance_suite_revision,
+            "codex-complete-agent-v1"
+        );
+        assert!(matches!(
+            contributions[0].facts().placement(),
+            agentdash_integration_api::CompleteAgentPlacementRequirement::InProcess
+        ));
     }
 
     #[test]

@@ -67,11 +67,3 @@ export type BackendExecutionLeaseState = import("../generated/backend-contracts"
 export type BackendActiveSession = import("../generated/backend-contracts").BackendActiveSessionResponse;
 export type BackendRuntimeExecutorSummary = import("../generated/backend-contracts").BackendRuntimeExecutorResponse;
 export type BackendRuntimeSummary = import("../generated/backend-contracts").BackendRuntimeSummaryResponse;
-
-export interface ViewConfig {
-  id: string;
-  name: string;
-  backend_ids: string[];
-  filters: Record<string, unknown>;
-  sort_by: string | null;
-}

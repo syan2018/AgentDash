@@ -1,31 +1,26 @@
-﻿import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
 
+import type { AgentInputContent } from "../../../generated/agent-service-api";
 import type { JsonValue } from "../../../generated/common-contracts";
-import type { UserInput } from "../../../generated/backbone-protocol";
+import { sha256OfBlob } from "../../../utils/sha256";
 import type {
-  AgentRunCommandOnlyRequest,
   ConversationCommandView,
-  ConversationMailboxSnapshotView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
 import type {
   AgentRunForkResponse,
+  AgentRunCommandOnlyRequest,
   AgentRunCommandPreconditionView,
   AgentRunMessageCommandResponse,
   BackendSelectionRequestDto,
   SessionMessageRefDto,
-} from "../../../generated/agent-run-mailbox-contracts";
+} from "../../../generated/agent-run-interaction-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   cancelAgentRun,
-  deleteAgentRunMailboxMessage,
-  fetchAgentRunMailboxMessageContent,
-  moveAgentRunMailboxMessage,
-  promoteAgentRunMailboxMessage,
-  resumeAgentRunMailbox,
   forkAgentRun,
   submitAgentRunComposerInput,
-} from "../../../services/agentRunMailbox";
+} from "../../../services/agentRunInteraction";
 import type {
   CreateProjectAgentRunRequest,
   ProjectAgentRunStartResult,
@@ -36,13 +31,13 @@ import {
   type InFlightAgentRunCommand,
 } from "./workspaceCommandState";
 import type {
+  AgentRunChatSubmitIntent,
   AgentRunConversationCommand,
   AgentRunConversationCommandState,
 } from "./conversationCommandState";
 import {
   conversationCommandByKind,
   isLocalDraftStartAction,
-  mailboxRowCommand,
 } from "./conversationCommandState";
 
 interface ResolveExecutorConfigInput {
@@ -63,18 +58,19 @@ export interface UseAgentRunWorkspaceCommandsOptions {
   currentRunId: string | null;
   currentAgentId: string | null;
   chatCommandState: AgentRunConversationCommandState;
-  conversationMailbox: ConversationMailboxSnapshotView | undefined;
   draftProjectId: string | null;
   draftProjectAgentKey: string | null;
   draftReady: boolean;
   createProjectAgentRun: CreateProjectAgentRun;
   fetchAndIngestLifecycleRun: (runId: string) => Promise<unknown>;
   refreshWorkspaceState: () => Promise<unknown>;
-  scheduleHookRuntimeRefresh: (reason: string, immediate?: boolean) => void;
   onAgentRunRedirect: (target: { runId: string; agentId: string }) => void;
   resolveExecutorConfig: ResolveExecutorConfig;
   isCompleteExecutorConfig: IsCompleteExecutorConfig;
-  onDraftStarted: (response: ProjectAgentRunStartResult) => void;
+  onDraftStarted: (
+    response: ProjectAgentRunStartResult,
+    initialSubmit: Omit<AgentRunChatSubmitIntent, "command_id">,
+  ) => void;
 }
 
 export interface UseAgentRunWorkspaceCommandsResult {
@@ -87,14 +83,7 @@ export interface UseAgentRunWorkspaceCommandsResult {
     deliveryIntent?: string,
   ) => Promise<void>;
   handleCancelAgentRun: () => Promise<void>;
-  handlePromoteMailboxMessage: (messageId: string) => Promise<void>;
-  handleDeleteMailboxMessage: (messageId: string) => Promise<void>;
-  handleResumeMailbox: () => Promise<void>;
-  handleRecallMailboxMessage: (messageId: string) => Promise<void>;
-  handleMoveMailboxMessage: (messageId: string, afterMessageId: string | null) => Promise<void>;
   handleForkFromMessageRef: (forkPointRef: SessionMessageRefDto) => Promise<void>;
-  recalledInput: string | null;
-  clearRecalledInput: () => void;
 }
 
 class SilentCommandRefreshError extends Error {
@@ -186,14 +175,7 @@ function executorConfigToJsonValue(config: ExecutorConfig | undefined): JsonValu
     model_id: config.model_id,
     agent_id: config.agent_id,
     thinking_level: config.thinking_level,
-    permission_policy: config.permission_policy,
   };
-}
-
-function textFromUserInputBlock(block: JsonValue): string | null {
-  if (block === null || typeof block !== "object" || Array.isArray(block)) return null;
-  if (block.type !== "text") return null;
-  return typeof block.text === "string" ? block.text : null;
 }
 
 export function useAgentRunWorkspaceCommands(
@@ -203,21 +185,18 @@ export function useAgentRunWorkspaceCommands(
     currentRunId,
     currentAgentId,
     chatCommandState,
-    conversationMailbox,
     draftProjectId,
     draftProjectAgentKey,
     draftReady,
     createProjectAgentRun,
     fetchAndIngestLifecycleRun,
     refreshWorkspaceState,
-    scheduleHookRuntimeRefresh,
     onAgentRunRedirect,
     resolveExecutorConfig,
     isCompleteExecutorConfig,
     onDraftStarted,
   } = options;
   const inFlightCommandRef = useRef<InFlightAgentRunCommand | null>(null);
-  const [recalledInput, setRecalledInput] = useState<string | null>(null);
 
   const refreshWorkspaceStateSilently = useCallback(() => {
     void refreshWorkspaceState().catch(() => {});
@@ -246,16 +225,6 @@ export function useAgentRunWorkspaceCommands(
       throw new Error(command.unavailable_reason ?? "当前 AgentRun 不可执行该命令。");
     }
 
-    const inputBlocks: UserInput[] = [];
-    if (trimmed) {
-      inputBlocks.push({ type: "text", text: trimmed, text_elements: [] });
-    }
-    if (imageAttachments) {
-      for (const img of imageAttachments) {
-        inputBlocks.push({ type: "image", url: img.dataUrl });
-      }
-    }
-
     const commandExecutorConfig = resolveExecutorConfig({
       command,
       modelConfig: chatCommandState.modelConfig,
@@ -275,7 +244,15 @@ export function useAgentRunWorkspaceCommands(
       command_id: command.command_id,
       kind: command.kind,
       stale_guard: isLocalDraftStartAction(command) ? null : command.stale_guard,
-      input: inputBlocks,
+      input: {
+        prompt: trimmed,
+        images: imageAttachments?.map((image) => ({
+          name: image.file.name,
+          size: image.file.size,
+          media_type: image.file.type,
+          last_modified: image.file.lastModified,
+        })) ?? [],
+      },
       executor_config: commandExecutorConfig ?? null,
       backend_selection: backendSelection ?? null,
     });
@@ -292,18 +269,38 @@ export function useAgentRunWorkspaceCommands(
           throw new Error(command.unavailable_reason ?? "当前 Draft 尚未就绪。");
         }
         const response = await createProjectAgentRun(draftProjectId, draftProjectAgentKey, {
-          input: inputBlocks,
           client_command_id: resolvedCommand.clientCommandId,
           executor_config: executorConfigToJsonValue(commandExecutorConfig),
           backend_selection: backendSelection,
         });
         void fetchAndIngestLifecycleRun(response.run_ref.run_id);
-        onDraftStarted(response);
+        onDraftStarted(response, {
+          prompt: trimmed,
+          executorConfig: commandExecutorConfig,
+          backendSelection,
+          imageAttachments,
+          deliveryIntent,
+        });
         return;
       }
 
       if (!currentRunId || !currentAgentId) {
         throw new Error("当前 AgentRun 尚未就绪，无法执行控制动作。");
+      }
+
+      const inputBlocks: AgentInputContent[] = [];
+      if (trimmed) {
+        inputBlocks.push({ kind: "text", text: trimmed });
+      }
+      if (imageAttachments) {
+        for (const img of imageAttachments) {
+          inputBlocks.push({
+            kind: "image",
+            media_type: img.file.type,
+            source: img.dataUrl,
+            digest: await sha256OfBlob(img.file),
+          });
+        }
       }
 
       const response = await submitAgentRunComposerInput(currentRunId, currentAgentId, {
@@ -323,8 +320,6 @@ export function useAgentRunWorkspaceCommands(
         onAgentRunRedirect(redirect);
         return;
       }
-      refreshWorkspaceStateSilently();
-      scheduleHookRuntimeRefresh("agent_run_command_submitted", true);
     } catch (error) {
       if (refreshAfterStaleAgentRunCommandError(error)) {
         throw new SilentCommandRefreshError();
@@ -346,9 +341,7 @@ export function useAgentRunWorkspaceCommands(
     onDraftStarted,
     onAgentRunRedirect,
     refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceStateSilently,
     resolveExecutorConfig,
-    scheduleHookRuntimeRefresh,
   ]);
 
   const handleCancelAgentRun = useCallback(async () => {
@@ -365,166 +358,11 @@ export function useAgentRunWorkspaceCommands(
       if (refreshAfterStaleAgentRunCommandError(error)) return;
       throw error;
     }
-    refreshWorkspaceStateSilently();
-    scheduleHookRuntimeRefresh("agent_run_cancelled", true);
   }, [
     chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
     refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceStateSilently,
-    scheduleHookRuntimeRefresh,
-  ]);
-
-  const handlePromoteMailboxMessage = useCallback(async (messageId: string) => {
-    if (!currentRunId || !currentAgentId) return;
-    const promoteCommand = mailboxRowCommand(chatCommandState.commands.commands, "promote_mailbox_message");
-    if (!promoteCommand?.enabled) return;
-    try {
-      await promoteAgentRunMailboxMessage(
-        currentRunId,
-        currentAgentId,
-        messageId,
-        commandRequest(promoteCommand),
-      );
-    } catch (error) {
-      if (refreshAfterStaleAgentRunCommandError(error)) return;
-      throw error;
-    }
-    refreshWorkspaceStateSilently();
-    scheduleHookRuntimeRefresh("mailbox_message_promoted", true);
-  }, [
-    chatCommandState.commands.commands,
-    currentAgentId,
-    currentRunId,
-    refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceStateSilently,
-    scheduleHookRuntimeRefresh,
-  ]);
-
-  const handleDeleteMailboxMessage = useCallback(async (messageId: string) => {
-    if (!currentRunId || !currentAgentId) return;
-    const deleteCommand = mailboxRowCommand(chatCommandState.commands.commands, "delete_mailbox_message");
-    if (!deleteCommand?.enabled) return;
-    try {
-      await deleteAgentRunMailboxMessage(
-        currentRunId,
-        currentAgentId,
-        messageId,
-        commandRequest(deleteCommand),
-      );
-    } catch (error) {
-      if (refreshAfterStaleAgentRunCommandError(error)) return;
-      throw error;
-    }
-    refreshWorkspaceStateSilently();
-    scheduleHookRuntimeRefresh("mailbox_message_deleted", true);
-  }, [
-    chatCommandState.commands.commands,
-    currentAgentId,
-    currentRunId,
-    refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceStateSilently,
-    scheduleHookRuntimeRefresh,
-  ]);
-
-  const handleResumeMailbox = useCallback(async () => {
-    if (!currentRunId || !currentAgentId) return;
-    const resumeCommand = conversationMailbox?.resume_command;
-    if (!resumeCommand?.enabled) return;
-    let response: Awaited<ReturnType<typeof resumeAgentRunMailbox>>;
-    try {
-      response = await resumeAgentRunMailbox(
-        currentRunId,
-        currentAgentId,
-        commandRequest(resumeCommand),
-      );
-    } catch (error) {
-      if (refreshAfterStaleAgentRunCommandError(error)) return;
-      throw error;
-    }
-    const acceptedRunId = response.accepted_refs?.run_ref.run_id;
-    if (acceptedRunId) {
-      void fetchAndIngestLifecycleRun(acceptedRunId);
-    }
-    refreshWorkspaceStateSilently();
-    scheduleHookRuntimeRefresh("mailbox_resumed", true);
-  }, [
-    conversationMailbox?.resume_command,
-    currentAgentId,
-    currentRunId,
-    fetchAndIngestLifecycleRun,
-    refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceStateSilently,
-    scheduleHookRuntimeRefresh,
-  ]);
-
-  const handleRecallMailboxMessage = useCallback(async (messageId: string) => {
-    if (!currentRunId || !currentAgentId) return;
-    try {
-      const deleteCommand = mailboxRowCommand(chatCommandState.commands.commands, "delete_mailbox_message");
-      if (!deleteCommand?.enabled) {
-        refreshWorkspaceStateSilently();
-        return;
-      }
-      const content = await fetchAgentRunMailboxMessageContent(
-        currentRunId,
-        currentAgentId,
-        messageId,
-      );
-      await deleteAgentRunMailboxMessage(
-        currentRunId,
-        currentAgentId,
-        messageId,
-        commandRequest(deleteCommand),
-      );
-      refreshWorkspaceStateSilently();
-      const textParts = Array.isArray(content.input)
-        ? content.input.map(textFromUserInputBlock).filter((text): text is string => text !== null)
-        : [];
-      if (textParts.length > 0) {
-        setRecalledInput(textParts.join("\n"));
-      }
-    } catch (error) {
-      refreshAfterStaleAgentRunCommandError(error);
-      refreshWorkspaceStateSilently();
-    }
-  }, [
-    chatCommandState.commands.commands,
-    currentAgentId,
-    currentRunId,
-    refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceStateSilently,
-  ]);
-
-  const handleMoveMailboxMessage = useCallback(async (messageId: string, afterMessageId: string | null) => {
-    if (!currentRunId || !currentAgentId) return;
-    try {
-      const moveCommand = mailboxRowCommand(chatCommandState.commands.commands, "move_mailbox_message");
-      if (!moveCommand?.enabled) {
-        refreshWorkspaceStateSilently();
-        return;
-      }
-      await moveAgentRunMailboxMessage(
-        currentRunId,
-        currentAgentId,
-        messageId,
-        {
-          ...commandRequest(moveCommand),
-          after_message_id: afterMessageId ?? undefined,
-        },
-      );
-      refreshWorkspaceStateSilently();
-    } catch (error) {
-      refreshAfterStaleAgentRunCommandError(error);
-      refreshWorkspaceStateSilently();
-    }
-  }, [
-    chatCommandState.commands.commands,
-    currentAgentId,
-    currentRunId,
-    refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceStateSilently,
   ]);
 
   const handleForkFromMessageRef = useCallback(async (forkPointRef: SessionMessageRefDto) => {
@@ -547,20 +385,9 @@ export function useAgentRunWorkspaceCommands(
     onAgentRunRedirect,
   ]);
 
-  const clearRecalledInput = useCallback(() => {
-    setRecalledInput(null);
-  }, []);
-
   return {
     handleAgentRunCommand,
     handleCancelAgentRun,
-    handlePromoteMailboxMessage,
-    handleDeleteMailboxMessage,
-    handleResumeMailbox,
-    handleRecallMailboxMessage,
-    handleMoveMailboxMessage,
     handleForkFromMessageRef,
-    recalledInput,
-    clearRecalledInput,
   };
 }

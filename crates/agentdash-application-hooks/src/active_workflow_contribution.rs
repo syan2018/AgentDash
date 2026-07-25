@@ -1,4 +1,4 @@
-use agentdash_spi::HookInjection;
+use agentdash_platform_spi::HookInjection;
 
 use agentdash_application_ports::lifecycle_surface_projection::ActiveWorkflowProjection;
 
@@ -113,6 +113,7 @@ mod tests {
                 error: None,
                 trace_refs: Vec::new(),
                 cache: None,
+                agent_call: None,
             },
             active_node_type: LifecycleNodeType::AgentNode,
             active_procedure_key: Some(procedure.key.clone()),

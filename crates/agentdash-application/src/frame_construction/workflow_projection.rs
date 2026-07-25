@@ -8,34 +8,27 @@ use crate::repository_set::RepositorySet;
 pub(super) async fn resolve_active_workflow_projection_from_message_stream_trace(
     session_id: &str,
     repos: &RepositorySet,
+    product_runtime_bindings:
+        &dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
 ) -> Result<Option<ports_lifecycle_surface::ActiveWorkflowProjection>, String> {
-    let Some(anchor) = repos
-        .execution_anchor_repo
-        .find_by_session(session_id)
-        .await
-        .map_err(|error| error.to_string())?
-    else {
-        return Ok(None);
-    };
-    let Some(orchestration_id) = anchor.orchestration_id else {
-        return Ok(None);
-    };
-    let Some(node_path) = anchor.node_path.as_deref() else {
-        return Ok(None);
-    };
-    let Some(run) = repos
-        .lifecycle_run_repo
-        .get_by_id(anchor.run_id)
+    let Some(association) =
+        agentdash_application_lifecycle::resolve_activity_runtime_association_from_runtime_thread(
+            session_id,
+            repos.agent_frame_repo.as_ref(),
+            repos.lifecycle_agent_repo.as_ref(),
+            repos.lifecycle_run_repo.as_ref(),
+            Some(product_runtime_bindings),
+        )
         .await
         .map_err(|error| error.to_string())?
     else {
         return Ok(None);
     };
     active_workflow_projection_from_runtime_node(
-        run,
-        orchestration_id,
-        node_path,
-        anchor.node_attempt.unwrap_or(1),
+        association.run,
+        association.orchestration_id,
+        &association.node_path,
+        association.attempt,
         repos.agent_procedure_repo.as_ref(),
     )
     .await

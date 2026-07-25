@@ -1,5 +1,5 @@
 use agentdash_domain::workflow::{LifecycleRunStatus, WorkflowHookRuleSpec};
-use agentdash_spi::{ActiveWorkflowMeta, AgentFrameHookSnapshot};
+use agentdash_platform_spi::{ActiveWorkflowMeta, AgentFrameHookSnapshot};
 
 pub(crate) fn workflow_run_status_tag(status: LifecycleRunStatus) -> &'static str {
     match status {
@@ -15,10 +15,6 @@ pub(crate) fn workflow_run_status_tag(status: LifecycleRunStatus) -> &'static st
 
 fn active_workflow(snapshot: &AgentFrameHookSnapshot) -> Option<&ActiveWorkflowMeta> {
     snapshot.metadata.as_ref()?.active_workflow.as_ref()
-}
-
-pub(crate) fn session_permission_policy(snapshot: &AgentFrameHookSnapshot) -> Option<&str> {
-    snapshot.metadata.as_ref()?.permission_policy.as_deref()
 }
 
 pub(crate) fn workflow_activity_key(snapshot: &AgentFrameHookSnapshot) -> Option<&str> {

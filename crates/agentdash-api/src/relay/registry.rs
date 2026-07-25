@@ -6,13 +6,9 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::sync::{RwLock, mpsc, oneshot};
 
-use agentdash_application_ports::backend_transport::RemoteExecutorInfo;
-use agentdash_application_ports::backend_transport::{
-    RelaySessionEvent, RelaySessionRoute, RelaySessionRouteInfo, RelayTerminalKind,
-};
 use agentdash_domain::backend::RuntimeBackendAnchorError;
+use agentdash_platform_spi::RelayMcpCallContext;
 use agentdash_relay::{CapabilitiesPayload, RelayMessage};
-use agentdash_spi::RelayMcpCallContext;
 
 pub type BackendSender = mpsc::UnboundedSender<RelayMessage>;
 
@@ -67,11 +63,8 @@ pub struct OnlineBackendInfo {
 /// 中继后端注册表 — 跟踪所有通过 WebSocket 连接的本机后端
 pub struct BackendRegistry {
     backends: RwLock<HashMap<String, ConnectedBackend>>,
-    executor_snapshot: std::sync::RwLock<Vec<RemoteExecutorInfo>>,
     /// 等待本机响应的挂起请求（msg_id → pending request）
     pending: RwLock<HashMap<String, PendingRequest>>,
-    /// per-session relay 通知接收端（由 RelayAgentConnector 注册，WebSocket handler 投递）
-    session_sinks: std::sync::RwLock<HashMap<String, RelaySessionRoute>>,
 }
 
 struct PendingRequest {
@@ -83,43 +76,8 @@ impl BackendRegistry {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             backends: RwLock::new(HashMap::new()),
-            executor_snapshot: std::sync::RwLock::new(Vec::new()),
             pending: RwLock::new(HashMap::new()),
-            session_sinks: std::sync::RwLock::new(HashMap::new()),
         })
-    }
-
-    /// 向 relay session sink 投递 notification（供 WebSocket handler 调用）。
-    /// 返回 true 表示投递成功（有已注册的 sink）。
-    pub fn feed_session_event(&self, session_id: &str, event: RelaySessionEvent) -> bool {
-        let sinks = self.session_sinks.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(tx) = sinks.get(session_id) {
-            tx.tx.send(event).is_ok()
-        } else {
-            false
-        }
-    }
-
-    pub fn feed_backend_terminal(
-        &self,
-        backend_id: &str,
-        kind: RelayTerminalKind,
-        message: Option<String>,
-    ) -> usize {
-        let sinks = self.session_sinks.read().unwrap_or_else(|e| e.into_inner());
-        sinks
-            .values()
-            .filter(|route| route.backend_id == backend_id)
-            .filter(|route| {
-                route
-                    .tx
-                    .send(RelaySessionEvent::Terminal {
-                        kind,
-                        message: message.clone(),
-                    })
-                    .is_ok()
-            })
-            .count()
     }
 
     pub async fn try_register(
@@ -132,7 +90,7 @@ impl BackendRegistry {
             return Err(RegisterBackendError::AlreadyOnline { backend_id: id });
         }
         backends.insert(id.clone(), backend);
-        self.rebuild_executor_snapshot(&backends);
+        drop(backends);
         diag!(Info, Subsystem::Relay,
         backend_id = %id, "本机后端已注册");
         Ok(())
@@ -142,16 +100,11 @@ impl BackendRegistry {
         {
             let mut backends = self.backends.write().await;
             backends.remove(backend_id);
-            self.rebuild_executor_snapshot(&backends);
         }
         self.pending
             .write()
             .await
             .retain(|_, pending| pending.backend_id != backend_id);
-        self.session_sinks
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|_, route| route.backend_id != backend_id);
         diag!(Info, Subsystem::Relay,
         backend_id = %backend_id, "本机后端已断开");
     }
@@ -208,43 +161,6 @@ impl BackendRegistry {
         self.backends.read().await.keys().next().cloned()
     }
 
-    /// 注册 per-session 通知接收端。
-    pub fn register_session_sink(&self, route: RelaySessionRoute) {
-        self.session_sinks
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(route.session_id.clone(), route);
-    }
-
-    /// 注销 per-session 通知接收端。
-    pub fn unregister_session_sink(&self, session_id: &str) {
-        self.session_sinks
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(session_id);
-    }
-
-    /// 检查指定 session 是否有已注册的通知接收端。
-    pub fn has_session_sink(&self, session_id: &str) -> bool {
-        self.session_sinks
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains_key(session_id)
-    }
-
-    pub fn session_route(&self, session_id: &str) -> Option<RelaySessionRouteInfo> {
-        self.session_sinks
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(session_id)
-            .map(|route| RelaySessionRouteInfo {
-                session_id: route.session_id.clone(),
-                backend_id: route.backend_id.clone(),
-                lease_id: route.lease_id,
-                turn_id: route.turn_id.clone(),
-            })
-    }
-
     // ── MCP Relay 支持 ──
 
     /// 更新指定 backend 的能力信息（含 MCP server 列表）
@@ -252,36 +168,9 @@ impl BackendRegistry {
         let mut backends = self.backends.write().await;
         if let Some(backend) = backends.get_mut(backend_id) {
             backend.capabilities = capabilities;
-            self.rebuild_executor_snapshot(&backends);
             diag!(Info, Subsystem::Relay,
         backend_id = %backend_id, "后端能力已更新");
         }
-    }
-
-    pub fn list_online_executors_snapshot(&self) -> Vec<RemoteExecutorInfo> {
-        self.executor_snapshot
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-    }
-
-    fn rebuild_executor_snapshot(&self, backends: &HashMap<String, ConnectedBackend>) {
-        let mut snapshot = Vec::new();
-        for backend in backends.values() {
-            for executor in &backend.capabilities.executors {
-                snapshot.push(RemoteExecutorInfo {
-                    backend_id: backend.backend_id.clone(),
-                    executor_id: executor.id.clone(),
-                    executor_name: executor.name.clone(),
-                    variants: executor.variants.clone(),
-                    available: executor.available,
-                });
-            }
-        }
-        *self
-            .executor_snapshot
-            .write()
-            .unwrap_or_else(|e| e.into_inner()) = snapshot;
     }
 
     /// 查找上报了指定 MCP server catalog 的在线 backend。
@@ -517,11 +406,19 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
     match msg {
         RelayMessage::Register { .. } => "register",
         RelayMessage::RegisterAck { .. } => "register_ack",
+        RelayMessage::RuntimeWireOfferAdvertise { .. } => "runtime_wire.offer.advertise",
+        RelayMessage::RuntimeWireOfferWithdraw { .. } => "runtime_wire.offer.withdraw",
+        RelayMessage::RuntimeWirePlacementOpen { .. } => "runtime_wire.placement.open",
+        RelayMessage::RuntimeWirePlacementOpenAck { .. } => "runtime_wire.placement.open_ack",
+        RelayMessage::RuntimeWirePlacementOpenRejected { .. } => {
+            "runtime_wire.placement.open_rejected"
+        }
+        RelayMessage::RuntimeWirePlacementFrame { .. } => "runtime_wire.placement.frame",
+        RelayMessage::RuntimeWirePlacementAck { .. } => "runtime_wire.placement.ack",
+        RelayMessage::RuntimeWirePlacementClosed { .. } => "runtime_wire.placement.closed",
+        RelayMessage::RuntimeWirePlacementLost { .. } => "runtime_wire.placement.lost",
         RelayMessage::Ping { .. } => "ping",
         RelayMessage::Pong { .. } => "pong",
-        RelayMessage::CommandPrompt { .. } => "command.prompt",
-        RelayMessage::CommandCancel { .. } => "command.cancel",
-        RelayMessage::CommandSteer { .. } => "command.steer",
         RelayMessage::CommandDiscover { .. } => "command.discover",
         RelayMessage::CommandDiscoverOptions { .. } => "command.discover_options",
         RelayMessage::CommandWorkspaceDetect { .. } => "command.workspace_detect",
@@ -543,9 +440,6 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::CommandVfsMaterialize { .. } => "command.vfs.materialize",
         RelayMessage::CommandToolFileList { .. } => "command.tool.file_list",
         RelayMessage::CommandToolSearch { .. } => "command.tool.search",
-        RelayMessage::ResponsePrompt { .. } => "response.prompt",
-        RelayMessage::ResponseCancel { .. } => "response.cancel",
-        RelayMessage::ResponseSteer { .. } => "response.steer",
         RelayMessage::ResponseDiscover { .. } => "response.discover",
         RelayMessage::ResponseWorkspaceDetect { .. } => "response.workspace_detect",
         RelayMessage::ResponseWorkspaceDetectGit { .. } => "response.workspace_detect_git",
@@ -567,10 +461,6 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::ResponseToolFileList { .. } => "response.tool.file_list",
         RelayMessage::ResponseToolSearch { .. } => "response.tool.search",
         RelayMessage::EventCapabilitiesChanged { .. } => "event.capabilities_changed",
-        RelayMessage::EventSessionNotification { .. } => "event.session_notification",
-        RelayMessage::EventRuntimeSessionStateChanged { .. } => {
-            "event.runtime_session_state_changed"
-        }
         RelayMessage::EventDiscoverOptionsPatch { .. } => "event.discover_options_patch",
         RelayMessage::CommandMcpProbeTransport { .. } => "command.mcp_probe_transport",
         RelayMessage::CommandMcpListTools { .. } => "command.mcp_list_tools",
@@ -595,10 +485,12 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::CommandTerminalInput { .. } => "command.terminal.input",
         RelayMessage::CommandTerminalResize { .. } => "command.terminal.resize",
         RelayMessage::CommandTerminalKill { .. } => "command.terminal.kill",
+        RelayMessage::CommandTerminalInventory { .. } => "command.terminal.inventory",
         RelayMessage::ResponseTerminalSpawn { .. } => "response.terminal.spawn",
         RelayMessage::ResponseTerminalInput { .. } => "response.terminal.input",
         RelayMessage::ResponseTerminalResize { .. } => "response.terminal.resize",
         RelayMessage::ResponseTerminalKill { .. } => "response.terminal.kill",
+        RelayMessage::ResponseTerminalInventory { .. } => "response.terminal.inventory",
         RelayMessage::EventTerminalOutput { .. } => "event.terminal.output",
         RelayMessage::EventPtyTerminalStateChanged { .. } => "event.pty_terminal.state_changed",
         RelayMessage::Error { .. } => "error",
@@ -609,7 +501,7 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
 mod tests {
     use super::*;
     use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorSource};
-    use agentdash_relay::{AgentInfoRelay, CommandBrowseDirectoryPayload, McpServerInfoRelay};
+    use agentdash_relay::{CommandBrowseDirectoryPayload, McpServerInfoRelay};
 
     fn connected_backend(backend_id: &str) -> ConnectedBackend {
         let (sender, _rx) = mpsc::unbounded_channel();
@@ -631,21 +523,6 @@ mod tests {
             connected_at: Utc::now(),
         }
     }
-
-    fn capabilities_with_executor(executor_id: &str) -> CapabilitiesPayload {
-        CapabilitiesPayload {
-            executors: vec![AgentInfoRelay {
-                id: executor_id.to_string(),
-                name: format!("{executor_id} executor"),
-                variants: vec!["default".to_string()],
-                available: true,
-            }],
-            supports_cancel: true,
-            supports_discover_options: true,
-            ..Default::default()
-        }
-    }
-
     fn capabilities_with_mcp_server(server_name: &str) -> CapabilitiesPayload {
         CapabilitiesPayload {
             executors: Vec::new(),
@@ -714,29 +591,6 @@ mod tests {
                 backend_id: "local-a".to_string()
             }
         );
-    }
-
-    #[tokio::test]
-    async fn executor_snapshot_tracks_register_update_and_unregister() {
-        let registry = BackendRegistry::new();
-        let mut backend = connected_backend("local-a");
-        backend.capabilities = capabilities_with_executor("executor-a");
-        registry.try_register(backend).await.expect("register");
-
-        let initial = registry.list_online_executors_snapshot();
-        assert_eq!(initial.len(), 1);
-        assert_eq!(initial[0].backend_id, "local-a");
-        assert_eq!(initial[0].executor_id, "executor-a");
-
-        registry
-            .update_capabilities("local-a", capabilities_with_executor("executor-b"))
-            .await;
-        let updated = registry.list_online_executors_snapshot();
-        assert_eq!(updated.len(), 1);
-        assert_eq!(updated[0].executor_id, "executor-b");
-
-        registry.unregister("local-a").await;
-        assert!(registry.list_online_executors_snapshot().is_empty());
     }
 
     #[tokio::test]
@@ -864,109 +718,8 @@ mod tests {
             }
         );
     }
-
     #[tokio::test]
-    async fn unregister_drops_session_routes_for_that_backend_only() {
-        let registry = BackendRegistry::new();
-        let (tx_a, _rx_a) = mpsc::unbounded_channel();
-        let (tx_b, _rx_b) = mpsc::unbounded_channel();
-        let lease_a = uuid::Uuid::new_v4();
-        let lease_b = uuid::Uuid::new_v4();
-        registry.register_session_sink(RelaySessionRoute {
-            session_id: "session-a".to_string(),
-            backend_id: "local-a".to_string(),
-            lease_id: lease_a,
-            turn_id: "turn-a".to_string(),
-            tx: tx_a,
-        });
-        registry.register_session_sink(RelaySessionRoute {
-            session_id: "session-b".to_string(),
-            backend_id: "local-b".to_string(),
-            lease_id: lease_b,
-            turn_id: "turn-b".to_string(),
-            tx: tx_b,
-        });
-
-        registry.unregister("local-a").await;
-
-        assert!(registry.session_route("session-a").is_none());
-        assert_eq!(
-            registry.session_route("session-b"),
-            Some(RelaySessionRouteInfo {
-                session_id: "session-b".to_string(),
-                backend_id: "local-b".to_string(),
-                lease_id: lease_b,
-                turn_id: "turn-b".to_string(),
-            })
-        );
-    }
-
-    #[tokio::test]
-    async fn feed_backend_terminal_notifies_matching_session_routes_without_removing_them() {
-        let registry = BackendRegistry::new();
-        let (tx_a, mut rx_a) = mpsc::unbounded_channel();
-        let (tx_b, mut rx_b) = mpsc::unbounded_channel();
-        let lease_a = uuid::Uuid::new_v4();
-        let lease_b = uuid::Uuid::new_v4();
-        registry.register_session_sink(RelaySessionRoute {
-            session_id: "session-a".to_string(),
-            backend_id: "local-a".to_string(),
-            lease_id: lease_a,
-            turn_id: "turn-a".to_string(),
-            tx: tx_a,
-        });
-        registry.register_session_sink(RelaySessionRoute {
-            session_id: "session-b".to_string(),
-            backend_id: "local-b".to_string(),
-            lease_id: lease_b,
-            turn_id: "turn-b".to_string(),
-            tx: tx_b,
-        });
-
-        let count = registry.feed_backend_terminal(
-            "local-a",
-            RelayTerminalKind::Lost,
-            Some("backend disconnected".to_string()),
-        );
-
-        assert_eq!(count, 1);
-        let event = rx_a
-            .recv()
-            .await
-            .expect("matching route should receive terminal");
-        match event {
-            RelaySessionEvent::Terminal { kind, message } => {
-                assert!(matches!(kind, RelayTerminalKind::Lost));
-                assert_eq!(message.as_deref(), Some("backend disconnected"));
-            }
-            other => panic!("unexpected event: {other:?}"),
-        }
-        assert!(rx_b.try_recv().is_err());
-        assert!(registry.session_route("session-a").is_some());
-        assert!(registry.session_route("session-b").is_some());
-    }
-
-    #[tokio::test]
-    async fn relay_mcp_backend_resolution_uses_anchor_backend_without_session_route_or_catalog() {
-        let registry = BackendRegistry::new();
-        registry
-            .try_register(connected_backend("local-a"))
-            .await
-            .expect("backend should register");
-
-        let backend_id = registry
-            .resolve_backend_for_relay_mcp(
-                "project-relay-tools",
-                Some(&relay_mcp_context("session-a", "local-a")),
-            )
-            .await
-            .expect("anchor backend should resolve");
-
-        assert_eq!(backend_id, "local-a");
-    }
-
-    #[tokio::test]
-    async fn relay_mcp_backend_resolution_prefers_anchor_over_session_route_and_catalog() {
+    async fn relay_mcp_backend_resolution_prefers_anchor_over_catalog() {
         let registry = BackendRegistry::new();
         registry
             .try_register(connected_backend("local-a"))
@@ -978,15 +731,6 @@ mod tests {
             .try_register(backend_b)
             .await
             .expect("backend should register");
-        let (tx, _rx) = mpsc::unbounded_channel();
-        registry.register_session_sink(RelaySessionRoute {
-            session_id: "session-a".to_string(),
-            backend_id: "local-a".to_string(),
-            lease_id: uuid::Uuid::new_v4(),
-            turn_id: "turn-a".to_string(),
-            tx,
-        });
-
         let backend_id = registry
             .resolve_backend_for_relay_mcp(
                 "declared-tools",

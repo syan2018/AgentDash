@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "实施前定位所有受影响后端 architecture 与 contract appendices"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "核对 Product、Runtime、Host、Infrastructure 的依赖方向与模块职责"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "收口 owner document、repository seam 与局部 aggregate 生命周期"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "执行 PostgreSQL hard-cut migration、JSONB 与既有数据库顺序升级"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "识别并替换当前 durable Runtime operation/projection/outbox 合同"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "识别当前 Runtime/Host/Callback owner-document 基线及本任务覆盖范围"}
+{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "将 Complete Agent Host 收口为 live attachment、routing 与 fencing"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "收口 Product 输入交接、source association 与 optional presentation"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "打通 Dash authoritative read、live callback、effect inspect 与真实错误诊断"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "更新 conversation snapshot/live stream/reconnect 的 Rust/TypeScript 合同"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "执行 Product→Runtime→Host→Agent→UI 的完整 producer/consumer 纵切审计"}
+{"file": ".trellis/tasks/07-20-agent-runtime-persistence-authority-convergence/research/current-architecture-audit.md", "reason": "提供当前三写架构、数据库样本、断链证据与故障窗口结论"}

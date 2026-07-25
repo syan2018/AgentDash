@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import type { SubjectExecutionView, Task } from "../../types";
-import { subjectExecutionKey } from "../../types";
+import { lifecycleRuntimeTraceSummaries, subjectExecutionKey } from "../../types";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
 import { agentRunWorkspacePath } from "../agent/agent-run-paths";
 
@@ -35,8 +35,8 @@ function SubjectExecutionSummary({ view }: { view: SubjectExecutionView | null }
     );
   }
 
-  const currentAgent = view.current_agent;
-  const latestRuntimeNode = view.latest_runtime_node;
+  const currentAgent = view.current_agent?.agent;
+  const latestRuntimeNode = view.current_attempt?.attempt.runtime_node;
 
   return (
     <div className="space-y-3">
@@ -90,14 +90,17 @@ function SubjectExecutionSummary({ view }: { view: SubjectExecutionView | null }
                   {run.status}
                 </span>
               </div>
-              {run.runtime_trace_refs.length > 0 && (
+              {lifecycleRuntimeTraceSummaries(run).length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {run.runtime_trace_refs.map((ref) => (
+                  {lifecycleRuntimeTraceSummaries(run).map((trace) => (
                     <span
-                      key={ref.runtime_session_id}
+                      key={trace.agent.agent_ref.agent_id}
                       className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
                     >
-                      Runtime trace {ref.runtime_session_id.slice(0, 8)}
+                      {trace.runtimeThreadId
+                        ? `Runtime trace ${trace.runtimeThreadId.slice(0, 8)}`
+                        : `Runtime ${trace.state}`}
+                      {trace.reason ? ` · ${trace.reason}` : ""}
                     </span>
                   ))}
                 </div>

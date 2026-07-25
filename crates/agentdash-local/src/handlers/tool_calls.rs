@@ -53,6 +53,7 @@ fn tool_error_to_relay_error(error: ToolError) -> RelayError {
     let message = error.to_string();
     match error {
         ToolError::PathNotAccessible(_) => RelayError::new(RelayErrorCode::Forbidden, message),
+        ToolError::NotFound(_) => RelayError::not_found(message),
         ToolError::InvalidPath(_) => RelayError::invalid_message(message),
         ToolError::Timeout(_) => RelayError::timeout(message),
         ToolError::Io(_) => RelayError::io_error(message),
@@ -414,6 +415,14 @@ mod tests {
         assert_tool_error_code(
             ToolError::InvalidPath("bad-path".to_string()),
             RelayErrorCode::InvalidMessage,
+        );
+    }
+
+    #[test]
+    fn tool_error_to_relay_error_maps_missing_path_code() {
+        assert_tool_error_code(
+            ToolError::NotFound("missing-path".to_string()),
+            RelayErrorCode::NotFound,
         );
     }
 

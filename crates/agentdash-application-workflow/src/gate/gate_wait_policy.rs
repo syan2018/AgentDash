@@ -1,20 +1,36 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::agent_run_control_effect::{
-    ProducerLastMessageEvidence, RuntimeTerminalDiagnostic,
-};
 use agentdash_domain::workflow::{
-    AgentRunDeliveryBindingRepository, GateWaitPolicyEnvelope, LifecycleGate,
-    LifecycleGateRepository, WaitProducerRef,
+    GateWaitPolicyEnvelope, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
 };
+use async_trait::async_trait;
 use serde_json::{Value, json};
 use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeTerminalDiagnostic {
+    pub kind: String,
+    pub code: Option<String>,
+    pub http_status: Option<u16>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub message: String,
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ProducerLastMessageEvidence {
+    pub summary: String,
+    pub message_path: String,
+    pub journal_session_id: String,
+    pub source_event_seq: u64,
+}
 
 use crate::WorkflowApplicationError;
 
 use super::{
-    GateDeliveryIntent, GateMailboxWakeIntent, LifecycleGateResolver, ResolveGatePayloadCommand,
-    child_evidence::child_evidence_result_refs,
+    GateDeliveryIntent, GateInputHandoffWakeIntent, LifecycleGateResolver,
+    ResolveGatePayloadCommand, child_evidence::child_evidence_result_refs,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,17 +72,26 @@ pub enum GateProducerTerminalConvergenceOutcomeKind {
 #[derive(Clone)]
 pub struct GateProducerTerminalConvergenceService {
     gate_repo: Arc<dyn LifecycleGateRepository>,
-    delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+    wake_target_runtime_threads: Arc<dyn GateWakeTargetRuntimeThreadQuery>,
+}
+
+#[async_trait]
+pub trait GateWakeTargetRuntimeThreadQuery: Send + Sync {
+    async fn resolve_runtime_thread(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<Option<String>, String>;
 }
 
 impl GateProducerTerminalConvergenceService {
     pub fn new(
         gate_repo: Arc<dyn LifecycleGateRepository>,
-        delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+        wake_target_runtime_threads: Arc<dyn GateWakeTargetRuntimeThreadQuery>,
     ) -> Self {
         Self {
             gate_repo,
-            delivery_binding_repo,
+            wake_target_runtime_threads,
         }
     }
 
@@ -111,7 +136,7 @@ impl GateProducerTerminalConvergenceService {
             .and_then(Value::as_str)
             .map(str::to_string);
         let intent = self
-            .mailbox_wake_intent(&gate, &envelope, event, result_payload.clone())
+            .input_handoff_wake_intent(&gate, &envelope, event, result_payload.clone())
             .await?;
         match LifecycleGateResolver::new(self.gate_repo.clone())
             .resolve_gate_payload(ResolveGatePayloadCommand {
@@ -148,7 +173,7 @@ impl GateProducerTerminalConvergenceService {
             gate_id: gate.id,
             kind: GateProducerTerminalConvergenceOutcomeKind::Resolved,
             result_status,
-            delivery_intents: vec![GateDeliveryIntent::MailboxWake(intent)],
+            delivery_intents: vec![GateDeliveryIntent::InputHandoffWake(intent)],
         })
     }
 
@@ -164,44 +189,45 @@ impl GateProducerTerminalConvergenceService {
             .and_then(Value::as_str)
             .map(str::to_string);
         let intent = self
-            .mailbox_wake_intent(&gate, &envelope, event, payload)
+            .input_handoff_wake_intent(&gate, &envelope, event, payload)
             .await?;
         Ok(GateProducerTerminalConvergenceOutcome {
             gate_id: gate.id,
             kind: GateProducerTerminalConvergenceOutcomeKind::AlreadyResolvedEnsuredDelivery,
             result_status,
-            delivery_intents: vec![GateDeliveryIntent::MailboxWake(intent)],
+            delivery_intents: vec![GateDeliveryIntent::InputHandoffWake(intent)],
         })
     }
 
-    async fn mailbox_wake_intent(
+    async fn input_handoff_wake_intent(
         &self,
         gate: &LifecycleGate,
         envelope: &GateWaitPolicyEnvelope,
         event: &GateProducerTerminalEvent,
         payload: Value,
-    ) -> Result<GateMailboxWakeIntent, WorkflowApplicationError> {
+    ) -> Result<GateInputHandoffWakeIntent, WorkflowApplicationError> {
         let WaitProducerRef::AgentRunDelivery { agent_id, .. } = &event.producer;
         let wake_target = &envelope.wait_policy.wake_target;
-        let target_binding = self
-            .delivery_binding_repo
-            .get_current(wake_target.target_run_id, wake_target.target_agent_id)
-            .await?
+        let target_runtime_thread_id = self
+            .wake_target_runtime_threads
+            .resolve_runtime_thread(wake_target.target_run_id, wake_target.target_agent_id)
+            .await
+            .map_err(WorkflowApplicationError::Internal)?
             .ok_or_else(|| {
                 WorkflowApplicationError::Conflict(format!(
                     "gate producer terminal convergence gate {} missing target delivery binding",
                     gate.id
                 ))
             })?;
-        Ok(GateMailboxWakeIntent {
+        Ok(GateInputHandoffWakeIntent {
             gate_id: gate.id,
             namespace: wake_target.namespace.clone(),
             request_id: payload_request_id(gate, envelope, &payload),
             target_run_id: wake_target.target_run_id,
             target_agent_id: wake_target.target_agent_id,
-            target_delivery_runtime_session_id: target_binding.runtime_session_id,
+            target_runtime_thread_id,
             producer_agent_id: *agent_id,
-            producer_delivery_runtime_session_id: event.trace_ref.clone(),
+            producer_runtime_thread_id: event.trace_ref.clone(),
             resolved_turn_id: payload
                 .get("resolved_turn_id")
                 .and_then(Value::as_str)
@@ -321,9 +347,8 @@ mod tests {
     use agentdash_domain::{
         DomainError,
         workflow::{
-            AgentRunDeliveryBinding, DeliveryBindingStatus, GateWaitPolicy,
-            RuntimeSessionExecutionAnchor, WaitExpectedResult, WaitTerminalOutcome,
-            WaitTerminalPolicy, WaitWakeTarget,
+            GateWaitPolicy, WaitExpectedResult, WaitTerminalOutcome, WaitTerminalPolicy,
+            WaitWakeTarget,
         },
     };
 
@@ -435,54 +460,21 @@ mod tests {
         }
     }
 
-    struct FixtureDeliveryBindingRepo {
-        binding: AgentRunDeliveryBinding,
+    struct FixtureWakeTargetRuntimeThreadQuery {
+        run_id: Uuid,
+        agent_id: Uuid,
+        runtime_thread_id: String,
     }
 
     #[async_trait::async_trait]
-    impl AgentRunDeliveryBindingRepository for FixtureDeliveryBindingRepo {
-        async fn upsert(&self, _binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn upsert_if_current_runtime_session(
-            &self,
-            binding: &AgentRunDeliveryBinding,
-        ) -> Result<bool, DomainError> {
-            if self.binding.run_id == binding.run_id
-                && self.binding.agent_id == binding.agent_id
-                && self.binding.runtime_session_id != binding.runtime_session_id
-            {
-                return Ok(false);
-            }
-            Ok(true)
-        }
-
-        async fn get_current(
+    impl GateWakeTargetRuntimeThreadQuery for FixtureWakeTargetRuntimeThreadQuery {
+        async fn resolve_runtime_thread(
             &self,
             run_id: Uuid,
             agent_id: Uuid,
-        ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
-            if self.binding.run_id == run_id && self.binding.agent_id == agent_id {
-                Ok(Some(self.binding.clone()))
-            } else {
-                Ok(None)
-            }
-        }
-
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
-            if self.binding.run_id == run_id {
-                Ok(vec![self.binding.clone()])
-            } else {
-                Ok(Vec::new())
-            }
-        }
-
-        async fn delete_by_session(&self, _runtime_session_id: &str) -> Result<(), DomainError> {
-            Ok(())
+        ) -> Result<Option<String>, String> {
+            Ok((self.run_id == run_id && self.agent_id == agent_id)
+                .then(|| self.runtime_thread_id.clone()))
         }
     }
 
@@ -564,20 +556,13 @@ mod tests {
     ) -> (Arc<FixtureGateRepo>, GateProducerTerminalConvergenceService) {
         let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(gate).await.expect("seed gate");
-        let parent_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            "parent-session".to_string(),
+        let runtime_thread_query = Arc::new(FixtureWakeTargetRuntimeThreadQuery {
             run_id,
-            Uuid::new_v4(),
-            parent_agent_id,
-        );
-        let delivery_repo = Arc::new(FixtureDeliveryBindingRepo {
-            binding: AgentRunDeliveryBinding::from_anchor(
-                &parent_anchor,
-                DeliveryBindingStatus::Running,
-                parent_anchor.updated_at,
-            ),
+            agent_id: parent_agent_id,
+            runtime_thread_id: "parent-session".to_string(),
         });
-        let service = GateProducerTerminalConvergenceService::new(gate_repo.clone(), delivery_repo);
+        let service =
+            GateProducerTerminalConvergenceService::new(gate_repo.clone(), runtime_thread_query);
         (gate_repo, service)
     }
 
@@ -649,7 +634,7 @@ mod tests {
             json!(child_frame_id.to_string())
         );
         assert_eq!(
-            payload["result_refs"]["child"]["delivery_runtime_session_id"],
+            payload["result_refs"]["child"]["runtime_thread_id"],
             json!("child-session")
         );
         let evidence = payload["result_refs"]["evidence"]
@@ -662,7 +647,7 @@ mod tests {
                     == Some(&json!(format!(
                         "lifecycle://agent-runs/{child_agent_id}/sessions/messages"
                     )))
-                && entry.get("delivery_runtime_session_id") == Some(&json!("child-session"))
+                && entry.get("runtime_thread_id") == Some(&json!("child-session"))
         }));
         assert!(
             !serde_json::to_string(&payload["result_refs"])
@@ -672,7 +657,7 @@ mod tests {
         assert!(payload.get("wait_policy").is_some());
         assert!(matches!(
             &first.outcomes[0].delivery_intents[0],
-            GateDeliveryIntent::MailboxWake(intent) if intent.namespace == "companion"
+            GateDeliveryIntent::InputHandoffWake(intent) if intent.namespace == "companion"
         ));
 
         let replay = service

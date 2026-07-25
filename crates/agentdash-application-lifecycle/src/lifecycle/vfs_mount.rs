@@ -4,10 +4,10 @@ use uuid::Uuid;
 use super::vfs_catalog::lifecycle_directory_hint;
 use agentdash_application_vfs::PROVIDER_LIFECYCLE_VFS;
 
-pub(crate) fn build_agent_run_session_lifecycle_mount(
+pub fn build_agent_run_lifecycle_mount(
     run_id: Uuid,
     agent_id: Uuid,
-    runtime_session_id: &str,
+    runtime_thread_id: &str,
     launch_frame_id: Uuid,
     orchestration_id: Option<Uuid>,
     node_path: Option<&str>,
@@ -16,9 +16,9 @@ pub(crate) fn build_agent_run_session_lifecycle_mount(
     let mut metadata = serde_json::json!({
         "run_id": run_id.to_string(),
         "agent_id": agent_id.to_string(),
-        "runtime_session_id": runtime_session_id,
+        "runtime_thread_id": runtime_thread_id,
         "launch_frame_id": launch_frame_id.to_string(),
-        "scope": "agent_run_session",
+        "scope": "agent_run_history",
         "directory_hint": lifecycle_directory_hint()
     });
     if let Some(orchestration_id) = orchestration_id {
@@ -34,10 +34,12 @@ pub(crate) fn build_agent_run_session_lifecycle_mount(
     Mount {
         id: "lifecycle".to_string(),
         provider: PROVIDER_LIFECYCLE_VFS.to_string(),
-        backend_id: String::new(),
+        // AppliedResourceSurface requires a stable backing identity for every mount. The
+        // canonical history is backed by the Managed Runtime thread rather than a filesystem.
+        backend_id: format!("managed-runtime:{runtime_thread_id}"),
         root_ref: format!(
-            "lifecycle://run/{run_id}/agent/{agent_id}/session/{}",
-            encode_lifecycle_uri_segment(runtime_session_id)
+            "lifecycle://run/{run_id}/agent/{agent_id}/thread/{}",
+            encode_lifecycle_uri_segment(runtime_thread_id)
         ),
         capabilities: vec![
             MountCapability::Read,
@@ -50,7 +52,7 @@ pub(crate) fn build_agent_run_session_lifecycle_mount(
     }
 }
 
-pub(crate) fn build_lifecycle_mount_with_node_scope(
+pub fn build_lifecycle_mount_with_node_scope(
     run_id: Uuid,
     agent_id: Option<Uuid>,
     orchestration_id: Uuid,
@@ -85,7 +87,10 @@ pub(crate) fn build_lifecycle_mount_with_node_scope(
     Mount {
         id: "lifecycle".to_string(),
         provider: PROVIDER_LIFECYCLE_VFS.to_string(),
-        backend_id: String::new(),
+        backend_id: format!(
+            "lifecycle-node:{run_id}:{orchestration_id}:{}",
+            encode_lifecycle_uri_segment(node_path)
+        ),
         root_ref: format!(
             "lifecycle://run/{run_id}/orchestration/{orchestration_id}/node/{}",
             encode_lifecycle_uri_segment(node_path)

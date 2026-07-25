@@ -1,116 +1,78 @@
-use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
-use std::collections::{HashMap, HashSet};
-use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
 
-use crate::routes::runtime_traces;
-use agentdash_agent::MessageRef;
-use agentdash_application::runtime_session_agent_run_bridge::{
-    agent_run_session_cancel_runtime, agent_run_session_control, agent_run_session_core,
-    agent_run_session_eventing, agent_run_session_launch,
-};
-use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
-use agentdash_application_agentrun::agent_run::{
-    self as app_agent_run, workspace as app_workspace,
+use agentdash_agent_service_api::AgentServiceErrorCode;
+use agentdash_application::agent_run_list::{
+    AgentRunListChildModel, ProjectAgentRunListInput, ProjectAgentRunListQuery,
+    ProjectAgentRunListQueryDeps,
 };
 use agentdash_application_agentrun::agent_run::{
-    AgentRunAdmissionService, AgentRunCancelCommand, AgentRunCancelCommandService,
-    AgentRunCommandReceiptView, AgentRunContextCompactionCommand,
-    AgentRunContextCompactionCommandDeps, AgentRunContextCompactionCommandResult,
-    AgentRunContextCompactionCommandService, AgentRunContextCompactionOutcome,
-    AgentRunContextCompactionSessionRuntimePort, AgentRunDeleteCommand,
-    AgentRunDeleteCommandService, AgentRunDeleteRepos, AgentRunForkCommand,
-    AgentRunForkCommandResult, AgentRunForkRepos, AgentRunForkService, AgentRunForkSubmitCommand,
-    AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
-    AgentRunTerminalLaunchTarget, DeliveryRuntimeSelectionError,
-    DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
+    AgentRunProductCommand, AgentRunProductCommandError, AgentRunProductCommandRequest,
+    AgentRunProductDeleteError, AgentRunProductDeleteRequest, AgentRunProductDeleteService,
+    AgentRunProductForkError, AgentRunProductForkMessageRef, AgentRunProductForkRequest,
+    AgentRunProductForkResult, AgentRunProductForkService, AgentRunProductInputDeliveryError,
+    AgentRunProductProjectionError, AgentRunTerminalChangeSequence, DeliverAgentRunProductInput,
+    project_managed_runtime_context,
 };
-use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
-use agentdash_contracts::agent_run_mailbox::{
-    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunContextCompactionCommandOutcome,
-    AgentRunContextCompactionCommandResponse, AgentRunForkLineageView, AgentRunForkOutcomeView,
-    AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
-    AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
-    AgentRunMessageCommandResponse, AgentRunToolCallApprovalResponse,
-    AgentRunToolCallRejectionResponse, MailboxMessageView, MailboxStateView,
+use agentdash_contracts::agent_run_interaction::{
+    AgentRunCommandOnlyRequest, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
+    AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkResponse,
+    AgentRunForkSubmitRequest, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
+    AgentRunMessageCommandResponse,
 };
-use agentdash_contracts::session::{
-    SessionEventResponse, SessionEventsPageResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
-};
-use agentdash_contracts::workflow::{
-    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
-    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest,
-    AgentRunCommandPreconditionView, AgentRunLineageRef, AgentRunListChild, AgentRunOwnershipView,
-    AgentRunRefDto, AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView,
-    AgentRunView, AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
-    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, ConversationCommandKind, ConversationCommandPlacement,
-    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
-    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
-    ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
-    ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
-    ConversationModelConfigView, ConversationWaitingItemView, DeleteAgentRunResponse,
-    LifecycleRunRefDto, LifecycleSubjectAssociationDto, RuntimeSessionRefDto, SubjectRefDto,
-    ValidationSeverity,
-};
-use agentdash_domain::workflow::{AgentLineage, LifecycleAgent, LifecycleRun};
-use agentdash_spi::AgentConfig;
+use agentdash_contracts::agent_run_product_projection as product_projection_contract;
+use agentdash_contracts::session::SessionMessageRefDto;
+use agentdash_contracts::workflow::{AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto};
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use axum::{
     Json,
-    body::Body,
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{Path, Query, State},
-    http::HeaderMap,
-    response::{IntoResponse, Response},
+    http::header,
+    response::IntoResponse,
 };
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{DateTime, Utc};
-use tokio::time::MissedTickBehavior;
+use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::dto::{
-    AgentRunJournalEventsQuery, AgentRunJournalStreamQuery, ContextAuditQuery,
-    RejectToolApprovalRequest, SpawnTerminalBody,
-};
 use crate::{
-    agent_run_runtime_surface::resolve_terminal_launch_target_for_runtime_session,
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
-    routes::{
-        agent_run_mailbox_contracts::{
-            agent_run_message_accepted_refs, agent_run_message_command_response,
-            backend_selection_input, command_receipt_view, mailbox_command_outcome_view,
-            mailbox_message_view, mailbox_message_visible, mailbox_state_view,
-        },
-        terminals,
-        vfs_surfaces::dto as vfs_surface_dto,
-    },
-    rpc::{ApiError, ApiErrorWithCode},
-    vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
+    rpc::ApiError,
 };
 
-struct AgentRunContext {
-    run: LifecycleRun,
-    agent: LifecycleAgent,
-    delivery_runtime_session_id: Option<String>,
-    delivery_frame_id: Option<Uuid>,
-}
+const DEFAULT_PRODUCT_CHANGE_PAGE_LIMIT: usize = 256;
+const MAX_PRODUCT_CHANGE_PAGE_LIMIT: usize = 256;
 
-struct AgentRunDeliveryRuntimeContext {
-    runtime_session_id: String,
-    frame_id: Uuid,
+#[derive(Debug, Deserialize)]
+pub struct ProductProjectionChangesQuery {
+    pub after: Option<u64>,
+    pub limit: Option<usize>,
 }
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route(
-            "/projects/{project_id}/agent-runs",
-            axum::routing::get(get_project_agent_runs),
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/snapshot",
+            axum::routing::get(get_managed_runtime_snapshot),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection",
+            axum::routing::get(get_managed_runtime_context_projection),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/live",
+            axum::routing::get(get_agent_run_live_events),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/commands",
+            axum::routing::post(execute_managed_runtime_command),
         )
         .route(
             "/projects/{project_id}/agent-runs/{run_id}",
             axum::routing::delete(delete_project_agent_run),
+        )
+        .route(
+            "/projects/{project_id}/agent-runs",
+            axum::routing::get(get_project_agent_runs),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/workspace",
@@ -129,824 +91,238 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::post(fork_submit_agent_run),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/mailbox",
-            axum::routing::get(get_agent_run_mailbox),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/resume",
-            axum::routing::post(resume_agent_run_mailbox),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}",
-            axum::routing::delete(delete_agent_run_mailbox_message),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/promote",
-            axum::routing::post(promote_agent_run_mailbox_message),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/move",
-            axum::routing::put(move_agent_run_mailbox_message),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/content",
-            axum::routing::get(get_agent_run_mailbox_message_content),
-        )
-        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/cancel",
             axum::routing::post(cancel_agent_run),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/control",
-            axum::routing::get(get_agent_run_runtime_control),
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/snapshot",
+            axum::routing::get(get_agent_run_terminal_snapshot),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/journal/events",
-            axum::routing::get(list_agent_run_journal_events),
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/changes",
+            axum::routing::get(get_agent_run_terminal_changes),
         )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals",
-            axum::routing::get(list_agent_run_runtime_terminals)
-                .post(spawn_agent_run_runtime_terminal),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection",
-            axum::routing::get(get_agent_run_runtime_context_projection),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/compact",
-            axum::routing::post(compact_agent_run_context),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/audit",
-            axum::routing::get(get_agent_run_runtime_context_audit),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/journal/stream/ndjson",
-            axum::routing::get(agent_run_journal_stream_route),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/approve",
-            axum::routing::post(approve_agent_run_tool_call),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/reject",
-            axum::routing::post(reject_agent_run_tool_call),
-        )
-}
-
-pub async fn get_project_agent_runs(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(project_id): Path<String>,
-    Query(query): Query<AgentRunListQuery>,
-) -> Result<Json<AgentRunWorkspaceListView>, ApiError> {
-    let project_id = parse_uuid(&project_id, "project_id")?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-
-    let limit = query
-        .limit
-        .map(|l| l as usize)
-        .unwrap_or(DEFAULT_PAGE_LIMIT)
-        .clamp(1, MAX_PAGE_LIMIT);
-    let cursor = query.cursor.as_deref().and_then(decode_cursor);
-
-    // keyset 分页：按 run 级 last_activity_at desc（run_id desc tiebreak）稳定排序，
-    // 仅对**页内** run 解析列表条目——成本随页大小而非项目历史 Run 总量增长。
-    let mut runs = state
-        .repos
-        .lifecycle_run_repo
-        .list_by_project(project_id)
-        .await
-        .map_err(ApiError::from)?;
-    // 排序键与游标 keyset 同为毫秒粒度，避免亚毫秒同刻在分页边界错位。
-    runs.sort_by(|a, b| {
-        b.last_activity_at
-            .timestamp_millis()
-            .cmp(&a.last_activity_at.timestamp_millis())
-            .then_with(|| b.id.cmp(&a.id))
-    });
-    if let Some((cur_millis, cur_id)) = cursor {
-        // 严格排在游标项之后（desc 序）的 run。
-        runs.retain(|run| (run.last_activity_at.timestamp_millis(), run.id) < (cur_millis, cur_id));
-    }
-
-    let total = runs.len();
-    let mut entries = Vec::new();
-    let mut next_cursor = None;
-    for (idx, run) in runs.iter().enumerate() {
-        let agents = state
-            .repos
-            .lifecycle_agent_repo
-            .list_by_run(run.id)
-            .await
-            .map_err(ApiError::from)?;
-        if agents.is_empty() {
-            continue;
-        }
-
-        // 一次取回该 run 的全部 lineage 边，内存构建控制树 forest。
-        // 主从真值源是 AgentLineage 控制树。
-        let lineages = state
-            .repos
-            .agent_lineage_repo
-            .list_by_run(run.id)
-            .await
-            .map_err(ApiError::from)?;
-        let (children_map, child_ids) = build_lineage_forest(&lineages);
-
-        // 只对主 Run（控制树 root = 未作为任何 lineage child 出现的 agent）产出 entry，
-        // 并内联其直接子 Agent（一跳），均走轻量列表条目。
-        for agent in agents.iter().filter(|agent| !child_ids.contains(&agent.id)) {
-            let subagent_count = count_descendants(agent.id, &children_map);
-            let item = load_agent_run_list_item(&state, run.clone(), agent.clone()).await?;
-            let children =
-                build_inline_children(&state, run, agent.id, &agents, &children_map, 0).await?;
-            entries.push(list_entry_from_item(run, item, subagent_count, children));
-        }
-
-        // 按 run 分页：本 run 全部 entry 产出后若已达页大小，游标指向本 run，下一页从其后开始。
-        if entries.len() >= limit {
-            if idx + 1 < total {
-                next_cursor = Some(encode_cursor(run.last_activity_at, run.id));
-            }
-            break;
-        }
-    }
-
-    Ok(Json(AgentRunWorkspaceListView {
-        project_id: project_id.to_string(),
-        agent_runs: entries,
-        next_cursor,
-    }))
-}
-
-pub async fn delete_project_agent_run(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((project_id, run_id)): Path<(String, String)>,
-) -> Result<Json<DeleteAgentRunResponse>, ApiError> {
-    let project_id = parse_uuid(&project_id, "project_id")?;
-    let run_id = parse_uuid(&run_id, "run_id")?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-
-    let service = AgentRunDeleteCommandService::new(
-        agent_run_delete_repos(state.as_ref()),
-        agent_run_session_core(state.services.session_core.clone()),
-    );
-    let outcome = service
-        .delete(AgentRunDeleteCommand { project_id, run_id })
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(Json(DeleteAgentRunResponse {
-        deleted: outcome.deleted,
-        project_id: outcome.project_id.to_string(),
-        run_id: outcome.run_id.to_string(),
-    }))
-}
-
-/// AgentRun 列表分页查询参数。
-#[derive(serde::Deserialize)]
-pub struct AgentRunListQuery {
-    pub limit: Option<u32>,
-    pub cursor: Option<String>,
-}
-
-const DEFAULT_PAGE_LIMIT: usize = 30;
-const MAX_PAGE_LIMIT: usize = 100;
-const AGENT_RUN_JOURNAL_STREAM_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
-
-/// keyset 游标：编码页尾 run 的 (last_activity_at_millis, run_id)，base64 不透明串。
-fn encode_cursor(last_activity_at: DateTime<Utc>, run_id: Uuid) -> String {
-    let raw = format!("{}:{}", last_activity_at.timestamp_millis(), run_id);
-    URL_SAFE_NO_PAD.encode(raw.as_bytes())
-}
-
-fn decode_cursor(cursor: &str) -> Option<(i64, Uuid)> {
-    let bytes = URL_SAFE_NO_PAD.decode(cursor.as_bytes()).ok()?;
-    let raw = String::from_utf8(bytes).ok()?;
-    let (millis, run_id) = raw.split_once(':')?;
-    Some((millis.parse().ok()?, Uuid::parse_str(run_id).ok()?))
-}
-
-/// 递归内联某节点的直接子 Agent 子树，每个节点携带真实 shell 状态。
-///
-/// forest（`children_map`）已在 list 循环内建好，取子节点零额外 repo 查询；仅列表条目解析是新增异步调用。
-/// 深度上限保护 lineage 环 / 异常深树（与 `count_descendants` 同语义）。async 递归经 `Box::pin`。
-fn build_inline_children<'a>(
-    state: &'a AppState,
-    run: &'a LifecycleRun,
-    parent_id: Uuid,
-    agents: &'a [LifecycleAgent],
-    children_map: &'a HashMap<Uuid, Vec<Uuid>>,
-    depth: usize,
-) -> std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<Vec<AgentRunListChild>, ApiError>> + Send + 'a>,
-> {
-    Box::pin(async move {
-        const MAX_DEPTH: usize = 16;
-        let mut children = Vec::new();
-        if depth >= MAX_DEPTH {
-            diag!(Warn, Subsystem::Api,
-        run_id = %run.id, parent = %parent_id, depth, "inline children 触达深度上限，截断");
-            return Ok(children);
-        }
-        let Some(direct) = children_map.get(&parent_id) else {
-            return Ok(children);
-        };
-        for child_id in direct {
-            let Some(child_agent) = agents.iter().find(|a| a.id == *child_id) else {
-                continue;
-            };
-            let subagent_count = count_descendants(child_agent.id, children_map);
-            let item = load_agent_run_list_item(state, run.clone(), child_agent.clone()).await?;
-            let nested =
-                build_inline_children(state, run, child_agent.id, agents, children_map, depth + 1)
-                    .await?;
-            let mut node = list_child_from_item(run, item, subagent_count);
-            node.children = nested;
-            children.push(node);
-        }
-        children.sort_by(|a, b| b.shell.last_activity_at.cmp(&a.shell.last_activity_at));
-        Ok(children)
-    })
-}
-
-pub async fn get_agent_run_workspace(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<AgentRunWorkspaceView>, ApiError> {
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let mut view = agent_run_workspace_view(
-        load_agent_run_workspace_snapshot(&state, &context, &current_user.user_id).await?,
-    );
-    let (parent, children) =
-        resolve_agent_run_lineage(&state, &context.run, &context.agent).await?;
-    view.parent = parent;
-    view.children = children;
-    Ok(Json(view))
-}
-
-/// 解析当前 AgentRun 的 lineage 一跳父子，供右侧会话栏展示从属关系与跳转。
-///
-/// 一次 `list_by_run` 拿全 run 的 lineage 边，内存建 forest：parent 至多一个，
-/// children 为直接子节点；每个 ref 附其子树后代数（`subagent_count`）供前端决定是否可下钻。
-/// 标题走轻量列表条目，保证与列表/header 一致且不再为取标题做完整详情快照。
-async fn resolve_agent_run_lineage(
-    state: &AppState,
-    run: &LifecycleRun,
-    agent: &LifecycleAgent,
-) -> Result<(Option<AgentRunLineageRef>, Vec<AgentRunLineageRef>), ApiError> {
-    let lineages = state
-        .repos
-        .agent_lineage_repo
-        .list_by_run(run.id)
-        .await
-        .map_err(ApiError::from)?;
-    let (children_map, _) = build_lineage_forest(&lineages);
-
-    let same_run_parent = match lineages
-        .iter()
-        .find(|lineage| lineage.child_agent_id == agent.id)
-        .and_then(|lineage| {
-            lineage
-                .parent_agent_id
-                .map(|id| (id, lineage.relation_kind.clone()))
-        }) {
-        Some((parent_agent_id, relation_kind)) => {
-            match state
-                .repos
-                .lifecycle_agent_repo
-                .get(parent_agent_id)
-                .await
-                .map_err(ApiError::from)?
-            {
-                Some(parent_agent) => {
-                    let subagent_count = count_descendants(parent_agent.id, &children_map);
-                    Some(
-                        lineage_ref_for_agent(
-                            state,
-                            run,
-                            &parent_agent,
-                            relation_kind,
-                            subagent_count,
-                        )
-                        .await?,
-                    )
-                }
-                None => None,
-            }
-        }
-        None => None,
-    };
-    let parent = same_run_parent;
-
-    let mut children = Vec::new();
-    for lineage in lineages
-        .iter()
-        .filter(|lineage| lineage.parent_agent_id == Some(agent.id))
-    {
-        if let Some(child_agent) = state
-            .repos
-            .lifecycle_agent_repo
-            .get(lineage.child_agent_id)
-            .await
-            .map_err(ApiError::from)?
-        {
-            let subagent_count = count_descendants(child_agent.id, &children_map);
-            children.push(
-                lineage_ref_for_agent(
-                    state,
-                    run,
-                    &child_agent,
-                    lineage.relation_kind.clone(),
-                    subagent_count,
-                )
-                .await?,
-            );
-        }
-    }
-    Ok((parent, children))
-}
-
-/// 为 lineage 上的某 agent 构建一跳引用（标题走轻量列表条目，避免完整详情快照）。
-async fn lineage_ref_for_agent(
-    state: &AppState,
-    run: &LifecycleRun,
-    agent: &LifecycleAgent,
-    relation_kind: String,
-    subagent_count: u32,
-) -> Result<AgentRunLineageRef, ApiError> {
-    let item = load_agent_run_list_item(state, run.clone(), agent.clone()).await?;
-    Ok(AgentRunLineageRef {
-        run_id: agent.run_id.to_string(),
-        agent_id: agent.id.to_string(),
-        source: agent.source.as_str().to_string(),
-        relation_kind,
-        display_title: item.shell.display_title,
-        subagent_count,
-    })
-}
-
-pub async fn submit_agent_run_composer_input(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Json(req): Json<AgentRunComposerSubmitRequest>,
-) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
-    diag!(Debug, Subsystem::Api,
-
-        run_id = %run_id,
-        agent_id = %agent_id,
-        input_blocks = req.input.len(),
-        "AgentRun composer submit entered"
-    );
-    if req.client_command_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
-        ));
-    }
-    if req.input.is_empty() {
-        return Err(ApiError::BadRequest("input 不能为空".to_string()));
-    }
-
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
-    let delivery_runtime_session_id = context.delivery_runtime_session_id.as_deref();
-    diag!(Debug, Subsystem::Api,
-
-        run_id = %context.run.id,
-        agent_id = %context.agent.id,
-        delivery_runtime_session_id = ?delivery_runtime_session_id,
-        "AgentRun composer submit context resolved"
-    );
-    agent_run_workspace_command_policy(state.as_ref())
-        .ensure_composer_submit_allowed(
-            command_policy_context(&context),
-            &command_precondition_to_application(req.command),
-        )
-        .await
-        .map_err(command_policy_error)?;
-    diag!(Debug, Subsystem::Api,
-
-        run_id = %context.run.id,
-        agent_id = %context.agent.id,
-        delivery_runtime_session_id = ?delivery_runtime_session_id,
-        "AgentRun composer submit policy accepted"
-    );
-    let executor_config = req
-        .executor_config
-        .map(serde_json::from_value::<AgentConfig>)
-        .transpose()
-        .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
-    if context.run.created_by_user_id != current_user.user_id {
-        let admission = agent_run_fork_admission_service(state.as_ref());
-        let current_user_id = current_user.user_id.clone();
-        let client_command_id = req.client_command_id.clone();
-        let response = admission
-            .admit_fork_submit(AgentRunForkSubmitCommand {
-                parent_run_id: context.run.id,
-                parent_agent_id: context.agent.id,
-                current_user_id: current_user_id.clone(),
-                title: None,
-                fork_point_ref: None,
-                metadata_json: None,
-                input: req.input,
-                client_command_id: req.client_command_id,
-                executor_config,
-                backend_selection: backend_selection_input(req.backend_selection),
-                identity: Some(current_user),
-            })
-            .await
-            .map_err(|error| {
-                log_agent_run_fork_route_error(
-                    "composer-submit:auto-fork",
-                    context.run.id,
-                    context.agent.id,
-                    &current_user_id,
-                    &client_command_id,
-                    None,
-                    &error,
-                );
-                ApiError::from(error)
-            })?;
-        return Ok(Json(agent_run_fork_submit_message_response(response)));
-    }
-    let service = agent_run_mailbox_service(state.as_ref());
-    let response = service
-        .accept_user_message(AgentRunMailboxUserMessageCommand {
-            run_id: context.run.id,
-            agent_id: context.agent.id,
-            frame_id,
-            source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::composer(),
-            schedule_on_submit: true,
-            input: req.input,
-            client_command_id: req.client_command_id,
-            executor_config,
-            backend_selection: backend_selection_input(req.backend_selection),
-            identity: Some(current_user),
-            delivery_intent: req.delivery_intent,
-        })
-        .await
-        .map_err(ApiError::from)?;
-    diag!(Debug, Subsystem::Api,
-
-        run_id = %context.run.id,
-        agent_id = %context.agent.id,
-        delivery_runtime_session_id = ?delivery_runtime_session_id,
-        outcome = ?response.outcome,
-        "AgentRun composer submit mailbox accepted"
-    );
-    Ok(Json(agent_run_message_command_response(response)))
 }
 
 async fn fork_agent_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-    Json(req): Json<AgentRunForkRequest>,
+    Json(body): Json<agentdash_contracts::agent_run_interaction::AgentRunForkRequest>,
 ) -> Result<Json<AgentRunForkResponse>, ApiError> {
-    if req.client_command_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
-        ));
-    }
-    let context = resolve_agent_run_context(
-        &state,
+    let target = authorize_agent_run_target(
+        state.as_ref(),
         &current_user,
         &run_id,
         &agent_id,
         ProjectPermission::Use,
     )
     .await?;
-    let admission = agent_run_fork_admission_service(state.as_ref());
-    let current_user_id = current_user.user_id.clone();
-    let client_command_id = req.client_command_id.clone();
-    let fork_point_ref = req.fork_point_ref.map(message_ref_from_contract);
-    let result = admission
-        .admit_explicit_fork(AgentRunForkCommand {
-            parent_run_id: context.run.id,
-            parent_agent_id: context.agent.id,
-            current_user_id: current_user_id.clone(),
-            title: req.title,
-            fork_point_ref: fork_point_ref.clone(),
-            metadata_json: req.metadata_json,
-            client_command_id: req.client_command_id,
-        })
-        .await
-        .map_err(|error| {
-            log_agent_run_fork_route_error(
-                "fork-agent-run",
-                context.run.id,
-                context.agent.id,
-                &current_user_id,
-                &client_command_id,
-                fork_point_ref.as_ref(),
-                &error,
-            );
-            ApiError::from(error)
-        })?;
-    Ok(Json(agent_run_fork_response(result)))
+    let result = execute_product_fork(
+        state.as_ref(),
+        target,
+        current_user.user_id,
+        body.client_command_id.clone(),
+        body.title,
+        body.fork_point_ref,
+        body.metadata_json,
+    )
+    .await?;
+    Ok(Json(fork_response(&result, body.client_command_id)))
 }
 
 async fn fork_submit_agent_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-    Json(req): Json<AgentRunForkSubmitRequest>,
+    Json(body): Json<AgentRunForkSubmitRequest>,
 ) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
-    if req.client_command_id.trim().is_empty() {
+    validate_fork_submit_preconditions(&body)?;
+    if body.executor_config.is_some() || body.backend_selection.is_some() {
         return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
+            "fork-submit 的 child 继承已提交 Product frame；当前请求不能覆盖 executor 或 backend"
+                .to_owned(),
         ));
     }
-    if req.input.is_empty() {
-        return Err(ApiError::BadRequest("input 不能为空".to_string()));
-    }
-    let context = resolve_agent_run_context(
-        &state,
+    let parent = authorize_agent_run_target(
+        state.as_ref(),
         &current_user,
         &run_id,
         &agent_id,
         ProjectPermission::Use,
     )
     .await?;
-    let executor_config = req
-        .executor_config
-        .map(serde_json::from_value::<AgentConfig>)
-        .transpose()
-        .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
-    let admission = agent_run_fork_admission_service(state.as_ref());
-    let current_user_id = current_user.user_id.clone();
-    let client_command_id = req.client_command_id.clone();
-    let fork_point_ref = req.fork_point_ref.map(message_ref_from_contract);
-    let result = admission
-        .admit_fork_submit(AgentRunForkSubmitCommand {
-            parent_run_id: context.run.id,
-            parent_agent_id: context.agent.id,
-            current_user_id: current_user_id.clone(),
-            title: req.title,
-            fork_point_ref: fork_point_ref.clone(),
-            metadata_json: req.metadata_json,
-            input: req.input,
-            client_command_id: req.client_command_id,
-            executor_config,
-            backend_selection: backend_selection_input(req.backend_selection),
-            identity: Some(current_user),
+    let fork = execute_product_fork(
+        state.as_ref(),
+        parent,
+        current_user.user_id,
+        format!("{}:fork", body.client_command_id),
+        body.title,
+        body.fork_point_ref,
+        body.metadata_json,
+    )
+    .await?;
+    let child = AgentRunTarget {
+        run_id: fork.saga.child().run_id,
+        agent_id: fork.saga.child().agent_id,
+    };
+    let delivery = state
+        .services
+        .agent_run_product_input_delivery
+        .deliver(DeliverAgentRunProductInput {
+            target: child.clone(),
+            content: body.input,
+            source: agentdash_domain::agent_input::AgentInputSourceIdentity::composer(),
+            origin: agentdash_domain::agent_input::AgentInputOrigin::User,
+            client_command_id: body.client_command_id.clone(),
         })
         .await
-        .map_err(|error| {
-            log_agent_run_fork_route_error(
-                "fork-submit-agent-run",
-                context.run.id,
-                context.agent.id,
-                &current_user_id,
-                &client_command_id,
-                fork_point_ref.as_ref(),
-                &error,
-            );
-            ApiError::from(error)
-        })?;
-    Ok(Json(agent_run_fork_submit_message_response(result)))
-}
-
-async fn get_agent_run_mailbox(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<AgentRunMailboxView>, ApiError> {
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    Ok(Json(
-        build_agent_run_mailbox_view(state.as_ref(), &context, &current_user.user_id).await?,
-    ))
-}
-
-async fn delete_agent_run_mailbox_message(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
-    Json(body): Json<AgentRunCommandOnlyRequest>,
-) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
-    agent_run_workspace_command_policy(state.as_ref())
-        .ensure_command_allowed(
-            command_policy_context(&context),
-            app_workspace::AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage {
-                command: command_precondition_to_application(body.command.clone()),
-            },
-        )
-        .await
-        .map_err(command_policy_error)?;
-    let message_id = parse_uuid(&message_id, "message_id")?;
-    let response = agent_run_mailbox_service(state.as_ref())
-        .delete_message(AgentRunMailboxControlCommand {
-            run_id: context.run.id,
-            agent_id: context.agent.id,
-            frame_id,
-            message_id: Some(message_id),
-            after_message_id: None,
+        .map_err(product_input_delivery_error)?;
+    let duplicate = fork.replayed || delivery.operation_receipt.duplicate;
+    Ok(Json(AgentRunMessageCommandResponse {
+        command_receipt: AgentRunCommandReceipt {
             client_command_id: body.client_command_id,
-        })
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(agent_run_message_command_response(response)))
-}
-
-async fn resume_agent_run_mailbox(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Json(body): Json<AgentRunCommandOnlyRequest>,
-) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
-    agent_run_workspace_command_policy(state.as_ref())
-        .ensure_command_allowed(
-            command_policy_context(&context),
-            app_workspace::AgentRunWorkspaceCommandPrecondition::ResumeMailbox {
-                command: command_precondition_to_application(body.command.clone()),
-            },
-        )
-        .await
-        .map_err(command_policy_error)?;
-    let response = agent_run_mailbox_service(state.as_ref())
-        .resume_mailbox(
-            AgentRunMailboxControlCommand {
-                run_id: context.run.id,
-                agent_id: context.agent.id,
-                frame_id,
-                message_id: None,
-                after_message_id: None,
-                client_command_id: body.client_command_id,
-            },
-            Some(current_user),
-        )
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(agent_run_message_command_response(response)))
-}
-
-async fn promote_agent_run_mailbox_message(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
-    Json(body): Json<AgentRunCommandOnlyRequest>,
-) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
-    agent_run_workspace_command_policy(state.as_ref())
-        .ensure_command_allowed(
-            command_policy_context(&context),
-            app_workspace::AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage {
-                command: command_precondition_to_application(body.command.clone()),
-            },
-        )
-        .await
-        .map_err(command_policy_error)?;
-    let message_id = parse_uuid(&message_id, "message_id")?;
-    let response = agent_run_mailbox_service(state.as_ref())
-        .promote_message(
-            AgentRunMailboxControlCommand {
-                run_id: context.run.id,
-                agent_id: context.agent.id,
-                frame_id,
-                message_id: Some(message_id),
-                after_message_id: None,
-                client_command_id: body.client_command_id,
-            },
-            Some(current_user),
-        )
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(agent_run_message_command_response(response)))
-}
-
-async fn move_agent_run_mailbox_message(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
-    Json(body): Json<AgentRunMailboxMoveRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
-    agent_run_workspace_command_policy(state.as_ref())
-        .ensure_command_allowed(
-            command_policy_context(&context),
-            app_workspace::AgentRunWorkspaceCommandPrecondition::MoveMailboxMessage {
-                command: command_precondition_to_application(body.command.clone()),
-            },
-        )
-        .await
-        .map_err(command_policy_error)?;
-    let message_id = parse_uuid(&message_id, "message_id")?;
-    let after_message_id = body
-        .after_message_id
-        .as_deref()
-        .map(|id| parse_uuid(id, "after_message_id"))
-        .transpose()?;
-    let result = agent_run_mailbox_service(state.as_ref())
-        .move_message(AgentRunMailboxControlCommand {
-            run_id: context.run.id,
-            agent_id: context.agent.id,
-            frame_id,
-            message_id: Some(message_id),
-            after_message_id,
-            client_command_id: body.client_command_id,
-        })
-        .await
-        .map_err(ApiError::from)?;
-    let order_key = result.order_key;
-    Ok(Json(
-        serde_json::json!({ "ok": true, "order_key": order_key }),
-    ))
-}
-
-async fn get_agent_run_mailbox_message_content(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, message_id)): Path<(String, String, String)>,
-) -> Result<Json<AgentRunMailboxMessageContentView>, ApiError> {
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let message_id = parse_uuid(&message_id, "message_id")?;
-    let input = agent_run_mailbox_service(state.as_ref())
-        .get_message_content(context.run.id, context.agent.id, message_id)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(AgentRunMailboxMessageContentView {
-        id: message_id.to_string(),
-        input,
+            status: delivery.operation_receipt.status.as_str().to_owned(),
+            duplicate,
+            message: None,
+        },
+        outcome: AgentRunMessageCommandOutcome::Launched,
+        accepted_refs: Some(agent_run_child_message_refs(&fork)),
+        fork: Some(fork_outcome_view(&fork)),
     }))
+}
+
+fn validate_fork_submit_preconditions(body: &AgentRunForkSubmitRequest) -> Result<(), ApiError> {
+    let client_command_id = body.client_command_id.trim();
+    if client_command_id.is_empty() || client_command_id.len() > 256 {
+        return Err(ApiError::BadRequest(
+            "fork-submit client_command_id 必须为 1..=256 字节".to_owned(),
+        ));
+    }
+    let has_content = body.input.iter().any(|content| {
+        let value = match content {
+            agentdash_agent_service_api::AgentInputContent::Text { text } => text,
+            agentdash_agent_service_api::AgentInputContent::Image { source, .. } => source,
+            agentdash_agent_service_api::AgentInputContent::Resource { uri, .. } => uri,
+            agentdash_agent_service_api::AgentInputContent::Structured { schema, .. } => schema,
+        };
+        !value.trim().is_empty()
+    });
+    if !has_content {
+        return Err(ApiError::BadRequest(
+            "fork-submit input 必须包含可投递内容".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+async fn execute_product_fork(
+    state: &AppState,
+    target: AgentRunTarget,
+    requested_by_user_id: String,
+    client_command_id: String,
+    title: Option<String>,
+    fork_point_ref: Option<SessionMessageRefDto>,
+    metadata_json: Option<serde_json::Value>,
+) -> Result<AgentRunProductForkResult, ApiError> {
+    AgentRunProductForkService::new(
+        state.services.agent_run_product_projection.clone(),
+        state.services.agent_run_product_protocol.clone(),
+    )
+    .fork(AgentRunProductForkRequest {
+        target,
+        client_command_id,
+        requested_by_user_id,
+        title,
+        fork_point_ref: fork_point_ref.map(|point| AgentRunProductForkMessageRef {
+            turn_id: point.turn_id,
+            entry_index: point.entry_index,
+        }),
+        metadata_json,
+    })
+    .await
+    .map_err(product_fork_error)
+}
+
+fn fork_response(
+    result: &AgentRunProductForkResult,
+    client_command_id: String,
+) -> AgentRunForkResponse {
+    let outcome = fork_outcome_view(result);
+    AgentRunForkResponse {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id,
+            status: "completed".to_owned(),
+            duplicate: result.replayed,
+            message: None,
+        },
+        outcome: outcome.outcome,
+        parent_refs: outcome.parent_refs,
+        child_refs: outcome.child_refs,
+        lineage: outcome.lineage,
+        redirect: outcome.redirect,
+    }
+}
+
+fn fork_outcome_view(result: &AgentRunProductForkResult) -> AgentRunForkOutcomeView {
+    let saga = &result.saga;
+    let intent = saga
+        .product_intent()
+        .expect("successful Product fork must retain immutable Product intent");
+    let parent = AgentRunTarget {
+        run_id: saga.parent().run_id,
+        agent_id: saga.parent().agent_id,
+    };
+    let child = AgentRunTarget {
+        run_id: saga.child().run_id,
+        agent_id: saga.child().agent_id,
+    };
+    let parent_refs = agent_run_message_refs(&parent);
+    let child_refs = agent_run_child_message_refs(result);
+    AgentRunForkOutcomeView {
+        outcome: "forked".to_owned(),
+        parent_refs: parent_refs.clone(),
+        child_refs: child_refs.clone(),
+        lineage: AgentRunForkLineageView {
+            id: saga.request_id().0.to_string(),
+            parent: parent_refs,
+            child: child_refs,
+            relation_kind: "fork".to_owned(),
+            fork_point_event_seq: None,
+            fork_point_ref: intent
+                .source_entry_index
+                .map(|entry_index| SessionMessageRefDto {
+                    turn_id: intent.source_turn_id.clone(),
+                    entry_index,
+                }),
+            forked_by_user_id: intent.requested_by_user_id.clone(),
+            created_at: intent.requested_at.to_rfc3339(),
+        },
+        redirect: AgentRunRefDto {
+            run_id: child.run_id.to_string(),
+            agent_id: child.agent_id.to_string(),
+        },
+    }
+}
+
+fn agent_run_child_message_refs(result: &AgentRunProductForkResult) -> AgentRunMessageAcceptedRefs {
+    let child = result.saga.child();
+    AgentRunMessageAcceptedRefs {
+        run_ref: LifecycleRunRefDto {
+            run_id: child.run_id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: child.run_id.to_string(),
+            agent_id: child.agent_id.to_string(),
+        },
+        frame_ref: Some(AgentFrameRefDto {
+            agent_id: child.agent_id.to_string(),
+            frame_id: child.frame_id.to_string(),
+            revision: None,
+        }),
+        agent_run_turn_id: None,
+        protocol_turn_id: None,
+    }
 }
 
 async fn cancel_agent_run(
@@ -955,296 +331,314 @@ async fn cancel_agent_run(
     Path((run_id, agent_id)): Path<(String, String)>,
     Json(body): Json<AgentRunCommandOnlyRequest>,
 ) -> Result<Json<AgentRunCommandReceipt>, ApiError> {
-    if body.client_command_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
-        ));
-    }
-    let context = resolve_agent_run_context(
-        &state,
+    let target = authorize_agent_run_target(
+        state.as_ref(),
         &current_user,
         &run_id,
         &agent_id,
         ProjectPermission::Use,
     )
     .await?;
-    agent_run_workspace_command_policy(state.as_ref())
-        .ensure_command_allowed(
-            command_policy_context(&context),
-            app_workspace::AgentRunWorkspaceCommandPrecondition::Cancel {
-                command: command_precondition_to_application(body.command.clone()),
-            },
-        )
+    let receipt = state
+        .services
+        .agent_run_product_projection_composition
+        .commands
+        .execute(AgentRunProductCommandRequest {
+            target,
+            client_command_id: body.client_command_id.clone(),
+            command: AgentRunProductCommand::Interrupt,
+        })
         .await
-        .map_err(command_policy_error)?;
-    let delivery_selection = delivery_runtime_selection_service(state.as_ref())
-        .select_current_delivery(context.run.id, context.agent.id)
-        .await
-        .map_err(delivery_runtime_selection_error)?;
-    let cancel_runtime = agent_run_session_cancel_runtime(state.services.session_runtime.clone());
-    let receipt = AgentRunCancelCommandService::new(
-        state.repos.agent_run_command_receipt_repo.as_ref(),
-        &cancel_runtime,
-    )
-    .cancel(AgentRunCancelCommand {
-        run_id: context.run.id,
-        agent_id: context.agent.id,
-        frame_id: Some(delivery_selection.launch_frame_id),
-        runtime_session_id: delivery_selection.runtime_session_id,
+        .map_err(agent_run_product_command_error)?;
+    Ok(Json(AgentRunCommandReceipt {
         client_command_id: body.client_command_id,
-        reason: None,
+        status: receipt.status.as_str().to_owned(),
+        duplicate: receipt.duplicate,
+        message: None,
+    }))
+}
+
+async fn submit_agent_run_composer_input(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<AgentRunComposerSubmitRequest>,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let delivery = state
+        .services
+        .agent_run_product_input_delivery
+        .deliver(DeliverAgentRunProductInput {
+            target: target.clone(),
+            content: body.input,
+            source: agentdash_domain::agent_input::AgentInputSourceIdentity::composer(),
+            origin: agentdash_domain::agent_input::AgentInputOrigin::User,
+            client_command_id: body.client_command_id.clone(),
+        })
+        .await
+        .map_err(product_input_delivery_error)?;
+    let duplicate = delivery.operation_receipt.duplicate;
+    Ok(Json(AgentRunMessageCommandResponse {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id: body.client_command_id,
+            status: delivery.operation_receipt.status.as_str().to_owned(),
+            duplicate,
+            message: None,
+        },
+        outcome: AgentRunMessageCommandOutcome::Launched,
+        accepted_refs: Some(agent_run_message_refs(&target)),
+        fork: None,
+    }))
+}
+
+fn agent_run_message_refs(target: &AgentRunTarget) -> AgentRunMessageAcceptedRefs {
+    AgentRunMessageAcceptedRefs {
+        run_ref: LifecycleRunRefDto {
+            run_id: target.run_id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: target.run_id.to_string(),
+            agent_id: target.agent_id.to_string(),
+        },
+        frame_ref: None,
+        agent_run_turn_id: None,
+        protocol_turn_id: None,
+    }
+}
+
+fn product_input_delivery_error(error: AgentRunProductInputDeliveryError) -> ApiError {
+    match error {
+        AgentRunProductInputDeliveryError::EmptyInput
+        | AgentRunProductInputDeliveryError::InvalidClientCommandId => {
+            ApiError::BadRequest(error.to_string())
+        }
+        AgentRunProductInputDeliveryError::Command(_)
+        | AgentRunProductInputDeliveryError::TitleInitialization(_) => {
+            ApiError::ServiceUnavailable(error.to_string())
+        }
+    }
+}
+
+fn product_fork_error(error: AgentRunProductForkError) -> ApiError {
+    match error {
+        AgentRunProductForkError::InvalidRequest => ApiError::BadRequest(error.to_string()),
+        AgentRunProductForkError::TargetNotBound
+        | AgentRunProductForkError::ForkUnavailable
+        | AgentRunProductForkError::CompletedTurnMissing
+        | AgentRunProductForkError::ForkPointNotFound
+        | AgentRunProductForkError::RequestConflict
+        | AgentRunProductForkError::Failed(_) => ApiError::Conflict(error.to_string()),
+        AgentRunProductForkError::RecoveryPending { .. } | AgentRunProductForkError::Lost(_) => {
+            ApiError::ServiceUnavailable(error.to_string())
+        }
+        AgentRunProductForkError::Projection(_)
+        | AgentRunProductForkError::Persistence(_)
+        | AgentRunProductForkError::Protocol(_) => ApiError::Internal(error.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentRunListQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+async fn get_project_agent_runs(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(project_id): Path<String>,
+    Query(query): Query<AgentRunListQuery>,
+) -> Result<Json<agentdash_contracts::workflow::ProjectAgentRunListView>, ApiError> {
+    let project_id = parse_uuid(&project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let page = ProjectAgentRunListQuery::new(ProjectAgentRunListQueryDeps {
+        run_repo: state.repos.lifecycle_run_repo.clone(),
+        agent_repo: state.repos.lifecycle_agent_repo.clone(),
+        lineage_repo: state.repos.agent_lineage_repo.clone(),
+        subject_repo: state.repos.lifecycle_subject_association_repo.clone(),
+        project_agent_repo: state.repos.project_agent_repo.clone(),
+    })
+    .list(ProjectAgentRunListInput {
+        project_id,
+        limit: query.limit,
+        cursor: query.cursor.as_deref(),
     })
     .await
-    .map_err(ApiError::from)?;
-    Ok(Json(agent_run_command_receipt_contract(receipt)))
-}
-
-async fn compact_agent_run_context(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Json(body): Json<AgentRunCommandOnlyRequest>,
-) -> Result<Json<AgentRunContextCompactionCommandResponse>, ApiError> {
-    if body.client_command_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
-        ));
-    }
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    agent_run_workspace_command_policy(state.as_ref())
-        .ensure_command_allowed(
-            command_policy_context(&context),
-            app_workspace::AgentRunWorkspaceCommandPrecondition::ContextCompact {
-                command: command_precondition_to_application(body.command.clone()),
-            },
-        )
-        .await
-        .map_err(command_policy_error)?;
-
-    let runtime = AgentRunContextCompactionSessionRuntimePort::new(
-        state.services.session_launch.clone(),
-        state.repos.manual_context_compaction_request_repo.clone(),
-    );
-    let result =
-        AgentRunContextCompactionCommandService::new(AgentRunContextCompactionCommandDeps {
-            command_receipt_repo: state.repos.agent_run_command_receipt_repo.as_ref(),
-            compaction_request_repo: state.repos.manual_context_compaction_request_repo.as_ref(),
-            delivery_selection_repos: delivery_runtime_selection_repositories(state.as_ref()),
-            runtime: &runtime,
-        })
-        .compact_context(AgentRunContextCompactionCommand {
-            run_id: context.run.id,
-            agent_id: context.agent.id,
-            client_command_id: body.client_command_id,
-        })
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(agent_run_context_compaction_command_response(result)))
-}
-
-async fn get_agent_run_runtime_control(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<AgentRunWorkspaceView>, ApiError> {
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let mut view = agent_run_workspace_view(
-        load_agent_run_workspace_snapshot(&state, &context, &current_user.user_id).await?,
-    );
-    let (parent, children) =
-        resolve_agent_run_lineage(&state, &context.run, &context.agent).await?;
-    view.parent = parent;
-    view.children = children;
-    Ok(Json(view))
-}
-
-async fn list_agent_run_journal_events(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Query(query): Query<AgentRunJournalEventsQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let context = resolve_agent_run_context(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let after_seq = query.after_seq.unwrap_or_default();
-    let limit = query.limit.unwrap_or(500).clamp(1, 2_000);
-    let page = agent_run_journal_service(state.as_ref())
-        .load_visible_journal_page(
-            app_agent_run::AgentRunJournalQuery {
-                run_id: context.run.id,
-                agent_id: context.agent.id,
-                delivery_runtime_session_id: context.delivery_runtime_session_id,
-            },
-            after_seq,
-            limit,
-        )
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(agent_run_journal_page_to_contract(
-        context.run.id,
-        context.agent.id,
-        page,
-    )))
-}
-
-fn agent_run_journal_service(state: &AppState) -> app_agent_run::AgentRunJournalService {
-    app_agent_run::AgentRunJournalService::new(
-        state.services.session_branching.clone(),
-        agent_run_session_eventing(state.services.session_eventing.clone()),
-    )
-}
-
-fn agent_run_journal_page_to_contract(
-    run_id: Uuid,
-    agent_id: Uuid,
-    page: app_agent_run::AgentRunJournalPage,
-) -> SessionEventsPageResponse {
-    let journal_session_id = app_agent_run::agent_run_journal_session_id(run_id, agent_id);
-    SessionEventsPageResponse {
-        snapshot_seq: page.snapshot_seq,
-        events: page
-            .events
-            .into_iter()
-            .map(|event| agent_run_journal_event_to_contract(event, &journal_session_id))
-            .collect(),
-        has_more: page.has_more,
-        next_after_seq: page.next_after_seq,
-    }
-}
-
-fn agent_run_journal_event_to_contract(
-    event: app_agent_run::AgentRunJournalEvent,
-    journal_session_id: &str,
-) -> SessionEventResponse {
-    app_agent_run::project_event_to_agent_run_journal(
-        event.event,
-        event.journal_seq,
-        journal_session_id,
-    )
-    .into()
-}
-
-async fn list_agent_run_runtime_terminals(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<Vec<TerminalState>>, ApiError> {
-    let _ =
-        resolve_agent_run_terminal_launch_target(&state, &current_user, &run_id, &agent_id).await?;
+    .map_err(|error| ApiError::Internal(error.to_string()))?;
     Ok(Json(
-        state
-            .services
-            .terminal_registry
-            .list_terminals(&run_id, &agent_id),
+        agentdash_contracts::workflow::ProjectAgentRunListView {
+            project_id: page.project_id.to_string(),
+            agent_runs: page
+                .entries
+                .into_iter()
+                .map(
+                    |entry| agentdash_contracts::workflow::AgentRunListEntryView {
+                        run_ref: agentdash_contracts::workflow::LifecycleRunRefDto {
+                            run_id: entry.run_id.to_string(),
+                        },
+                        agent_ref: agentdash_contracts::workflow::AgentRunRefDto {
+                            run_id: entry.run_id.to_string(),
+                            agent_id: entry.agent_id.to_string(),
+                        },
+                        title: entry.title,
+                        lifecycle_status: entry.lifecycle_status,
+                        last_activity_at: entry.last_activity_at,
+                        project_agent_label: entry.project_agent_label,
+                        source: entry.source,
+                        subagent_count: entry.subagent_count,
+                        children: entry
+                            .children
+                            .into_iter()
+                            .map(agent_run_child_view)
+                            .collect(),
+                        subject_ref: entry.subject.as_ref().map(|subject| {
+                            agentdash_contracts::workflow::SubjectRefDto {
+                                kind: subject.kind.clone(),
+                                id: subject.id.to_string(),
+                            }
+                        }),
+                        subject_label: entry.subject.and_then(|subject| subject.label),
+                    },
+                )
+                .collect(),
+            next_cursor: page.next_cursor,
+        },
     ))
 }
 
-async fn spawn_agent_run_runtime_terminal(
+fn agent_run_child_view(
+    child: AgentRunListChildModel,
+) -> agentdash_contracts::workflow::AgentRunListChildView {
+    agentdash_contracts::workflow::AgentRunListChildView {
+        run_ref: agentdash_contracts::workflow::LifecycleRunRefDto {
+            run_id: child.run_id.to_string(),
+        },
+        agent_ref: agentdash_contracts::workflow::AgentRunRefDto {
+            run_id: child.run_id.to_string(),
+            agent_id: child.agent_id.to_string(),
+        },
+        title: child.title,
+        lifecycle_status: child.lifecycle_status,
+        last_activity_at: child.last_activity_at,
+        project_agent_label: child.project_agent_label,
+        source: child.source,
+        children: child
+            .children
+            .into_iter()
+            .map(agent_run_child_view)
+            .collect(),
+    }
+}
+
+async fn delete_project_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((project_id, run_id)): Path<(String, String)>,
+) -> Result<Json<agentdash_contracts::workflow::DeleteAgentRunResponse>, ApiError> {
+    let project_id = parse_uuid(&project_id, "project_id")?;
+    let run_id = parse_uuid(&run_id, "run_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Configure,
+    )
+    .await?;
+    let outcome = AgentRunProductDeleteService::new(state.repos.lifecycle_run_repo.clone())
+        .delete(AgentRunProductDeleteRequest { project_id, run_id })
+        .await
+        .map_err(agent_run_product_delete_error)?;
+    Ok(Json(
+        agentdash_contracts::workflow::DeleteAgentRunResponse {
+            deleted: outcome.deleted,
+            project_id: outcome.project_id.to_string(),
+            run_id: outcome.run_id.to_string(),
+        },
+    ))
+}
+
+fn agent_run_product_delete_error(error: AgentRunProductDeleteError) -> ApiError {
+    match error {
+        AgentRunProductDeleteError::ProjectMismatch => ApiError::NotFound(error.to_string()),
+        AgentRunProductDeleteError::Repository(_) => ApiError::Internal(error.to_string()),
+    }
+}
+
+async fn get_agent_run_workspace(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-    Json(body): Json<SpawnTerminalBody>,
-) -> Result<impl IntoResponse, ApiError> {
-    let (runtime_session_id, launch_target) =
-        resolve_agent_run_terminal_launch_target(&state, &current_user, &run_id, &agent_id).await?;
-    terminals::spawn_terminal_for_runtime_session(
-        &state,
-        &runtime_session_id,
+) -> Result<Json<agentdash_contracts::workflow::AgentRunWorkspaceView>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
         &run_id,
         &agent_id,
-        launch_target,
-        body,
-    )
-    .await
-}
-
-async fn resolve_agent_run_terminal_launch_target(
-    state: &Arc<AppState>,
-    current_user: &agentdash_integration_api::AuthIdentity,
-    run_id: &str,
-    agent_id: &str,
-) -> Result<(String, AgentRunTerminalLaunchTarget), ApiError> {
-    let context = resolve_agent_run_context(
-        state.as_ref(),
-        current_user,
-        run_id,
-        agent_id,
         ProjectPermission::Use,
     )
     .await?;
-    let runtime_session_id = delivery_runtime_session_from_agent_run_context(&context)?;
-    // Ensure terminal registry knows this session -> AgentRun binding
+    let run = state
+        .repos
+        .lifecycle_run_repo
+        .get_by_id(target.run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("AgentRun 不存在".into()))?;
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(target.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("AgentRun Agent 不存在".into()))?;
+    let (parent, children) =
+        super::agent_run_workspace::resolve_lineage(state.as_ref(), &run, &agent).await?;
+    let mut workspace =
+        super::agent_run_workspace::load(state.as_ref(), run, agent, &current_user).await?;
+    workspace.parent = parent;
+    workspace.children = children;
+    Ok(Json(workspace))
+}
+
+async fn get_managed_runtime_snapshot(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<agentdash_agent_runtime_contract::ManagedRuntimeSnapshot>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     state
         .services
-        .terminal_registry
-        .bind_session(&runtime_session_id, run_id, agent_id);
-    let launch_target =
-        resolve_terminal_launch_target_for_runtime_session(state, &runtime_session_id).await?;
-    if launch_target.project_id != context.run.project_id {
-        return Err(ApiError::Conflict(format!(
-            "AgentRun {} / {} 与 terminal runtime surface Project 不一致",
-            context.run.id, context.agent.id
-        )));
-    }
-    Ok((runtime_session_id, launch_target.target))
+        .agent_run_product_projection
+        .runtime_snapshot(&target)
+        .await
+        .map(Json)
+        .map_err(agent_run_product_projection_error)
 }
 
-async fn get_agent_run_runtime_context_projection(
+async fn get_managed_runtime_context_projection(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<impl IntoResponse, ApiError> {
-    let runtime_session_id =
-        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    Ok(Json(
-        runtime_traces::load_runtime_trace_context_projection(state.as_ref(), &runtime_session_id)
-            .await?,
-    ))
-}
-
-async fn get_agent_run_runtime_context_audit(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Query(query): Query<ContextAuditQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    // Validate the AgentRun exists and user has access
-    let _runtime_session_id =
-        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    Ok(Json(
-        runtime_traces::load_runtime_trace_context_audit(state.as_ref(), &run_id, &agent_id, query)
-            .await?,
-    ))
-}
-
-async fn agent_run_journal_stream_route(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    headers: HeaderMap,
-    Query(query): Query<AgentRunJournalStreamQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let context = resolve_agent_run_context(
+) -> Result<Json<agentdash_contracts::session::SessionProjectionViewResponse>, ApiError> {
+    let target = authorize_agent_run_target(
         state.as_ref(),
         &current_user,
         &run_id,
@@ -1252,339 +646,185 @@ async fn agent_run_journal_stream_route(
         ProjectPermission::Use,
     )
     .await?;
-    agent_run_journal_stream_ndjson(state.as_ref(), context, headers, query).await
+    let snapshot = state
+        .services
+        .agent_run_product_projection
+        .runtime_snapshot(&target)
+        .await
+        .map_err(agent_run_product_projection_error)?;
+    Ok(Json(project_managed_runtime_context(&snapshot)))
 }
 
-async fn agent_run_journal_stream_ndjson(
-    state: &AppState,
-    context: AgentRunContext,
-    headers: HeaderMap,
-    query: AgentRunJournalStreamQuery,
-) -> Result<Response, ApiError> {
-    // Ensure terminal registry knows this session -> AgentRun binding
-    if let Some(ref session_id) = context.delivery_runtime_session_id {
-        state.services.terminal_registry.bind_session(
-            session_id,
-            &context.run.id.to_string(),
-            &context.agent.id.to_string(),
-        );
-    }
-    let resume_from = parse_agent_run_journal_resume_from_header(&headers)?
-        .or(query.since_id)
-        .unwrap_or(0);
-    let subscription = agent_run_journal_service(state)
-        .subscribe_visible_journal_stream(
-            app_agent_run::AgentRunJournalQuery {
-                run_id: context.run.id,
-                agent_id: context.agent.id,
-                delivery_runtime_session_id: context.delivery_runtime_session_id.clone(),
-            },
-            resume_from,
-        )
+async fn get_agent_run_live_events(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let mut live = state
+        .services
+        .agent_run_product_projection
+        .runtime_live_events(&target)
         .await
-        .map_err(ApiError::from)?;
-    let stream_state = subscription.state;
-    let mut rx = subscription.live_events;
-    let journal_session_id = stream_state.journal_session_id.clone();
-    let delivery_runtime_session_id = stream_state.delivery_runtime_session_id.clone();
-
+        .map_err(agent_run_product_projection_error)?;
     let stream = async_stream::stream! {
-        let mut seq = resume_from;
-        for event in stream_state.prefix_events.iter().cloned() {
-            seq = event.journal_seq;
-            let projected = app_agent_run::project_event_to_agent_run_journal(
-                event.event,
-                event.journal_seq,
-                &journal_session_id,
-            );
-            if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::event(projected)) {
-                yield Ok::<Bytes, Infallible>(line);
-            }
-        }
-
-        for event in stream_state.backlog_events.iter().cloned() {
-            seq = event.journal_seq;
-            let projected = app_agent_run::project_event_to_agent_run_journal(
-                event.event,
-                event.journal_seq,
-                &journal_session_id,
-            );
-            if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::event(projected)) {
-                yield Ok::<Bytes, Infallible>(line);
-            }
-        }
-
-        if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::connected(
-            stream_state.connected_seq,
-            stream_state.ephemeral_epoch,
-        )) {
-            yield Ok::<Bytes, Infallible>(line);
-        }
-
-        for event in stream_state.ephemeral_backlog_events.iter().cloned() {
-            let projected = app_agent_run::project_event_to_agent_run_journal(
-                event.event,
-                event.journal_seq,
-                &journal_session_id,
-            );
-            if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::ephemeral_event(projected)) {
-                yield Ok::<Bytes, Infallible>(line);
-            }
-        }
-
-        let mut heartbeat_tick = tokio::time::interval(AGENT_RUN_JOURNAL_STREAM_HEARTBEAT_INTERVAL);
-        heartbeat_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
+        // Flush the transport immediately so browser/dev proxies expose the connected state
+        // before the first Agent event. Empty NDJSON lines carry no domain fact.
+        yield Ok::<Bytes, std::convert::Infallible>(Bytes::from_static(b"\n"));
         loop {
-            tokio::select! {
-                next = rx.recv() => {
-                    match next {
-                        Ok(event) => {
-                            let envelope = match stream_state.project_live_event(event) {
-                                app_agent_run::AgentRunJournalLiveEvent::Durable(event) => {
-                                    seq = event.journal_seq;
-                                    let projected = app_agent_run::project_event_to_agent_run_journal(
-                                        event.event,
-                                        event.journal_seq,
-                                        &journal_session_id,
-                                    );
-                                    SessionNdjsonEnvelope::event(projected)
-                                }
-                                app_agent_run::AgentRunJournalLiveEvent::Ephemeral(event) => {
-                                    let projected = app_agent_run::project_event_to_agent_run_journal(
-                                        event.event,
-                                        event.journal_seq,
-                                        &journal_session_id,
-                                    );
-                                    SessionNdjsonEnvelope::ephemeral_event(projected)
-                                }
-                                app_agent_run::AgentRunJournalLiveEvent::StaleDurable => {
-                                    continue;
-                                }
-                            };
-                            if let Some(line) = agent_run_journal_ndjson_line(&envelope) {
-                                yield Ok::<Bytes, Infallible>(line);
-                            }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            diag!(Warn, Subsystem::Api,
-                                run_id = %context.run.id,
-                                agent_id = %context.agent.id,
-                                runtime_session_id = %delivery_runtime_session_id,
-                                lagged = n,
-                                "AgentRun journal stream 订阅落后，部分消息被跳过（NDJSON）"
-                            );
-                            continue;
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            diag!(Info, Subsystem::Api,
-                                run_id = %context.run.id,
-                                agent_id = %context.agent.id,
-                                runtime_session_id = %delivery_runtime_session_id,
-                                last_seq = seq,
-                                "AgentRun journal stream 连接关闭：广播通道关闭（NDJSON）"
-                            );
-                            break;
-                        }
+            match live.next().await {
+                Ok(Some(event)) => match serde_json::to_vec(&event) {
+                    Ok(mut raw) => {
+                        raw.push(b'\n');
+                        yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(raw));
                     }
-                }
-                _ = heartbeat_tick.tick() => {
-                    if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::heartbeat_now()) {
-                        yield Ok::<Bytes, Infallible>(line);
-                    }
-                }
+                    Err(_) => break,
+                },
+                Ok(None) | Err(_) => break,
             }
         }
     };
-
     Ok((
         [
-            (
-                axum::http::header::CONTENT_TYPE,
-                "application/x-ndjson; charset=utf-8",
-            ),
-            (axum::http::header::CACHE_CONTROL, "no-cache, no-transform"),
-            (axum::http::header::CONNECTION, "keep-alive"),
-            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::CONTENT_TYPE, "application/x-ndjson; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache, no-transform"),
+            (header::CONNECTION, "keep-alive"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
         Body::from_stream(stream),
-    )
-        .into_response())
+    ))
 }
 
-fn parse_agent_run_journal_resume_from_header(
-    headers: &HeaderMap,
-) -> Result<Option<u64>, ApiError> {
-    let Some(value) = headers.get("x-stream-since-id") else {
-        return Ok(None);
+async fn execute_managed_runtime_command(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<product_projection_contract::AgentRunProductRuntimeCommandRequest>,
+) -> Result<Json<agentdash_agent_runtime_contract::ManagedRuntimeOperationReceipt>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let command = match body.command {
+        product_projection_contract::AgentRunProductRuntimeCommand::Resume => {
+            AgentRunProductCommand::Resume
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::SubmitInput { content } => {
+            AgentRunProductCommand::SubmitInput { content }
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::Interrupt => {
+            AgentRunProductCommand::Interrupt
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::RequestCompaction => {
+            AgentRunProductCommand::RequestCompaction
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::Rebind => {
+            AgentRunProductCommand::Rebind
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::ResolveInteraction {
+            interaction_id,
+            response,
+        } => AgentRunProductCommand::ResolveInteraction {
+            interaction_id,
+            response,
+        },
+        product_projection_contract::AgentRunProductRuntimeCommand::Close => {
+            AgentRunProductCommand::Close
+        }
     };
-    let raw = value
-        .to_str()
-        .map_err(|_| ApiError::BadRequest("x-stream-since-id 不是有效 UTF-8".to_string()))?;
-    let parsed = raw
-        .parse::<i64>()
-        .map_err(|_| ApiError::BadRequest("x-stream-since-id 不是有效整数".to_string()))?;
-    if parsed < 0 {
+    state
+        .services
+        .agent_run_product_projection_composition
+        .commands
+        .execute(AgentRunProductCommandRequest {
+            target,
+            client_command_id: body.client_command_id,
+            command,
+        })
+        .await
+        .map(Json)
+        .map_err(agent_run_product_command_error)
+}
+
+async fn get_agent_run_terminal_snapshot(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<product_projection_contract::AgentRunTerminalSnapshot>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    state
+        .services
+        .agent_run_product_projection
+        .terminal_snapshot(&target)
+        .await
+        .map(product_projection_contract::AgentRunTerminalSnapshot::from)
+        .map(Json)
+        .map_err(agent_run_product_projection_error)
+}
+
+async fn get_agent_run_terminal_changes(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<ProductProjectionChangesQuery>,
+) -> Result<Json<product_projection_contract::AgentRunTerminalChangePage>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    state
+        .services
+        .agent_run_product_projection
+        .terminal_changes(
+            &target,
+            query.after.map(AgentRunTerminalChangeSequence),
+            product_projection_limit(query.limit)?,
+        )
+        .await
+        .map(product_projection_contract::AgentRunTerminalChangePage::from)
+        .map(Json)
+        .map_err(agent_run_product_projection_error)
+}
+
+fn product_projection_limit(limit: Option<usize>) -> Result<usize, ApiError> {
+    let limit = limit.unwrap_or(DEFAULT_PRODUCT_CHANGE_PAGE_LIMIT);
+    if !(1..=MAX_PRODUCT_CHANGE_PAGE_LIMIT).contains(&limit) {
         return Err(ApiError::BadRequest(
-            "x-stream-since-id 不能为负数".to_string(),
+            "Product projection change page limit 必须位于 1..=256".to_string(),
         ));
     }
-    Ok(Some(parsed as u64))
+    Ok(limit)
 }
 
-fn agent_run_journal_ndjson_line(value: &SessionNdjsonEnvelope) -> Option<Bytes> {
-    match serde_json::to_vec(value) {
-        Ok(mut bytes) => {
-            bytes.push(b'\n');
-            Some(Bytes::from(bytes))
-        }
-        Err(err) => {
-            let context =
-                DiagnosticErrorContext::new("agent_run_journal.ndjson", "serialize_event");
-            diag_error!(
-                Error,
-                Subsystem::Api,
-                context = &context,
-                error = &err,
-                route = "/api/agent-runs/{run_id}/agents/{agent_id}/journal/stream/ndjson",
-                "序列化 AgentRun journal NDJSON 消息失败"
-            );
-            None
-        }
-    }
-}
-
-async fn approve_agent_run_tool_call(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
-) -> Result<impl IntoResponse, ApiError> {
-    let context = resolve_agent_run_context(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    approve_tool_call_for_agent_run_delivery(state.as_ref(), &context, tool_call_id).await
-}
-
-async fn reject_agent_run_tool_call(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
-    Json(req): Json<RejectToolApprovalRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let context = resolve_agent_run_context(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    reject_tool_call_for_agent_run_delivery(state.as_ref(), &context, tool_call_id, req.reason)
-        .await
-}
-
-async fn approve_tool_call_for_agent_run_delivery(
-    state: &AppState,
-    context: &AgentRunContext,
-    tool_call_id: String,
-) -> Result<Json<AgentRunToolCallApprovalResponse>, ApiError> {
-    let session_id = delivery_runtime_session_from_agent_run_context(context)?;
-    state
-        .services
-        .session_control
-        .approve_tool_call(&session_id, &tool_call_id)
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(Json(AgentRunToolCallApprovalResponse {
-        approved: true,
-        run_ref: LifecycleRunRefDto {
-            run_id: context.run.id.to_string(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: context.run.id.to_string(),
-            agent_id: context.agent.id.to_string(),
-        },
-        tool_call_id,
-    }))
-}
-
-async fn reject_tool_call_for_agent_run_delivery(
-    state: &AppState,
-    context: &AgentRunContext,
-    tool_call_id: String,
-    reason: Option<String>,
-) -> Result<Json<AgentRunToolCallRejectionResponse>, ApiError> {
-    let session_id = delivery_runtime_session_from_agent_run_context(context)?;
-    state
-        .services
-        .session_control
-        .reject_tool_call(&session_id, &tool_call_id, reason)
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(Json(AgentRunToolCallRejectionResponse {
-        rejected: true,
-        run_ref: LifecycleRunRefDto {
-            run_id: context.run.id.to_string(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: context.run.id.to_string(),
-            agent_id: context.agent.id.to_string(),
-        },
-        tool_call_id,
-    }))
-}
-
-async fn resolve_agent_run_delivery_runtime(
-    state: &Arc<AppState>,
-    current_user: &agentdash_integration_api::AuthIdentity,
-    run_id: &str,
-    agent_id: &str,
-) -> Result<String, ApiError> {
-    let context = resolve_agent_run_context(
-        state,
-        current_user,
-        run_id,
-        agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    delivery_runtime_session_from_agent_run_context(&context)
-}
-
-fn delivery_runtime_session_from_agent_run_context(
-    context: &AgentRunContext,
-) -> Result<String, ApiError> {
-    context.delivery_runtime_session_id.clone().ok_or_else(|| {
-        ApiError::Conflict(format!(
-            "AgentRun {} / {} 缺少 delivery runtime",
-            context.run.id, context.agent.id
-        ))
-    })
-}
-
-fn delivery_frame_id_from_agent_run_context(context: &AgentRunContext) -> Result<Uuid, ApiError> {
-    context.delivery_frame_id.ok_or_else(|| {
-        ApiError::Conflict(format!(
-            "AgentRun {} / {} 缺少 current delivery frame",
-            context.run.id, context.agent.id
-        ))
-    })
-}
-
-async fn resolve_agent_run_context(
+async fn authorize_agent_run_target(
     state: &AppState,
     current_user: &agentdash_integration_api::AuthIdentity,
     run_id: &str,
     agent_id: &str,
     permission: ProjectPermission,
-) -> Result<AgentRunContext, ApiError> {
+) -> Result<AgentRunTarget, ApiError> {
     let run_id = parse_uuid(run_id, "run_id")?;
     let agent_id = parse_uuid(agent_id, "agent_id")?;
     let run = state
@@ -1607,1077 +847,62 @@ async fn resolve_agent_run_context(
             "LifecycleAgent {agent_id} 不属于 LifecycleRun {run_id}"
         )));
     }
-    let delivery_runtime = delivery_runtime_session_for_agent_run(state, run.id, agent.id).await?;
-    Ok(AgentRunContext {
-        run,
-        agent,
-        delivery_runtime_session_id: delivery_runtime
-            .as_ref()
-            .map(|delivery| delivery.runtime_session_id.clone()),
-        delivery_frame_id: delivery_runtime.map(|delivery| delivery.frame_id),
-    })
+    Ok(AgentRunTarget { run_id, agent_id })
 }
 
-async fn delivery_runtime_session_for_agent_run(
-    state: &AppState,
-    run_id: Uuid,
-    agent_id: Uuid,
-) -> Result<Option<AgentRunDeliveryRuntimeContext>, ApiError> {
-    delivery_runtime_session_for_agent_run_from_selection(
-        delivery_runtime_selection_service(state),
-        run_id,
-        agent_id,
-    )
-    .await
-}
-
-async fn delivery_runtime_session_for_agent_run_from_selection(
-    selection_service: DeliveryRuntimeSelectionService<'_>,
-    run_id: Uuid,
-    agent_id: Uuid,
-) -> Result<Option<AgentRunDeliveryRuntimeContext>, ApiError> {
-    match selection_service
-        .select_current_delivery(run_id, agent_id)
-        .await
-    {
-        Ok(selection) => Ok(Some(AgentRunDeliveryRuntimeContext {
-            runtime_session_id: selection.runtime_session_id,
-            frame_id: selection.current_frame_id,
-        })),
-        Err(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { .. }) => Ok(None),
-        Err(error) => Err(delivery_runtime_selection_error(error)),
-    }
-}
-
-fn delivery_runtime_selection_error(error: DeliveryRuntimeSelectionError) -> ApiError {
+fn agent_run_product_projection_error(error: AgentRunProductProjectionError) -> ApiError {
     match error {
-        DeliveryRuntimeSelectionError::RunNotFound { .. }
-        | DeliveryRuntimeSelectionError::AgentNotFound { .. }
-        | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. }
-        | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. }
-        | DeliveryRuntimeSelectionError::SubjectNotFound { .. } => {
-            ApiError::NotFound(error.to_string())
+        AgentRunProductProjectionError::TargetNotBound => {
+            ApiError::Conflict("AgentRun 尚未建立 committed Runtime binding".to_string())
         }
-        DeliveryRuntimeSelectionError::Repository(source) => ApiError::from(source),
-        other => ApiError::Conflict(other.to_string()),
-    }
-}
-
-async fn load_agent_run_workspace_snapshot(
-    state: &AppState,
-    context: &AgentRunContext,
-    viewer_user_id: &str,
-) -> Result<app_workspace::AgentRunWorkspaceSnapshot, ApiError> {
-    let vfs_runtime = ApiVfsSurfaceRuntimeProjection::new(
-        state.services.backend_registry.clone(),
-        state.services.mount_provider_registry.clone(),
-    );
-    let lifecycle_surface_projection = AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
-        state.repos.skill_asset_repo.clone(),
-    );
-    let service = app_workspace::AgentRunWorkspaceQueryService::new(
-        agent_run_workspace_query_deps(state),
-        agent_run_session_core(state.services.session_core.clone()),
-        agent_run_session_control(state.services.session_control.clone()),
-        &vfs_runtime,
-        &lifecycle_surface_projection,
-        state.services.lifecycle_read_model_query.as_ref(),
-    );
-    service
-        .resolve(app_workspace::AgentRunWorkspaceQueryInput {
-            run: context.run.clone(),
-            agent: context.agent.clone(),
-            viewer_user_id: Some(viewer_user_id.to_string()),
-        })
-        .await
-        .map_err(ApiError::from)
-}
-
-/// 轻量列表条目：列表/lineage ref 共用，避免为每个主 Run 走完整详情快照。
-async fn load_agent_run_list_item(
-    state: &AppState,
-    run: LifecycleRun,
-    agent: LifecycleAgent,
-) -> Result<app_workspace::AgentRunListItem, ApiError> {
-    let vfs_runtime = ApiVfsSurfaceRuntimeProjection::new(
-        state.services.backend_registry.clone(),
-        state.services.mount_provider_registry.clone(),
-    );
-    let lifecycle_surface_projection = AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
-        state.repos.skill_asset_repo.clone(),
-    );
-    let service = app_workspace::AgentRunWorkspaceQueryService::new(
-        agent_run_workspace_query_deps(state),
-        agent_run_session_core(state.services.session_core.clone()),
-        agent_run_session_control(state.services.session_control.clone()),
-        &vfs_runtime,
-        &lifecycle_surface_projection,
-        state.services.lifecycle_read_model_query.as_ref(),
-    );
-    service
-        .resolve_list_item(app_workspace::AgentRunWorkspaceQueryInput {
-            run,
-            agent,
-            viewer_user_id: None,
-        })
-        .await
-        .map_err(ApiError::from)
-}
-
-/// 从 run 的全部 lineage 边构建控制树邻接（parent -> [child]）与 child id 集合。
-/// root = 未作为任何 lineage child 出现的 agent。
-fn build_lineage_forest(lineages: &[AgentLineage]) -> (HashMap<Uuid, Vec<Uuid>>, HashSet<Uuid>) {
-    let mut children_map: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
-    let mut child_ids: HashSet<Uuid> = HashSet::new();
-    for lineage in lineages {
-        if let Some(parent_agent_id) = lineage.parent_agent_id {
-            children_map
-                .entry(parent_agent_id)
-                .or_default()
-                .push(lineage.child_agent_id);
-        }
-        child_ids.insert(lineage.child_agent_id);
-    }
-    (children_map, child_ids)
-}
-
-fn shell_model_to_contract(
-    shell: app_workspace::AgentRunWorkspaceShellModel,
-) -> AgentRunWorkspaceShell {
-    AgentRunWorkspaceShell {
-        display_title: shell.display_title,
-        title_source: shell.title_source,
-        delivery_status: shell.delivery_status,
-        last_turn_id: shell.last_turn_id,
-        last_activity_at: shell.last_activity_at,
-    }
-}
-
-/// Root list entry 的 activity 展示时间必须与服务端 keyset 排序 / cursor 同源。
-fn root_list_shell_model_to_contract(
-    run: &LifecycleRun,
-    shell: app_workspace::AgentRunWorkspaceShellModel,
-) -> AgentRunWorkspaceShell {
-    let mut shell = shell_model_to_contract(shell);
-    shell.last_activity_at = run.last_activity_at.to_rfc3339();
-    shell
-}
-
-/// 内联子 Agent 节点：复用列表条目的 shell（含真实 delivery_status / last_activity_at）。
-fn list_child_from_item(
-    run: &LifecycleRun,
-    item: app_workspace::AgentRunListItem,
-    subagent_count: u32,
-) -> AgentRunListChild {
-    AgentRunListChild {
-        run_ref: LifecycleRunRefDto {
-            run_id: run.id.to_string(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: run.id.to_string(),
-            agent_id: item.agent.id.to_string(),
-        },
-        project_agent_label: item.project_agent_label,
-        source: item.agent.source.as_str().to_string(),
-        shell: shell_model_to_contract(item.shell),
-        subagent_count,
-        children: Vec::new(),
-    }
-}
-
-fn list_entry_from_item(
-    run: &LifecycleRun,
-    item: app_workspace::AgentRunListItem,
-    subagent_count: u32,
-    children: Vec<AgentRunListChild>,
-) -> AgentRunWorkspaceListEntry {
-    AgentRunWorkspaceListEntry {
-        run_ref: LifecycleRunRefDto {
-            run_id: run.id.to_string(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: run.id.to_string(),
-            agent_id: item.agent.id.to_string(),
-        },
-        project_id: run.project_id.to_string(),
-        project_agent_label: item.project_agent_label.clone(),
-        source: item.agent.source.as_str().to_string(),
-        shell: root_list_shell_model_to_contract(run, item.shell),
-        run_status: lifecycle_run_status_to_contract(run.status),
-        subagent_count,
-        children,
-        // 列表 UI 不消费 frame_ref，省去 frame runtime 解析。
-        frame_ref: None,
-        subject_ref: item.subject_ref.map(subject_ref_to_contract),
-        subject_label: item.subject_label,
-    }
-}
-
-fn agent_run_workspace_view(
-    snapshot: app_workspace::AgentRunWorkspaceSnapshot,
-) -> AgentRunWorkspaceView {
-    let resource_surface = snapshot
-        .resource_surface
-        .map(vfs_surface_dto::surface_from_application);
-    let resource_surface_coordinate = snapshot
-        .resource_surface_coordinate
-        .map(resource_surface_coordinate_to_contract);
-    let mailbox = workspace_mailbox_to_contract(snapshot.mailbox);
-    let mailbox_messages = snapshot
-        .mailbox_messages
-        .into_iter()
-        .map(mailbox_message_view)
-        .collect();
-    let conversation =
-        conversation_to_contract(snapshot.conversation, Some(mailbox), mailbox_messages);
-    let control_plane = workspace_control_plane_from_conversation(&conversation);
-
-    AgentRunWorkspaceView {
-        run_ref: LifecycleRunRefDto {
-            run_id: snapshot.run.id.to_string(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: snapshot.run.id.to_string(),
-            agent_id: snapshot.agent.id.to_string(),
-        },
-        project_id: snapshot.run.project_id.to_string(),
-        shell: AgentRunWorkspaceShell {
-            display_title: snapshot.shell.display_title,
-            title_source: snapshot.shell.title_source,
-            delivery_status: snapshot.shell.delivery_status,
-            last_turn_id: snapshot.shell.last_turn_id,
-            last_activity_at: snapshot.shell.last_activity_at,
-        },
-        control_plane,
-        agent: snapshot.agent_view.map(|agent| AgentRunView {
-            agent_ref: AgentRunRefDto {
-                run_id: agent.agent_ref.run_id,
-                agent_id: agent.agent_ref.agent_id,
-            },
-            project_id: agent.project_id,
-            source: agent.source,
-            project_agent_id: agent.project_agent_id,
-            status: agent.status,
-            last_delivery_status: agent.last_delivery_status,
-            created_at: agent.created_at,
-            updated_at: agent.updated_at,
-        }),
-        frame_runtime: snapshot.frame_runtime.map(frame_runtime_to_contract),
-        subject_associations: snapshot
-            .subject_associations
-            .into_iter()
-            .map(|association| LifecycleSubjectAssociationDto {
-                id: association.id,
-                anchor_run_id: association.anchor_run_id,
-                anchor_agent_id: association.anchor_agent_id,
-                subject_ref: SubjectRefDto {
-                    kind: association.subject_ref.kind,
-                    id: association.subject_ref.id,
-                },
-                role: association.role,
-                metadata: association.metadata,
-                created_at: association.created_at,
-            })
-            .collect(),
-        resource_surface,
-        resource_surface_coordinate,
-        conversation: Some(conversation),
-        // lineage 由 get_agent_run_workspace 单独填充（列表路径不需要，保持默认）。
-        parent: None,
-        children: Vec::new(),
-    }
-}
-
-fn resource_surface_coordinate_to_contract(
-    coordinate: app_workspace::AgentRunResourceSurfaceCoordinateModel,
-) -> AgentRunResourceSurfaceCoordinateView {
-    AgentRunResourceSurfaceCoordinateView {
-        surface_frame_ref: AgentFrameRefDto {
-            agent_id: coordinate.surface_frame_ref.agent_id,
-            frame_id: coordinate.surface_frame_ref.frame_id,
-            revision: coordinate.surface_frame_ref.revision,
-        },
-        source_anchor: coordinate.source_anchor.map(|anchor| {
-            AgentRunResourceSurfaceSourceAnchorView {
-                runtime_session_ref: RuntimeSessionRefDto {
-                    runtime_session_id: anchor.runtime_session_id,
-                },
-                launch_frame_id: anchor.launch_frame_id,
-                orchestration_id: anchor.orchestration_id,
-                node_path: anchor.node_path,
-                node_attempt: anchor.node_attempt,
-                delivery_status: anchor.delivery_status,
-                observed_at: anchor.observed_at,
+        AgentRunProductProjectionError::Binding(message)
+        | AgentRunProductProjectionError::Runtime(message)
+        | AgentRunProductProjectionError::Terminal(message) => ApiError::Internal(message),
+        AgentRunProductProjectionError::Agent(source) => match source.code {
+            AgentServiceErrorCode::InvalidArgument | AgentServiceErrorCode::Unsupported => {
+                ApiError::BadRequest(source.to_string())
             }
-        }),
-    }
-}
-
-fn conversation_to_contract(
-    conversation: app_agent_run::AgentConversationSnapshotModel,
-    mailbox_state: Option<MailboxStateView>,
-    mailbox_messages: Vec<MailboxMessageView>,
-) -> AgentConversationSnapshot {
-    AgentConversationSnapshot {
-        snapshot_id: conversation.snapshot_id,
-        identity: AgentConversationIdentity {
-            run_ref: LifecycleRunRefDto {
-                run_id: conversation.identity.run_id.clone(),
-            },
-            agent_ref: AgentRunRefDto {
-                run_id: conversation.identity.run_id,
-                agent_id: conversation.identity.agent_id,
-            },
-            project_id: conversation.identity.project_id,
-        },
-        lifecycle_context: AgentConversationLifecycleContext {
-            frame_ref: conversation
-                .lifecycle_context
-                .frame_ref
-                .map(|frame| AgentFrameRefDto {
-                    agent_id: frame.agent_id,
-                    frame_id: frame.frame_id,
-                    revision: frame.revision,
-                }),
-            subject_associations: conversation
-                .lifecycle_context
-                .subject_associations
-                .into_iter()
-                .map(|association| LifecycleSubjectAssociationDto {
-                    id: association.id,
-                    anchor_run_id: association.anchor_run_id,
-                    anchor_agent_id: association.anchor_agent_id,
-                    subject_ref: SubjectRefDto {
-                        kind: association.subject_ref.kind,
-                        id: association.subject_ref.id,
-                    },
-                    role: association.role,
-                    metadata: association.metadata,
-                    created_at: association.created_at,
-                })
-                .collect(),
-        },
-        execution: conversation_execution_to_contract(conversation.execution),
-        model_config: conversation_model_config_to_contract(conversation.model_config),
-        commands: conversation_command_set_to_contract(conversation.commands),
-        mailbox: ConversationMailboxSnapshotView {
-            visible_message_count: conversation.mailbox.visible_message_count,
-            paused: conversation.mailbox.paused,
-            user_attention: conversation.mailbox.user_attention,
-            resume_command: conversation
-                .mailbox
-                .resume_command
-                .map(conversation_command_to_contract),
-            state: mailbox_state,
-            messages: mailbox_messages,
-            waiting_items: conversation
-                .mailbox
-                .waiting_items
-                .into_iter()
-                .map(conversation_waiting_item_to_contract)
-                .collect(),
-        },
-        resource_surface: conversation
-            .resource_surface
-            .map(vfs_surface_dto::surface_from_application),
-        resource_surface_coordinate: conversation
-            .resource_surface_coordinate
-            .map(resource_surface_coordinate_to_contract),
-        diagnostics: conversation
-            .diagnostics
-            .into_iter()
-            .map(conversation_diagnostic_to_contract)
-            .collect(),
-    }
-}
-
-fn conversation_waiting_item_to_contract(
-    item: app_agent_run::ConversationWaitingItemModel,
-) -> ConversationWaitingItemView {
-    ConversationWaitingItemView {
-        wait_id: item.wait_id,
-        gate_id: item.gate_id,
-        kind: item.kind,
-        source_ref: item.source_ref,
-        correlation_ref: item.correlation_ref,
-        status: item.status,
-        source_label: item.source_label,
-        preview: item.preview,
-        created_at: item.created_at,
-        resolved_at: item.resolved_at,
-    }
-}
-
-fn conversation_execution_to_contract(
-    execution: app_agent_run::ConversationExecutionModel,
-) -> ConversationExecutionView {
-    ConversationExecutionView {
-        status: conversation_execution_status_to_contract(execution.status),
-        runtime_session_ref: execution
-            .runtime_session_id
-            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
-        active_turn_id: execution.active_turn_id,
-        reason: execution.reason,
-    }
-}
-
-fn conversation_execution_status_to_contract(
-    status: app_agent_run::ConversationExecutionStatusModel,
-) -> ConversationExecutionStatus {
-    match status {
-        app_agent_run::ConversationExecutionStatusModel::Draft => {
-            ConversationExecutionStatus::Draft
-        }
-        app_agent_run::ConversationExecutionStatusModel::ModelRequired => {
-            ConversationExecutionStatus::ModelRequired
-        }
-        app_agent_run::ConversationExecutionStatusModel::Ready => {
-            ConversationExecutionStatus::Ready
-        }
-        app_agent_run::ConversationExecutionStatusModel::StartingClaimed => {
-            ConversationExecutionStatus::StartingClaimed
-        }
-        app_agent_run::ConversationExecutionStatusModel::RunningActive => {
-            ConversationExecutionStatus::RunningActive
-        }
-        app_agent_run::ConversationExecutionStatusModel::Cancelling => {
-            ConversationExecutionStatus::Cancelling
-        }
-        app_agent_run::ConversationExecutionStatusModel::Terminal => {
-            ConversationExecutionStatus::Terminal
-        }
-        app_agent_run::ConversationExecutionStatusModel::FrameMissing => {
-            ConversationExecutionStatus::FrameMissing
-        }
-    }
-}
-
-fn conversation_model_config_to_contract(
-    config: app_agent_run::ConversationModelConfigModel,
-) -> ConversationModelConfigView {
-    ConversationModelConfigView {
-        status: match config.status {
-            app_agent_run::ConversationModelConfigStatusModel::Resolved => {
-                ConversationModelConfigStatus::Resolved
+            AgentServiceErrorCode::NotFound => ApiError::NotFound(source.to_string()),
+            AgentServiceErrorCode::Conflict | AgentServiceErrorCode::StaleBindingGeneration => {
+                ApiError::Conflict(source.to_string())
             }
-            app_agent_run::ConversationModelConfigStatusModel::ModelRequired => {
-                ConversationModelConfigStatus::ModelRequired
+            AgentServiceErrorCode::Unavailable | AgentServiceErrorCode::DeadlineExceeded => {
+                ApiError::ServiceUnavailable(source.to_string())
+            }
+            AgentServiceErrorCode::ProtocolViolation | AgentServiceErrorCode::Internal => {
+                ApiError::Internal(source.to_string())
             }
         },
-        effective_executor_config: config
-            .effective_executor_config
-            .map(conversation_effective_executor_config_to_contract),
-        missing_fields: config.missing_fields,
-        message: config.message,
+        AgentRunProductProjectionError::TargetMismatch => ApiError::Internal(error.to_string()),
     }
 }
 
-fn conversation_effective_executor_config_to_contract(
-    config: app_agent_run::ConversationEffectiveExecutorConfigModel,
-) -> ConversationEffectiveExecutorConfigView {
-    ConversationEffectiveExecutorConfigView {
-        executor: config.executor,
-        provider_id: config.provider_id,
-        model_id: config.model_id,
-        agent_id: config.agent_id,
-        thinking_level: config.thinking_level,
-        permission_policy: config.permission_policy,
-        source: match config.source {
-            app_agent_run::ConversationModelConfigSourceModel::ProjectAgentPreset => {
-                ConversationModelConfigSource::ProjectAgentPreset
+fn agent_run_product_command_error(error: AgentRunProductCommandError) -> ApiError {
+    match error {
+        AgentRunProductCommandError::TargetNotBound
+        | AgentRunProductCommandError::TargetMismatch
+        | AgentRunProductCommandError::ActiveTurnMissing => ApiError::Conflict(error.to_string()),
+        AgentRunProductCommandError::InvalidClientCommandId
+        | AgentRunProductCommandError::InvalidCommand(_) => ApiError::BadRequest(error.to_string()),
+        AgentRunProductCommandError::Unavailable(_)
+        | AgentRunProductCommandError::InspectionPending => {
+            ApiError::ServiceUnavailable(error.to_string())
+        }
+        AgentRunProductCommandError::Agent(ref source) => match source.code {
+            AgentServiceErrorCode::InvalidArgument | AgentServiceErrorCode::Unsupported => {
+                ApiError::BadRequest(error.to_string())
             }
-            app_agent_run::ConversationModelConfigSourceModel::FrameExecutionProfile => {
-                ConversationModelConfigSource::FrameExecutionProfile
+            AgentServiceErrorCode::Conflict | AgentServiceErrorCode::StaleBindingGeneration => {
+                ApiError::Conflict(error.to_string())
             }
-            app_agent_run::ConversationModelConfigSourceModel::UserOverride => {
-                ConversationModelConfigSource::UserOverride
+            AgentServiceErrorCode::Unavailable | AgentServiceErrorCode::DeadlineExceeded => {
+                ApiError::ServiceUnavailable(error.to_string())
             }
-            app_agent_run::ConversationModelConfigSourceModel::ExecutorDiscoveryDefault => {
-                ConversationModelConfigSource::ExecutorDiscoveryDefault
-            }
-            app_agent_run::ConversationModelConfigSourceModel::Unspecified => {
-                ConversationModelConfigSource::Unspecified
-            }
+            AgentServiceErrorCode::NotFound
+            | AgentServiceErrorCode::ProtocolViolation
+            | AgentServiceErrorCode::Internal => ApiError::Internal(error.to_string()),
         },
-    }
-}
-
-fn conversation_command_set_to_contract(
-    commands: app_agent_run::ConversationCommandSetModel,
-) -> ConversationCommandSetView {
-    ConversationCommandSetView {
-        ownership: ownership_to_contract(commands.ownership),
-        commands: commands
-            .commands
-            .into_iter()
-            .map(conversation_command_to_contract)
-            .collect(),
-        keyboard: ConversationKeyboardMapView {
-            enter: commands.keyboard.enter,
-            ctrl_enter: commands.keyboard.ctrl_enter,
-        },
-    }
-}
-
-fn ownership_to_contract(
-    ownership: app_agent_run::AgentRunOwnershipModel,
-) -> AgentRunOwnershipView {
-    AgentRunOwnershipView {
-        run_created_by_user_id: ownership.run_created_by_user_id,
-        agent_created_by_user_id: ownership.agent_created_by_user_id,
-        current_user_controls_run: ownership.current_user_controls_run,
-    }
-}
-
-fn conversation_command_to_contract(
-    command: app_agent_run::ConversationCommandModel,
-) -> ConversationCommandView {
-    ConversationCommandView {
-        kind: conversation_command_kind_to_contract(command.kind),
-        command_id: command.command_id,
-        enabled: command.enabled,
-        unavailable_reason: command.unavailable_reason,
-        disabled_code: command.disabled_code,
-        shortcut: command.shortcut,
-        requires_input: command.requires_input,
-        executor_config_policy: command.executor_config_policy,
-        placement: command
-            .placement
-            .into_iter()
-            .map(conversation_command_placement_to_contract)
-            .collect(),
-        stale_guard: conversation_stale_guard_to_contract(command.stale_guard),
-    }
-}
-
-fn conversation_command_kind_to_contract(
-    kind: app_agent_run::ConversationCommandKindModel,
-) -> ConversationCommandKind {
-    match kind {
-        app_agent_run::ConversationCommandKindModel::SubmitMessage => {
-            ConversationCommandKind::SubmitMessage
-        }
-        app_agent_run::ConversationCommandKindModel::PromoteMailboxMessage => {
-            ConversationCommandKind::PromoteMailboxMessage
-        }
-        app_agent_run::ConversationCommandKindModel::DeleteMailboxMessage => {
-            ConversationCommandKind::DeleteMailboxMessage
-        }
-        app_agent_run::ConversationCommandKindModel::MoveMailboxMessage => {
-            ConversationCommandKind::MoveMailboxMessage
-        }
-        app_agent_run::ConversationCommandKindModel::ResumeMailbox => {
-            ConversationCommandKind::ResumeMailbox
-        }
-        app_agent_run::ConversationCommandKindModel::Cancel => ConversationCommandKind::Cancel,
-        app_agent_run::ConversationCommandKindModel::CompactContext => {
-            ConversationCommandKind::CompactContext
-        }
-    }
-}
-
-fn conversation_command_kind_to_application(
-    kind: ConversationCommandKind,
-) -> app_agent_run::ConversationCommandKindModel {
-    match kind {
-        ConversationCommandKind::SubmitMessage => {
-            app_agent_run::ConversationCommandKindModel::SubmitMessage
-        }
-        ConversationCommandKind::PromoteMailboxMessage => {
-            app_agent_run::ConversationCommandKindModel::PromoteMailboxMessage
-        }
-        ConversationCommandKind::DeleteMailboxMessage => {
-            app_agent_run::ConversationCommandKindModel::DeleteMailboxMessage
-        }
-        ConversationCommandKind::MoveMailboxMessage => {
-            app_agent_run::ConversationCommandKindModel::MoveMailboxMessage
-        }
-        ConversationCommandKind::ResumeMailbox => {
-            app_agent_run::ConversationCommandKindModel::ResumeMailbox
-        }
-        ConversationCommandKind::Cancel => app_agent_run::ConversationCommandKindModel::Cancel,
-        ConversationCommandKind::CompactContext => {
-            app_agent_run::ConversationCommandKindModel::CompactContext
-        }
-    }
-}
-
-fn conversation_command_placement_to_contract(
-    placement: app_agent_run::ConversationCommandPlacementModel,
-) -> ConversationCommandPlacement {
-    match placement {
-        app_agent_run::ConversationCommandPlacementModel::ComposerPrimary => {
-            ConversationCommandPlacement::ComposerPrimary
-        }
-        app_agent_run::ConversationCommandPlacementModel::ComposerSecondary => {
-            ConversationCommandPlacement::ComposerSecondary
-        }
-        app_agent_run::ConversationCommandPlacementModel::MailboxRow => {
-            ConversationCommandPlacement::MailboxRow
-        }
-        app_agent_run::ConversationCommandPlacementModel::MailboxBanner => {
-            ConversationCommandPlacement::MailboxBanner
-        }
-        app_agent_run::ConversationCommandPlacementModel::Header => {
-            ConversationCommandPlacement::Header
-        }
-    }
-}
-
-fn conversation_stale_guard_to_contract(
-    guard: app_agent_run::ConversationCommandStaleGuardModel,
-) -> ConversationCommandStaleGuardView {
-    ConversationCommandStaleGuardView {
-        snapshot_id: guard.snapshot_id,
-        run_id: guard.run_id,
-        agent_id: guard.agent_id,
-        frame_id: guard.frame_id,
-        active_turn_id: guard.active_turn_id,
-    }
-}
-
-fn command_precondition_to_application(
-    command: AgentRunCommandPreconditionView,
-) -> app_agent_run::AgentRunCommandPreconditionModel {
-    app_agent_run::AgentRunCommandPreconditionModel {
-        command_id: command.command_id,
-        command_kind: conversation_command_kind_to_application(command.command_kind),
-        stale_guard: app_agent_run::ConversationCommandStaleGuardModel {
-            snapshot_id: command.stale_guard.snapshot_id,
-            run_id: command.stale_guard.run_id,
-            agent_id: command.stale_guard.agent_id,
-            frame_id: command.stale_guard.frame_id,
-            active_turn_id: command.stale_guard.active_turn_id,
-        },
-    }
-}
-
-fn conversation_diagnostic_to_contract(
-    diagnostic: app_agent_run::ConversationDiagnosticModel,
-) -> ConversationDiagnosticView {
-    ConversationDiagnosticView {
-        code: diagnostic.code,
-        severity: match diagnostic.severity {
-            app_agent_run::ValidationSeverityModel::Warning => ValidationSeverity::Warning,
-            app_agent_run::ValidationSeverityModel::Error => ValidationSeverity::Error,
-        },
-        message: diagnostic.message,
-        detail: diagnostic.detail,
-    }
-}
-
-fn subject_ref_to_contract(subject_ref: app_workspace::SubjectRefModel) -> SubjectRefDto {
-    SubjectRefDto {
-        kind: subject_ref.kind,
-        id: subject_ref.id,
-    }
-}
-
-fn workspace_control_plane_from_conversation(
-    conversation: &agentdash_contracts::workflow::AgentConversationSnapshot,
-) -> AgentRunWorkspaceControlPlaneView {
-    let status = match conversation.execution.status {
-        ConversationExecutionStatus::Ready
-        | ConversationExecutionStatus::Draft
-        | ConversationExecutionStatus::ModelRequired => AgentRunWorkspaceControlPlaneStatus::Ready,
-        ConversationExecutionStatus::StartingClaimed
-        | ConversationExecutionStatus::RunningActive => {
-            AgentRunWorkspaceControlPlaneStatus::Running
-        }
-        ConversationExecutionStatus::Cancelling => AgentRunWorkspaceControlPlaneStatus::Cancelling,
-        ConversationExecutionStatus::Terminal => AgentRunWorkspaceControlPlaneStatus::Terminal,
-        ConversationExecutionStatus::FrameMissing => {
-            AgentRunWorkspaceControlPlaneStatus::FrameMissing
-        }
-    };
-    AgentRunWorkspaceControlPlaneView {
-        status,
-        reason: conversation.execution.reason.clone(),
-        ownership: conversation.commands.ownership.clone(),
-    }
-}
-
-fn workspace_mailbox_to_contract(
-    mailbox: app_workspace::AgentRunWorkspaceMailboxStateModel,
-) -> MailboxStateView {
-    MailboxStateView {
-        paused: mailbox.paused,
-        pause_reason: mailbox.pause_reason,
-        message: mailbox.message,
-        can_resume: mailbox.can_resume,
-        hide_system_steer_messages: mailbox.hide_system_steer_messages,
-    }
-}
-
-fn frame_runtime_to_contract(
-    frame: app_workspace::AgentRunWorkspaceFrameRuntimeModel,
-) -> AgentFrameRuntimeView {
-    AgentFrameRuntimeView {
-        frame_ref: AgentFrameRefDto {
-            agent_id: frame.frame_ref.agent_id,
-            frame_id: frame.frame_ref.frame_id,
-            revision: frame.frame_ref.revision,
-        },
-        capability_surface: frame.capability_surface,
-        context_slice: frame.context_slice,
-        vfs_surface: frame.vfs_surface,
-        mcp_surface: frame.mcp_surface,
-        runtime_session_refs: frame
-            .runtime_session_refs
-            .into_iter()
-            .map(|runtime_ref| RuntimeSessionRefDto {
-                runtime_session_id: runtime_ref.runtime_session_id,
-            })
-            .collect(),
-        execution_profile: frame.execution_profile,
-        effective_executor_config: frame
-            .effective_executor_config
-            .map(conversation_effective_executor_config_to_contract),
-    }
-}
-
-/// 统计控制树某 root 子树（传递闭包）下的 subagent 总数。
-///
-/// lineage 支持任意深度递归且无环检测，因此遍历带 `visited` 防环 + 深度上限保护，
-/// 超限截断并 warn（不静默丢弃）。root 自身不计入。
-fn count_descendants(root: Uuid, children_map: &HashMap<Uuid, Vec<Uuid>>) -> u32 {
-    const MAX_DEPTH: usize = 64;
-    let mut visited: HashSet<Uuid> = HashSet::new();
-    let mut stack: Vec<(Uuid, usize)> = vec![(root, 0)];
-    let mut count: u32 = 0;
-    while let Some((node, depth)) = stack.pop() {
-        if depth >= MAX_DEPTH {
-            diag!(Warn, Subsystem::Api,
-
-                root = %root,
-                node = %node,
-                depth,
-                "agent lineage 子树超过最大深度，截断后代计数"
-            );
-            continue;
-        }
-        let Some(children) = children_map.get(&node) else {
-            continue;
-        };
-        for &child in children {
-            if visited.insert(child) {
-                count += 1;
-                stack.push((child, depth + 1));
-            }
-        }
-    }
-    count
-}
-
-async fn build_agent_run_mailbox_view(
-    state: &AppState,
-    context: &AgentRunContext,
-    viewer_user_id: &str,
-) -> Result<AgentRunMailboxView, ApiError> {
-    let messages = state
-        .repos
-        .agent_run_mailbox_repo
-        .list_messages(context.run.id, context.agent.id)
-        .await
-        .map_err(ApiError::from)?;
-    let visible_message_count = messages
-        .iter()
-        .filter(|message| mailbox_message_visible(message))
-        .count();
-    let mailbox_state = state
-        .repos
-        .agent_run_mailbox_repo
-        .get_state(context.run.id, context.agent.id)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(AgentRunMailboxView {
-        state: mailbox_state_view(
-            mailbox_state.as_ref(),
-            context.delivery_frame_id.is_some()
-                && !app_workspace::is_terminal_agent_status(&context.agent.status),
-            visible_message_count,
-            app_workspace::load_hide_system_steer_messages_setting(
-                state.repos.settings_repo.as_ref(),
-                Some(viewer_user_id),
-            )
-            .await?,
-        ),
-        messages: messages
-            .into_iter()
-            .filter(mailbox_message_visible)
-            .map(mailbox_message_view)
-            .collect(),
-    })
-}
-
-fn delivery_runtime_selection_repositories(
-    state: &AppState,
-) -> DeliveryRuntimeSelectionRepositories<'_> {
-    DeliveryRuntimeSelectionRepositories {
-        lifecycle_runs: state.repos.lifecycle_run_repo.as_ref(),
-        lifecycle_agents: state.repos.lifecycle_agent_repo.as_ref(),
-        agent_frames: state.repos.agent_frame_repo.as_ref(),
-        execution_anchors: state.repos.execution_anchor_repo.as_ref(),
-        delivery_bindings: state.repos.agent_run_delivery_binding_repo.as_ref(),
-    }
-}
-
-fn delivery_runtime_selection_service(state: &AppState) -> DeliveryRuntimeSelectionService<'_> {
-    DeliveryRuntimeSelectionService::new(delivery_runtime_selection_repositories(state))
-}
-
-fn agent_run_delete_repos(state: &AppState) -> AgentRunDeleteRepos<'_> {
-    AgentRunDeleteRepos {
-        lifecycle_runs: state.repos.lifecycle_run_repo.as_ref(),
-        execution_anchors: state.repos.execution_anchor_repo.as_ref(),
-        delivery_bindings: state.repos.agent_run_delivery_binding_repo.as_ref(),
-    }
-}
-
-fn agent_run_workspace_query_deps(
-    state: &AppState,
-) -> app_workspace::AgentRunWorkspaceQueryDeps<'_> {
-    app_workspace::AgentRunWorkspaceQueryDeps {
-        delivery_selection_repos: delivery_runtime_selection_repositories(state),
-        agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
-        execution_anchor_repo: state.repos.execution_anchor_repo.as_ref(),
-        project_agent_repo: state.repos.project_agent_repo.as_ref(),
-        agent_run_mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
-        lifecycle_subject_association_repo: state.repos.lifecycle_subject_association_repo.as_ref(),
-        lifecycle_gate_repo: state.repos.lifecycle_gate_repo.as_ref(),
-        settings_repo: state.repos.settings_repo.as_ref(),
-        inline_file_repo: state.repos.inline_file_repo.as_ref(),
-    }
-}
-
-fn agent_run_fork_repos(state: &AppState) -> AgentRunForkRepos<'_> {
-    AgentRunForkRepos {
-        lifecycle_run_repo: state.repos.lifecycle_run_repo.as_ref(),
-        lifecycle_agent_repo: state.repos.lifecycle_agent_repo.as_ref(),
-        agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
-        execution_anchor_repo: state.repos.execution_anchor_repo.as_ref(),
-        delivery_binding_repo: state.repos.agent_run_delivery_binding_repo.as_ref(),
-        agent_run_command_receipt_repo: state.repos.agent_run_command_receipt_repo.as_ref(),
-        agent_run_mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
-        agent_run_lineage_repo: state.repos.agent_run_lineage_repo.as_ref(),
-        agent_run_fork_materialization: state.repos.agent_run_fork_materialization.as_ref(),
-        project_projection_notifications: state.repos.project_projection_notifications.clone(),
-    }
-}
-
-fn agent_run_mailbox_service(state: &AppState) -> AgentRunMailboxService<'_> {
-    AgentRunMailboxService::new(
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.lifecycle_agent_repo.as_ref(),
-        state.repos.project_agent_repo.as_ref(),
-        state.repos.agent_frame_repo.as_ref(),
-        state.repos.execution_anchor_repo.as_ref(),
-        state.repos.agent_run_delivery_binding_repo.as_ref(),
-        state.repos.project_backend_access_repo.as_ref(),
-        state.repos.agent_run_command_receipt_repo.as_ref(),
-        state.repos.agent_run_mailbox_repo.as_ref(),
-        agent_run_session_core(state.services.session_core.clone()),
-        agent_run_session_control(state.services.session_control.clone()),
-        agent_run_session_eventing(state.services.session_eventing.clone()),
-        agent_run_session_launch(state.services.session_launch.clone()),
-    )
-}
-
-fn agent_run_fork_service(state: &AppState) -> AgentRunForkService<'_> {
-    AgentRunForkService::new(
-        agent_run_fork_repos(state),
-        state.services.session_branching.clone(),
-        agent_run_session_core(state.services.session_core.clone()),
-        agent_run_mailbox_service(state),
-    )
-}
-
-fn agent_run_fork_admission_service(state: &AppState) -> AgentRunAdmissionService<'_> {
-    AgentRunAdmissionService::for_fork(agent_run_fork_service(state))
-}
-
-fn agent_run_fork_submit_message_response(
-    result: AgentRunForkCommandResult,
-) -> AgentRunMessageCommandResponse {
-    let fork = agent_run_fork_outcome_view(&result);
-    AgentRunMessageCommandResponse {
-        command_receipt: command_receipt_view(result.command_receipt),
-        outcome: mailbox_command_outcome_view(
-            result
-                .mailbox_outcome
-                .unwrap_or(app_agent_run::AgentRunMailboxCommandOutcome::Queued),
-        ),
-        mailbox_message: result.mailbox_message.map(mailbox_message_view),
-        accepted_refs: Some(agent_run_message_accepted_refs(result.child_refs.clone())),
-        fork: Some(fork),
-    }
-}
-
-fn agent_run_fork_response(result: AgentRunForkCommandResult) -> AgentRunForkResponse {
-    let fork = agent_run_fork_outcome_view(&result);
-    AgentRunForkResponse {
-        command_receipt: command_receipt_view(result.command_receipt),
-        outcome: fork.outcome,
-        parent_refs: fork.parent_refs,
-        child_refs: fork.child_refs,
-        lineage: fork.lineage,
-        redirect: fork.redirect,
-    }
-}
-
-fn agent_run_fork_outcome_view(result: &AgentRunForkCommandResult) -> AgentRunForkOutcomeView {
-    let parent_refs = agent_run_message_accepted_refs(result.parent_refs.clone());
-    let child_refs = agent_run_message_accepted_refs(result.child_refs.clone());
-    AgentRunForkOutcomeView {
-        outcome: "forked".to_string(),
-        parent_refs: parent_refs.clone(),
-        child_refs: child_refs.clone(),
-        lineage: AgentRunForkLineageView {
-            id: result.lineage.id.to_string(),
-            parent: parent_refs,
-            child: child_refs.clone(),
-            relation_kind: result.lineage.relation_kind.clone(),
-            fork_point_event_seq: result.lineage.fork_point_event_seq,
-            fork_point_ref: result
-                .lineage
-                .fork_point_ref_json
-                .clone()
-                .and_then(|value| serde_json::from_value::<SessionMessageRefDto>(value).ok()),
-            forked_by_user_id: result.lineage.forked_by_user_id.clone(),
-            created_at: result.lineage.created_at.to_rfc3339(),
-        },
-        redirect: child_refs.agent_ref,
-    }
-}
-
-fn message_ref_from_contract(value: SessionMessageRefDto) -> MessageRef {
-    MessageRef {
-        turn_id: value.turn_id,
-        entry_index: value.entry_index,
-    }
-}
-
-fn log_agent_run_fork_route_error(
-    route: &'static str,
-    run_id: Uuid,
-    agent_id: Uuid,
-    current_user_id: &str,
-    client_command_id: &str,
-    fork_point_ref: Option<&MessageRef>,
-    error: &(impl std::fmt::Debug + std::fmt::Display),
-) {
-    let fork_point = message_ref_log_label(fork_point_ref);
-    let error_context = DiagnosticErrorContext::new("agent_run.fork", "route");
-    diag_error!(Error, Subsystem::Api,
-        context = &error_context,
-        error = &error,
-        route = route,
-        run_id = %run_id,
-        agent_id = %agent_id,
-        current_user_id = %current_user_id,
-        client_command_id = %client_command_id,
-        fork_point = %fork_point,
-        "AgentRun fork route failed"
-    );
-}
-
-fn message_ref_log_label(value: Option<&MessageRef>) -> String {
-    value
-        .map(|message_ref| format!("{}:{}", message_ref.turn_id, message_ref.entry_index))
-        .unwrap_or_else(|| "head".to_string())
-}
-
-fn agent_run_workspace_command_policy(
-    state: &AppState,
-) -> app_workspace::AgentRunWorkspaceCommandPolicyService<'_> {
-    app_workspace::AgentRunWorkspaceCommandPolicyService::new(
-        app_workspace::AgentRunWorkspaceCommandPolicyDeps {
-            delivery_selection_repos: delivery_runtime_selection_repositories(state),
-            agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
-            project_agent_repo: state.repos.project_agent_repo.as_ref(),
-            agent_run_mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
-        },
-        agent_run_session_control(state.services.session_control.clone()),
-    )
-}
-
-fn command_policy_context<'a>(
-    context: &'a AgentRunContext,
-) -> app_workspace::AgentRunWorkspaceCommandPolicyContext<'a> {
-    app_workspace::AgentRunWorkspaceCommandPolicyContext {
-        run: &context.run,
-        agent: &context.agent,
-    }
-}
-
-fn lifecycle_run_status_to_contract(
-    status: agentdash_domain::workflow::LifecycleRunStatus,
-) -> agentdash_contracts::workflow::LifecycleRunStatus {
-    match status {
-        agentdash_domain::workflow::LifecycleRunStatus::Draft => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Draft
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Ready => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Ready
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Running => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Running
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Blocked => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Blocked
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Completed => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Completed
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Failed => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Failed
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Cancelled => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Cancelled
-        }
-    }
-}
-
-fn agent_run_command_receipt_contract(
-    receipt: AgentRunCommandReceiptView,
-) -> AgentRunCommandReceipt {
-    AgentRunCommandReceipt {
-        client_command_id: receipt.client_command_id,
-        status: receipt.status,
-        duplicate: receipt.duplicate,
-        message: receipt.message,
-    }
-}
-
-fn agent_run_context_compaction_command_response(
-    result: AgentRunContextCompactionCommandResult,
-) -> AgentRunContextCompactionCommandResponse {
-    AgentRunContextCompactionCommandResponse {
-        command_receipt: agent_run_command_receipt_contract(result.command_receipt),
-        outcome: match result.outcome {
-            AgentRunContextCompactionOutcome::ScheduledNextTurn => {
-                AgentRunContextCompactionCommandOutcome::ScheduledNextTurn
-            }
-            AgentRunContextCompactionOutcome::LaunchedCompactionTurn => {
-                AgentRunContextCompactionCommandOutcome::LaunchedCompactionTurn
-            }
-            AgentRunContextCompactionOutcome::Completed => {
-                AgentRunContextCompactionCommandOutcome::Completed
-            }
-            AgentRunContextCompactionOutcome::NoEligibleMessages => {
-                AgentRunContextCompactionCommandOutcome::NoEligibleMessages
-            }
-            AgentRunContextCompactionOutcome::Blocked => {
-                AgentRunContextCompactionCommandOutcome::Blocked
-            }
-            AgentRunContextCompactionOutcome::Failed => {
-                AgentRunContextCompactionCommandOutcome::Failed
-            }
-        },
-        runtime_session_id: result.runtime_session_id,
-        request_id: result.request_id,
-        turn_id: result.turn_id,
-        message: result.message,
+        AgentRunProductCommandError::Binding(_) => ApiError::Internal(error.to_string()),
     }
 }
 
@@ -2685,445 +910,60 @@ fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
 }
 
-fn command_policy_error(error: app_workspace::AgentRunWorkspaceCommandPolicyError) -> ApiError {
-    match error {
-        app_workspace::AgentRunWorkspaceCommandPolicyError::Application(error) => {
-            ApiError::from(error)
-        }
-        app_workspace::AgentRunWorkspaceCommandPolicyError::Conflict(conflict) => {
-            ApiError::ConflictWithCode(Box::new(ApiErrorWithCode {
-                message: conflict.message,
-                error_code: conflict.error_code,
-                replacement_command: conflict.replacement_command,
-                detail: conflict.detail,
-            }))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionRepositories;
-    use agentdash_domain::workflow::{
-        AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunDeliveryBinding,
-        AgentRunDeliveryBindingRepository, AgentRunLineage, AgentSource, DeliveryBindingStatus,
-        LifecycleAgent, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
-    };
-    use agentdash_test_support::workflow::{
-        MemoryAgentFrameRepository, MemoryAgentRunDeliveryBindingRepository,
-        MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
-        MemoryRuntimeSessionExecutionAnchorRepository,
-    };
+    use agentdash_agent_service_api::{AgentInputContent, AgentServiceError};
 
     use super::*;
 
     #[test]
-    fn agent_run_fork_response_preserves_redirect_and_lineage() {
-        let parent_run_id = Uuid::new_v4();
-        let parent_agent_id = Uuid::new_v4();
-        let child_run_id = Uuid::new_v4();
-        let child_agent_id = Uuid::new_v4();
-        let child_frame_id = Uuid::new_v4();
-        let fork_point_ref = SessionMessageRefDto {
-            turn_id: "turn-1".to_string(),
-            entry_index: 2,
-        };
-        let lineage = AgentRunLineage::new_fork(
-            parent_run_id,
-            parent_agent_id,
-            child_run_id,
-            child_agent_id,
-            Some(12),
-            Some(serde_json::to_value(&fork_point_ref).expect("message ref should serialize")),
-            "user-a",
-            Some(serde_json::json!({ "source": "api-test" })),
-        );
+    fn missing_bound_agent_source_is_not_reported_as_http_500() {
+        let mapped = agent_run_product_projection_error(AgentRunProductProjectionError::Agent(
+            AgentServiceError::new(
+                AgentServiceErrorCode::NotFound,
+                "Dash source fixture-source was not found",
+                false,
+            ),
+        ));
 
-        let response = agent_run_fork_response(AgentRunForkCommandResult {
-            command_receipt: AgentRunCommandReceiptView {
-                client_command_id: "cmd-fork".to_string(),
-                status: "accepted".to_string(),
-                duplicate: false,
-                message: None,
-            },
-            parent_refs: AgentRunAcceptedRefs {
-                run_id: parent_run_id,
-                agent_id: parent_agent_id,
-                frame_id: None,
-                frame_revision: None,
-                runtime_session_id: Some("parent-runtime".to_string()),
-                agent_run_turn_id: None,
-                protocol_turn_id: None,
-            },
-            child_refs: AgentRunAcceptedRefs {
-                run_id: child_run_id,
-                agent_id: child_agent_id,
-                frame_id: Some(child_frame_id),
-                frame_revision: Some(1),
-                runtime_session_id: Some("child-runtime".to_string()),
-                agent_run_turn_id: None,
-                protocol_turn_id: None,
-            },
-            lineage,
-            mailbox_outcome: Some(app_agent_run::AgentRunMailboxCommandOutcome::Queued),
-            mailbox_message: None,
-        });
-
-        assert_eq!(response.outcome, "forked");
-        assert_eq!(response.redirect.run_id, child_run_id.to_string());
-        assert_eq!(response.redirect.agent_id, child_agent_id.to_string());
-        assert_eq!(
-            response.lineage.parent.agent_ref.run_id,
-            parent_run_id.to_string()
-        );
-        assert_eq!(
-            response.lineage.child.agent_ref.run_id,
-            child_run_id.to_string()
-        );
-        assert_eq!(response.lineage.fork_point_event_seq, Some(12));
-        let response_fork_point_ref = response
-            .lineage
-            .fork_point_ref
-            .expect("fork point ref should be mapped");
-        assert_eq!(response_fork_point_ref.turn_id, fork_point_ref.turn_id);
-        assert_eq!(
-            response_fork_point_ref.entry_index,
-            fork_point_ref.entry_index
-        );
-        assert_eq!(response.lineage.forked_by_user_id, "user-a");
+        assert!(matches!(mapped, ApiError::NotFound(_)));
     }
 
-    #[derive(Default)]
-    struct DeliverySelectionFixture {
-        runs: MemoryLifecycleRunRepository,
-        agents: MemoryLifecycleAgentRepository,
-        frames: MemoryAgentFrameRepository,
-        anchors: MemoryRuntimeSessionExecutionAnchorRepository,
-        delivery_bindings: MemoryAgentRunDeliveryBindingRepository,
-    }
-
-    impl DeliverySelectionFixture {
-        fn service(&self) -> DeliveryRuntimeSelectionService<'_> {
-            DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
-                lifecycle_runs: &self.runs,
-                lifecycle_agents: &self.agents,
-                agent_frames: &self.frames,
-                execution_anchors: &self.anchors,
-                delivery_bindings: &self.delivery_bindings,
-            })
+    fn fork_submit(
+        client_command_id: &str,
+        input: Vec<AgentInputContent>,
+    ) -> AgentRunForkSubmitRequest {
+        AgentRunForkSubmitRequest {
+            input,
+            client_command_id: client_command_id.to_owned(),
+            executor_config: None,
+            title: None,
+            fork_point_ref: None,
+            metadata_json: None,
+            backend_selection: None,
         }
     }
 
-    #[tokio::test]
-    async fn delivery_runtime_session_context_ignores_anchor_without_binding() {
-        let fixture = DeliverySelectionFixture::default();
-        let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let launch_frame = AgentFrame::new_initial(agent.id);
-        let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
-        let old_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-old",
-            run.id,
-            launch_frame.id,
-            agent.id,
+    #[test]
+    fn fork_submit_rejects_invalid_input_before_product_fork_can_start() {
+        assert!(validate_fork_submit_preconditions(&fork_submit("", Vec::new())).is_err());
+        assert!(
+            validate_fork_submit_preconditions(&fork_submit(
+                "fork-submit-1",
+                vec![AgentInputContent::Text {
+                    text: "   ".to_owned(),
+                }],
+            ))
+            .is_err()
         );
-
-        fixture.runs.create(&run).await.expect("run");
-        fixture
-            .frames
-            .create(&launch_frame)
-            .await
-            .expect("launch frame");
-        fixture
-            .frames
-            .create(&current_frame)
-            .await
-            .expect("current frame");
-        fixture.agents.create(&agent).await.expect("agent");
-        fixture
-            .anchors
-            .create_once(&old_anchor)
-            .await
-            .expect("old anchor");
-
-        let delivery_runtime = delivery_runtime_session_for_agent_run_from_selection(
-            fixture.service(),
-            run.id,
-            agent.id,
-        )
-        .await
-        .expect("selection result");
-
-        assert!(delivery_runtime.is_none());
-    }
-
-    #[tokio::test]
-    async fn delivery_runtime_session_context_uses_binding_not_latest_anchor() {
-        let fixture = DeliverySelectionFixture::default();
-        let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let current_launch_frame = AgentFrame::new_initial(agent.id);
-        let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
-
-        let mut current_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-current",
-            run.id,
-            current_launch_frame.id,
-            agent.id,
+        assert!(
+            validate_fork_submit_preconditions(&fork_submit(
+                "fork-submit-1",
+                vec![AgentInputContent::Text {
+                    text: "continue".to_owned(),
+                }],
+            ))
+            .is_ok()
         );
-        current_anchor.updated_at = Utc::now() - chrono::Duration::seconds(30);
-        let mut latest_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-latest-raw-evidence",
-            run.id,
-            current_launch_frame.id,
-            agent.id,
-        );
-        latest_anchor.updated_at = Utc::now();
-        let current_binding = AgentRunDeliveryBinding::from_anchor(
-            &current_anchor,
-            DeliveryBindingStatus::Running,
-            current_anchor.updated_at,
-        );
-
-        fixture.runs.create(&run).await.expect("run");
-        fixture
-            .frames
-            .create(&current_launch_frame)
-            .await
-            .expect("launch frame");
-        fixture
-            .frames
-            .create(&current_frame)
-            .await
-            .expect("current frame");
-        fixture.agents.create(&agent).await.expect("agent");
-        fixture
-            .anchors
-            .create_once(&latest_anchor)
-            .await
-            .expect("latest anchor");
-        fixture
-            .anchors
-            .create_once(&current_anchor)
-            .await
-            .expect("current anchor");
-        fixture
-            .delivery_bindings
-            .upsert(&current_binding)
-            .await
-            .expect("current binding");
-
-        let delivery_runtime = delivery_runtime_session_for_agent_run_from_selection(
-            fixture.service(),
-            run.id,
-            agent.id,
-        )
-        .await
-        .expect("selection result");
-
-        let delivery_runtime = delivery_runtime.expect("current delivery");
-        assert_eq!(delivery_runtime.runtime_session_id, "runtime-current");
-        assert_eq!(delivery_runtime.frame_id, current_frame.id);
-    }
-
-    #[test]
-    fn list_entry_from_item_carries_source_and_count() {
-        let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let item = app_workspace::AgentRunListItem {
-            run: run.clone(),
-            agent,
-            shell: app_workspace::AgentRunWorkspaceShellModel {
-                display_title: "Session meta title".to_string(),
-                title_source: "source".to_string(),
-                delivery_status: "idle".to_string(),
-                last_turn_id: None,
-                last_activity_at: "2026-06-12T00:00:00Z".to_string(),
-            },
-            project_agent_label: Some("Code Reviewer".to_string()),
-            delivery_runtime_session_id: None,
-            subject_ref: None,
-            subject_label: None,
-        };
-
-        let entry = list_entry_from_item(&run, item, 3, Vec::new());
-
-        assert_eq!(entry.shell.display_title, "Session meta title");
-        assert_eq!(entry.shell.title_source, "source");
-        assert_eq!(entry.source, "project_agent");
-        assert_eq!(entry.project_agent_label.as_deref(), Some("Code Reviewer"));
-        assert_eq!(entry.subagent_count, 3);
-        assert!(entry.frame_ref.is_none());
-        assert!(entry.children.is_empty());
-    }
-
-    #[test]
-    fn list_entry_from_item_uses_run_activity_for_root_shell() {
-        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
-        run.last_activity_at = DateTime::parse_from_rfc3339("2026-06-18T08:30:00Z")
-            .expect("run activity")
-            .with_timezone(&Utc);
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let item = app_workspace::AgentRunListItem {
-            run: run.clone(),
-            agent,
-            shell: app_workspace::AgentRunWorkspaceShellModel {
-                display_title: "Root AgentRun".to_string(),
-                title_source: "source".to_string(),
-                delivery_status: "idle".to_string(),
-                last_turn_id: None,
-                last_activity_at: "2026-06-12T00:00:00Z".to_string(),
-            },
-            project_agent_label: None,
-            delivery_runtime_session_id: None,
-            subject_ref: None,
-            subject_label: None,
-        };
-
-        let entry = list_entry_from_item(&run, item, 0, Vec::new());
-        let (cursor_millis, cursor_run_id) =
-            decode_cursor(&encode_cursor(run.last_activity_at, run.id)).expect("cursor");
-        let shell_activity = DateTime::parse_from_rfc3339(&entry.shell.last_activity_at)
-            .expect("shell activity")
-            .with_timezone(&Utc);
-
-        assert_eq!(
-            entry.shell.last_activity_at,
-            run.last_activity_at.to_rfc3339()
-        );
-        assert_eq!(cursor_millis, shell_activity.timestamp_millis());
-        assert_eq!(cursor_run_id, run.id);
-    }
-
-    #[test]
-    fn list_child_from_item_preserves_agent_scoped_activity() {
-        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
-        run.last_activity_at = DateTime::parse_from_rfc3339("2026-06-18T08:30:00Z")
-            .expect("run activity")
-            .with_timezone(&Utc);
-        let child_activity = "2026-06-12T00:00:00Z";
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let item = app_workspace::AgentRunListItem {
-            run: run.clone(),
-            agent,
-            shell: app_workspace::AgentRunWorkspaceShellModel {
-                display_title: "Child AgentRun".to_string(),
-                title_source: "source".to_string(),
-                delivery_status: "idle".to_string(),
-                last_turn_id: None,
-                last_activity_at: child_activity.to_string(),
-            },
-            project_agent_label: None,
-            delivery_runtime_session_id: None,
-            subject_ref: None,
-            subject_label: None,
-        };
-
-        let child = list_child_from_item(&run, item, 0);
-
-        assert_eq!(child.shell.last_activity_at, child_activity);
-    }
-
-    #[test]
-    fn cursor_round_trips_keyset() {
-        let run_id = Uuid::new_v4();
-        let at = DateTime::parse_from_rfc3339("2026-06-16T08:30:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let encoded = encode_cursor(at, run_id);
-        let (millis, decoded_id) = decode_cursor(&encoded).expect("decode");
-        assert_eq!(millis, at.timestamp_millis());
-        assert_eq!(decoded_id, run_id);
-        assert!(decode_cursor("not-base64!!").is_none());
-    }
-
-    #[test]
-    fn build_lineage_forest_identifies_roots() {
-        let run_id = Uuid::new_v4();
-        let root = Uuid::new_v4();
-        let child = Uuid::new_v4();
-        let grandchild = Uuid::new_v4();
-        let lineages = vec![
-            AgentLineage::new(run_id, Some(root), child, "spawn", None, None),
-            AgentLineage::new(run_id, Some(child), grandchild, "spawn", None, None),
-        ];
-
-        let (children_map, child_ids) = build_lineage_forest(&lineages);
-
-        assert!(!child_ids.contains(&root));
-        assert!(child_ids.contains(&child));
-        assert!(child_ids.contains(&grandchild));
-        assert_eq!(count_descendants(root, &children_map), 2);
-    }
-
-    #[test]
-    fn count_descendants_counts_full_subtree() {
-        // root -> a -> c ; root -> b
-        let root = Uuid::new_v4();
-        let a = Uuid::new_v4();
-        let b = Uuid::new_v4();
-        let c = Uuid::new_v4();
-        let mut map: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
-        map.insert(root, vec![a, b]);
-        map.insert(a, vec![c]);
-
-        assert_eq!(count_descendants(root, &map), 3);
-        assert_eq!(count_descendants(a, &map), 1);
-        assert_eq!(count_descendants(b, &map), 0);
-    }
-
-    #[test]
-    fn count_descendants_guards_against_cycle() {
-        // 人为构造环 a -> b -> a，遍历不应死循环或重复计数。
-        let a = Uuid::new_v4();
-        let b = Uuid::new_v4();
-        let mut map: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
-        map.insert(a, vec![b]);
-        map.insert(b, vec![a]);
-
-        assert_eq!(count_descendants(a, &map), 2);
-    }
-
-    #[test]
-    fn mailbox_state_view_exposes_pause_reason_and_resume() {
-        let state = agentdash_domain::agent_run_mailbox::AgentRunMailboxState {
-            run_id: Uuid::new_v4(),
-            agent_id: Uuid::new_v4(),
-            delivery_runtime_session_id: Some("runtime-1".to_string()),
-            paused: true,
-            pause_reason: Some("turn_interrupted".to_string()),
-            pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),
-            backend_selection_preference: None,
-            updated_at: chrono::Utc::now(),
-        };
-        let view = mailbox_state_view(Some(&state), true, 1, false);
-
-        assert!(view.paused);
-        assert_eq!(view.pause_reason.as_deref(), Some("turn_interrupted"));
-        assert_eq!(
-            view.message.as_deref(),
-            Some("上一轮已中断，mailbox 已暂停。")
-        );
-        assert!(view.can_resume);
-    }
-
-    #[test]
-    fn mailbox_state_view_hides_empty_paused_prompt() {
-        let state = agentdash_domain::agent_run_mailbox::AgentRunMailboxState {
-            run_id: Uuid::new_v4(),
-            agent_id: Uuid::new_v4(),
-            delivery_runtime_session_id: Some("runtime-1".to_string()),
-            paused: true,
-            pause_reason: Some("turn_interrupted".to_string()),
-            pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),
-            backend_selection_preference: None,
-            updated_at: chrono::Utc::now(),
-        };
-        let view = mailbox_state_view(Some(&state), true, 0, false);
-
-        assert!(!view.paused);
-        assert!(!view.can_resume);
-        assert_eq!(view.pause_reason.as_deref(), Some("turn_interrupted"));
     }
 }

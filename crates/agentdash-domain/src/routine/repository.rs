@@ -32,6 +32,12 @@ pub trait RoutineExecutionRepository: Send + Sync {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<RoutineExecution>, DomainError>;
+    /// 返回已冻结 dispatch intent 但尚未取得 AgentRun delivery receipt 的执行。
+    async fn list_recoverable(&self, limit: u32) -> Result<Vec<RoutineExecution>, DomainError>;
+    async fn find_by_runtime_operation_id(
+        &self,
+        runtime_operation_id: &str,
+    ) -> Result<Option<RoutineExecution>, DomainError>;
     /// 查找指定 entity_key 最近的活跃 session
     async fn find_latest_by_entity_key(
         &self,

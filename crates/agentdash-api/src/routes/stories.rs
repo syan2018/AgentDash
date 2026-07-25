@@ -171,7 +171,6 @@ pub async fn update_story(
     } else {
         req.session_composition.map(Some)
     };
-    let status_changed = req.status.is_some();
     let story = update_story_record(
         &state.repos,
         story,
@@ -191,17 +190,6 @@ pub async fn update_story(
         },
     )
     .await?;
-    let new_status = story.status.clone();
-
-    if status_changed {
-        let coordinator = state.services.terminal_cancel_coordinator.clone();
-        let story_id = story.id;
-        tokio::spawn(async move {
-            coordinator
-                .on_story_status_changed(story_id, &new_status)
-                .await;
-        });
-    }
 
     Ok(Json(StoryResponse::from(story)))
 }

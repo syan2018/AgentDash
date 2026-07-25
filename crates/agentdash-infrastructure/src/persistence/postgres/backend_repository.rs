@@ -2,11 +2,9 @@ use sqlx::PgPool;
 
 use agentdash_domain::backend::{
     BackendConfig, BackendRepository, BackendShareScopeKind, BackendType, BackendVisibility,
-    LocalBackendClaim, ViewConfig,
+    LocalBackendClaim,
 };
 use agentdash_domain::common::error::DomainError;
-
-use super::json_document::{from_jsonb, to_jsonb};
 
 pub struct PostgresBackendRepository {
     pool: PgPool,
@@ -18,7 +16,7 @@ impl PostgresBackendRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        crate::migration::assert_postgres_tables_ready(&self.pool, &["backends", "views"]).await
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["backends"]).await
     }
 }
 
@@ -256,39 +254,6 @@ impl BackendRepository for PostgresBackendRepository {
             .map_err(super::db_err)?;
         Ok(())
     }
-
-    async fn list_views(&self) -> Result<Vec<ViewConfig>, DomainError> {
-        let rows = sqlx::query_as::<_, ViewRow>(
-            "SELECT id, name, backend_ids, filters, sort_by FROM views ORDER BY name",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(super::db_err)?;
-
-        rows.into_iter().map(TryInto::try_into).collect()
-    }
-
-    async fn save_view(&self, view: &ViewConfig) -> Result<(), DomainError> {
-        sqlx::query(
-            "INSERT INTO views (id, name, backend_ids, filters, sort_by)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                backend_ids = EXCLUDED.backend_ids,
-                filters = EXCLUDED.filters,
-                sort_by = EXCLUDED.sort_by",
-        )
-        .bind(&view.id)
-        .bind(&view.name)
-        .bind(to_jsonb(&view.backend_ids, "views.backend_ids")?)
-        .bind(to_jsonb(&view.filters, "views.filters")?)
-        .bind(&view.sort_by)
-        .execute(&self.pool)
-        .await
-        .map_err(super::db_err)?;
-
-        Ok(())
-    }
 }
 
 // --- SQLx 行映射 ---
@@ -336,29 +301,6 @@ impl TryFrom<BackendRow> for BackendConfig {
             capability_slot: row.capability_slot,
             device: row.device,
             last_claimed_at: row.last_claimed_at,
-        })
-    }
-}
-
-#[derive(sqlx::FromRow)]
-struct ViewRow {
-    id: String,
-    name: String,
-    backend_ids: serde_json::Value,
-    filters: serde_json::Value,
-    sort_by: Option<String>,
-}
-
-impl TryFrom<ViewRow> for ViewConfig {
-    type Error = DomainError;
-
-    fn try_from(row: ViewRow) -> Result<Self, Self::Error> {
-        Ok(Self {
-            id: row.id,
-            name: row.name,
-            backend_ids: from_jsonb(row.backend_ids, "views.backend_ids")?,
-            filters: from_jsonb(row.filters, "views.filters")?,
-            sort_by: row.sort_by,
         })
     }
 }

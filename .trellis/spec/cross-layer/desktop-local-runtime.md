@@ -548,6 +548,8 @@ Desktop defaults JSON:
 - `DesktopAppSettings.auto_connect_local_runtime` is the global desktop auto-connect gate. `LocalRuntimeProfile.auto_start` marks whether the saved profile should participate in native startup. Automatic native startup requires both and then waits for Web bridge to report that the Dashboard has a current user; profile persistence keeps startup configuration facts such as workspace roots and `executor_enabled`, not bearer credentials. Manual start/retry/tray commands still call the same host service.
 - `external` Desktop API mode only chooses the Dashboard API origin. It does not disable the embedded desktop runner host, because cloud API authority and local execution lifecycle are separate facts.
 - Web Dashboard auto-connect is a request bridge, not lifecycle ownership. It uses current-user availability as the authenticated intent gate, passes the current bearer token only when one exists, reuses an in-flight promise, and uses bounded retry for transient native/API readiness failures. If the Dashboard has a current user but no bearer token, the bridge still calls the same native ensure path so `/api/local-runtime/ensure` can either accept another configured auth source or return an actionable auth/API error in the native snapshot.
+- A desktop credential claim has bounded connect and whole-request deadlines. Timeout while connecting, waiting for response headers, or reading the response body is the same retryable `desktop_claim_timeout`; `claiming` only describes that single in-flight attempt.
+- Web auto-connect classifies each observation as `complete | pending | inactive`. Completion requires a non-empty runtime `backend_id` and Relay `registered_backend_id` to be equal while Relay state is `registered`; intermediate supervisor/Relay states are observed at most eight times without issuing another `runtime_start`.
 - Desktop embedded runner enrollment origin follows the current Desktop Dashboard API origin. In release external builds that origin is provided by `AGENTDASH_DEFAULT_CLOUD_ORIGIN` / `--api-origin`; in `pnpm dev:desktop` it is provided by `VITE_API_ORIGIN` and `AGENTDASH_DESKTOP_API_ORIGIN` pointing at the local dev `agentdash-server`. Frontend defaults resolve Local Runtime server URL as `API_ORIGIN -> default_cloud_origin -> 127.0.0.1:17301`, and Tauri normalizes profile/start request `server_url` to `desktop_api_config().origin`; persisted profile values never override the current Dashboard API origin.
 - Auto-connect failures are surfaced through native runtime snapshot/logs. Browser console output from the bridge should not include caught error objects because errors may contain request context or token-bearing diagnostics.
 
@@ -571,6 +573,8 @@ Desktop defaults JSON:
 | Native startup has no auto-start profile | report `state=idle` and wait for login bridge/profile save or manual start |
 | Profile contains an old remote or old development `server_url` while Dashboard API origin changed | normalize saved profile and runtime start request to the current Desktop Dashboard API origin |
 | Auto-connect transient failure | schedule bounded retry while leaving diagnostics in runtime snapshot/logs |
+| Credential ensure exceeds its request deadline | enter retryable native diagnostics with code `desktop_claim_timeout`; do not remain in `claiming` |
+| Runtime is `running` but Relay is unregistered or registered for another/empty backend identity | keep auto-connect pending; do not mark completion or issue another `runtime_start` |
 | Auto-connect disabled or bridge unavailable | return without scheduling retry |
 
 ### 5. Operational Rationale
@@ -596,6 +600,7 @@ Desktop defaults JSON:
 - Rust tests assert Windows autostart command/value formation, setup exe rejection, and unsupported status shape on non-Windows platforms.
 - TS typecheck asserts the desktop bridge contract is available to `app-tauri` without importing Tauri APIs into shared Web Dashboard components.
 - Frontend tests assert Local Runtime defaults prefer current `API_ORIGIN` over packaged `default_cloud_origin`; auto-connect skips when current user is unavailable, still reaches native ensure when current user exists without a bearer token, normalizes old profile `server_url` to current Dashboard API origin, reuses in-flight start, retries bounded transient failures, and does not log caught error objects.
+- Rust claim tests cover a server that never returns headers and a server that returns headers but stalls the body; both must produce retryable `desktop_claim_timeout`. Frontend tests cover the eight-observation bound, no repeated `runtime_start` in pending states, and exact non-empty Relay/backend identity matching.
 - Manual Windows validation asserts install, launch, close-to-tray, tray restore, runtime start/stop/status, explicit quit, and uninstall cleanup.
 - Manual Windows validation asserts repeated double-click or login autostart plus manual launch leaves one desktop process and one embedded runner owner.
 
@@ -742,17 +747,17 @@ const relayState = localRuntimeSnapshot?.relay_connection?.state ?? "not_configu
 - `workspace_roots` 表达显式登记的 workspace root 集合；为空时不构成异常，也不限制本机目录浏览。执行类能力仍以 session `mount_root_ref` 为当前 workspace root 边界。
 - 本机目录浏览是 setup 选择器能力，默认允许全盘浏览；workspace detect/register 成功后产生目录事实，session prompt / file tool / shell 才进入执行边界。
 
-### Relay Prompt / Event Lifecycle
+### RuntimeWire Agent Placement Lifecycle
 
-- Cloud relay connector 在发送 `command.prompt` 前注册 session event sink，原因是 local runtime 可以在 `response.prompt` 前推送 session notification 或 terminal state。
-- Relay executor discovery 读取 backend registry 维护的在线 executor 快照；`AgentConnector::list_executors()` 是同步接口，不能在同步 discovery 路径里临时 `block_on` registry 的 async 状态查询。
+- Cloud从Local Host advertisements注册remote service instance/offer；Agent命令只通过typed RuntimeWire stream发送。
+- Relay transport维护stream sequence、ack/replay、in-flight backpressure和reconnect generation；不做Agent service discovery能力并集。
 - Backend registry 的 pending command 归属到具体 `backend_id`；backend 断连时释放该 backend 的 pending sender，让调用方立即收到 response dropped，而不是等待 command timeout。
 - Cloud 侧用 `backend_execution_leases` 记录 relay session turn 对 backend 的执行占用。`runtime_health` 只表达连接健康，workspace inventory / binding 只表达目录事实，执行空闲/忙碌由 active lease 投影。
 - Session launch 负责把 backend selection intent 解析成已 claim 的 backend execution placement，并把 `backend_id + lease_id + selection_mode` 放进 connector `ExecutionContext`。Relay connector 不再从 VFS mount 自行猜测执行 backend。
 - Relay session sink 记录 `session_id -> backend_id + lease_id + sender`，原因是 cancel、terminal release 与 backend disconnect cleanup 都必须落到实际承载该 session 的 backend，而不是广播或重新猜测。
 - Relay prompt 自动选择 backend 时先筛选在线且提供目标 executor 的 backend，再按 active lease count 升序与 backend_id 稳定排序；capacity / weight 不属于第一版调度输入。
 - `/backends/runtime-summary` 是前端展示执行空闲/忙碌与可分配状态的汇总投影；该投影由 application 层合并 runtime health、backend registry executor snapshot 与 active backend execution leases，前端消费该投影，不从 runtime health 或 executor snapshot 自行推断。
-- Local runtime 的 session notification forwarder 按 `session_id` 唯一运行；同一 relay session 的 follow-up prompt 复用现有 forwarder，保证同一条 session event 只有一个 relay 转发路径。
+- Local RuntimeWire handler按stream有序串行Driver lifecycle event；response correlation与reverse HostPort允许并发。
 - Relay protocol 顶层信封保留在 `agentdash-relay/src/protocol.rs`；握手、心跳和 capability discovery payload 位于 `agentdash-relay/src/protocol/handshake.rs`，prompt / discovery / workspace / tool / VFS materialization / terminal / session event / MCP payload 位于 `agentdash-relay/src/protocol/` 对应子模块。顶层信封和子协议 payload 分离，原因是 wire format 必须集中稳定，而各子协议会按本机能力独立演进。
 
 ### Extension Artifact Cache
@@ -795,8 +800,7 @@ pub struct LocalCommandRouterConfig {
     pub backend_id: String,
     pub workspace_roots: Vec<PathBuf>,
     pub tool_executor: ToolExecutor,
-    pub session_runtime: Option<SessionRuntimeServices>,
-    pub connector: Option<Arc<dyn AgentConnector>>,
+    pub runtime_wire: Arc<RuntimeWireCommandHandler>,
     pub mcp_manager: Option<Arc<McpClientManager>>,
     pub workspace_contract_config: WorkspaceContractRuntimeConfig,
     pub extension_host: LocalExtensionHostManager,
@@ -1054,6 +1058,7 @@ fn connection_key(entry: &ResolvedMcpServerEntry) -> Result<String, anyhow::Erro
 | runtime 有 Running session | `runtime_restart()` 拒绝 |
 | MCP probe 失败 | 返回 `{ ok: false }`，不升级成 command error |
 | Tauri CLI 缺失 | 仓库依赖 `@tauri-apps/cli`，不要求全局安装 |
+| Local Runtime Host启动 | 从Integration definitions与文本profile在内存中重建instance/offer，不启动embedded PostgreSQL或执行Dashboard migrations |
 
 ## 禁止模式
 

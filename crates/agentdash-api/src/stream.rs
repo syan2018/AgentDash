@@ -203,10 +203,9 @@ pub async fn event_stream_ndjson(
                         Ok(project_event) => {
                             if project_id_from_projection_event(&project_event)
                                 .is_some_and(|event_project_id| event_project_id == project_id_text.as_str())
+                                && let Some(line) = to_ndjson_line(&project_event)
                             {
-                                if let Some(line) = to_ndjson_line(&project_event) {
-                                    yield Ok(line);
-                                }
+                                yield Ok(line);
                             }
                         }
                         Err(RecvError::Lagged(skipped)) => {

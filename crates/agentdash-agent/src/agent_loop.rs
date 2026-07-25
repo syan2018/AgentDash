@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::bridge::{BridgeRequest, LlmBridge};
+#[cfg(test)]
+use crate::bridge::BridgeRequest;
+use crate::bridge::LlmBridge;
 use crate::tool_result_ref::ToolResultRefContext;
 use crate::types::{
     AfterToolCallContext, AfterToolCallResult, AfterTurnInput, AgentContext, AgentError,
@@ -17,10 +19,8 @@ mod streaming;
 mod tool_call;
 mod tool_result;
 
-use self::streaming::{
-    CompactionPreflightOutcome, run_compaction_preflight, stream_assistant_response,
-};
-use self::tool_call::{execute_tool_calls, refresh_context_tools};
+use self::streaming::stream_assistant_response;
+use self::tool_call::execute_tool_calls;
 
 const MAX_CONSECUTIVE_EMPTY_CONTINUES: usize = 1;
 
@@ -212,47 +212,16 @@ pub async fn agent_loop_continue(
 /// 该入口不追加 prompt、不请求 provider、不轮询 steering/follow-up，只消费 runtime
 /// delegate 在 pre-provider 边界暴露的 compaction 决策。
 pub async fn agent_loop_compact_only(
-    context: &mut AgentContext,
-    tool_instances: &[DynAgentTool],
-    config: &AgentLoopConfig,
-    bridge: &dyn LlmBridge,
-    emit: &AgentEventSink,
-    cancel: CancellationToken,
+    _context: &mut AgentContext,
+    _tool_instances: &[DynAgentTool],
+    _config: &AgentLoopConfig,
+    _bridge: &dyn LlmBridge,
+    _emit: &AgentEventSink,
+    _cancel: CancellationToken,
 ) -> Result<Vec<AgentMessage>, AgentError> {
-    emit_event(emit, AgentEvent::AgentStart).await;
-    emit_event(emit, AgentEvent::TurnStart).await;
-
-    refresh_context_tools(context, tool_instances, config);
-    let mut request = BridgeRequest {
-        system_prompt: Some(context.system_prompt.clone()),
-        messages: context.messages.clone(),
-        tools: context.tools.clone(),
-    };
-    let mut message_refs_for_llm = context.message_refs.clone();
-    let preflight = run_compaction_preflight(
-        context,
-        &mut request,
-        &mut message_refs_for_llm,
-        config,
-        bridge,
-        emit,
-        &cancel,
-    )
-    .await?;
-    if let CompactionPreflightOutcome::Failed { reason } = preflight.outcome {
-        return Err(AgentError::InvalidState(format!(
-            "context compaction failed: {reason}"
-        )));
-    }
-
-    emit_event(
-        emit,
-        AgentEvent::AgentEnd {
-            messages: Vec::new(),
-        },
-    )
-    .await;
-    Ok(Vec::new())
+    Err(AgentError::InvalidState(
+        "context compaction is owned by the managed Agent Runtime".to_string(),
+    ))
 }
 
 // ─── 主循环 ─────────────────────────────────────────────────
@@ -526,11 +495,6 @@ mod tests {
 
     use super::*;
     use crate::bridge::{BridgeResponse, StreamChunk};
-    use crate::types::{
-        CompactionFailureInput, CompactionImplementation, CompactionMetadata, CompactionParams,
-        CompactionPhase, CompactionReason, CompactionResult, CompactionStrategy, CompactionTrigger,
-        CompactionTriggerStats, EvaluateCompactionInput, RuntimeCompactionDelegate,
-    };
 
     struct UnusedBridge;
 
@@ -551,63 +515,9 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct CapturingCompactionDelegate {
-        failures: Mutex<Vec<CompactionFailureInput>>,
-    }
-
-    #[async_trait]
-    impl RuntimeCompactionDelegate for CapturingCompactionDelegate {
-        async fn evaluate_compaction(
-            &self,
-            _input: EvaluateCompactionInput,
-            _cancel: CancellationToken,
-        ) -> Result<Option<CompactionParams>, crate::types::AgentRuntimeError> {
-            Ok(Some(CompactionParams {
-                keep_last_n: 1,
-                reserve_tokens: 16_384,
-                custom_summary: Some("summary".to_string()),
-                custom_prompt: None,
-                trigger_stats: CompactionTriggerStats {
-                    input_tokens: 0,
-                    context_window: 64_000,
-                    reserve_tokens: 16_384,
-                },
-                metadata: CompactionMetadata {
-                    trigger: CompactionTrigger::Manual,
-                    reason: CompactionReason::UserRequested,
-                    phase: CompactionPhase::StandaloneCompactTurn,
-                    strategy: CompactionStrategy::SummaryPrefix,
-                    implementation: CompactionImplementation::LocalSummary,
-                    request_id: Some("request-1".to_string()),
-                },
-            }))
-        }
-
-        async fn after_compaction(
-            &self,
-            _result: CompactionResult,
-            _cancel: CancellationToken,
-        ) -> Result<(), crate::types::AgentRuntimeError> {
-            Ok(())
-        }
-
-        async fn after_compaction_failed(
-            &self,
-            input: CompactionFailureInput,
-            _cancel: CancellationToken,
-        ) -> Result<(), crate::types::AgentRuntimeError> {
-            self.failures.lock().await.push(input);
-            Ok(())
-        }
-    }
-
     #[tokio::test]
-    async fn compact_only_empty_context_fails_request_instead_of_noop() {
-        let delegate = Arc::new(CapturingCompactionDelegate::default());
-        let mut config = AgentLoopConfig::default();
-        config.runtime_delegates =
-            AgentRuntimeDelegateSet::new().with_compaction(Some(delegate.clone()));
+    async fn compact_only_is_rejected_without_invoking_runtime_policy() {
+        let config = AgentLoopConfig::default();
         let events = Arc::new(Mutex::new(Vec::new()));
         let emit: AgentEventSink = {
             let events = events.clone();
@@ -636,38 +546,8 @@ mod tests {
         .await
         .expect_err("empty compact-only context should fail the maintenance turn");
 
-        assert!(error.to_string().contains("compaction_context_empty"));
-        let failures = delegate.failures.lock().await;
-        let failure = failures.first().expect("failure should be reported");
-        assert_eq!(failure.reason, "compaction_context_empty");
-        assert_eq!(failure.error, "compaction_context_empty");
-        assert_eq!(
-            failure
-                .details
-                .as_ref()
-                .and_then(|details| details.get("message_count"))
-                .and_then(serde_json::Value::as_u64),
-            Some(0)
-        );
-        assert_eq!(
-            failure
-                .metadata
-                .as_ref()
-                .and_then(|metadata| metadata.request_id.as_deref()),
-            Some("request-1")
-        );
-        drop(failures);
-
+        assert!(error.to_string().contains("managed Agent Runtime"));
         let events = events.lock().await;
-        assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, AgentEvent::ContextCompactionFailed { .. }))
-        );
-        assert!(
-            !events
-                .iter()
-                .any(|event| matches!(event, AgentEvent::ContextCompactionNoop { .. }))
-        );
+        assert!(events.is_empty());
     }
 }

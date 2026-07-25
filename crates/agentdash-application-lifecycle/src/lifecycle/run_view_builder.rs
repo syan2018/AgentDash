@@ -1,600 +1,572 @@
-//! Read Model 投影构建器 — 组装 application-owned LifecycleRunView / SubjectExecutionView。
+//! Application-owned Lifecycle read model.
 //!
-//! 单一所有者：API 路由层不再内联投影逻辑，统一通过本模块构建 read model，
-//! 确保 `runtime_trace_refs`、`subject_associations` 等字段始终被正确填充。
+//! Product repositories identify the LifecycleRun and AgentRun target. Runtime
+//! thread/source coordinates come exclusively from the committed Product
+//! binding, while execution availability comes exclusively from the canonical
+//! Managed Runtime snapshot.
 
-use std::collections::{HashMap, HashSet};
+use std::cmp::Reverse;
 use std::sync::Arc;
 
-use serde_json::{Value, json};
-use uuid::Uuid;
-
-pub use agentdash_application_ports::lifecycle_read_model::{
-    ActiveRuntimeNodeRefView, AgentRunRefView, AgentRunView, ExecutorRunRefView,
-    LifecycleExecutionEntryView, LifecycleExecutionEventKindView, LifecycleReadModelQueryPort,
-    LifecycleRunRefView, LifecycleRunStatusView, LifecycleRunTopologyView, LifecycleRunView,
-    LifecycleSubjectAssociationView, OrchestrationInstanceView, ProjectActiveAgentsView,
-    RuntimeNodeView, RuntimeSessionRefView, SubjectExecutionView, SubjectRefView,
-    SubjectRuntimeAttemptView,
+use agentdash_agent_runtime_contract::ManagedRuntimeSnapshot;
+use agentdash_application_agentrun::agent_run::{
+    AgentRunProductProjectionQueryPort, AgentRunProductRuntimeBinding,
+    AgentRunProductRuntimeSnapshotObservation,
 };
 use agentdash_domain::DomainError;
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineage, AgentLineageRepository, AgentRunDeliveryBinding,
-    AgentRunDeliveryBindingRepository, ExecutorRunRef as DomainExecutorRunRef, LifecycleAgent,
-    LifecycleAgentRepository, LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind,
-    LifecycleRun, LifecycleRunRepository, LifecycleRunStatus as DomainLifecycleRunStatus,
-    LifecycleRunTopology as DomainLifecycleRunTopology, LifecycleSubjectAssociation,
-    LifecycleSubjectAssociationRepository, OrchestrationInstance, RuntimeNodeState,
-    RuntimeNodeStatus, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
-    SubjectRef,
+    ExecutorRunRef, LifecycleAgent, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    LifecycleRunStatus, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
+    NodePortValue, OrchestrationInstance, PlanNodeKind, RuntimeNodeError, RuntimeNodeState,
+    RuntimeNodeStatus, RuntimeTraceRef, SubjectRef,
 };
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde_json::Value;
+use thiserror::Error;
+use uuid::Uuid;
 
-#[derive(Clone)]
-pub struct LifecycleReadModelQueryAdapter {
-    repos: LifecycleReadModelRepos,
+#[derive(Debug, Clone)]
+pub struct LifecycleRunView {
+    pub run: LifecycleRun,
+    pub agents: Vec<LifecycleAgentExecutionView>,
+    pub subject_associations: Vec<LifecycleSubjectAssociation>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SubjectExecutionView {
+    pub subject_ref: SubjectRef,
+    pub associations: Vec<LifecycleSubjectAssociation>,
+    pub runs: Vec<LifecycleRunView>,
+    pub current_agent: Option<LifecycleAgentExecutionView>,
+    pub attempts: Vec<SubjectExecutionAttemptView>,
+    pub current_attempt: Option<SubjectExecutionAttemptView>,
+    pub artifacts: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubjectExecutionAttemptView {
+    pub target: AgentRunTarget,
+    pub runtime: RuntimeExecutionTraceView,
+    pub attempt: LifecycleExecutionAttemptView,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectActiveAgentsView {
+    pub project_id: Uuid,
+    pub runs: Vec<LifecycleRunView>,
+    pub agents: Vec<LifecycleAgentExecutionView>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LifecycleAgentExecutionView {
+    pub agent: LifecycleAgent,
+    pub runtime: RuntimeExecutionTraceView,
+    pub current_attempt: Option<LifecycleExecutionAttemptView>,
+    pub attempts: Vec<LifecycleExecutionAttemptView>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifecycleExecutionAttemptView {
+    pub orchestration_id: Uuid,
+    pub node_path: String,
+    pub attempt: u32,
+    pub status: RuntimeNodeStatus,
+    pub observed_at: DateTime<Utc>,
+    pub artifacts: Value,
+    pub runtime_node: LifecycleRuntimeNodeView,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifecycleRuntimeNodeView {
+    pub node_id: String,
+    pub node_path: String,
+    pub kind: PlanNodeKind,
+    pub status: RuntimeNodeStatus,
+    pub attempt: u32,
+    pub inputs: Vec<NodePortValue>,
+    pub outputs: Vec<NodePortValue>,
+    pub executor_run_ref: Option<ExecutorRunRef>,
+    pub agent_call_target: Option<AgentRunTarget>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub error: Option<RuntimeNodeError>,
+    pub trace_refs: Vec<RuntimeTraceRef>,
+    pub artifacts: Value,
+    pub children: Vec<LifecycleRuntimeNodeView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeTraceAbsenceReason {
+    ProductBindingMissing,
+    AgentUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuntimeExecutionTraceView {
+    Absent {
+        target: AgentRunTarget,
+        reason: RuntimeTraceAbsenceReason,
+    },
+    Current {
+        binding: AgentRunProductRuntimeBinding,
+        snapshot: ManagedRuntimeSnapshot,
+    },
 }
 
 #[derive(Clone)]
-pub struct LifecycleReadModelRepos {
-    pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-    pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
-    pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
-    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    pub agent_run_delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+pub struct LifecycleRunViewQueryDeps {
+    pub lifecycle_runs: Arc<dyn LifecycleRunRepository>,
+    pub lifecycle_agents: Arc<dyn LifecycleAgentRepository>,
+    pub subject_associations: Arc<dyn LifecycleSubjectAssociationRepository>,
+    pub product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
 }
 
-impl LifecycleReadModelQueryAdapter {
-    pub fn new(repos: LifecycleReadModelRepos) -> Self {
-        Self { repos }
-    }
+#[derive(Clone)]
+pub struct LifecycleRunViewQueryService {
+    deps: LifecycleRunViewQueryDeps,
 }
 
-#[async_trait::async_trait]
-impl LifecycleReadModelQueryPort for LifecycleReadModelQueryAdapter {
-    async fn lifecycle_run_view(&self, run_id: Uuid) -> Result<LifecycleRunView, DomainError> {
-        let run = self
-            .repos
-            .lifecycle_run_repo
-            .get_by_id(run_id)
-            .await?
-            .ok_or(DomainError::NotFound {
-                entity: "lifecycle_run",
-                id: run_id.to_string(),
-            })?;
-        build_lifecycle_run_view(&self.repos, &run).await
-    }
-}
-
-// ── Public async builders ──────────────────────────────────────
-
-/// 从 LifecycleRun 构建完整的 LifecycleRunView（含 trace refs、subject associations）。
-pub async fn build_lifecycle_run_view(
-    repos: &LifecycleReadModelRepos,
-    run: &LifecycleRun,
-) -> Result<LifecycleRunView, DomainError> {
-    let agents = repos.lifecycle_agent_repo.list_by_run(run.id).await?;
-    build_lifecycle_run_view_with_preloaded(repos, run, agents).await
-}
-
-/// 使用已加载的 agents 构建 LifecycleRunView，避免重复查询。
-pub async fn build_lifecycle_run_view_with_preloaded(
-    repos: &LifecycleReadModelRepos,
-    run: &LifecycleRun,
-    agents: Vec<LifecycleAgent>,
-) -> Result<LifecycleRunView, DomainError> {
-    let mut subject_associations = repos
-        .lifecycle_subject_association_repo
-        .list_by_anchor(run.id, None)
-        .await?;
-    for agent in &agents {
-        subject_associations.extend(
-            repos
-                .lifecycle_subject_association_repo
-                .list_by_anchor(run.id, Some(agent.id))
-                .await?,
-        );
+impl LifecycleRunViewQueryService {
+    pub fn new(deps: LifecycleRunViewQueryDeps) -> Self {
+        Self { deps }
     }
 
-    let orchestrations = orchestration_views(run);
-    let active_runtime_node_refs = active_runtime_node_refs(run);
-    let runtime_trace_refs = collect_runtime_trace_refs(repos, run.id).await?;
-    let delivery_bindings = repos
-        .agent_run_delivery_binding_repo
-        .list_by_run(run.id)
-        .await?;
+    async fn runtime_trace(&self, target: &AgentRunTarget) -> RuntimeExecutionTraceView {
+        match self
+            .deps
+            .product_projection
+            .runtime_snapshot_observation(target)
+            .await
+        {
+            Ok(AgentRunProductRuntimeSnapshotObservation::Absent { .. }) => {
+                RuntimeExecutionTraceView::Absent {
+                    target: target.clone(),
+                    reason: RuntimeTraceAbsenceReason::ProductBindingMissing,
+                }
+            }
+            Ok(AgentRunProductRuntimeSnapshotObservation::Current {
+                product_binding,
+                snapshot,
+            }) => RuntimeExecutionTraceView::Current {
+                binding: product_binding,
+                snapshot,
+            },
+            Err(_) => RuntimeExecutionTraceView::Absent {
+                target: target.clone(),
+                reason: RuntimeTraceAbsenceReason::AgentUnavailable,
+            },
+        }
+    }
 
-    Ok(assemble_lifecycle_run_view(
-        run,
-        lifecycle_agent_views(&agents, &delivery_bindings),
-        subject_associations
-            .iter()
-            .map(association_to_view)
-            .collect(),
-        orchestrations,
-        active_runtime_node_refs,
-        runtime_trace_refs,
-    ))
-}
-
-/// 为给定 subject 构建 SubjectExecutionView。
-pub async fn build_subject_execution_view(
-    repos: &LifecycleReadModelRepos,
-    subject: SubjectRef,
-) -> Result<SubjectExecutionView, DomainError> {
-    let associations = repos
-        .lifecycle_subject_association_repo
-        .list_by_subject(&subject)
-        .await?;
-    let run_ids = unique_run_ids(&associations);
-    let runs = repos.lifecycle_run_repo.list_by_ids(&run_ids).await?;
-
-    let mut run_views = Vec::with_capacity(runs.len());
-    let mut current_agent: Option<AgentRunView> = None;
-    let runtime_attempts = subject_runtime_attempt_history(repos, &associations, &runs).await?;
-    let latest_runtime_node = runtime_attempts
-        .first()
-        .map(|attempt| attempt.runtime_node.clone());
-    let artifacts = runtime_attempts
-        .first()
-        .map(|attempt| attempt.artifacts.clone())
-        .unwrap_or_else(|| json!({}));
-
-    for run in &runs {
-        let agents = repos.lifecycle_agent_repo.list_by_run(run.id).await?;
-        let delivery_bindings = repos
-            .agent_run_delivery_binding_repo
-            .list_by_run(run.id)
+    async fn build_run_view(
+        &self,
+        run: LifecycleRun,
+    ) -> Result<LifecycleRunView, LifecycleRunViewQueryError> {
+        let agents = self.deps.lifecycle_agents.list_by_run(run.id).await?;
+        let mut subject_associations = self
+            .deps
+            .subject_associations
+            .list_by_anchor(run.id, None)
             .await?;
-        let delivery_bindings_by_agent = delivery_bindings_by_agent(&delivery_bindings);
+        for agent in &agents {
+            subject_associations.extend(
+                self.deps
+                    .subject_associations
+                    .list_by_anchor(run.id, Some(agent.id))
+                    .await?,
+            );
+        }
+        subject_associations.sort_by_key(|association| (association.created_at, association.id));
+        subject_associations.dedup_by_key(|association| association.id);
 
-        if current_agent.is_none() {
-            current_agent = select_current_agent(&associations, &agents).map(|agent| {
-                lifecycle_agent_to_view(agent, delivery_bindings_by_agent.get(&agent.id).copied())
+        let mut agent_views = Vec::with_capacity(agents.len());
+        for agent in agents {
+            let target = AgentRunTarget {
+                run_id: run.id,
+                agent_id: agent.id,
+            };
+            let mut attempts = execution_attempts(&run, &target);
+            attempts.sort_by_key(attempt_sort_key);
+            let current_attempt = attempts.first().cloned();
+            agent_views.push(LifecycleAgentExecutionView {
+                agent,
+                runtime: self.runtime_trace(&target).await,
+                current_attempt,
+                attempts,
             });
         }
+        agent_views.sort_by_key(|view| (view.agent.created_at, view.agent.id));
 
-        run_views.push(build_lifecycle_run_view_with_preloaded(repos, run, agents).await?);
+        Ok(LifecycleRunView {
+            run,
+            agents: agent_views,
+            subject_associations,
+        })
+    }
+}
+
+#[async_trait]
+pub trait LifecycleRunViewQueryPort: Send + Sync {
+    async fn lifecycle_run_view(
+        &self,
+        run_id: Uuid,
+    ) -> Result<LifecycleRunView, LifecycleRunViewQueryError>;
+
+    async fn subject_execution_view(
+        &self,
+        subject: SubjectRef,
+    ) -> Result<SubjectExecutionView, LifecycleRunViewQueryError>;
+
+    async fn project_active_agents_view(
+        &self,
+        project_id: Uuid,
+    ) -> Result<ProjectActiveAgentsView, LifecycleRunViewQueryError>;
+}
+
+#[async_trait]
+impl LifecycleRunViewQueryPort for LifecycleRunViewQueryService {
+    async fn lifecycle_run_view(
+        &self,
+        run_id: Uuid,
+    ) -> Result<LifecycleRunView, LifecycleRunViewQueryError> {
+        let run = self
+            .deps
+            .lifecycle_runs
+            .get_by_id(run_id)
+            .await?
+            .ok_or(LifecycleRunViewQueryError::RunNotFound { run_id })?;
+        self.build_run_view(run).await
     }
 
-    run_views.sort_by(|a, b| b.last_activity_at.cmp(&a.last_activity_at));
+    async fn subject_execution_view(
+        &self,
+        subject: SubjectRef,
+    ) -> Result<SubjectExecutionView, LifecycleRunViewQueryError> {
+        let mut associations = self
+            .deps
+            .subject_associations
+            .list_by_subject(&subject)
+            .await?;
+        associations.sort_by_key(|association| Reverse((association.created_at, association.id)));
+        let run_ids = unique_run_ids(&associations);
+        let mut runs = self.deps.lifecycle_runs.list_by_ids(&run_ids).await?;
+        runs.sort_by_key(|run| Reverse((run.last_activity_at, run.id)));
 
-    Ok(SubjectExecutionView {
-        subject_ref: subject_ref_to_view(&subject),
-        associations: associations.iter().map(association_to_view).collect(),
-        runs: run_views,
-        current_agent,
-        runtime_attempts,
-        latest_runtime_node,
-        artifacts,
-    })
-}
+        let mut run_views = Vec::with_capacity(runs.len());
+        for run in runs {
+            run_views.push(self.build_run_view(run).await?);
+        }
+        let associated_targets = associated_targets(&associations, &run_views);
+        let current_agent = select_subject_current_agent(&associations, &run_views);
+        let mut attempts = subject_attempts(&associated_targets, &run_views);
+        attempts.sort_by_key(subject_attempt_sort_key);
+        let current_attempt = attempts.first().cloned();
+        let artifacts = current_attempt
+            .as_ref()
+            .map(|current| current.attempt.artifacts.clone())
+            .unwrap_or(Value::Null);
 
-/// 构建项目维度的活跃 agent 聚合视图（仅含非终态 run）。
-pub async fn build_project_active_agents_view(
-    repos: &LifecycleReadModelRepos,
-    project_id: uuid::Uuid,
-) -> Result<ProjectActiveAgentsView, DomainError> {
-    let all_runs = repos.lifecycle_run_repo.list_by_project(project_id).await?;
-    let active_runs: Vec<_> = all_runs
-        .into_iter()
-        .filter(|r| {
-            !matches!(
-                r.status,
-                DomainLifecycleRunStatus::Completed
-                    | DomainLifecycleRunStatus::Failed
-                    | DomainLifecycleRunStatus::Cancelled
-            )
+        Ok(SubjectExecutionView {
+            subject_ref: subject,
+            associations,
+            runs: run_views,
+            current_agent,
+            attempts,
+            current_attempt,
+            artifacts,
         })
-        .collect();
-
-    let mut run_views = Vec::with_capacity(active_runs.len());
-    let mut all_agents = Vec::new();
-
-    for run in &active_runs {
-        let view = build_lifecycle_run_view(repos, run).await?;
-        all_agents.extend(view.agents.clone());
-        run_views.push(view);
     }
 
-    run_views.sort_by(|a, b| b.last_activity_at.cmp(&a.last_activity_at));
-
-    Ok(ProjectActiveAgentsView {
-        project_id: project_id.to_string(),
-        runs: run_views,
-        agents: all_agents,
-    })
-}
-
-// ── Internal async helpers ─────────────────────────────────────
-
-async fn collect_runtime_trace_refs(
-    repos: &LifecycleReadModelRepos,
-    run_id: Uuid,
-) -> Result<Vec<RuntimeSessionRefView>, DomainError> {
-    Ok(repos
-        .execution_anchor_repo
-        .list_by_run(run_id)
-        .await?
-        .into_iter()
-        .map(|anchor| RuntimeSessionRefView {
-            runtime_session_id: anchor.runtime_session_id,
+    async fn project_active_agents_view(
+        &self,
+        project_id: Uuid,
+    ) -> Result<ProjectActiveAgentsView, LifecycleRunViewQueryError> {
+        let mut runs = self
+            .deps
+            .lifecycle_runs
+            .list_by_project(project_id)
+            .await?
+            .into_iter()
+            .filter(|run| is_project_active_run(run.status))
+            .collect::<Vec<_>>();
+        runs.sort_by_key(|run| Reverse((run.last_activity_at, run.id)));
+        let mut run_views = Vec::with_capacity(runs.len());
+        for run in runs {
+            run_views.push(self.build_run_view(run).await?);
+        }
+        let agents = run_views
+            .iter()
+            .flat_map(|run| run.agents.iter().cloned())
+            .collect();
+        Ok(ProjectActiveAgentsView {
+            project_id,
+            runs: run_views,
+            agents,
         })
-        .collect())
+    }
 }
 
-async fn subject_runtime_attempt_history(
-    repos: &LifecycleReadModelRepos,
+#[derive(Debug, Error)]
+pub enum LifecycleRunViewQueryError {
+    #[error(transparent)]
+    Domain(#[from] DomainError),
+    #[error("LifecycleRun not found: {run_id}")]
+    RunNotFound { run_id: Uuid },
+}
+
+fn unique_run_ids(associations: &[LifecycleSubjectAssociation]) -> Vec<Uuid> {
+    let mut run_ids = associations
+        .iter()
+        .map(|association| association.anchor_run_id)
+        .collect::<Vec<_>>();
+    run_ids.sort_unstable();
+    run_ids.dedup();
+    run_ids
+}
+
+fn associated_targets(
     associations: &[LifecycleSubjectAssociation],
-    runs: &[LifecycleRun],
-) -> Result<Vec<SubjectRuntimeAttemptView>, DomainError> {
-    let mut attempts = Vec::new();
-    let mut seen_runtime_sessions = HashSet::new();
-
+    runs: &[LifecycleRunView],
+) -> std::collections::BTreeSet<AgentRunTarget> {
+    let mut targets = std::collections::BTreeSet::new();
     for association in associations {
-        let agents = resolve_association_history_agents(repos, association).await?;
-        let Some(run) = runs.iter().find(|run| run.id == association.anchor_run_id) else {
+        let Some(run) = runs
+            .iter()
+            .find(|run| run.run.id == association.anchor_run_id)
+        else {
             continue;
         };
-        for agent in agents {
-            let current_frame_id = repos
-                .agent_frame_repo
-                .get_current(agent.id)
-                .await?
-                .map(|frame| frame.id);
-            let anchors = repos.execution_anchor_repo.list_by_agent(agent.id).await?;
-            for anchor in anchors {
-                if anchor.run_id != run.id
-                    || !seen_runtime_sessions.insert(anchor.runtime_session_id.clone())
-                {
-                    continue;
-                }
-                let Some(attempt) = runtime_attempt_from_anchor(run, &anchor, current_frame_id)
-                else {
-                    continue;
-                };
-                attempts.push(attempt);
+        if let Some(agent_id) = association.anchor_agent_id {
+            if run.agents.iter().any(|view| view.agent.id == agent_id) {
+                targets.insert(AgentRunTarget {
+                    run_id: run.run.id,
+                    agent_id,
+                });
             }
+        } else {
+            targets.extend(run.agents.iter().map(|view| AgentRunTarget {
+                run_id: run.run.id,
+                agent_id: view.agent.id,
+            }));
         }
     }
-
-    sort_subject_runtime_attempts(&mut attempts);
-
-    Ok(attempts)
+    targets
 }
 
-async fn resolve_association_history_agents(
-    repos: &LifecycleReadModelRepos,
-    association: &LifecycleSubjectAssociation,
-) -> Result<Vec<LifecycleAgent>, DomainError> {
-    if !association_role_can_own_runtime_attempts(&association.role) {
-        return Ok(Vec::new());
-    }
-
-    if let Some(agent_id) = association.anchor_agent_id {
-        let agent = repos.lifecycle_agent_repo.get(agent_id).await?;
-        return Ok(agent
-            .filter(|agent| agent.run_id == association.anchor_run_id)
-            .into_iter()
-            .collect());
-    }
-    let agents = repos
-        .lifecycle_agent_repo
-        .list_by_run(association.anchor_run_id)
-        .await?;
-    let lineages = repos
-        .agent_lineage_repo
-        .list_by_run(association.anchor_run_id)
-        .await?;
-    Ok(filter_whole_run_history_agents(agents, &lineages))
-}
-
-fn association_role_can_own_runtime_attempts(role: &str) -> bool {
-    matches!(role, "subject" | "task_execution")
-}
-
-fn filter_whole_run_history_agents(
-    agents: Vec<LifecycleAgent>,
-    lineages: &[AgentLineage],
-) -> Vec<LifecycleAgent> {
-    if lineages.is_empty() {
-        return if agents.len() == 1 {
-            agents
-        } else {
-            Vec::new()
+fn select_subject_current_agent(
+    associations: &[LifecycleSubjectAssociation],
+    runs: &[LifecycleRunView],
+) -> Option<LifecycleAgentExecutionView> {
+    for association in associations {
+        let Some(agent_id) = association.anchor_agent_id else {
+            continue;
         };
-    }
-
-    let child_agent_ids = lineages
-        .iter()
-        .map(|lineage| lineage.child_agent_id)
-        .collect::<HashSet<_>>();
-    agents
-        .into_iter()
-        .filter(|agent| !child_agent_ids.contains(&agent.id))
-        .collect()
-}
-
-fn sort_subject_runtime_attempts(attempts: &mut [SubjectRuntimeAttemptView]) {
-    attempts.sort_by(|a, b| {
-        b.observed_at.cmp(&a.observed_at).then_with(|| {
-            b.runtime_session_ref
-                .runtime_session_id
-                .cmp(&a.runtime_session_ref.runtime_session_id)
-        })
-    });
-}
-
-fn runtime_attempt_from_anchor(
-    run: &LifecycleRun,
-    anchor: &RuntimeSessionExecutionAnchor,
-    current_frame_id: Option<Uuid>,
-) -> Option<SubjectRuntimeAttemptView> {
-    let orchestration_id = anchor.orchestration_id?;
-    let node_path = anchor.node_path.as_deref()?;
-    let attempt = anchor.node_attempt.unwrap_or(1);
-    let orchestration = run
-        .orchestrations
-        .iter()
-        .find(|item| item.orchestration_id == orchestration_id)?;
-    let node = find_runtime_node_by_path(&orchestration.node_tree, node_path, attempt)?;
-    let observed_at = node
-        .completed_at
-        .or(node.started_at)
-        .unwrap_or(anchor.updated_at);
-    let runtime_node = runtime_node_to_view(node);
-    let artifacts = runtime_node_artifacts(orchestration, node);
-    Some(SubjectRuntimeAttemptView {
-        run_ref: LifecycleRunRefView {
-            run_id: run.id.to_string(),
-        },
-        agent_ref: AgentRunRefView {
-            run_id: run.id.to_string(),
-            agent_id: anchor.agent_id.to_string(),
-        },
-        runtime_session_ref: RuntimeSessionRefView {
-            runtime_session_id: anchor.runtime_session_id.clone(),
-        },
-        launch_frame_id: anchor.launch_frame_id.to_string(),
-        current_frame_id: current_frame_id.map(|id| id.to_string()),
-        orchestration_id: orchestration_id.to_string(),
-        node_path: node_path.to_string(),
-        attempt,
-        status: status_string(&node.status),
-        observed_at: observed_at.to_rfc3339(),
-        runtime_node,
-        artifacts,
-    })
-}
-
-// ── Pure conversion functions (pub for reuse) ──────────────────
-
-pub fn subject_ref_to_view(subject: &SubjectRef) -> SubjectRefView {
-    SubjectRefView {
-        kind: subject.kind.clone(),
-        id: subject.id.to_string(),
-    }
-}
-
-pub fn association_to_view(
-    association: &LifecycleSubjectAssociation,
-) -> LifecycleSubjectAssociationView {
-    LifecycleSubjectAssociationView {
-        id: association.id.to_string(),
-        anchor_run_id: association.anchor_run_id.to_string(),
-        anchor_agent_id: association.anchor_agent_id.map(|id| id.to_string()),
-        subject_ref: SubjectRefView {
-            kind: association.subject_kind.clone(),
-            id: association.subject_id.to_string(),
-        },
-        role: association.role.clone(),
-        metadata: association.metadata_json.clone(),
-        created_at: association.created_at.to_rfc3339(),
-    }
-}
-
-pub fn lifecycle_agent_to_view(
-    agent: &LifecycleAgent,
-    current_delivery: Option<&AgentRunDeliveryBinding>,
-) -> AgentRunView {
-    AgentRunView {
-        agent_ref: AgentRunRefView {
-            run_id: agent.run_id.to_string(),
-            agent_id: agent.id.to_string(),
-        },
-        project_id: agent.project_id.to_string(),
-        source: agent.source.as_str().to_string(),
-        project_agent_id: agent.project_agent_id.map(|id| id.to_string()),
-        status: agent.status.clone(),
-        last_delivery_status: current_delivery.map(|binding| binding.status.as_str().to_string()),
-        created_at: agent.created_at.to_rfc3339(),
-        updated_at: agent.updated_at.to_rfc3339(),
-    }
-}
-
-fn lifecycle_agent_views(
-    agents: &[LifecycleAgent],
-    delivery_bindings: &[AgentRunDeliveryBinding],
-) -> Vec<AgentRunView> {
-    let delivery_bindings_by_agent = delivery_bindings_by_agent(delivery_bindings);
-    agents
-        .iter()
-        .map(|agent| {
-            lifecycle_agent_to_view(agent, delivery_bindings_by_agent.get(&agent.id).copied())
-        })
-        .collect()
-}
-
-fn delivery_bindings_by_agent(
-    delivery_bindings: &[AgentRunDeliveryBinding],
-) -> HashMap<Uuid, &AgentRunDeliveryBinding> {
-    delivery_bindings
-        .iter()
-        .map(|binding| (binding.agent_id, binding))
-        .collect()
-}
-
-// ── Internal pure helpers ──────────────────────────────────────
-
-fn status_to_view(status: DomainLifecycleRunStatus) -> LifecycleRunStatusView {
-    match status {
-        DomainLifecycleRunStatus::Draft => LifecycleRunStatusView::Draft,
-        DomainLifecycleRunStatus::Ready => LifecycleRunStatusView::Ready,
-        DomainLifecycleRunStatus::Running => LifecycleRunStatusView::Running,
-        DomainLifecycleRunStatus::Blocked => LifecycleRunStatusView::Blocked,
-        DomainLifecycleRunStatus::Completed => LifecycleRunStatusView::Completed,
-        DomainLifecycleRunStatus::Failed => LifecycleRunStatusView::Failed,
-        DomainLifecycleRunStatus::Cancelled => LifecycleRunStatusView::Cancelled,
-    }
-}
-
-fn topology_to_view(topology: DomainLifecycleRunTopology) -> LifecycleRunTopologyView {
-    match topology {
-        DomainLifecycleRunTopology::Plain => LifecycleRunTopologyView::Plain,
-        DomainLifecycleRunTopology::WorkflowGraph => LifecycleRunTopologyView::WorkflowGraph,
-    }
-}
-
-fn assemble_lifecycle_run_view(
-    run: &LifecycleRun,
-    agents: Vec<AgentRunView>,
-    subject_associations: Vec<LifecycleSubjectAssociationView>,
-    orchestrations: Vec<OrchestrationInstanceView>,
-    active_runtime_node_refs: Vec<ActiveRuntimeNodeRefView>,
-    runtime_trace_refs: Vec<RuntimeSessionRefView>,
-) -> LifecycleRunView {
-    LifecycleRunView {
-        run_ref: LifecycleRunRefView {
-            run_id: run.id.to_string(),
-        },
-        project_id: run.project_id.to_string(),
-        topology: topology_to_view(run.topology),
-        status: status_to_view(run.status),
-        orchestrations,
-        active_runtime_node_refs,
-        agents,
-        subject_associations,
-        runtime_trace_refs,
-        execution_log: run
-            .execution_log
+        if let Some(agent) = runs
             .iter()
-            .map(execution_entry_to_view)
-            .collect(),
-        created_at: run.created_at.to_rfc3339(),
-        updated_at: run.updated_at.to_rfc3339(),
-        last_activity_at: run.last_activity_at.to_rfc3339(),
+            .find(|run| run.run.id == association.anchor_run_id)
+            .and_then(|run| run.agents.iter().find(|view| view.agent.id == agent_id))
+        {
+            return Some(agent.clone());
+        }
     }
-}
-
-fn orchestration_views(run: &LifecycleRun) -> Vec<OrchestrationInstanceView> {
-    run.orchestrations
-        .iter()
-        .map(orchestration_to_view)
-        .collect()
-}
-
-fn orchestration_to_view(instance: &OrchestrationInstance) -> OrchestrationInstanceView {
-    OrchestrationInstanceView {
-        orchestration_id: instance.orchestration_id.to_string(),
-        role: instance.role.clone(),
-        status: status_string(&instance.status),
-        plan_digest: instance.plan_snapshot.plan_digest.clone(),
-        source_ref: serde_json::to_value(&instance.source_ref).unwrap_or(serde_json::Value::Null),
-        ready_node_ids: instance.dispatch.ready_node_ids.clone(),
-        nodes: instance
-            .node_tree
-            .iter()
-            .map(runtime_node_to_view)
-            .collect(),
-        created_at: instance.created_at.to_rfc3339(),
-        updated_at: instance.updated_at.to_rfc3339(),
-    }
-}
-
-fn runtime_node_to_view(node: &RuntimeNodeState) -> RuntimeNodeView {
-    RuntimeNodeView {
-        node_id: node.node_id.clone(),
-        node_path: node.node_path.clone(),
-        kind: status_string(&node.kind),
-        status: status_string(&node.status),
-        attempt: node.attempt,
-        executor_run_ref: node.executor_run_ref.as_ref().map(executor_run_ref_to_view),
-        started_at: node.started_at.map(|timestamp| timestamp.to_rfc3339()),
-        completed_at: node.completed_at.map(|timestamp| timestamp.to_rfc3339()),
-        children: node.children.iter().map(runtime_node_to_view).collect(),
-    }
-}
-
-fn executor_run_ref_to_view(refs: &DomainExecutorRunRef) -> ExecutorRunRefView {
-    match refs {
-        DomainExecutorRunRef::RuntimeSession { session_id } => ExecutorRunRefView::RuntimeSession {
-            session_id: session_id.clone(),
-        },
-        DomainExecutorRunRef::FunctionRun { run_id } => ExecutorRunRefView::FunctionRun {
-            run_id: run_id.clone(),
-        },
-        DomainExecutorRunRef::HumanDecision { decision_id } => ExecutorRunRefView::HumanDecision {
-            decision_id: decision_id.clone(),
-        },
-    }
-}
-
-fn active_runtime_node_refs(run: &LifecycleRun) -> Vec<ActiveRuntimeNodeRefView> {
-    run.orchestrations
-        .iter()
-        .flat_map(|instance| {
-            flatten_runtime_nodes(&instance.node_tree)
-                .into_iter()
-                .filter(|node| {
+    let targets = associated_targets(associations, runs);
+    runs.iter()
+        .flat_map(|run| run.agents.iter())
+        .filter(|view| {
+            targets.contains(&AgentRunTarget {
+                run_id: view.agent.run_id,
+                agent_id: view.agent.id,
+            })
+        })
+        .max_by_key(|view| {
+            (
+                view.current_attempt.as_ref().is_some_and(|attempt| {
                     matches!(
-                        node.status,
+                        attempt.status,
                         RuntimeNodeStatus::Ready
                             | RuntimeNodeStatus::Claiming
                             | RuntimeNodeStatus::Running
                             | RuntimeNodeStatus::Blocked
                     )
-                })
-                .map(move |node| ActiveRuntimeNodeRefView {
-                    run_id: run.id.to_string(),
-                    orchestration_id: instance.orchestration_id.to_string(),
-                    node_path: node.node_path.clone(),
-                    attempt: node.attempt,
-                    status: status_string(&node.status),
+                }),
+                view.current_attempt
+                    .as_ref()
+                    .map(|attempt| attempt.observed_at),
+                view.agent.status == "active",
+                view.agent.updated_at,
+                view.agent.id,
+            )
+        })
+        .cloned()
+}
+
+fn subject_attempts(
+    targets: &std::collections::BTreeSet<AgentRunTarget>,
+    runs: &[LifecycleRunView],
+) -> Vec<SubjectExecutionAttemptView> {
+    runs.iter()
+        .flat_map(|run| run.agents.iter())
+        .filter_map(|agent| {
+            let target = AgentRunTarget {
+                run_id: agent.agent.run_id,
+                agent_id: agent.agent.id,
+            };
+            targets
+                .contains(&target)
+                .then_some((target, agent.runtime.clone(), &agent.attempts))
+        })
+        .flat_map(|(target, runtime, attempts)| {
+            attempts
+                .iter()
+                .cloned()
+                .map(move |attempt| SubjectExecutionAttemptView {
+                    target: target.clone(),
+                    runtime: runtime.clone(),
+                    attempt,
                 })
         })
         .collect()
 }
 
-fn flatten_runtime_nodes(nodes: &[RuntimeNodeState]) -> Vec<&RuntimeNodeState> {
-    fn collect<'a>(node: &'a RuntimeNodeState, acc: &mut Vec<&'a RuntimeNodeState>) {
-        acc.push(node);
-        for child in &node.children {
-            collect(child, acc);
-        }
-    }
-
-    let mut flattened = Vec::new();
-    for node in nodes {
-        collect(node, &mut flattened);
-    }
-    flattened
+fn subject_attempt_sort_key(
+    item: &SubjectExecutionAttemptView,
+) -> (
+    Reverse<bool>,
+    Reverse<DateTime<Utc>>,
+    Reverse<u32>,
+    AgentRunTarget,
+    String,
+    Uuid,
+) {
+    (
+        Reverse(matches!(
+            item.attempt.status,
+            RuntimeNodeStatus::Ready
+                | RuntimeNodeStatus::Claiming
+                | RuntimeNodeStatus::Running
+                | RuntimeNodeStatus::Blocked
+        )),
+        Reverse(item.attempt.observed_at),
+        Reverse(item.attempt.attempt),
+        item.target.clone(),
+        item.attempt.node_path.clone(),
+        item.attempt.orchestration_id,
+    )
 }
 
-fn find_runtime_node_by_path<'a>(
-    nodes: &'a [RuntimeNodeState],
-    node_path: &str,
-    attempt: u32,
-) -> Option<&'a RuntimeNodeState> {
-    for node in nodes {
-        if node.node_path == node_path && node.attempt == attempt {
-            return Some(node);
-        }
-        if let Some(found) = find_runtime_node_by_path(&node.children, node_path, attempt) {
-            return Some(found);
-        }
+fn is_project_active_run(status: LifecycleRunStatus) -> bool {
+    matches!(
+        status,
+        LifecycleRunStatus::Draft
+            | LifecycleRunStatus::Ready
+            | LifecycleRunStatus::Running
+            | LifecycleRunStatus::Blocked
+    )
+}
+
+fn execution_attempts(
+    run: &LifecycleRun,
+    target: &AgentRunTarget,
+) -> Vec<LifecycleExecutionAttemptView> {
+    let mut attempts = Vec::new();
+    for orchestration in &run.orchestrations {
+        collect_execution_attempts(
+            orchestration,
+            &orchestration.node_tree,
+            target,
+            &mut attempts,
+        );
     }
-    None
+    attempts
+}
+
+fn collect_execution_attempts(
+    orchestration: &OrchestrationInstance,
+    nodes: &[RuntimeNodeState],
+    target: &AgentRunTarget,
+    attempts: &mut Vec<LifecycleExecutionAttemptView>,
+) {
+    for node in nodes {
+        if node_targets_agent_run(node, target) {
+            attempts.push(LifecycleExecutionAttemptView {
+                orchestration_id: orchestration.orchestration_id,
+                node_path: node.node_path.clone(),
+                attempt: node.attempt.max(1),
+                status: node.status,
+                observed_at: node
+                    .completed_at
+                    .or(node.started_at)
+                    .unwrap_or(orchestration.updated_at),
+                artifacts: runtime_node_artifacts(orchestration, node),
+                runtime_node: runtime_node_to_view(orchestration, node),
+            });
+        }
+        collect_execution_attempts(orchestration, &node.children, target, attempts);
+    }
+}
+
+fn runtime_node_to_view(
+    orchestration: &OrchestrationInstance,
+    node: &RuntimeNodeState,
+) -> LifecycleRuntimeNodeView {
+    LifecycleRuntimeNodeView {
+        node_id: node.node_id.clone(),
+        node_path: node.node_path.clone(),
+        kind: node.kind,
+        status: node.status,
+        attempt: node.attempt,
+        inputs: node.inputs.clone(),
+        outputs: node.outputs.clone(),
+        executor_run_ref: node.executor_run_ref.clone(),
+        agent_call_target: node.agent_call.as_ref().map(|state| state.target.clone()),
+        started_at: node.started_at,
+        completed_at: node.completed_at,
+        error: node.error.clone(),
+        trace_refs: node.trace_refs.clone(),
+        artifacts: runtime_node_artifacts(orchestration, node),
+        children: node
+            .children
+            .iter()
+            .map(|child| runtime_node_to_view(orchestration, child))
+            .collect(),
+    }
+}
+
+fn node_targets_agent_run(node: &RuntimeNodeState, target: &AgentRunTarget) -> bool {
+    node.agent_call
+        .as_ref()
+        .is_some_and(|state| state.target == *target)
+        || matches!(
+            node.executor_run_ref.as_ref(),
+            Some(ExecutorRunRef::AgentRun { run_id, agent_id })
+                if *run_id == target.run_id && *agent_id == target.agent_id
+        )
+}
+
+fn attempt_sort_key(
+    attempt: &LifecycleExecutionAttemptView,
+) -> (
+    Reverse<bool>,
+    Reverse<DateTime<Utc>>,
+    Reverse<u32>,
+    String,
+    Uuid,
+) {
+    (
+        Reverse(matches!(
+            attempt.status,
+            RuntimeNodeStatus::Ready
+                | RuntimeNodeStatus::Claiming
+                | RuntimeNodeStatus::Running
+                | RuntimeNodeStatus::Blocked
+        )),
+        Reverse(attempt.observed_at),
+        Reverse(attempt.attempt),
+        attempt.node_path.clone(),
+        attempt.orchestration_id,
+    )
 }
 
 fn runtime_node_artifacts(orchestration: &OrchestrationInstance, node: &RuntimeNodeState) -> Value {
@@ -610,101 +582,246 @@ fn runtime_node_artifacts(orchestration: &OrchestrationInstance, node: &RuntimeN
         .iter()
         .filter(|artifact| artifact.node_path.as_deref() == Some(node.node_path.as_str()))
         .collect::<Vec<_>>();
-
-    json!({
+    serde_json::json!({
         "node_outputs": node_outputs,
-        "artifact_refs": serde_json::to_value(artifact_refs).unwrap_or(Value::Null),
+        "artifact_refs": artifact_refs,
     })
-}
-
-fn status_string<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn execution_entry_to_view(
-    entry: &agentdash_domain::workflow::LifecycleExecutionEntry,
-) -> LifecycleExecutionEntryView {
-    LifecycleExecutionEntryView {
-        timestamp: entry.timestamp,
-        activity_key: entry.activity_key.clone(),
-        event_kind: execution_event_kind_to_view(entry.event_kind),
-        summary: entry.summary.clone(),
-        detail: entry.detail.clone(),
-    }
-}
-
-fn execution_event_kind_to_view(
-    kind: DomainLifecycleExecutionEventKind,
-) -> LifecycleExecutionEventKindView {
-    match kind {
-        DomainLifecycleExecutionEventKind::ActivityActivated => {
-            LifecycleExecutionEventKindView::ActivityActivated
-        }
-        DomainLifecycleExecutionEventKind::ActivityCompleted => {
-            LifecycleExecutionEventKindView::ActivityCompleted
-        }
-        DomainLifecycleExecutionEventKind::ConstraintBlocked => {
-            LifecycleExecutionEventKindView::ConstraintBlocked
-        }
-        DomainLifecycleExecutionEventKind::CompletionEvaluated => {
-            LifecycleExecutionEventKindView::CompletionEvaluated
-        }
-        DomainLifecycleExecutionEventKind::ArtifactAppended => {
-            LifecycleExecutionEventKindView::ArtifactAppended
-        }
-        DomainLifecycleExecutionEventKind::ContextInjected => {
-            LifecycleExecutionEventKindView::ContextInjected
-        }
-    }
-}
-
-fn select_current_agent<'a>(
-    associations: &[LifecycleSubjectAssociation],
-    agents: &'a [LifecycleAgent],
-) -> Option<&'a LifecycleAgent> {
-    associations
-        .iter()
-        .find_map(|a| a.anchor_agent_id)
-        .and_then(|agent_id| agents.iter().find(|agent| agent.id == agent_id))
-        .or_else(|| agents.iter().find(|agent| agent.status == "active"))
-        .or_else(|| agents.first())
-}
-
-fn unique_run_ids(associations: &[LifecycleSubjectAssociation]) -> Vec<Uuid> {
-    let mut run_ids = Vec::new();
-    for association in associations {
-        if !run_ids.contains(&association.anchor_run_id) {
-            run_ids.push(association.anchor_run_id);
-        }
-    }
-    run_ids
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, Utc};
-    use serde_json::json;
+    use std::collections::BTreeMap;
 
-    use agentdash_domain::workflow::{
-        AgentLineage, AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleRun,
-        OrchestrationInstance, OrchestrationLimits, OrchestrationPlanSnapshot,
-        OrchestrationSourceRef, PlanNodeKind, RuntimeNodeState, RuntimeNodeStatus,
-        RuntimeSessionExecutionAnchor,
+    use agentdash_agent_runtime_contract::{
+        ManagedRuntimeAvailabilityEvidence, ManagedRuntimeCommandAvailability,
+        ManagedRuntimeCommandKind, ManagedRuntimeLifecycleStatus,
+        ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
+        ManagedRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
+        RuntimeThreadId, SurfaceRevision,
     };
+    use agentdash_application_agentrun::agent_run::{
+        AgentRunProductProjectionError, AgentRunTerminalChangePage, AgentRunTerminalChangeSequence,
+        AgentRunTerminalSnapshot, ProductAgentFrameRef, ProductExecutionProfileRef,
+    };
+    use agentdash_domain::workflow::{
+        AgentSource, OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef,
+        PlanNodeKind, SubjectRef,
+    };
+    use agentdash_test_support::workflow::{
+        MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
+        MemoryLifecycleSubjectAssociationRepository,
+    };
+    use tokio::sync::Mutex;
 
     use super::*;
 
-    #[test]
-    fn subject_runtime_attempt_history_items_sort_latest_and_preserve_coordinates() {
-        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
-        let source_ref = OrchestrationSourceRef::Inline {
-            source_digest: "sha256:test-subject-history".to_string(),
+    #[derive(Default)]
+    struct ProjectionRepo {
+        snapshots: Mutex<BTreeMap<AgentRunTarget, ManagedRuntimeSnapshot>>,
+        bindings: Mutex<BTreeMap<AgentRunTarget, AgentRunProductRuntimeBinding>>,
+    }
+
+    #[async_trait]
+    impl AgentRunProductProjectionQueryPort for ProjectionRepo {
+        async fn runtime_snapshot(
+            &self,
+            target: &AgentRunTarget,
+        ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError> {
+            self.snapshots
+                .lock()
+                .await
+                .get(target)
+                .cloned()
+                .ok_or_else(|| AgentRunProductProjectionError::Runtime("snapshot missing".into()))
+        }
+
+        async fn runtime_snapshot_observation(
+            &self,
+            target: &AgentRunTarget,
+        ) -> Result<AgentRunProductRuntimeSnapshotObservation, AgentRunProductProjectionError>
+        {
+            let Some(binding) = self.bindings.lock().await.get(target).cloned() else {
+                return Ok(AgentRunProductRuntimeSnapshotObservation::Absent {
+                    requested_target: target.clone(),
+                });
+            };
+            let snapshot = self
+                .snapshots
+                .lock()
+                .await
+                .get(target)
+                .cloned()
+                .ok_or_else(|| {
+                    AgentRunProductProjectionError::Runtime("snapshot missing".into())
+                })?;
+            Ok(AgentRunProductRuntimeSnapshotObservation::Current {
+                product_binding: binding,
+                snapshot,
+            })
+        }
+
+        async fn runtime_live_events(
+            &self,
+            _target: &AgentRunTarget,
+        ) -> Result<
+            Box<dyn agentdash_agent_service_api::AgentLiveEventStream>,
+            AgentRunProductProjectionError,
+        > {
+            Err(AgentRunProductProjectionError::Runtime("unused".into()))
+        }
+
+        async fn terminal_snapshot(
+            &self,
+            _target: &AgentRunTarget,
+        ) -> Result<AgentRunTerminalSnapshot, AgentRunProductProjectionError> {
+            Err(AgentRunProductProjectionError::Terminal("unused".into()))
+        }
+
+        async fn terminal_changes(
+            &self,
+            _target: &AgentRunTarget,
+            _after: Option<AgentRunTerminalChangeSequence>,
+            _limit: usize,
+        ) -> Result<AgentRunTerminalChangePage, AgentRunProductProjectionError> {
+            Err(AgentRunProductProjectionError::Terminal("unused".into()))
+        }
+    }
+
+    struct Fixture {
+        runs: Arc<MemoryLifecycleRunRepository>,
+        agents: Arc<MemoryLifecycleAgentRepository>,
+        associations: Arc<MemoryLifecycleSubjectAssociationRepository>,
+        projections: Arc<ProjectionRepo>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                runs: Arc::new(MemoryLifecycleRunRepository::default()),
+                agents: Arc::new(MemoryLifecycleAgentRepository::default()),
+                associations: Arc::new(MemoryLifecycleSubjectAssociationRepository::default()),
+                projections: Arc::new(ProjectionRepo::default()),
+            }
+        }
+
+        fn service(&self) -> LifecycleRunViewQueryService {
+            LifecycleRunViewQueryService::new(LifecycleRunViewQueryDeps {
+                lifecycle_runs: self.runs.clone(),
+                lifecycle_agents: self.agents.clone(),
+                subject_associations: self.associations.clone(),
+                product_projection: self.projections.clone(),
+            })
+        }
+
+        async fn insert_binding_and_snapshot(
+            &self,
+            target: AgentRunTarget,
+            thread: &str,
+            source: ManagedRuntimeSourceBindingEvidence,
+        ) {
+            let execution_profile = execution_profile();
+            let binding = AgentRunProductRuntimeBinding {
+                target: target.clone(),
+                runtime_thread_id: RuntimeThreadId::new(thread).unwrap(),
+                agent:
+                    agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
+                        service_instance_id:
+                            agentdash_agent_service_api::AgentServiceInstanceId::new(
+                                "fixture-agent",
+                            )
+                            .unwrap(),
+                        source: agentdash_agent_service_api::AgentSourceCoordinate::new(
+                            "fixture-source",
+                        )
+                        .unwrap(),
+                    },
+                launch_frame: ProductAgentFrameRef {
+                    frame_id: Uuid::new_v4(),
+                    agent_id: target.agent_id,
+                    revision: source.applied_surface_revision.0,
+                },
+                execution_profile_digest: execution_profile.profile_digest.clone(),
+                execution_profile,
+            };
+            self.projections
+                .bindings
+                .lock()
+                .await
+                .insert(target.clone(), binding);
+            self.projections
+                .snapshots
+                .lock()
+                .await
+                .insert(target, snapshot(thread, source));
+        }
+    }
+
+    fn execution_profile() -> ProductExecutionProfileRef {
+        let mut profile = ProductExecutionProfileRef {
+            profile_key: "lifecycle-run-view-fixture".to_string(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::json!({
+                "provider": "fixture",
+                "model": "lifecycle-run-view"
+            }),
+            credential_scope: None,
         };
-        let plan_snapshot = OrchestrationPlanSnapshot {
-            plan_digest: "sha256:plan".to_string(),
+        profile.refresh_digest();
+        profile
+    }
+
+    fn source(name: &str) -> ManagedRuntimeSourceBindingEvidence {
+        ManagedRuntimeSourceBindingEvidence {
+            source_ref: RuntimeSourceRef::new(name).unwrap(),
+            committed_at_revision: RuntimeProjectionRevision(2),
+            applied_surface_revision: SurfaceRevision(3),
+            activated_at_revision: Some(RuntimeProjectionRevision(4)),
+        }
+    }
+
+    fn snapshot(
+        thread: &str,
+        source_binding: ManagedRuntimeSourceBindingEvidence,
+    ) -> ManagedRuntimeSnapshot {
+        let evidence = ManagedRuntimeAvailabilityEvidence {
+            blocking_operation_id: None,
+            bound_surface_revision: Some(SurfaceRevision(3)),
+            applied_surface_revision: Some(SurfaceRevision(3)),
+        };
+        ManagedRuntimeSnapshot {
+            thread_id: RuntimeThreadId::new(thread).unwrap(),
+            thread_name: None,
+            thread_name_source: None,
+            revision: RuntimeProjectionRevision(7),
+            captured_at_ms: 10,
+            lifecycle: ManagedRuntimeLifecycleStatus::Active,
+            interactions: Vec::new(),
+            operations: Vec::new(),
+            source_binding: Some(source_binding),
+            authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
+            fidelity: ManagedRuntimeProjectionFidelity::Exact,
+            command_availability: BTreeMap::from([(
+                ManagedRuntimeCommandKind::SubmitInput,
+                ManagedRuntimeCommandAvailability::Available { evidence },
+            )]),
+            conversation_history: Vec::new(),
+        }
+    }
+
+    fn target(run: &LifecycleRun, agent: &LifecycleAgent) -> AgentRunTarget {
+        AgentRunTarget {
+            run_id: run.id,
+            agent_id: agent.id,
+        }
+    }
+
+    fn nested_attempt(run: &LifecycleRun, target: AgentRunTarget) -> OrchestrationInstance {
+        let source_ref = OrchestrationSourceRef::Inline {
+            source_digest: "sha256:nested".to_owned(),
+        };
+        let plan = OrchestrationPlanSnapshot {
+            plan_digest: "sha256:plan".to_owned(),
             plan_version: 1,
             source_ref: source_ref.clone(),
             nodes: Vec::new(),
@@ -715,188 +832,298 @@ mod tests {
             metadata: None,
             created_at: Utc::now(),
         };
-        let mut orchestration = OrchestrationInstance::new("subject", source_ref, plan_snapshot);
-        let orchestration_id = orchestration.orchestration_id;
-        let older_time = Utc::now() - Duration::seconds(30);
-        let newer_time = Utc::now();
-        orchestration.node_tree = vec![
-            runtime_node("agent-node-1", 1, RuntimeNodeStatus::Failed, older_time),
-            runtime_node("agent-node-2", 2, RuntimeNodeStatus::Completed, newer_time),
-        ];
-        orchestration
-            .state_snapshot
-            .node_outputs
-            .insert("agent-node-2".to_string(), json!({"result": "newer"}));
-        run.orchestrations.push(orchestration);
-
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent);
-        let launch_frame_id = Uuid::new_v4();
-        let current_frame_id = Uuid::new_v4();
-
-        let older_anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-            "runtime-old",
-            run.id,
-            launch_frame_id,
-            agent.id,
-            orchestration_id,
-            "root.agent",
-            1,
-        );
-        let newer_anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-            "runtime-new",
-            run.id,
-            launch_frame_id,
-            agent.id,
-            orchestration_id,
-            "root.agent",
-            2,
-        );
-
-        let mut attempts = vec![
-            runtime_attempt_from_anchor(&run, &older_anchor, Some(current_frame_id))
-                .expect("older attempt"),
-            runtime_attempt_from_anchor(&run, &newer_anchor, Some(current_frame_id))
-                .expect("newer attempt"),
-        ];
-        sort_subject_runtime_attempts(&mut attempts);
-
-        let latest = attempts.first().expect("latest attempt");
-        assert_eq!(latest.runtime_session_ref.runtime_session_id, "runtime-new");
-        assert_eq!(latest.run_ref.run_id, run.id.to_string());
-        assert_eq!(latest.agent_ref.agent_id, agent.id.to_string());
-        assert_eq!(latest.launch_frame_id, launch_frame_id.to_string());
-        let current_frame_id_string = current_frame_id.to_string();
-        assert_eq!(
-            latest.current_frame_id.as_deref(),
-            Some(current_frame_id_string.as_str())
-        );
-        assert_eq!(latest.orchestration_id, orchestration_id.to_string());
-        assert_eq!(latest.node_path, "root.agent");
-        assert_eq!(latest.attempt, 2);
-        assert_eq!(latest.status, "completed");
-        assert_eq!(latest.runtime_node.node_id, "agent-node-2");
-        assert_eq!(latest.artifacts["node_outputs"]["result"], "newer");
-        assert!(attempts[0].observed_at > attempts[1].observed_at);
-    }
-
-    #[test]
-    fn whole_run_history_agents_exclude_lineage_children() {
-        let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let root_agent =
-            LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let child_agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::Subagent);
-        let lineage = AgentLineage::new(
-            run.id,
-            Some(root_agent.id),
-            child_agent.id,
-            "delegated_task",
-            None,
-            None,
-        );
-
-        let agents =
-            filter_whole_run_history_agents(vec![root_agent.clone(), child_agent], &[lineage]);
-
-        assert_eq!(agents.len(), 1);
-        assert_eq!(agents[0].id, root_agent.id);
-    }
-
-    #[test]
-    fn whole_run_history_agents_require_lineage_when_multiple_agents_exist() {
-        let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let agent_a = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let agent_b = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-
-        let agents = filter_whole_run_history_agents(vec![agent_a, agent_b], &[]);
-
-        assert!(agents.is_empty());
-    }
-
-    #[test]
-    fn subject_runtime_attempt_roles_are_narrow() {
-        assert!(association_role_can_own_runtime_attempts("subject"));
-        assert!(association_role_can_own_runtime_attempts("task_execution"));
-        assert!(!association_role_can_own_runtime_attempts("source"));
-        assert!(!association_role_can_own_runtime_attempts(
-            "projection_target"
-        ));
-        assert!(!association_role_can_own_runtime_attempts("control_scope"));
-        assert!(!association_role_can_own_runtime_attempts("lineage"));
-    }
-
-    #[test]
-    fn lifecycle_agent_view_uses_current_delivery_status_not_raw_latest_anchor() {
-        let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let launch_frame_id = Uuid::new_v4();
-        let current_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-current-delivery",
-            run.id,
-            launch_frame_id,
-            agent.id,
-        );
-        let raw_latest_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-raw-latest",
-            run.id,
-            launch_frame_id,
-            agent.id,
-        );
-        let binding = AgentRunDeliveryBinding::from_anchor(
-            &current_anchor,
-            DeliveryBindingStatus::Running,
-            current_anchor.updated_at,
-        );
-        let raw_latest_binding = AgentRunDeliveryBinding::from_anchor(
-            &raw_latest_anchor,
-            DeliveryBindingStatus::Lost,
-            raw_latest_anchor.updated_at,
-        );
-
-        let view = lifecycle_agent_to_view(&agent, Some(&binding));
-
-        assert_ne!(
-            binding.runtime_session_id.as_str(),
-            raw_latest_binding.runtime_session_id.as_str()
-        );
-        assert_eq!(view.last_delivery_status.as_deref(), Some("running"));
-        assert_ne!(
-            view.last_delivery_status.as_deref(),
-            Some(raw_latest_binding.status.as_str())
-        );
-    }
-
-    #[test]
-    fn lifecycle_agent_view_has_no_delivery_status_without_current_delivery() {
-        let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-
-        let view = lifecycle_agent_to_view(&agent, None);
-
-        assert!(view.last_delivery_status.is_none());
-    }
-
-    fn runtime_node(
-        node_id: &str,
-        attempt: u32,
-        status: RuntimeNodeStatus,
-        completed_at: chrono::DateTime<Utc>,
-    ) -> RuntimeNodeState {
-        RuntimeNodeState {
-            node_id: node_id.to_string(),
-            node_path: "root.agent".to_string(),
-            kind: PlanNodeKind::AgentCall,
-            status,
-            attempt,
+        let mut orchestration = OrchestrationInstance::new("root", source_ref, plan);
+        let now = Utc::now();
+        orchestration.node_tree = vec![RuntimeNodeState {
+            node_id: "phase".into(),
+            node_path: "phase".into(),
+            kind: PlanNodeKind::Phase,
+            status: RuntimeNodeStatus::Running,
+            attempt: 1,
             inputs: Vec::new(),
             outputs: Vec::new(),
             executor_run_ref: None,
-            children: Vec::new(),
+            agent_call: None,
+            children: vec![RuntimeNodeState {
+                node_id: "agent".into(),
+                node_path: "phase/agent".into(),
+                kind: PlanNodeKind::AgentCall,
+                status: RuntimeNodeStatus::Running,
+                attempt: 2,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+                executor_run_ref: Some(ExecutorRunRef::AgentRun {
+                    run_id: target.run_id,
+                    agent_id: target.agent_id,
+                }),
+                agent_call: None,
+                children: Vec::new(),
+                phase_path: vec!["phase".into()],
+                started_at: Some(now),
+                completed_at: None,
+                error: None,
+                trace_refs: Vec::new(),
+                cache: None,
+            }],
             phase_path: Vec::new(),
-            started_at: None,
-            completed_at: Some(completed_at),
+            started_at: Some(run.created_at),
+            completed_at: None,
             error: None,
             trace_refs: Vec::new(),
             cache: None,
+        }];
+        orchestration
+    }
+
+    #[tokio::test]
+    async fn direct_run_reads_current_thread_and_availability_from_final_projection() {
+        let fixture = Fixture::new();
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let target = target(&run, &agent);
+        fixture.runs.create(&run).await.unwrap();
+        fixture.agents.create(&agent).await.unwrap();
+        fixture
+            .insert_binding_and_snapshot(target, "thread-direct", source("source-direct"))
+            .await;
+
+        let view = fixture.service().lifecycle_run_view(run.id).await.unwrap();
+
+        let RuntimeExecutionTraceView::Current { binding, snapshot } = &view.agents[0].runtime
+        else {
+            panic!("expected current Runtime thread");
+        };
+        assert_eq!(binding.runtime_thread_id.as_str(), "thread-direct");
+        assert!(
+            snapshot
+                .command_availability
+                .contains_key(&ManagedRuntimeCommandKind::SubmitInput)
+        );
+        assert!(view.agents[0].current_attempt.is_none());
+    }
+
+    #[tokio::test]
+    async fn multiple_agents_keep_missing_and_current_runtime_traces_typed() {
+        let fixture = Fixture::new();
+        let run = LifecycleRun::new_control(Uuid::new_v4());
+        let current = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent);
+        let missing = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::Subagent);
+        let stale = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::Subagent);
+        fixture.runs.create(&run).await.unwrap();
+        for agent in [&current, &missing, &stale] {
+            fixture.agents.create(agent).await.unwrap();
         }
+        fixture
+            .insert_binding_and_snapshot(target(&run, &current), "thread-current", source("a"))
+            .await;
+        let stale_target = target(&run, &stale);
+        fixture
+            .insert_binding_and_snapshot(stale_target.clone(), "thread-stale", source("b"))
+            .await;
+        fixture.projections.snapshots.lock().await.insert(
+            stale_target,
+            snapshot("thread-stale", source("different-source")),
+        );
+
+        let view = fixture.service().lifecycle_run_view(run.id).await.unwrap();
+
+        assert!(view.agents.iter().any(|view| matches!(
+            view.runtime,
+            RuntimeExecutionTraceView::Absent {
+                reason: RuntimeTraceAbsenceReason::ProductBindingMissing,
+                ..
+            }
+        )));
+        assert!(view.agents.iter().any(|view| matches!(
+            &view.runtime,
+            RuntimeExecutionTraceView::Current { snapshot, .. }
+                if snapshot.thread_id.as_str() == "thread-stale"
+        )));
+        assert_eq!(view.agents.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn nested_orchestration_selects_current_attempt_without_using_node_thread_fields() {
+        let fixture = Fixture::new();
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent);
+        let target = target(&run, &agent);
+        run.add_orchestration(nested_attempt(&run, target.clone()));
+        fixture.runs.create(&run).await.unwrap();
+        fixture.agents.create(&agent).await.unwrap();
+        fixture
+            .insert_binding_and_snapshot(target, "thread-final-binding", source("source-final"))
+            .await;
+        let subject = SubjectRef::new("task", Uuid::new_v4());
+        fixture
+            .associations
+            .create(&LifecycleSubjectAssociation::new_agent_scoped(
+                run.id,
+                agent.id,
+                &subject,
+                "task_execution",
+                None,
+            ))
+            .await
+            .unwrap();
+
+        let view = fixture.service().lifecycle_run_view(run.id).await.unwrap();
+
+        let current = view.agents[0].current_attempt.as_ref().unwrap();
+        assert_eq!(current.node_path, "phase/agent");
+        assert_eq!(current.attempt, 2);
+        assert_eq!(view.subject_associations.len(), 1);
+        let RuntimeExecutionTraceView::Current { binding, .. } = &view.agents[0].runtime else {
+            panic!("expected current binding");
+        };
+        assert_eq!(binding.runtime_thread_id.as_str(), "thread-final-binding");
+        assert_eq!(current.runtime_node.kind, PlanNodeKind::AgentCall);
+        assert_eq!(
+            current.runtime_node.executor_run_ref,
+            Some(ExecutorRunRef::AgentRun {
+                run_id: run.id,
+                agent_id: agent.id,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn subject_execution_keeps_same_path_attempts_distinct_across_runs_and_agents() {
+        let fixture = Fixture::new();
+        let project_id = Uuid::new_v4();
+        let subject = SubjectRef::new("task", Uuid::new_v4());
+        let now = Utc::now();
+
+        let mut first_run = LifecycleRun::new_control(project_id);
+        let first_agent =
+            LifecycleAgent::new_root(first_run.id, project_id, AgentSource::WorkflowAgent);
+        let first_target = target(&first_run, &first_agent);
+        let mut first_orchestration = nested_attempt(&first_run, first_target.clone());
+        first_orchestration.node_tree[0].children[0].started_at =
+            Some(now - chrono::Duration::seconds(10));
+        first_orchestration
+            .state_snapshot
+            .node_outputs
+            .insert("agent".into(), serde_json::json!({"result": "first"}));
+        first_run.add_orchestration(first_orchestration);
+
+        let mut second_run = LifecycleRun::new_control(project_id);
+        let second_agent =
+            LifecycleAgent::new_root(second_run.id, project_id, AgentSource::WorkflowAgent);
+        let second_target = target(&second_run, &second_agent);
+        let mut second_orchestration = nested_attempt(&second_run, second_target.clone());
+        second_orchestration.node_tree[0].children[0].started_at = Some(now);
+        second_orchestration
+            .state_snapshot
+            .node_outputs
+            .insert("agent".into(), serde_json::json!({"result": "second"}));
+        second_run.add_orchestration(second_orchestration);
+
+        for run in [&first_run, &second_run] {
+            fixture.runs.create(run).await.unwrap();
+        }
+        for agent in [&first_agent, &second_agent] {
+            fixture.agents.create(agent).await.unwrap();
+        }
+        fixture
+            .insert_binding_and_snapshot(first_target, "thread-first", source("first"))
+            .await;
+        fixture
+            .insert_binding_and_snapshot(second_target.clone(), "thread-second", source("second"))
+            .await;
+        let mut first_association = LifecycleSubjectAssociation::new_agent_scoped(
+            first_run.id,
+            first_agent.id,
+            &subject,
+            "task_execution",
+            None,
+        );
+        first_association.created_at = now - chrono::Duration::seconds(10);
+        let mut second_association = LifecycleSubjectAssociation::new_agent_scoped(
+            second_run.id,
+            second_agent.id,
+            &subject,
+            "task_execution",
+            None,
+        );
+        second_association.created_at = now;
+        fixture
+            .associations
+            .create(&first_association)
+            .await
+            .unwrap();
+        fixture
+            .associations
+            .create(&second_association)
+            .await
+            .unwrap();
+
+        let view = fixture
+            .service()
+            .subject_execution_view(subject)
+            .await
+            .unwrap();
+
+        assert_eq!(view.runs.len(), 2);
+        assert_eq!(view.attempts.len(), 2);
+        assert!(
+            view.attempts
+                .iter()
+                .all(|attempt| attempt.attempt.node_path == "phase/agent")
+        );
+        assert_ne!(view.attempts[0].target, view.attempts[1].target);
+        assert_eq!(
+            view.current_agent.as_ref().unwrap().agent.id,
+            second_agent.id
+        );
+        assert_eq!(view.current_attempt.as_ref().unwrap().target, second_target);
+        assert_eq!(
+            view.artifacts.pointer("/node_outputs/result"),
+            Some(&serde_json::json!("second"))
+        );
+        assert_eq!(
+            view.current_attempt
+                .as_ref()
+                .unwrap()
+                .attempt
+                .runtime_node
+                .node_path,
+            "phase/agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn project_active_agents_excludes_terminal_runs_and_keeps_typed_absence() {
+        let fixture = Fixture::new();
+        let project_id = Uuid::new_v4();
+        let mut active_run = LifecycleRun::new_control(project_id);
+        active_run.status = LifecycleRunStatus::Blocked;
+        let active_agent =
+            LifecycleAgent::new_root(active_run.id, project_id, AgentSource::WorkflowAgent);
+        let mut completed_run = LifecycleRun::new_control(project_id);
+        completed_run.status = LifecycleRunStatus::Completed;
+        let completed_agent =
+            LifecycleAgent::new_root(completed_run.id, project_id, AgentSource::WorkflowAgent);
+        fixture.runs.create(&active_run).await.unwrap();
+        fixture.runs.create(&completed_run).await.unwrap();
+        fixture.agents.create(&active_agent).await.unwrap();
+        fixture.agents.create(&completed_agent).await.unwrap();
+
+        let view = fixture
+            .service()
+            .project_active_agents_view(project_id)
+            .await
+            .unwrap();
+
+        assert_eq!(view.runs.len(), 1);
+        assert_eq!(view.runs[0].run.id, active_run.id);
+        assert_eq!(view.agents.len(), 1);
+        assert!(matches!(
+            view.agents[0].runtime,
+            RuntimeExecutionTraceView::Absent {
+                reason: RuntimeTraceAbsenceReason::ProductBindingMissing,
+                ..
+            }
+        ));
     }
 }

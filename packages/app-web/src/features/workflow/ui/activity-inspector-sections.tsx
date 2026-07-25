@@ -10,7 +10,7 @@ import type {
   HookRulePreset,
   InputPortDefinition,
   OutputPortDefinition,
-  RuntimeSessionPolicy,
+  RuntimeThreadPolicy,
   WorkflowContextBinding,
   AgentProcedure,
   WorkflowHookRuleSpec,
@@ -266,7 +266,7 @@ export function ExecutorSection({
         kind: "agent",
         procedure_key: procedureDraft.key,
         agent_reuse_policy: "create_activity_agent",
-        runtime_session_policy: "create_new",
+        runtime_thread_policy: "create_new",
       });
     } else if (kind === "human") {
       onExecutorChange({
@@ -411,17 +411,17 @@ function AgentExecutorForm({
       <div>
         <label className="agentdash-form-label">Runtime Session</label>
         <select
-          value={executor.runtime_session_policy}
+          value={executor.runtime_thread_policy}
           onChange={(e) =>
             onChange({
               ...executor,
-              runtime_session_policy: e.target.value as RuntimeSessionPolicy,
+              runtime_thread_policy: e.target.value as RuntimeThreadPolicy,
             })
           }
           className="agentdash-form-select"
         >
           <option value="create_new">Create New</option>
-          <option value="deliver_to_current_trace">Deliver To Current Trace</option>
+          <option value="deliver_to_current_thread">Deliver To Current Trace</option>
         </select>
       </div>
     </div>

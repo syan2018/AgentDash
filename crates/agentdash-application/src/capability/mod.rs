@@ -17,7 +17,7 @@ pub mod tool_catalog;
 #[cfg(test)]
 mod pipeline_tests;
 
-pub use agentdash_spi::CompanionSliceMode;
+pub use agentdash_platform_spi::CompanionSliceMode;
 pub use notification::{
     build_capability_delta_markdown, capability_description, is_known_capability_key,
 };

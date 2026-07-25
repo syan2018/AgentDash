@@ -260,7 +260,7 @@ export function createEmptyLifecycleDraft(projectId = "", seed: LifecycleDraftSe
         kind: "agent",
         procedure_key: "",
         agent_reuse_policy: "create_activity_agent",
-        runtime_session_policy: "create_new",
+        runtime_thread_policy: "create_new",
       },
       output_ports: [],
       input_ports: [],
@@ -492,7 +492,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         kind: "agent",
         procedure_key: drafts[activityKey].key,
         agent_reuse_policy: "create_activity_agent",
-        runtime_session_policy: "create_new",
+        runtime_thread_policy: "create_new",
       };
     }
     set({
@@ -713,7 +713,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         kind: "agent",
         procedure_key: procedureDraft.key,
         agent_reuse_policy: "create_activity_agent",
-        runtime_session_policy: "create_new",
+        runtime_thread_policy: "create_new",
       },
       output_ports: [...procedureDraft.contract.output_ports],
       input_ports: [...procedureDraft.contract.input_ports],

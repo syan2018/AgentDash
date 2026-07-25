@@ -19,7 +19,11 @@
 
 跨 repository 用例使用具名 deps struct，例如 `AgentRunForkRepos`、`ProjectAgentRunStartRepos`、`DeliveryRuntimeSelectionRepositories` 或 workspace query deps。这样 constructor 签名表达真实依赖集合，测试 fixture 也必须显式构造该用例需要的 port。原因是全量 repository set 会把 service locator 伪装成业务依赖，难以判断某个用例是否跨越了不该跨的 aggregate。
 
-Session runtime persistence 不通过 `RepositorySet` 表达。`SessionPersistence`、session event record、terminal effect outbox record 与 runtime command record 定义在 `agentdash-spi::session_persistence`，由 application 组合成 runtime stores，由 infrastructure 提供 PostgreSQL / SQLite adapter。这样 session runtime 的持久化事实可以跨 cloud/local adapter 复用，而基础设施层不需要依赖 application 编排 crate。
+Agent Runtime 与 Complete Agent Host 不通过 `RepositorySet` 或通用 `SessionPersistence`
+表达，因为它们只拥有当前进程协调状态。composition root 只装配 Product owner repository、
+concrete Agent store 与真实 Tool/Hook effect owner。LifecycleAgent 的 frames/association 通过
+owner-scoped repository 读写；Dash history/effect 通过 Complete Agent store 读写。原因是
+repository 必须对应跨重启仍成立的唯一业务 owner，而不是为中间层缓存或路由提供落库位置。
 
 ---
 
@@ -48,6 +52,7 @@ Story 页面展示 Task 时读取 Story projection；Task durable facts 的写�
 - 结构体命名 `<技术><实体>Repository`（如 `PostgresStoryRepository`）
 - 不在 `postgres/` 目录保留 `Sqlite*` 命名
 - 一个 struct 可同时实现多个 trait
+- revisioned aggregate repository使用`get_latest(owner_id)`表达最高持久化revision；运行时已采用版本由拥有adoption状态的read model提供，repository不把latest命名为current。
 
 ---
 

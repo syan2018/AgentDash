@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
-- **Last Active**: 2026-05-27
+- **Total Sessions**: 30
+- **Last Active**: 2026-07-15
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1003 | Active |
+| `journal-1.md` | ~1411 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,12 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 30 | 2026-07-15 | 恢复 Session 与工具链 main 等价行为 | `764b50137`, `50e813ed8`, `32df86aaa`, `5e3b3252f`, `1963f4c37` | `codex/agent-runtime-architecture-convergence` |
+| 29 | 2026-07-15 | 收束 Agent Runtime ContextFrame 与工具终态链路 | `7c3cf7e2f`, `14cccde83`, `8889bb3e3`, `1b3a8a8f3` | `codex/agent-runtime-architecture-convergence` |
+| 28 | 2026-07-14 | 恢复会话协议与产品行为 | `5ae96bc53`, `990c539a9`, `b616815e0`, `a0f011868`, `63cd2e53c`, `2de644a25`, `92e0236c0`, `6238a31ff`, `e1b17e3b5`, `6d742ffcc`, `91ab428a8`, `55b7a19ae`, `2b55695b1` | `codex/agent-runtime-architecture-convergence` |
+| 27 | 2026-07-12 | Local Runtime无数据库与按需恢复收束 | `e91238c98` | `codex/agent-runtime-architecture-convergence` |
+| 26 | 2026-07-12 | ARD-009 Desktop Runtime领取与Backend在线收束 | `42c7c33b2` | `codex/agent-runtime-architecture-convergence` |
+| 25 | 2026-07-12 | AgentRun Runtime主链路统一收束 | `bc127a7fb` | `codex/agent-runtime-architecture-convergence` |
 | 24 | 2026-05-27 | Canvas Promote Extension 与 TS Extension SDK 收口 | `4171ded7`, `e53f69a5` | `codex/extension-sdk` |
 | 23 | 2026-05-26 | Companion 通用交互能力申请 MVP | `4cada192` | `main` |
 | 22 | 2026-05-26 | 上下文压缩基建落地 | `1d36cbe1`, `ff6ac916`, `aadb7db9`, `596a8d1d`, `894f766c`, `0c31e8cd`, `cdc2ef05`, `cd6472e3`, `f89746ea`, `baabaa72`, `600db8f6` | `main` |

@@ -152,6 +152,11 @@ pub fn lifecycle_mount_has_skill_asset_projection(lifecycle_mount: &Mount) -> bo
         .unwrap_or(false)
 }
 
+pub fn projected_skill_asset_keys(lifecycle_mount: &Mount) -> Result<Vec<String>, MountError> {
+    super::provider_skill_asset::parse_skill_asset_mount_metadata(lifecycle_mount)
+        .map(|(_, keys)| keys)
+}
+
 pub async fn read_lifecycle_skill_asset_projection(
     repo: &dyn SkillAssetRepository,
     lifecycle_mount: &Mount,

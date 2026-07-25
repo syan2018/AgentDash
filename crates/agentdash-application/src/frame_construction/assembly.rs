@@ -1,15 +1,14 @@
 use std::collections::HashMap;
 
-use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{AuthIdentity, CapabilityState, SessionContextBundle, Vfs};
-use uuid::Uuid;
+use agentdash_platform_spi::{CapabilityState, SessionContextBundle, Vfs};
 
-use crate::agent_run::frame::{FrameContextBundleSummary, FrameSurfaceDraft};
+use crate::agent_run::frame::{
+    AgentContextSourceSnapshot, FrameContextBundleSummary, FrameSurfaceDraft,
+};
 #[cfg(test)]
 use crate::agent_run::runtime_capability::compose_vfs_with_overlay_and_directives;
-use crate::canvas::project_visible_canvas_mounts;
 use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
 use agentdash_application_ports::launch::LaunchPromptInput;
@@ -39,7 +38,7 @@ pub(crate) struct FrameAssemblyBuilder {
     pub(super) capability_state: Option<CapabilityState>,
 
     // ── MCP 层 ──
-    pub(super) mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
+    pub(super) mcp_servers: Vec<agentdash_platform_spi::RuntimeMcpServer>,
 
     // ── 系统上下文层 ──
     pub(super) context_bundle: Option<SessionContextBundle>,
@@ -91,22 +90,6 @@ impl FrameAssemblyBuilder {
         self
     }
 
-    /// 在已有 VFS 上追加 canvas mount。
-    pub(super) async fn append_canvas_mounts(
-        mut self,
-        canvas_repo: &dyn CanvasRepository,
-        project_id: Uuid,
-        mount_ids: &[String],
-        identity: Option<&AuthIdentity>,
-    ) -> Result<Self, String> {
-        if let Some(space) = self.vfs.as_mut() {
-            project_visible_canvas_mounts(canvas_repo, project_id, space, mount_ids, identity)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(self)
-    }
-
     /// 设置已解析的能力输出（由外部 CapabilityResolver 产出）。
     pub(crate) fn with_resolved_capabilities(mut self, capability_state: CapabilityState) -> Self {
         self.capability_state = Some(capability_state);
@@ -123,7 +106,7 @@ impl FrameAssemblyBuilder {
     /// 设置 MCP server 列表（覆盖）。
     pub(crate) fn with_mcp_servers(
         mut self,
-        servers: Vec<agentdash_spi::RuntimeMcpServer>,
+        servers: Vec<agentdash_platform_spi::RuntimeMcpServer>,
     ) -> Self {
         self.mcp_servers = servers;
         self
@@ -132,7 +115,7 @@ impl FrameAssemblyBuilder {
     /// 追加 MCP server 到列表。
     pub(super) fn append_mcp_servers(
         mut self,
-        servers: impl IntoIterator<Item = agentdash_spi::RuntimeMcpServer>,
+        servers: impl IntoIterator<Item = agentdash_platform_spi::RuntimeMcpServer>,
     ) -> Self {
         self.mcp_servers.extend(servers);
         self
@@ -216,7 +199,7 @@ impl FrameAssemblyBuilder {
     pub(super) fn apply_companion_slice(
         self,
         parent_vfs: Option<&Vfs>,
-        parent_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
+        parent_mcp_servers: &[agentdash_platform_spi::RuntimeMcpServer],
         parent_context_bundle: Option<&SessionContextBundle>,
         mode: CompanionSliceMode,
         executor_config: AgentConfig,
@@ -288,6 +271,10 @@ impl FrameAssemblyBuilder {
                 .context_bundle
                 .as_ref()
                 .map(FrameContextBundleSummary::from_bundle),
+            context_source_snapshot: self
+                .context_bundle
+                .as_ref()
+                .map(AgentContextSourceSnapshot::from_bundle),
             execution_profile: self.executor_config.clone(),
         }
     }

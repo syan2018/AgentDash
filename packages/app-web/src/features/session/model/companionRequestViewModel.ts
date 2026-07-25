@@ -85,7 +85,7 @@ export function buildCompanionRequestDetailLines(
     if (requestedPaths.length > 0) detailLines.push(`请求能力：${requestedPaths.join(", ")}`);
     if (reason) detailLines.push(`理由：${reason}`);
     if (scope) detailLines.push(`范围：${scope}${ttlSeconds ? `，TTL ${ttlSeconds} 秒` : ""}`);
-    detailLines.push("能力授权以 PermissionGrant 审批为准，此会话卡片不提交授权结果");
+    detailLines.push("运行中能力配置变更由 AgentRun 统一处理，此会话卡片不提交变更结果");
   }
 
   return detailLines;

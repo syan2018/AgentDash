@@ -1,6 +1,7 @@
 export type AgentRunDeliveryStatus =
   | "idle"
   | "running"
+  | "suspended"
   | "cancelling"
   | "completed"
   | "failed"
@@ -10,6 +11,7 @@ export type AgentRunDeliveryStatus =
 export const AGENT_RUN_DELIVERY_STATUS_LABEL: Record<AgentRunDeliveryStatus, string> = {
   idle: "就绪",
   running: "执行中",
+  suspended: "已暂停",
   cancelling: "取消中",
   completed: "已完成",
   failed: "失败",
@@ -21,6 +23,7 @@ export function normalizeAgentRunDeliveryStatus(status: string): AgentRunDeliver
   if (
     status === "idle"
     || status === "running"
+    || status === "suspended"
     || status === "cancelling"
     || status === "completed"
     || status === "failed"
@@ -29,5 +32,18 @@ export function normalizeAgentRunDeliveryStatus(status: string): AgentRunDeliver
   ) {
     return status;
   }
+  return "idle";
+}
+
+export function agentRunListPresentationStatus(
+  lifecycleStatus: string,
+): AgentRunDeliveryStatus {
+  if (lifecycleStatus === "running") return "running";
+  if (lifecycleStatus === "suspended" || lifecycleStatus === "paused") return "suspended";
+  if (lifecycleStatus === "cancelling") return "cancelling";
+  if (lifecycleStatus === "completed") return "completed";
+  if (lifecycleStatus === "failed") return "failed";
+  if (lifecycleStatus === "cancelled") return "interrupted";
+  if (lifecycleStatus === "lost") return "lost";
   return "idle";
 }

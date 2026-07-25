@@ -2,13 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_domain::context_source::ContextSourceKind;
-use agentdash_spi::AgentConnector;
-use agentdash_spi::MarketplaceSourceProvider;
-use agentdash_spi::MemoryDiscoveryProvider;
-use agentdash_spi::RoutineTriggerProvider;
-use agentdash_spi::SkillDiscoveryProvider;
-use agentdash_spi::platform::mount::MountProvider;
-use agentdash_spi::{SourceResolver, VfsDiscoveryProvider};
+use agentdash_platform_spi::MarketplaceSourceProvider;
+use agentdash_platform_spi::MemoryDiscoveryProvider;
+use agentdash_platform_spi::RoutineTriggerProvider;
+use agentdash_platform_spi::SkillDiscoveryProvider;
+use agentdash_platform_spi::platform::mount::MountProvider;
+use agentdash_platform_spi::{SourceResolver, VfsDiscoveryProvider};
 
 use crate::auth::AuthProvider;
 use crate::directory::IdentityDirectoryProvider;
@@ -52,6 +51,15 @@ pub trait AgentDashIntegration: Send + Sync {
     /// 集成名称（用于日志和诊断）
     fn name(&self) -> &str;
 
+    /// 贡献 Complete Agent 声明、instance、placement requirement 与 factory。
+    ///
+    /// Factory 只产出最终 `CompleteAgentService` 边界；Host 在 composition root 中独立
+    /// 验证 descriptor/build/conformance claim，并归一 placement、health、credential 与
+    /// offer evidence。集成不能自签 verified evidence，也不能声明默认成功或 fallback。
+    fn complete_agent_registrations(&self) -> Vec<crate::CompleteAgentRegistrationContribution> {
+        vec![]
+    }
+
     /// 注册额外的寻址空间能力提供者。
     ///
     /// 注意：`VfsDiscoveryProvider` 仅负责 descriptor / discovery 层抽象，
@@ -65,13 +73,6 @@ pub trait AgentDashIntegration: Send + Sync {
     /// 返回 `(kind, resolver)` 对，注册到 `SourceResolverRegistry`。
     /// 当前该扩展点仍处于实验阶段，宿主尚未将其纳入稳定运行时闭环。
     fn source_resolvers(&self) -> Vec<(ContextSourceKind, Box<dyn SourceResolver>)> {
-        vec![]
-    }
-
-    /// 注册额外的 Agent 连接器。
-    ///
-    /// 宿主会在运行时构建前完成冲突检测；若多个集成声明同一执行器 ID，应启动失败。
-    fn agent_connectors(&self) -> Vec<Arc<dyn AgentConnector>> {
         vec![]
     }
 

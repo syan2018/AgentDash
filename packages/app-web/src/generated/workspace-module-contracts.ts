@@ -58,7 +58,7 @@ export type WorkspaceModuleOperationReadiness = { kind: WorkspaceModuleOperation
  * Operation 调用就绪状态；它只描述当前 operation 是否可调用，
  * 与 module 可见性和 renderer loadability 分层。
  */
-export type WorkspaceModuleOperationReadinessKind = "ready" | "missing_runtime_gateway" | "missing_channel_transport" | "missing_runtime_backend_anchor" | "backend_unavailable" | "runtime_action_unavailable" | "backend_service_unavailable";
+export type WorkspaceModuleOperationReadinessKind = "ready" | "missing_extension_gateway" | "missing_channel_transport" | "missing_runtime_backend_anchor" | "backend_unavailable" | "runtime_action_unavailable" | "backend_service_unavailable";
 
 /**
  * Operation exposure target.
@@ -73,13 +73,6 @@ export type WorkspaceModulePresentRequest = { module_id: string, view_key: strin
  * 可选 delivery trace context；HTTP user-open 不依赖它写事件。
  */
 turn_id?: string | null, payload?: JsonValue | null, };
-
-/**
- * canonical workspace module presentation payload。
- *
- * Agent tool event、tool result details 与 HTTP user-open response 共用该形状。
- */
-export type WorkspaceModulePresentation = { module_id: string, view_key: string, renderer_kind: string, presentation_uri: string, title: string, payload?: JsonValue | null, diagnostics?: JsonValue | null, };
 
 /**
  * Module 状态 + 不可用原因。

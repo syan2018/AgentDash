@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { CanvasRuntimePanel } from "../../canvas-panel";
 import { useWorkspaceData } from "../workspace-data-context";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
@@ -22,16 +22,28 @@ function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
   const {
     projectId,
     agentRunCanvasBridgeBase,
-    refreshAgentRunWorkspace,
   } = useWorkspaceData();
   const parsed = parseCanvasUri(uri);
   const canvasMountId = parsed?.canvasMountId || null;
-  const agentRunBridge = agentRunCanvasBridgeBase && canvasMountId
-    ? {
-        ...agentRunCanvasBridgeBase,
-        canvas_mount_id: canvasMountId,
-      }
-    : null;
+  const bridgeRunId = agentRunCanvasBridgeBase?.run_id ?? null;
+  const bridgeAgentId = agentRunCanvasBridgeBase?.agent_id ?? null;
+  const bridgeProjectId = agentRunCanvasBridgeBase?.project_id ?? null;
+  const agentRunBridge = useMemo(
+    () => bridgeRunId && bridgeAgentId && bridgeProjectId && canvasMountId
+      ? {
+          run_id: bridgeRunId,
+          agent_id: bridgeAgentId,
+          project_id: bridgeProjectId,
+          canvas_mount_id: canvasMountId,
+        }
+      : null,
+    [
+      bridgeAgentId,
+      bridgeProjectId,
+      bridgeRunId,
+      canvasMountId,
+    ],
+  );
 
   const handleBrowseFiles = useCallback((mountId: string) => {
     const uri = `${mountId}://`;
@@ -59,7 +71,6 @@ function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
       projectId={projectId}
       agentRunBridge={agentRunBridge}
       showBridgeUnavailable={agentRunCanvasBridgeBase === null}
-      onAgentRunWorkspaceRefresh={refreshAgentRunWorkspace}
       refreshRevision={refreshRevision}
       onClose={() => {}}
       onBrowseFiles={handleBrowseFiles}

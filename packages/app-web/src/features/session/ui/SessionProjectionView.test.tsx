@@ -3,10 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { SessionProjectionViewResponse } from "../../../generated/session-contracts";
 import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import { SessionProjectionViewPanel } from "./SessionProjectionView";
-import {
-  commandPrecondition,
-  contextCompactionOutcomeMessage,
-} from "./sessionProjectionCompactionAction";
+import { contextCompactionOutcomeMessage } from "./sessionProjectionCompactionAction";
 
 const mocks = vi.hoisted(() => ({
   compactAgentRunContext: vi.fn(),
@@ -101,7 +98,7 @@ describe("SessionProjectionViewPanel", () => {
     expect(markup).toContain("disabled");
   });
 
-  it("点击手动压缩只提交 command-only request", async () => {
+  it("点击手动压缩提交 canonical Product Runtime command", async () => {
     vi.stubGlobal("crypto", { randomUUID: () => "command-compact-1" });
     mocks.compactAgentRunContext.mockResolvedValue({
       command_receipt: {
@@ -131,12 +128,8 @@ describe("SessionProjectionViewPanel", () => {
     await flushPromises();
 
     expect(mocks.compactAgentRunContext).toHaveBeenCalledWith(
-      "run/1",
-      "agent/1",
-      {
-        client_command_id: "command-compact-1",
-        command: commandPrecondition(sampleCompactCommand()),
-      },
+      { runId: "run/1", agentId: "agent/1" },
+      "command-compact-1",
     );
   });
 });

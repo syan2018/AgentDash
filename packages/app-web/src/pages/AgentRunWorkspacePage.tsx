@@ -1,4 +1,4 @@
-﻿/**
+/**
  * AgentRunWorkspacePage — AgentRun 交互工作台。
  *
  * 用户认知中 "AgentRun = 一个可继续交互的工作台"。此页面是用户点击 AgentRun 后的主视图，
@@ -11,7 +11,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resizable-panels";
-import { SessionChatView } from "../features/session";
+import {
+  SessionChatView,
+  type SessionChatInitialSubmit,
+} from "../features/session";
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { InlineBackendSelector, type InlineBackendOption } from "../features/session/ui/composer";
 import { selectVfsBackendTarget } from "../features/vfs/vfs-browser-panel-policy";
@@ -21,7 +24,6 @@ import {
   refreshAgentRunListState,
   useAgentRunListState,
 } from "../features/agent/agent-run-list-state-store";
-import type { CompanionSubagentKnownAgentRef } from "../features/session/model/companionSubagentDispatch";
 import {
   WorkspacePanel,
   type WorkspacePanelHandle,
@@ -36,21 +38,18 @@ import {
   listProjectBackendAccess,
   type ProjectBackendAccess,
 } from "../services/backendAccess";
-import type { BackendSelectionRequestDto } from "../generated/agent-run-mailbox-contracts";
-import { useWorkspaceModuleStore } from "../features/workspace-module";
+import type { BackendSelectionRequestDto } from "../generated/agent-run-interaction-contracts";
 import type {
   BackendConfig,
   RuntimeTraceAgentContext,
   SessionNavigationState,
   AgentRunWorkspaceView,
-  AgentRunListChild,
-  AgentRunWorkspaceListEntry,
-  SubjectRunContext,
   ProjectAgentSummary,
   ProjectAgentRunStartResult,
   Story,
   StoryNavigationState,
 } from "../types";
+import { collectCompanionSubagentRefs } from "./AgentRunWorkspacePage.companionRefs";
 
 // ─── AgentRunWorkspacePage ────────────────────────────────────────
 
@@ -60,6 +59,10 @@ interface AgentRunWorkspacePageProps {
   draftProjectId?: string;
   draftProjectAgentId?: string;
 }
+
+type AgentRunWorkspaceNavigationState = SessionNavigationState & {
+  initial_submit?: SessionChatInitialSubmit;
+};
 
 function machineLabelFromDevice(device: BackendConfig["device"]): string | null {
   if (device == null || typeof device !== "object" || Array.isArray(device)) return null;
@@ -74,34 +77,10 @@ function backendDisplayLabel(backend: BackendConfig): string {
     || "未命名 Backend";
 }
 
-function collectCompanionSubagentRefs(
-  entries: AgentRunWorkspaceListEntry[],
-  currentRunId: string | null,
-): CompanionSubagentKnownAgentRef[] {
-  const refs: CompanionSubagentKnownAgentRef[] = [];
-  for (const entry of entries) {
-    if (currentRunId && entry.run_ref.run_id !== currentRunId) continue;
-    for (const child of entry.children) {
-      appendCompanionSubagentRef(refs, child);
-    }
-  }
-  return refs;
-}
-
-function appendCompanionSubagentRef(
-  refs: CompanionSubagentKnownAgentRef[],
-  child: AgentRunListChild,
-): void {
-  refs.push({
-    run_id: child.run_ref.run_id,
-    agent_id: child.agent_ref.agent_id,
-    display_title: child.shell.display_title,
-    delivery_status: child.shell.delivery_status,
-    last_activity_at: child.shell.last_activity_at,
-  });
-  for (const nested of child.children) {
-    appendCompanionSubagentRef(refs, nested);
-  }
+function associationMetadataString(metadata: unknown, key: string): string | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const value = (metadata as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 export function AgentRunWorkspacePage({
@@ -122,7 +101,6 @@ export function AgentRunWorkspacePage({
   const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
-  const fetchWorkspaceModules = useWorkspaceModuleStore((state) => state.fetchProject);
 
   const [loadedOwnerStory, setLoadedOwnerStory] = useState<{
     story_id: string;
@@ -155,7 +133,7 @@ export function AgentRunWorkspacePage({
   }, []);
 
   const routeState = useMemo(
-    () => (location.state as SessionNavigationState | null) ?? null,
+    () => (location.state as AgentRunWorkspaceNavigationState | null) ?? null,
     [location.state],
   );
   const traceAgentContext = (routeState?.trace_agent ?? null) as RuntimeTraceAgentContext | null;
@@ -183,7 +161,6 @@ export function AgentRunWorkspacePage({
   const {
     state: agentRunWorkspaceState,
     refreshWorkspaceState: refreshAgentRunWorkspaceState,
-    refreshHookRuntime: refreshAgentRunHookRuntime,
   } = useAgentRunWorkspaceState({
     runId: currentRunId,
     agentId: currentAgentId,
@@ -222,13 +199,11 @@ export function AgentRunWorkspacePage({
   const hasIdentityBar =
     !isProjectAgentDraft
     && (identityAgentSource !== null || identitySubject !== null || lineageParent !== null || subagentChildCount > 0);
-  const activeHookRuntime = agentRunWorkspaceState.hook_runtime;
   const deliveryRuntimeSurface = agentRunWorkspaceState.runtime_surface;
   const sessionContextSnapshot = null;
   const sessionCapabilities = null;
   const taskExecutorSummary = null;
 
-  const runContext: SubjectRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
   const agentRunDetailRunId = workspaceControl?.run_ref.run_id ?? currentRunId;
   const agentRunDetailAgentId = workspaceControl?.agent_ref.agent_id ?? currentAgentId;
   const agentRunDetailFrameId = workspaceControl?.frame_runtime?.frame_ref.frame_id ?? null;
@@ -250,7 +225,10 @@ export function AgentRunWorkspacePage({
 
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
   const storiesByProjectId = useStoryStore((s) => s.storiesByProjectId);
-  const ownerStoryId = runContext?.story_id ?? null;
+  const ownerAssociation = workspaceControl?.subject_associations?.[0] ?? null;
+  const ownerStoryId = ownerAssociation?.subject_ref.kind === "story"
+    ? ownerAssociation.subject_ref.id
+    : associationMetadataString(ownerAssociation?.metadata, "story_id");
 
   useEffect(() => {
     const cached = ownerStoryId ? findStoryById(storiesByProjectId, ownerStoryId) : null;
@@ -278,22 +256,13 @@ export function AgentRunWorkspacePage({
     return null;
   }, [loadedOwnerStory, ownerStoryId, storiesByProjectId]);
   const ownerProjectId = workspaceControl?.project_id
-    ?? runContext?.project_id
     ?? ownerStory?.project_id
     ?? draftProjectIdValue
     ?? null;
-  const refreshWorkspaceModuleCatalog = useCallback(() => {
-    if (!ownerProjectId) return;
-    void fetchWorkspaceModules(ownerProjectId);
-  }, [fetchWorkspaceModules, ownerProjectId]);
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
-  const ownerProjectName = runContext?.scope === "project"
-    ? (ownerProject?.name?.trim() || runContext.project_id)
-    : isProjectAgentDraft
-      ? (ownerProject?.name?.trim() || "")
-    : "";
+  const ownerProjectName = ownerProject?.name?.trim() || ownerProjectId || "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
   const agentRunListState = useAgentRunListState(ownerProjectId);
   const companionSubagents = useMemo(
@@ -398,18 +367,26 @@ export function AgentRunWorkspacePage({
     if (isProjectAgentDraft && draftProjectIdValue) {
       return { owner_type: "project" as const, project_id: draftProjectIdValue };
     }
-    if (!runContext) return null;
-    if (runContext.scope === "project") {
-      return { owner_type: "project" as const, project_id: runContext.project_id };
+    if (ownerAssociation?.subject_ref.kind === "project") {
+      return { owner_type: "project" as const, project_id: ownerAssociation.subject_ref.id };
     }
-    if (runContext.scope === "story" && runContext.story_id) {
-      return { owner_type: "story" as const, story_id: runContext.story_id };
+    if (ownerAssociation?.subject_ref.kind === "story") {
+      return { owner_type: "story" as const, story_id: ownerAssociation.subject_ref.id };
     }
-    if (runContext.scope === "task" && runContext.story_id && runContext.task_id) {
-      return { owner_type: "task" as const, story_id: runContext.story_id, task_id: runContext.task_id };
+    if (ownerAssociation?.subject_ref.kind === "task") {
+      const storyId = associationMetadataString(ownerAssociation.metadata, "story_id");
+      if (storyId) {
+        return {
+          owner_type: "task" as const,
+          story_id: storyId,
+          task_id: ownerAssociation.subject_ref.id,
+        };
+      }
     }
-    return null;
-  }, [draftProjectIdValue, isProjectAgentDraft, runContext]);
+    return ownerProjectId
+      ? { owner_type: "project" as const, project_id: ownerProjectId }
+      : null;
+  }, [draftProjectIdValue, isProjectAgentDraft, ownerAssociation, ownerProjectId]);
 
   // ─── 页面级回调 ───────────────────────────────────────
 
@@ -432,11 +409,18 @@ export function AgentRunWorkspacePage({
     };
   }, [backendLabelById, chatWorkspaceId, ownerProjectId, workspacesByProjectId]);
 
-  const handleDraftAgentRunStarted = useCallback((response: ProjectAgentRunStartResult) => {
+  const handleDraftAgentRunStarted = useCallback((
+    response: ProjectAgentRunStartResult,
+    initialSubmit: SessionChatInitialSubmit["intent"],
+  ) => {
     refreshAgentRunListState(draftProjectIdValue, "draft_started");
     navigate(`/agent-runs/${encodeURIComponent(response.run_ref.run_id)}/${encodeURIComponent(response.agent_ref.agent_id)}`, {
       replace: true,
       state: {
+        initial_submit: {
+          transitionId: response.command_receipt.client_command_id,
+          intent: initialSubmit,
+        },
         trace_agent: {
           display_name: response.agent.display_name,
           executor_hint: response.agent.executor.executor,
@@ -444,6 +428,15 @@ export function AgentRunWorkspacePage({
       },
     });
   }, [draftProjectIdValue, navigate]);
+
+  const handleInitialSubmitConsumed = useCallback((transitionId: string) => {
+    if (routeState?.initial_submit?.transitionId !== transitionId) return;
+    const { initial_submit: _consumed, ...nextState } = routeState;
+    navigate(`${location.pathname}${location.search}`, {
+      replace: true,
+      state: nextState,
+    });
+  }, [location.pathname, location.search, navigate, routeState]);
 
   const handleAgentRunRedirect = useCallback((target: { runId: string; agentId: string }) => {
     refreshAgentRunListState(ownerProjectId ?? draftProjectIdValue, "agent_run_redirect");
@@ -467,11 +460,7 @@ export function AgentRunWorkspacePage({
   const {
     chatModel: controlPlaneChatModel,
     chatIntents: controlPlaneChatIntents,
-    handleMessageSent,
-    handleTurnEnd,
-    handleTaskPlanChanged,
-    handleSystemEvent,
-    handleWorkspaceModuleOpened,
+    handleAgentRunLiveEvent,
   } = useAgentRunWorkspaceControlPlane({
     currentRunId,
     currentAgentId,
@@ -481,14 +470,12 @@ export function AgentRunWorkspacePage({
     isProjectAgentDraft,
     agentRunWorkspaceState,
     refreshAgentRunWorkspaceState,
-    refreshAgentRunHookRuntime,
     traceExecutorHint: traceAgentContext?.executor_hint,
     taskExecutorSummary,
     createProjectAgentRun,
     onDraftStarted: handleDraftAgentRunStarted,
     onAgentRunRedirect: handleAgentRunRedirect,
     refreshAgentRunList,
-    refreshWorkspaceModuleCatalog,
     openWorkspacePanel: ({ typeId, uri, options }) => {
       expandWorkspacePanel(typeId, uri, options);
     },
@@ -499,7 +486,7 @@ export function AgentRunWorkspacePage({
     submitComposer: (intent: Parameters<typeof controlPlaneChatIntents.submitComposer>[0]) =>
       controlPlaneChatIntents.submitComposer({
         ...intent,
-        backendSelection: selectedBackendSelection,
+        backendSelection: intent.backendSelection ?? selectedBackendSelection,
       }),
   }), [controlPlaneChatIntents, selectedBackendSelection]);
 
@@ -542,6 +529,7 @@ export function AgentRunWorkspacePage({
       : "返回 Story";
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
     projectId: ownerProjectId,
+    workspaceModules: workspaceControl?.workspace_modules ?? [],
     agentRunRuntimeTarget,
     lifecycleRun: null,
     lifecycleAgent: workspaceControl?.agent ?? null,
@@ -556,7 +544,6 @@ export function AgentRunWorkspacePage({
     executorSummary: taskExecutorSummary,
     runtimeSurface: deliveryRuntimeSurface,
     workspaceBackend,
-    hookRuntime: activeHookRuntime,
     sessionCapabilities,
   }), [
     ownerProjectId,
@@ -572,43 +559,8 @@ export function AgentRunWorkspacePage({
     taskExecutorSummary,
     deliveryRuntimeSurface,
     workspaceBackend,
-    activeHookRuntime,
     sessionCapabilities,
   ]);
-
-  // ─── owner 信息条（作为 inputPrefix 传入 ChatView）
-
-  const runContextDisplayName = useMemo(() => {
-    if (!runContext) return "";
-    if (runContext.scope === "task") return runContext.task_title?.trim() || runContext.task_id || "";
-    if (runContext.scope === "story") return runContext.story_title?.trim() || runContext.story_id || "";
-    return ownerProject?.name?.trim() || runContext.project_id;
-  }, [runContext, ownerProject]);
-
-  const ownerBindingBar = runContext ? (
-    <div className="flex min-w-0 flex-wrap items-center gap-2">
-      <span className="rounded-[6px] bg-background/80 px-1.5 py-0.5 uppercase">
-        {runContext.scope}
-      </span>
-      <span className="min-w-0 truncate">
-        已绑定：{runContextDisplayName}
-      </span>
-      {effectiveReturnTarget && (
-        <button
-          type="button"
-          onClick={handleBackToOwner}
-          className="rounded-[6px] px-1.5 py-0.5 text-[11px] transition-colors hover:bg-background hover:text-foreground"
-        >
-          打开关联
-          {runContext.scope === "project"
-            ? "项目"
-            : runContext.scope === "task"
-              ? "任务"
-              : "Story"}
-        </button>
-      )}
-    </div>
-  ) : null;
   const backendSelectionBar = activeBackendAccesses.length > 0 ? (
     <InlineBackendSelector
       value={effectiveSelectedBackendId}
@@ -619,12 +571,6 @@ export function AgentRunWorkspacePage({
       onRefresh={() => { void fetchBackends(); }}
     />
   ) : null;
-  const chatInputPrefix = ownerBindingBar ? (
-    <>
-      {ownerBindingBar}
-    </>
-  ) : undefined;
-
   // ─── 路由 state 驱动自动展开右栏 ───────────────────────
   useEffect(() => {
     if (!routeState?.open_workspace_panel) return;
@@ -733,11 +679,9 @@ export function AgentRunWorkspacePage({
               <SessionChatView
                 model={chatModel}
                 intents={chatIntents}
-                onMessageSent={handleMessageSent}
-                onTurnEnd={handleTurnEnd}
-                onSystemEvent={handleSystemEvent}
-                onTaskPlanChanged={handleTaskPlanChanged}
-                inputPrefix={chatInputPrefix}
+                initialSubmit={routeState?.initial_submit}
+                onInitialSubmitConsumed={handleInitialSubmitConsumed}
+                onLiveEvent={handleAgentRunLiveEvent}
                 inputToolbarSlot={backendSelectionBar}
                 openWorkspacePanel={({ typeId, uri, options }) => {
                   expandWorkspacePanel(typeId, uri, options);
@@ -763,7 +707,6 @@ export function AgentRunWorkspacePage({
           <WorkspacePanel
             ref={workspacePanelRef}
             runtimeData={workspaceRuntimeData}
-            onWorkspaceModuleOpened={handleWorkspaceModuleOpened}
           />
         </Panel>
       </Group>

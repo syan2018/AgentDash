@@ -62,6 +62,5 @@ export function executorSourceFromExecutionProfile(value: JsonValue | undefined)
     model_id: stringField(record, "model_id"),
     agent_id: stringField(record, "agent_id"),
     thinking_level: thinkingLevelField(record, "thinking_level"),
-    permission_policy: stringField(record, "permission_policy"),
   };
 }

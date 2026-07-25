@@ -1,0 +1,213 @@
+{
+  "scenario_id": "agentrun_fork_mailbox_context_lineage_status",
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "capture_method": "The fixed Main AgentRun command, mailbox, control-plane, and fork production functions execute this exact input in scripts/session-parity/mainFrontendEvidence.test.tsx; the current frontend executes the same input independently.",
+    "source_files": [
+      {
+        "path": "packages/app-web/src/features/agent-run-workspace/model/conversationCommandState.ts",
+        "sha256": "292c480e62f9e919e331efe2b68cc38a28c5bd7956859a96b26be3823d3d56e5",
+        "git_blob_sha": "00a39fa607d26355f3abe7f80bfffb1b49ec157c"
+      },
+      {
+        "path": "packages/app-web/src/features/agent-run-workspace/model/controlPlaneModel.ts",
+        "sha256": "ba360d649d75d262a8f97708e2b2c7f5eb83e96bef0fdb529526004913f42742",
+        "git_blob_sha": "6a74edf7e111007abce9db24328a7d9e3af25b3b"
+      },
+      {
+        "path": "packages/app-web/src/features/agent-run-workspace/model/useAgentRunWorkspaceCommands.ts",
+        "sha256": "562f7dae4c1566d70d3a3a02d4bccf3106a4075c7591f90ec85aa6ccaa831c7d",
+        "git_blob_sha": "f06f99a58e3c0b4bbd227f54429daa13f20b7b6d"
+      }
+    ]
+  },
+  "conversation_input": {
+    "conversation": {
+      "execution": { "status": "ready", "reason": "等待下一条消息" },
+      "commands": {
+        "ownership": {
+          "run_created_by_user_id": "owner-user",
+          "agent_created_by_user_id": "owner-user",
+          "current_user_controls_run": true
+        },
+        "keyboard": {},
+        "commands": [
+          {
+            "kind": "compact_context",
+            "command_id": "cmd-compact",
+            "enabled": true,
+            "requires_input": false,
+            "executor_config_policy": "forbidden",
+            "placement": ["header"],
+            "stale_guard": { "snapshot_id": "snapshot-1", "run_id": "run-1", "agent_id": "agent-1" }
+          },
+          {
+            "kind": "promote_mailbox_message",
+            "command_id": "cmd-promote",
+            "enabled": true,
+            "requires_input": false,
+            "executor_config_policy": "optional",
+            "placement": ["mailbox_row"],
+            "stale_guard": { "snapshot_id": "snapshot-1", "run_id": "run-1", "agent_id": "agent-1" }
+          },
+          {
+            "kind": "delete_mailbox_message",
+            "command_id": "cmd-delete",
+            "enabled": true,
+            "requires_input": false,
+            "executor_config_policy": "optional",
+            "placement": ["mailbox_row"],
+            "stale_guard": { "snapshot_id": "snapshot-1", "run_id": "run-1", "agent_id": "agent-1" }
+          }
+        ]
+      },
+      "model_config": {
+        "status": "resolved",
+        "missing_fields": [],
+        "effective_executor_config": {
+          "executor": "CODEX",
+          "provider_id": "openai",
+          "model_id": "gpt-test",
+          "source": "project_agent_preset"
+        }
+      }
+    },
+    "workspaceStateStatus": "ready",
+    "workspaceStateError": null
+  },
+  "mailbox_input": {
+    "visible_message_count": 1,
+    "paused": false,
+    "user_attention": true,
+    "resume_command": {
+      "kind": "resume_mailbox",
+      "command_id": "cmd-resume",
+      "enabled": true,
+      "requires_input": false,
+      "executor_config_policy": "forbidden",
+      "placement": ["mailbox_banner"],
+      "stale_guard": { "snapshot_id": "snapshot-1", "run_id": "run-1", "agent_id": "agent-1" }
+    },
+    "state": { "paused": true, "can_resume": true, "hide_system_steer_messages": true },
+    "messages": [
+      {
+        "id": "mailbox-1",
+        "origin": "user",
+        "source": { "namespace": "core", "kind": "composer", "actor": "user", "display_label_key": "mailbox.source.core.composer" },
+        "delivery": { "kind": "launch_or_continue_turn" },
+        "barrier": "agent_run_turn_boundary",
+        "drain_mode": "one",
+        "status": "queued",
+        "preview": "queued message",
+        "has_images": false,
+        "attempt_count": 0,
+        "created_at": "2026-06-30T00:00:00.000Z",
+        "updated_at": "2026-06-30T00:00:00.000Z",
+        "can_promote": true,
+        "can_delete": true,
+        "can_reorder": true,
+        "can_recall": true
+      }
+    ],
+    "waiting_items": [
+      {
+        "wait_id": "wait-1",
+        "gate_id": "gate-1",
+        "kind": "companion",
+        "status": "open",
+        "source_label": "Research Agent",
+        "preview": "等待协作 Agent",
+        "created_at": "2026-07-02T10:15:30.000Z"
+      }
+    ]
+  },
+  "system_event": {
+    "event_type": "control_plane_projection_changed",
+    "event": {
+      "type": "platform",
+      "payload": {
+        "kind": "control_plane_projection_changed",
+        "data": {
+          "run_id": "run-1",
+          "agent_id": "agent-1",
+          "frame_id": null,
+          "gate_id": null,
+          "mailbox_message_id": null,
+          "delivery_runtime_session_id": null,
+          "workspace_module_presentation": null,
+          "projection": "mailbox",
+          "reason": "mailbox_state_changed"
+        }
+      }
+    }
+  },
+  "fork": {
+    "run_id": "parent-run",
+    "agent_id": "parent-agent",
+    "client_command_id": "cmd-fork",
+    "fork_point_ref": { "turn_id": "turn-1", "entry_index": 2 },
+    "response": {
+      "command_receipt": { "client_command_id": "cmd-fork", "status": "accepted", "duplicate": false },
+      "outcome": "forked",
+      "parent_refs": {
+        "run_ref": { "run_id": "parent-run" },
+        "agent_ref": { "run_id": "parent-run", "agent_id": "parent-agent" }
+      },
+      "child_refs": {
+        "run_ref": { "run_id": "child-run" },
+        "agent_ref": { "run_id": "child-run", "agent_id": "child-agent" }
+      },
+      "lineage": {
+        "id": "lineage-1",
+        "parent": {
+          "run_ref": { "run_id": "parent-run" },
+          "agent_ref": { "run_id": "parent-run", "agent_id": "parent-agent" }
+        },
+        "child": {
+          "run_ref": { "run_id": "child-run" },
+          "agent_ref": { "run_id": "child-run", "agent_id": "child-agent" }
+        },
+        "relation_kind": "fork",
+        "fork_point_ref": { "turn_id": "turn-1", "entry_index": 2 },
+        "forked_by_user_id": "user-1",
+        "created_at": "2026-07-03T00:00:00.000Z"
+      },
+      "redirect": { "run_id": "child-run", "agent_id": "child-agent" }
+    }
+  },
+  "expected": {
+    "command_ids": ["cmd-compact", "cmd-promote", "cmd-delete"],
+    "compact_command_id": "cmd-compact",
+    "mailbox": {
+      "paused": true,
+      "user_attention": true,
+      "hide_system_steer_messages": true,
+      "can_resume": true,
+      "message_ids": ["mailbox-1"],
+      "waiting_ids": ["wait-1"],
+      "resume_command_id": "cmd-resume",
+      "promote_command_id": "cmd-promote",
+      "delete_command_id": "cmd-delete"
+    },
+    "system_effect": {
+      "refreshWorkspaceState": true,
+      "refreshAgentRunListReason": "control_plane:mailbox:mailbox_state_changed"
+    },
+    "fork_request": {
+      "run_id": "parent-run",
+      "agent_id": "parent-agent",
+      "request": { "client_command_id": "cmd-fork", "fork_point_ref": { "turn_id": "turn-1", "entry_index": 2 } }
+    },
+    "redirect": { "runId": "child-run", "agentId": "child-agent" },
+    "lineage": {
+      "parent_run_id": "parent-run",
+      "parent_agent_id": "parent-agent",
+      "child_run_id": "child-run",
+      "child_agent_id": "child-agent",
+      "relation_kind": "fork",
+      "turn_id": "turn-1",
+      "entry_index": 2
+    },
+    "status_target": { "run_id": "parent-run", "agent_id": "parent-agent" }
+  }
+}

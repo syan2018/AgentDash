@@ -6,7 +6,7 @@ pub use agentdash_application::runtime_bridge::{
     runtime_mcp_server_to_summary, runtime_mcp_servers_to_summaries,
 };
 
-use agentdash_application::runtime::RuntimeFileEntry;
+use agentdash_application_vfs::RuntimeFileEntry;
 use agentdash_relay::FileEntryRelay;
 
 pub fn relay_file_entry_to_runtime(entry: &FileEntryRelay) -> RuntimeFileEntry {

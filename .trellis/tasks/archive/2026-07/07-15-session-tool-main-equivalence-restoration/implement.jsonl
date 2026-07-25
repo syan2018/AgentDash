@@ -1,0 +1,13 @@
+{"file":".trellis/spec/backend/agent-runtime-kernel.md","reason":"收束operation、turn、item、driver acceptance与outbox post-acceptance终结语义"}
+{"file":".trellis/spec/backend/agent-runtime-persistence.md","reason":"实现receipt、operation terminal、binding provenance与重启恢复不变量"}
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"明确driver命令接收、拒绝和已接收后terminal错误边界"}
+{"file":".trellis/spec/backend/agent-runtime-native-adapter.md","reason":"恢复main等价Native消息角色、tool identity、presentation producer与连续loop"}
+{"file":".trellis/spec/backend/agent-runtime-codex-adapter.md","reason":"保持Codex App Server标准body并接入公共Platform ToolBroker"}
+{"file":".trellis/spec/backend/agent-runtime-surface-tool-broker.md","reason":"重建definition compile、typed per-call invocation context、权限与单presentation route"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"恢复AgentFrame、Hook Runtime、launch/current provenance与tool invocation anchor"}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"将Task/Workflow/Companion等scope从真实AgentFrame注入每次工具调用"}
+{"file":".trellis/spec/backend/permission/policy-engine.md","reason":"确保Platform ToolBroker在owner副作用前执行真实grant授权"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"恢复frame-scoped VFS access并消除whole-mount默认授权"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"固定wrapper可变而protected BackboneEvent内容、顺序与null语义main等价"}
+{"file":".trellis/tasks/07-15-session-tool-main-equivalence-restoration/research/main-equivalence-difference-matrix.md","reason":"按完整差异矩阵实施并逐项关闭WRONG/MISSING/PARTIAL"}
+{"file":".trellis/tasks/07-15-session-tool-main-equivalence-restoration/research/database-failure-forensics.md","reason":"以实际失败run的双identity、悬空operation与outbox重投链作为回归基线"}

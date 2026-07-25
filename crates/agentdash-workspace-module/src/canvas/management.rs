@@ -508,7 +508,7 @@ pub fn build_personal_canvas(
 ) -> Result<Canvas, DomainError> {
     let mount_id = match mount_id {
         Some(value) => normalize_canvas_mount_id_for_domain(&value)?,
-        None => derive_canvas_mount_id(&title),
+        None => generated_canvas_mount_id(&title),
     };
     let mut canvas = Canvas::new_personal(project_id, owner_user_id, mount_id, title, description);
     canvas.sandbox_config = CanvasSandboxConfig::react_default();
@@ -526,7 +526,7 @@ pub fn build_canvas(
 ) -> Result<Canvas, DomainError> {
     let mount_id = match mount_id {
         Some(value) => normalize_canvas_mount_id_for_domain(&value)?,
-        None => derive_canvas_mount_id(&title),
+        None => generated_canvas_mount_id(&title),
     };
     let mut canvas = Canvas::new(project_id, mount_id, title, description);
     canvas.sandbox_config = CanvasSandboxConfig::react_default();
@@ -707,6 +707,12 @@ fn normalize_canvas_mount_id_for_domain(raw: &str) -> Result<String, DomainError
     normalize_canvas_mount_id(raw).map_err(|error| DomainError::InvalidConfig(error.to_string()))
 }
 
+fn generated_canvas_mount_id(title: &str) -> String {
+    let base = derive_canvas_mount_id(title);
+    let entropy = Uuid::new_v4().simple().to_string();
+    format!("{base}-{}", &entropy[..8])
+}
+
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
@@ -857,7 +863,29 @@ fn normalize_path(path: &str) -> Result<String, DomainError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::project::ProjectRole;
+    use agentdash_domain::canvas::CanvasRepository;
+    use agentdash_domain::project::{
+        Project, ProjectRepository, ProjectRole, ProjectSubjectGrant, ProjectSubjectType,
+    };
+    use agentdash_test_support::workspace_module::{
+        MemoryCanvasRepository, MemoryProjectRepository,
+    };
+
+    #[derive(Default)]
+    struct FixtureCanvasRepositories {
+        projects: MemoryProjectRepository,
+        canvases: MemoryCanvasRepository,
+    }
+
+    impl CanvasRepositorySet for FixtureCanvasRepositories {
+        fn project_repo(&self) -> &dyn ProjectRepository {
+            &self.projects
+        }
+
+        fn canvas_repo(&self) -> &dyn CanvasRepository {
+            &self.canvases
+        }
+    }
 
     #[test]
     fn build_canvas_uses_react_default_and_seed_file() {
@@ -902,6 +930,33 @@ mod tests {
         assert_eq!(canvas.scope, CanvasScope::Personal);
         assert!(canvas.published_from_canvas_id.is_none());
         assert!(canvas.cloned_from_canvas_id.is_none());
+    }
+
+    #[test]
+    fn generated_canvas_mount_identity_is_unique_for_repeated_non_ascii_titles() {
+        let project_id = Uuid::new_v4();
+        let first = build_personal_canvas(
+            project_id,
+            "alice".to_string(),
+            None,
+            "随手展示 Canvas".to_string(),
+            String::new(),
+            CanvasMutationInput::default(),
+        )
+        .expect("应能生成第一个 Canvas");
+        let second = build_personal_canvas(
+            project_id,
+            "alice".to_string(),
+            None,
+            "随手展示 Canvas".to_string(),
+            String::new(),
+            CanvasMutationInput::default(),
+        )
+        .expect("应能生成第二个 Canvas");
+
+        assert_ne!(first.mount_id, second.mount_id);
+        assert!(first.mount_id.starts_with("cvs-canvas-"));
+        assert!(second.mount_id.starts_with("cvs-canvas-"));
     }
 
     #[test]
@@ -1054,5 +1109,118 @@ mod tests {
 
         let err = validate_canvas_contract(&canvas).expect_err("应拒绝缺少 owner");
         assert!(err.to_string().contains("owner_user_id"));
+    }
+
+    #[tokio::test]
+    async fn canvas_product_owner_preserves_crud_publish_copy_and_unpublish_flow() {
+        let repos = FixtureCanvasRepositories::default();
+        let project = Project::new_with_creator(
+            "Canvas Product tracer".to_string(),
+            "production owner behavior".to_string(),
+            "alice".to_string(),
+        );
+        repos
+            .projects
+            .create(&project)
+            .await
+            .expect("create project");
+        repos
+            .projects
+            .upsert_subject_grant(&ProjectSubjectGrant::new(
+                project.id,
+                ProjectSubjectType::User,
+                "alice".to_string(),
+                ProjectRole::Owner,
+                "alice".to_string(),
+            ))
+            .await
+            .expect("grant owner");
+        let actor = ProjectAuthorizationContext::new("alice".to_string(), Vec::new(), false);
+
+        let personal = create_personal_canvas(
+            &repos,
+            &actor,
+            CreatePersonalCanvasInput {
+                project_id: project.id,
+                mount_id: Some("cvs-product-tracer".to_string()),
+                title: "Product tracer".to_string(),
+                description: Some("draft".to_string()),
+                mutation: CanvasMutationInput::default(),
+            },
+        )
+        .await
+        .expect("create personal Canvas");
+        assert!(personal.access.can_edit_source);
+        assert!(personal.access.runtime_write_allowed);
+
+        let updated = update_canvas_record(
+            &repos,
+            personal.canvas.clone(),
+            CanvasMutationInput {
+                title: Some("Product tracer updated".to_string()),
+                ..CanvasMutationInput::default()
+            },
+        )
+        .await
+        .expect("update personal Canvas");
+        assert_eq!(updated.title, "Product tracer updated");
+
+        let shared = publish_canvas_to_project(
+            &repos,
+            &actor,
+            updated.id,
+            PublishCanvasInput {
+                mount_id: Some("cvs-product-shared".to_string()),
+                ..PublishCanvasInput::default()
+            },
+        )
+        .await
+        .expect("publish Canvas");
+        assert_eq!(shared.canvas.scope, CanvasScope::Project);
+        assert_eq!(shared.canvas.published_from_canvas_id, Some(updated.id));
+        assert!(shared.access.can_manage_shared);
+        assert!(!shared.access.runtime_write_allowed);
+
+        let copied = copy_canvas_to_personal(
+            &repos,
+            &actor,
+            shared.canvas.id,
+            CopyCanvasInput {
+                mount_id: Some("cvs-product-copy".to_string()),
+                ..CopyCanvasInput::default()
+            },
+        )
+        .await
+        .expect("copy shared Canvas");
+        assert_eq!(copied.canvas.scope, CanvasScope::Personal);
+        assert_eq!(copied.canvas.cloned_from_canvas_id, Some(shared.canvas.id));
+        assert!(copied.access.runtime_write_allowed);
+
+        let visible =
+            list_canvases_for_user(&repos, &actor, project.id, CanvasListScopeFilter::All)
+                .await
+                .expect("list Canvas projections");
+        assert_eq!(visible.len(), 3);
+
+        let unpublished = unpublish_project_canvas(&repos, &actor, shared.canvas.id)
+            .await
+            .expect("unpublish shared Canvas");
+        assert_eq!(unpublished.source_canvas_id, Some(updated.id));
+        assert!(
+            repos
+                .canvases
+                .get_by_id(shared.canvas.id)
+                .await
+                .expect("load shared Canvas")
+                .is_none()
+        );
+
+        delete_canvas_record(&repos, &copied.canvas)
+            .await
+            .expect("delete copied Canvas");
+        let remaining = repos.canvases.debug_list().await;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, updated.id);
+        assert_eq!(remaining[0].shared_canvas_id, None);
     }
 }

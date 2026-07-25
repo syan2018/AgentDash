@@ -29,7 +29,7 @@ use agentdash_domain::session_composition::validate_session_composition;
 use agentdash_domain::workflow::{
     LifecycleRun, LifecycleTaskPlanItemDraft, SubjectRef, TaskPriority,
 };
-use agentdash_spi::platform::auth::AuthIdentity;
+use agentdash_platform_spi::platform::auth::AuthIdentity;
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
 
@@ -634,7 +634,7 @@ fn story_projection_source_kind(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_spi::context::tool_schema_sanitizer::sanitize_tool_schema;
+    use agentdash_platform_spi::context::tool_schema_sanitizer::sanitize_tool_schema;
     use serde_json::Value;
 
     #[test]

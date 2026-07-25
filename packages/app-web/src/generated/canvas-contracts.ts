@@ -2,11 +2,11 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { UserInput } from "./backbone-protocol";
+import type { AgentInputContent } from "./agent-run-interaction-contracts";
 
 export type CanvasAccessDto = { can_view: boolean, can_edit_source: boolean, can_publish: boolean, can_manage_shared: boolean, can_copy: boolean, runtime_write_allowed: boolean, };
 
-export type CanvasAgentInputSubmitRequest = { input: Array<UserInput>, client_command_id: string, delivery_intent?: string, interaction_snapshot_id?: string, render_observation_id?: string, };
+export type CanvasAgentInputSubmitRequest = { input: Array<AgentInputContent>, client_command_id: string, delivery_intent?: string, interaction_snapshot_id?: string, render_observation_id?: string, };
 
 export type CanvasAgentRunRuntimeSnapshotDto = { canvas_id: string, canvas_mount_id: string, vfs_mount_id: string, resource_surface_ref?: string, entry: string, files: Array<CanvasRuntimeFileDto>, bindings: Array<CanvasRuntimeBindingDto>, import_map: CanvasImportMapDto, libraries: Array<string>, runtime_bridge: CanvasRuntimeBridgeSnapshotDto, };
 
@@ -44,7 +44,7 @@ export type CanvasRuntimeObservationStatusDto = "building" | "ready" | "error";
 
 export type CanvasRuntimeObservationUpsertRequest = { frame_id: string, generation: number, captured_at?: string, status: CanvasRuntimeObservationStatusDto, message?: string, viewport: CanvasRuntimeViewportDto, document: CanvasRuntimeDocumentStateDto, diagnostics: Array<CanvasRuntimeDiagnosticDto>, screenshot_ref?: string, };
 
-export type CanvasRuntimeSnapshotDto = { canvas_id: string, canvas_mount_id: string, vfs_mount_id: string, session_id?: string, resource_surface_ref?: string, entry: string, files: Array<CanvasRuntimeFileDto>, bindings: Array<CanvasRuntimeBindingDto>, import_map: CanvasImportMapDto, libraries: Array<string>, runtime_bridge: CanvasRuntimeBridgeSnapshotDto, };
+export type CanvasRuntimeSnapshotDto = { canvas_id: string, canvas_mount_id: string, vfs_mount_id: string, runtime_thread_id?: string, resource_surface_ref?: string, entry: string, files: Array<CanvasRuntimeFileDto>, bindings: Array<CanvasRuntimeBindingDto>, import_map: CanvasImportMapDto, libraries: Array<string>, runtime_bridge: CanvasRuntimeBridgeSnapshotDto, };
 
 export type CanvasRuntimeViewportDto = { width: number, height: number, device_pixel_ratio: number, };
 
@@ -64,9 +64,9 @@ export type PublishCanvasToProjectRequest = { canvas_mount_id?: string, title?: 
 
 export type RuntimeActionDescriptorDto = { action_key: string, kind: RuntimeActionKindDto, description?: string, input_schema?: JsonValue, output_schema?: JsonValue, default_policy: RuntimePolicyDto, };
 
-export type RuntimeActionKindDto = "session_runtime" | "setup";
+export type RuntimeActionKindDto = "runtime_thread" | "setup";
 
-export type RuntimeContextDto = { "type": "session", session_id: string, project_id?: string, workspace_id?: string, } | { "type": "setup", project_id?: string, workspace_id?: string, backend_id?: string, root_ref?: string, };
+export type RuntimeContextDto = { "type": "runtime_thread", runtime_thread_id: string, project_id?: string, workspace_id?: string, } | { "type": "setup", project_id?: string, workspace_id?: string, backend_id?: string, root_ref?: string, };
 
 export type RuntimeInvocationOutputDto = { output: JsonValue, metadata: { [key in string]?: JsonValue }, };
 

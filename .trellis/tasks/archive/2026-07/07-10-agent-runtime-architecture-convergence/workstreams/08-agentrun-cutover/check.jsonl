@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/architecture.md","reason":"复核最终依赖方向与旧crate删除"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"复核AgentRun/Runtime状态唯一性"}
+{"file":".trellis/spec/backend/capability/integration-api.md","reason":"复核所有Agent service经Integration进入"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"复核product/runtime event事实源分离"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"复核UI只消费owned contract与availability"}

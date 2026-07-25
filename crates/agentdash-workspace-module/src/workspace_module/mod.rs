@@ -1,11 +1,6 @@
-pub mod runtime_bridge;
-mod runtime_context;
-pub mod runtime_tool_provider;
-mod surface;
-mod tools;
 pub mod visibility;
 
-use agentdash_application_runtime_gateway::{
+use agentdash_application_extension_gateway::{
     RuntimeActionDescriptor, RuntimeActionKind, validate_json_schema_subset,
 };
 use agentdash_contracts::workspace_module::{
@@ -34,30 +29,10 @@ use crate::extension_runtime::{
     ExtensionGeneratedOperationProjection, ExtensionGeneratedOperationVisibility,
 };
 
-pub use runtime_bridge::{
-    ResolvedInvocationBackend, SharedWorkspaceModuleAgentRunBridgeHandle,
-    SharedWorkspaceModuleRuntimeGatewayHandle, WorkspaceModuleAgentRunBridge,
-    delivery_runtime_session_id_from_context, project_authorization_context_from_identity,
-    project_id_from_context, request_existing_canvas_visibility_for_runtime,
-    resolve_invocation_backend, shared_runtime_vfs_from_context,
-    submit_canvas_runtime_surface_update,
-};
-pub(crate) use runtime_context::WorkspaceModuleRuntimeContext;
-pub use runtime_tool_provider::WorkspaceModuleRuntimeToolProvider;
-pub(crate) use surface::{
-    WorkspaceModuleAgentSurface, WorkspaceModuleAgentSurfaceCommand,
-    WorkspaceModuleCanvasBindingResult, WorkspaceModuleCommandDiagnostic,
-    WorkspaceModuleInvokeCommand, WorkspaceModuleOperateCommand, WorkspaceModuleOperationOutcome,
-    WorkspaceModuleOperationRuntimeSource, WorkspaceModulePresentCommand,
-    WorkspaceModuleResolveContext, WorkspaceModuleSurfaceError, WorkspaceModuleVisibilitySource,
-};
-pub use tools::{
-    WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
-    WorkspaceModuleOperateTool, WorkspaceModulePresentTool,
-};
 pub use visibility::{
-    WorkspaceModuleVisibilityDiagnostic, WorkspaceModuleVisibilityProjection,
-    resolve_workspace_module_visibility,
+    WorkspaceModuleVisibilityDiagnostic, WorkspaceModuleVisibilityInput,
+    WorkspaceModuleVisibilityProjection, project_agent_run_workspace_module_visibility,
+    project_workspace_module_visibility, resolve_workspace_module_visibility,
     resolve_workspace_module_visibility_with_operation_context,
 };
 
@@ -143,16 +118,16 @@ impl WorkspaceModuleRuntimeActionCatalog {
             descriptors,
             missing_descriptor_readiness: WorkspaceModuleOperationReadiness::unavailable(
                 WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable,
-                "runtime action is not present in the RuntimeGateway actor/context catalog",
+                "runtime action is not present in the ExtensionGateway actor/context catalog",
             ),
         }
     }
 
-    pub fn missing_runtime_gateway(reason: impl Into<String>) -> Self {
+    pub fn missing_extension_gateway(reason: impl Into<String>) -> Self {
         Self {
             descriptors: Vec::new(),
             missing_descriptor_readiness: WorkspaceModuleOperationReadiness::unavailable(
-                WorkspaceModuleOperationReadinessKind::MissingRuntimeGateway,
+                WorkspaceModuleOperationReadinessKind::MissingExtensionGateway,
                 reason,
             ),
         }
@@ -168,9 +143,12 @@ impl WorkspaceModuleRuntimeActionCatalog {
         }
     }
 
-    fn session_action_descriptor(&self, action_key: &str) -> Option<&RuntimeActionDescriptor> {
+    fn runtime_thread_action_descriptor(
+        &self,
+        action_key: &str,
+    ) -> Option<&RuntimeActionDescriptor> {
         self.descriptors.iter().find(|descriptor| {
-            descriptor.kind == RuntimeActionKind::SessionRuntime
+            descriptor.kind == RuntimeActionKind::RuntimeThread
                 && descriptor.action_key.as_str() == action_key
         })
     }
@@ -178,8 +156,8 @@ impl WorkspaceModuleRuntimeActionCatalog {
 
 impl Default for WorkspaceModuleRuntimeActionCatalog {
     fn default() -> Self {
-        Self::missing_runtime_gateway(
-            "RuntimeGateway catalog is not attached to this workspace module projection",
+        Self::missing_extension_gateway(
+            "ExtensionGateway catalog is not attached to this workspace module projection",
         )
     }
 }
@@ -424,7 +402,7 @@ fn operation_from_generated_projection(
         ExtensionGeneratedOperationDispatch::RuntimeAction { action_key } => {
             let readiness = if operation_context
                 .runtime_actions
-                .session_action_descriptor(action_key)
+                .runtime_thread_action_descriptor(action_key)
                 .is_some()
             {
                 first_unready_or_ready([&operation_context.backend_readiness])
@@ -798,7 +776,7 @@ fn describe_permission(permission: &ExtensionPermissionDeclaration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_application_runtime_gateway::{
+    use agentdash_application_extension_gateway::{
         RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimePolicy,
     };
     use agentdash_contracts::workspace_module::{
@@ -981,7 +959,7 @@ mod tests {
                 extension_key: "ops-demo".to_string(),
                 extension_id: "ops-demo".to_string(),
                 action_key: "ops-demo.run".to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Run".to_string(),
                 input_schema: serde_json::json!(true),
                 output_schema: serde_json::json!(true),
@@ -1021,7 +999,7 @@ mod tests {
                 extension_key: "ops-demo".to_string(),
                 extension_id: "ops-demo".to_string(),
                 action_key: "ops-demo.run".to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Manifest description must not become executable metadata".to_string(),
                 input_schema: serde_json::json!({"type": "object"}),
                 output_schema: serde_json::json!({"type": "object"}),
@@ -1045,7 +1023,7 @@ mod tests {
     }
 
     #[test]
-    fn operation_catalog_runtime_action_requires_session_gateway_descriptor() {
+    fn operation_catalog_runtime_action_requires_runtime_thread_gateway_descriptor() {
         let projection = ExtensionRuntimeProjection {
             installations: vec![ExtensionInstallationProjection {
                 installation_id: Uuid::new_v4(),
@@ -1059,7 +1037,7 @@ mod tests {
                 extension_key: "ops-demo".to_string(),
                 extension_id: "ops-demo".to_string(),
                 action_key: "ops-demo.run".to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Manifest action".to_string(),
                 input_schema: serde_json::json!({"type": "object"}),
                 output_schema: serde_json::json!({"type": "object"}),
@@ -1132,7 +1110,7 @@ mod tests {
                 extension_key: "ops-demo".to_string(),
                 extension_id: "ops-demo".to_string(),
                 action_key: action_key.to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Manifest action metadata is not an operation fact".to_string(),
                 input_schema: serde_json::json!(true),
                 output_schema: serde_json::json!(true),
@@ -1155,7 +1133,7 @@ mod tests {
         };
         let descriptor = RuntimeActionDescriptor {
             action_key: RuntimeActionKey::parse(action_key).expect("valid action key"),
-            kind: RuntimeActionKind::SessionRuntime,
+            kind: RuntimeActionKind::RuntimeThread,
             description: Some("Gateway resolved descriptor".to_string()),
             input_schema: Some(serde_json::json!({"type": "object"})),
             output_schema: Some(serde_json::json!({"type": "object"})),

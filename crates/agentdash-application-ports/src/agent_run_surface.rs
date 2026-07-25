@@ -1,7 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AuthIdentity, CapabilityState, RuntimeMcpServer, ToolCapability, ToolCluster, Vfs,
 };
 use async_trait::async_trait;
@@ -43,7 +44,7 @@ pub struct AgentRunRuntimeAddress {
 
 #[derive(Debug, Clone)]
 pub struct AgentRunRuntimeSurface {
-    pub runtime_session_id: String,
+    pub runtime_thread_id: RuntimeThreadId,
     pub run_id: Uuid,
     pub project_id: Uuid,
     pub agent_id: Uuid,
@@ -53,6 +54,7 @@ pub struct AgentRunRuntimeSurface {
     pub surface_revision: i32,
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
+    pub vfs_access_policy: agentdash_platform_spi::RuntimeVfsAccessPolicy,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     pub active_turn_id: Option<String>,
@@ -102,39 +104,49 @@ pub struct AgentRunRuntimeSurfaceClosure {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentRunRuntimeSurfaceQueryError {
     #[error(
-        "runtime surface query missing anchor: component={component}, session_id={runtime_session_id}",
+        "runtime surface query missing anchor: component={component}, runtime_thread_id={runtime_thread_id}",
         component = purpose.component
     )]
     MissingAnchor {
         purpose: RuntimeSurfaceQueryPurpose,
-        runtime_session_id: String,
+        runtime_thread_id: String,
     },
     #[error(
-        "runtime surface query missing lifecycle run: component={component}, session_id={runtime_session_id}, run_id={run_id}",
+        "runtime surface query missing lifecycle run: component={component}, runtime_thread_id={runtime_thread_id}, run_id={run_id}",
         component = purpose.component
     )]
     MissingLifecycleRun {
         purpose: RuntimeSurfaceQueryPurpose,
-        runtime_session_id: String,
+        runtime_thread_id: String,
         run_id: Uuid,
     },
     #[error(
-        "runtime surface query missing lifecycle agent: component={component}, session_id={runtime_session_id}, agent_id={agent_id}",
+        "runtime surface query missing lifecycle agent: component={component}, runtime_thread_id={runtime_thread_id}, agent_id={agent_id}",
         component = purpose.component
     )]
     MissingLifecycleAgent {
         purpose: RuntimeSurfaceQueryPurpose,
-        runtime_session_id: String,
+        runtime_thread_id: String,
         agent_id: Uuid,
     },
     #[error(
-        "runtime surface query missing current frame: component={component}, session_id={runtime_session_id}, agent_id={agent_id}",
+        "runtime surface query missing current frame: component={component}, runtime_thread_id={runtime_thread_id}, agent_id={agent_id}",
         component = purpose.component
     )]
     MissingCurrentFrame {
         purpose: RuntimeSurfaceQueryPurpose,
-        runtime_session_id: String,
+        runtime_thread_id: String,
         agent_id: Uuid,
+    },
+    #[error(
+        "runtime surface query missing immutable surface closure: component={component}, runtime_thread_id={runtime_thread_id}, frame_id={frame_id}, field={field}",
+        component = purpose.component
+    )]
+    MissingSurfaceClosure {
+        purpose: RuntimeSurfaceQueryPurpose,
+        runtime_thread_id: String,
+        frame_id: Uuid,
+        field: &'static str,
     },
     #[error("runtime surface query backend anchor failed: {source}")]
     RuntimeBackendAnchor { source: RuntimeBackendAnchorError },
@@ -190,20 +202,20 @@ pub enum AgentRunTerminalLaunchTargetError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunEffectiveCapabilityRequest {
-    pub runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub agent_run_id: Uuid,
     pub agent_id: Uuid,
     pub command_key: Option<String>,
 }
 
 impl AgentRunEffectiveCapabilityRequest {
-    pub fn for_runtime_session(
-        runtime_session_id: impl Into<String>,
+    pub fn for_runtime_thread(
+        runtime_thread_id: impl Into<String>,
         agent_run_id: Uuid,
         agent_id: Uuid,
     ) -> Self {
         Self {
-            runtime_session_id: runtime_session_id.into(),
+            runtime_thread_id: runtime_thread_id.into(),
             agent_run_id,
             agent_id,
             command_key: None,
@@ -216,11 +228,6 @@ impl AgentRunEffectiveCapabilityRequest {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AgentRunGrantProjection {
-    pub admitted_tools: BTreeMap<String, BTreeSet<String>>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunEffectiveCapabilityView {
     pub target: AgentFrameRuntimeTarget,
@@ -228,13 +235,11 @@ pub struct AgentRunEffectiveCapabilityView {
     pub visible_capabilities: BTreeSet<ToolCapability>,
     pub vfs_surface: Vfs,
     pub mcp_surface: Vec<RuntimeMcpServer>,
-    pub visible_workspace_module_refs: Vec<String>,
-    pub grant_projection: AgentRunGrantProjection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunAdmissionRequest {
-    pub runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub capability_key: String,
     pub tool_name: String,
     pub cluster: Option<ToolCluster>,
@@ -242,13 +247,13 @@ pub struct AgentRunAdmissionRequest {
 
 impl AgentRunAdmissionRequest {
     pub fn tool(
-        runtime_session_id: impl Into<String>,
+        runtime_thread_id: impl Into<String>,
         capability_key: impl Into<String>,
         tool_name: impl Into<String>,
         cluster: Option<ToolCluster>,
     ) -> Self {
         Self {
-            runtime_session_id: runtime_session_id.into(),
+            runtime_thread_id: runtime_thread_id.into(),
             capability_key: capability_key.into(),
             tool_name: tool_name.into(),
             cluster,
@@ -281,9 +286,9 @@ impl AgentRunAdmissionDecision {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentRunEffectiveCapabilityError {
     #[error(
-        "agent run capability runtime session was not found: runtime_session_id={runtime_session_id}"
+        "agent run capability runtime thread was not found: runtime_thread_id={runtime_thread_id}"
     )]
-    MissingRuntimeSession { runtime_session_id: String },
+    MissingRuntimeThread { runtime_thread_id: String },
     #[error("agent run capability target was not found: run_id={run_id}, agent_id={agent_id}")]
     MissingTarget { run_id: Uuid, agent_id: Uuid },
     #[error("agent run capability projection failed: {message}")]
@@ -299,22 +304,22 @@ pub enum AgentRunEffectiveCapabilityError {
 pub trait AgentRunRuntimeSurfaceQueryPort: Send + Sync {
     async fn current_runtime_surface(
         &self,
-        runtime_session_id: &str,
+        runtime_thread_id: &str,
         purpose: RuntimeSurfaceQueryPurpose,
     ) -> Result<AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError>;
 
     async fn current_runtime_surface_with_backend(
         &self,
-        runtime_session_id: &str,
+        runtime_thread_id: &str,
         purpose: RuntimeSurfaceQueryPurpose,
     ) -> Result<AgentRunRuntimeSurfaceWithBackend, AgentRunRuntimeSurfaceQueryError>;
 }
 
 #[async_trait]
 pub trait AgentRunResourceSurfaceQueryPort: Send + Sync {
-    async fn resource_surface_for_runtime_session(
+    async fn resource_surface_for_runtime_thread(
         &self,
-        runtime_session_id: &str,
+        runtime_thread_id: &str,
     ) -> Result<AgentRunResourceSurface, AgentRunResourceSurfaceQueryError>;
 
     async fn resource_surface_for_agent_run(
@@ -326,9 +331,9 @@ pub trait AgentRunResourceSurfaceQueryPort: Send + Sync {
 
 #[async_trait]
 pub trait AgentRunRuntimePlacementPort: Send + Sync {
-    async fn terminal_launch_target_for_runtime_session(
+    async fn terminal_launch_target_for_runtime_thread(
         &self,
-        runtime_session_id: &str,
+        runtime_thread_id: &str,
         purpose: RuntimeSurfaceQueryPurpose,
     ) -> Result<AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError>;
 }

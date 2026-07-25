@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "复核 migration immutability、升级路径、数据清理与最终 schema。"}
+{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "复核 attachment、generation、lease、source、effect 与 recovery fencing。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "复核 Runtime/Host persistence ownership 和 durable transaction 边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "复核产品 profile 到 Runtime target 的生产链路。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "执行后端 lint、check、tests 与一致性检查。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "复核 API、Product、Host、Integration 与数据库跨层闭环。"}
+{"file": ".trellis/tasks/07-20-complete-agent-persistence-boundary/research/current-model-evidence.md", "reason": "确保最终实现消除原始复现且没有转移 stale-binding 风险。"}

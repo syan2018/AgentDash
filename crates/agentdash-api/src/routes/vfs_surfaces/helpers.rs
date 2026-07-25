@@ -4,7 +4,7 @@ use agentdash_application_vfs::{
     PROVIDER_INLINE_FS, RuntimeFileEntry, VfsMutationError,
     types::{runtime_entry_content_kind, runtime_entry_mime_type},
 };
-use agentdash_spi::Vfs;
+use agentdash_platform_spi::Vfs;
 
 use crate::{app_state::AppState, rpc::ApiError};
 

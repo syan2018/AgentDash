@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 /// SubjectRef → whole run 或 LifecycleAgent 的关系。
 ///
-/// anchor 只能是 run 或 LifecycleAgent；runtime node 证据来自 RuntimeSessionExecutionAnchor。
+/// anchor 只能是 run 或 LifecycleAgent；runtime node 证据来自 canonical runtime binding 与 run node tree。
 /// 当 `anchor_agent_id` 非空时，表示 agent-scoped association，该 agent 必须属于 `anchor_run_id`。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LifecycleSubjectAssociation {

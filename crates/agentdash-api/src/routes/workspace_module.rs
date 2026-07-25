@@ -128,7 +128,7 @@ pub async fn present_workspace_module(
     Ok(Json(presentation))
 }
 
-async fn load_project_workspace_modules(
+pub(crate) async fn load_project_workspace_modules(
     state: &AppState,
     current_user: &agentdash_domain::project::ProjectAuthorizationContext,
     project_id: Uuid,

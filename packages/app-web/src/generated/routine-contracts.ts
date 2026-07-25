@@ -21,7 +21,7 @@ export type RoutineDispatchStrategyDto = { "mode": "fresh" } | { "mode": "reuse"
 
 export type RoutineExecutionResponse = { id: string, routine_id: string, trigger_source: string, trigger_payload: JsonValue | null, resolved_prompt: string | null, runtime_refs?: RoutineAgentRuntimeRefsDto, status: RoutineExecutionStatusDto, started_at: string, completed_at: string | null, error: string | null, entity_key: string | null, };
 
-export type RoutineExecutionStatusDto = "pending" | "dispatched" | "failed" | "skipped";
+export type RoutineExecutionStatusDto = "pending" | "dispatched" | "completed" | "failed" | "interrupted" | "skipped";
 
 export type RoutineOrchestrationBindingRefsDto = { orchestration_ref: string, node_path: string, attempt: number, };
 

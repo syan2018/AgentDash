@@ -1,5 +1,5 @@
 use agentdash_domain::context_source::{ContextSourceKind, ContextSourceRef};
-use agentdash_spi::{
+use agentdash_platform_spi::{
     ContextFragment, InjectionError, MergeStrategy, ResolveSourcesOutput, ResolveSourcesRequest,
     SourceResolver,
 };

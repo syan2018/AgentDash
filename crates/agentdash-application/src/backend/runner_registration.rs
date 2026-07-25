@@ -384,7 +384,7 @@ mod tests {
 
     use agentdash_domain::backend::{
         BackendConfig, BackendType, BackendVisibility, LocalBackendClaim, ProjectBackendAccess,
-        ProjectBackendAccessStatus, ViewConfig,
+        ProjectBackendAccessStatus,
     };
     use agentdash_domain::project::{
         Project, ProjectRole, ProjectSubjectGrant, ProjectSubjectType,
@@ -721,14 +721,6 @@ mod tests {
 
         async fn remove_backend(&self, id: &str) -> Result<(), DomainError> {
             self.backends.lock().await.remove(id);
-            Ok(())
-        }
-
-        async fn list_views(&self) -> Result<Vec<ViewConfig>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn save_view(&self, _view: &ViewConfig) -> Result<(), DomainError> {
             Ok(())
         }
     }

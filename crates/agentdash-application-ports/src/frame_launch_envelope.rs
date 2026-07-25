@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -6,14 +7,21 @@ use crate::launch::LaunchCommand;
 use agentdash_agent_protocol::UserInputBlock;
 use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::session_persistence::RuntimeCommandRecord;
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, MemoryDiscoveryOutput,
     RuntimeMcpServer, SessionContextBundle, Vfs,
 };
 use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalHookEffectBinding {
+    pub handler_type: String,
+    pub handler_id: String,
+    pub handler_revision: u64,
+    pub supported_effect_kinds: BTreeSet<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct FrameRuntimeSurface {
@@ -24,12 +32,12 @@ pub struct FrameRuntimeSurface {
     pub context_slice: Value,
     pub vfs_surface: Value,
     pub mcp_surface: Value,
-    pub runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
 }
 
 impl FrameRuntimeSurface {
     /// 从 `AgentFrame` 投影纯 surface 数据。
-    pub fn from_frame(frame: &AgentFrame, runtime_session_id: Option<String>) -> Self {
+    pub fn from_frame(frame: &AgentFrame, runtime_thread_id: Option<String>) -> Self {
         Self {
             agent_id: frame.agent_id,
             frame_id: frame.id,
@@ -41,7 +49,7 @@ impl FrameRuntimeSurface {
             context_slice: frame.context_slice_json.clone().unwrap_or(Value::Null),
             vfs_surface: frame.vfs_surface_json.clone().unwrap_or(Value::Null),
             mcp_surface: frame.mcp_surface_json.clone().unwrap_or(Value::Null),
-            runtime_session_id,
+            runtime_thread_id,
         }
     }
 }
@@ -77,12 +85,6 @@ pub struct LaunchResolutionTrace {
     pub mcp_source: Option<String>,
     pub capability_source: Option<String>,
     pub pending_overlay_applied: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TerminalHookEffectBinding {
-    pub handler: Value,
-    pub supported_effect_kinds: Vec<String>,
 }
 
 /// Frame refs — 持久化 frame surface 与 pending frame revision。
@@ -142,11 +144,10 @@ pub struct RuntimeTraceLaunchStateRef {
 
 #[derive(Clone)]
 pub struct FrameLaunchEnvelopeRequest {
-    pub runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub command: LaunchCommand,
     pub runtime_trace_state: RuntimeTraceLaunchStateRef,
     pub had_existing_runtime: bool,
-    pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
     pub agent_needs_bootstrap: bool,
 }
 
@@ -165,14 +166,14 @@ pub trait FrameLaunchEnvelopePort: Send + Sync {
     async fn build_launch_envelope(
         &self,
         input: FrameLaunchEnvelopeRequest,
-    ) -> Result<FrameLaunchEnvelope, agentdash_spi::ConnectorError>;
+    ) -> Result<FrameLaunchEnvelope, agentdash_platform_spi::PlatformRuntimeError>;
 }
 
 pub type SharedFrameLaunchEnvelopePort = Arc<dyn FrameLaunchEnvelopePort>;
 
 #[derive(Debug, Clone)]
 pub struct AcceptedLaunchCommitInput {
-    pub runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub turn_id: String,
     pub pending_frame: Option<AgentFrame>,
     pub accepted_capability_state: CapabilityState,
@@ -209,14 +210,14 @@ impl AcceptedLaunchCommitOutcome {
 
 #[async_trait]
 pub trait AcceptedLaunchCommitPort: Send + Sync {
-    async fn agent_needs_bootstrap(&self, runtime_session_id: &str) -> bool;
+    async fn agent_needs_bootstrap(&self, runtime_thread_id: &str) -> bool;
 
-    async fn mark_agent_bootstrapped(&self, runtime_session_id: &str);
+    async fn mark_agent_bootstrapped(&self, runtime_thread_id: &str);
 
     async fn commit_accepted_launch(
         &self,
         input: AcceptedLaunchCommitInput,
-    ) -> Result<AcceptedLaunchCommitOutcome, agentdash_spi::ConnectorError>;
+    ) -> Result<AcceptedLaunchCommitOutcome, agentdash_platform_spi::PlatformRuntimeError>;
 }
 
 #[async_trait]
@@ -225,5 +226,5 @@ pub trait AcceptedLaunchHookRuntimeSync: Send + Sync {
         &self,
         target: crate::runtime_surface_adoption::AgentFrameRuntimeTarget,
         turn_id: &str,
-    ) -> Result<(), agentdash_spi::ConnectorError>;
+    ) -> Result<(), agentdash_platform_spi::PlatformRuntimeError>;
 }

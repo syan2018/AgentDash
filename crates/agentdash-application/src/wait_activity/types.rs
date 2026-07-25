@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use agentdash_application_ports::agent_run_control_effect::RuntimeTerminalDiagnostic;
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -16,14 +16,22 @@ pub(crate) const WAIT_PREVIEW_CHARS: usize = 280;
 
 #[derive(Debug, Clone)]
 pub struct WaitToolContext {
-    pub delivery_runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<RuntimeThreadId>,
     pub turn_id: String,
+    pub owner: Option<WaitActivityOwnerScope>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WaitActivityOwnerScope {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub frame_id: Uuid,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedWaitScope {
     #[allow(dead_code)]
-    pub(crate) delivery_runtime_session_id: Option<String>,
+    pub(crate) runtime_thread_id: Option<RuntimeThreadId>,
     pub(crate) run_id: Option<Uuid>,
     pub(crate) agent_id: Option<Uuid>,
     pub(crate) frame_id: Option<Uuid>,
@@ -118,7 +126,7 @@ pub struct WaitActivityItem {
     pub correlation_ref: Option<String>,
     pub preview: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostic: Option<RuntimeTerminalDiagnostic>,
+    pub diagnostic: Option<Value>,
     pub result_refs: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exec: Option<WaitExecDetails>,

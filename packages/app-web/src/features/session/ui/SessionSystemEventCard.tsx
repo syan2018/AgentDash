@@ -75,7 +75,6 @@ const DEFAULT_BADGE = SEVERITY_BADGE.info!;
 // ─── 文案映射 ─────────────────────────────────────────────────────────────────
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
-  executor_session_bound:          "会话已绑定",
   turn_interrupted:                "执行已中断",
   turn_failed:                     "执行失败",
   system_message:                  "系统消息",
@@ -87,6 +86,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   approval_resolved:               "审批结果",
   hook_action_resolved:            "事项已结案",
   workspace_module_present_failed: "Workspace Module 展示失败",
+  workspace_module_presentation_requested: "Workspace Module 展示",
   context_frame:          "Agent 上下文",
   session_branch_forked:           "会话已分叉",
   provider_attempt_status:         "模型状态",
@@ -97,7 +97,6 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
 };
 
 const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
-  executor_session_bound:          "已绑定到执行会话",
   turn_interrupted:                "本轮执行已中断",
   turn_failed:                     "本轮执行失败",
   system_message:                  "系统消息",
@@ -109,6 +108,7 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   approval_resolved:               "当前工具调用审批已完成",
   hook_action_resolved:            "一项流程干预已被结案",
   workspace_module_present_failed: "后端未找到可展示的 Workspace Module 视图",
+  workspace_module_presentation_requested: "Agent 请求打开 Workspace Module",
   context_frame:          "Agent 上下文已更新",
   session_branch_forked:           "已从父会话分叉出当前会话",
   provider_attempt_status:         "模型服务状态更新",
@@ -556,12 +556,6 @@ function buildGenericDetailLines(eventType: string, data: Record<string, unknown
     const resolutionNote = typeof data.resolution_note === "string" ? data.resolution_note : null;
     if (summary) lines.push(`摘要：${summary}`);
     if (resolutionNote) lines.push(`说明：${resolutionNote}`);
-    return lines;
-  }
-
-  if (eventType === "executor_session_bound") {
-    const esId = typeof data.executor_session_id === "string" ? data.executor_session_id : null;
-    if (esId) lines.push(`执行器会话：${esId.slice(0, 12)}...`);
     return lines;
   }
 

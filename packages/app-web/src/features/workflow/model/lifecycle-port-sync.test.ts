@@ -48,7 +48,7 @@ function step(key: string, procedure_key: string): ActivityDefinition {
       kind: "agent",
       procedure_key,
       agent_reuse_policy: "create_activity_agent",
-      runtime_session_policy: "create_new",
+      runtime_thread_policy: "create_new",
     },
     output_ports: [],
     input_ports: [],

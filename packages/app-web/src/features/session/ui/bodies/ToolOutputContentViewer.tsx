@@ -10,6 +10,7 @@ import type { ToolOutputBlock } from "./toolOutputContent";
 import { formatBytes, parseBoundedOutputText, type BoundedOutputInfo } from "../../model/boundedOutput";
 import { JsonTree } from "./JsonTree";
 import { CB } from "./cardBodyTokens";
+import { DisclosureChevron } from "../../../../components/ui/disclosure";
 
 const PREVIEW_CHARS = 2000;
 const PREVIEW_LINES = 24;
@@ -180,9 +181,7 @@ function ResourceOutputPanel({
           {label ?? uri}
         </span>
         {text && (
-          <span className={CB.expandToggle}>
-            {showText ? "▲" : "▼"}
-          </span>
+          <DisclosureChevron expanded={showText} className={CB.expandToggle} />
         )}
       </button>
       {showText && text && (

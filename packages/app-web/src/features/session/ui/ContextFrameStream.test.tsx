@@ -50,6 +50,40 @@ describe("ContextFrameStream", () => {
     expect(markup).toContain("AGENTS.md");
     expect(markup).toContain("项目约定");
   });
+
+  it("相同 delivery 坐标和时间戳时使用 frame identity 保持确定性顺序", () => {
+    const first = sampleIdentityFrame();
+    first.id = "a-frame";
+    (first.sections as Array<Record<string, unknown>>)[0] = {
+      ...(first.sections as Array<Record<string, unknown>>)[0],
+      fragments: [{
+        slot: "identity",
+        label: "a_marker",
+        source: "connector",
+        content: "A",
+      }],
+    };
+    const last = sampleIdentityFrame();
+    last.id = "z-frame";
+    (last.sections as Array<Record<string, unknown>>)[0] = {
+      ...(last.sections as Array<Record<string, unknown>>)[0],
+      fragments: [{
+        slot: "identity",
+        label: "z_marker",
+        source: "connector",
+        content: "Z",
+      }],
+    };
+
+    const markup = renderToStaticMarkup(
+      <ContextFrameStream
+        frames={[readFrame(last), readFrame(first)]}
+        defaultExpanded
+      />,
+    );
+
+    expect(markup.indexOf("a_marker")).toBeLessThan(markup.indexOf("z_marker"));
+  });
 });
 
 function readFrame(value: Record<string, unknown>): ContextFrame {

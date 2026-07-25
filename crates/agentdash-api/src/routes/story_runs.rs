@@ -6,10 +6,8 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application_lifecycle::run_view_builder;
-use agentdash_application_lifecycle::run_view_builder::LifecycleRunStatusView;
 use agentdash_contracts::workflow::SubjectExecutionView;
-use agentdash_domain::workflow::SubjectRef;
+use agentdash_domain::workflow::{LifecycleRunStatus, SubjectRef};
 
 use crate::{
     app_state::AppState,
@@ -17,7 +15,9 @@ use crate::{
     rpc::ApiError,
 };
 
-use super::lifecycle_contracts::subject_execution_view_to_contract;
+use super::lifecycle_contracts::{
+    lifecycle_run_view_query_error, subject_execution_view_to_contract,
+};
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
@@ -46,8 +46,12 @@ pub async fn list_story_runs(
     .await?;
 
     let subject = SubjectRef::new("story", story_uuid);
-    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
-    let view = run_view_builder::build_subject_execution_view(&lifecycle_repos, subject).await?;
+    let view = state
+        .services
+        .lifecycle_run_views
+        .subject_execution_view(subject)
+        .await
+        .map_err(lifecycle_run_view_query_error)?;
     Ok(Json(subject_execution_view_to_contract(view)))
 }
 
@@ -69,12 +73,16 @@ pub async fn get_active_story_run(
     .await?;
 
     let subject = SubjectRef::new("story", story_uuid);
-    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
-    let view = run_view_builder::build_subject_execution_view(&lifecycle_repos, subject).await?;
+    let view = state
+        .services
+        .lifecycle_run_views
+        .subject_execution_view(subject)
+        .await
+        .map_err(lifecycle_run_view_query_error)?;
     let has_active_run = view.runs.iter().any(|run| {
         matches!(
-            run.status,
-            LifecycleRunStatusView::Ready | LifecycleRunStatusView::Running
+            run.run.status,
+            LifecycleRunStatus::Ready | LifecycleRunStatus::Running
         )
     });
 

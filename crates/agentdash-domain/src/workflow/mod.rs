@@ -1,8 +1,6 @@
 mod agent_frame;
 mod agent_lineage;
-mod agent_run_delivery_binding;
 mod agent_run_lineage;
-mod command_receipt;
 pub mod dispatch;
 mod entity;
 mod gate_result_delivery_marker;
@@ -10,20 +8,14 @@ mod gate_wait_policy;
 mod lifecycle_agent;
 mod lifecycle_gate;
 mod lifecycle_subject_association;
-mod manual_context_compaction_request;
 mod repository;
-mod runtime_session_anchor;
 mod validation;
 mod value_objects;
+mod workflow_executor_effect;
 
 pub use agent_frame::{AgentFrame, AgentFrameSurfaceDocument};
 pub use agent_lineage::AgentLineage;
-pub use agent_run_delivery_binding::{AgentRunDeliveryBinding, DeliveryBindingStatus};
 pub use agent_run_lineage::AgentRunLineage;
-pub use command_receipt::{
-    AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind, AgentRunCommandReceipt,
-    AgentRunCommandReceiptRepository, AgentRunCommandStatus, NewAgentRunCommandReceipt,
-};
 pub use dispatch::{
     AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy, AgentRuntimeRefs, CapabilityPolicy,
     ContextPolicy, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, GatePolicy,
@@ -39,7 +31,8 @@ pub use entity::{
 pub use gate_result_delivery_marker::{
     ClaimGateResultParentContinuationRequest, ClaimGateResultWaiterRequest,
     CompleteGateResultParentContinuationRequest, GateResultDeliveryClaim, GateResultDeliveryMarker,
-    GateResultDeliveryMarkerRepository, GateResultDeliveryStatus, RegisterGateResultWaiterRequest,
+    GateResultDeliveryMarkerRepository, GateResultDeliveryState, GateResultDeliveryStatus,
+    RegisterGateResultWaiterRequest,
 };
 pub use gate_wait_policy::{
     GATE_WAIT_POLICY_SCHEMA_VERSION, GateWaitPolicy, GateWaitPolicyEnvelope,
@@ -50,20 +43,13 @@ pub use gate_wait_policy::{
 pub use lifecycle_agent::{AgentSource, LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::{LifecycleGate, LifecycleGateWaitingProjection};
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
-pub use manual_context_compaction_request::{
-    ManualContextCompactionRequest, ManualContextCompactionRequestRepository,
-    ManualContextCompactionRequestStatus, ManualContextCompactionRequestedMode,
-    NewManualContextCompactionRequest,
-};
 pub use repository::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunDeliveryBindingRepository, AgentRunLineageRepository, LifecycleAgentRepository,
-    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
+    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
+    LifecycleRunWriteError, LifecycleSubjectAssociationRepository, WorkflowGraphRepository,
     WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };
-pub use runtime_session_anchor::RuntimeSessionExecutionAnchor;
 pub use validation::{validate_agent_procedure, validate_workflow_graph};
 pub use value_objects::{
     ActivationRule, ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
@@ -80,14 +66,24 @@ pub use value_objects::{
     OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus,
     OutputPortDefinition, PlanActivation, PlanNode, PlanNodeKind, RunScriptArtifact,
     RunScriptArtifactStatus, RuntimeNodeError, RuntimeNodeState, RuntimeNodeStatus,
-    RuntimeSessionPolicy, RuntimeTraceRef, StandaloneFulfillment, StateArtifactRef,
+    RuntimeThreadPolicy, RuntimeTraceRef, StandaloneFulfillment, StateArtifactRef,
     StateExchangeRule, StateExchangeSnapshot, TaskPlanStatus, TaskPriority,
     ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState,
-    TransitionCondition, ValidationIssue, ValidationSeverity, WorkflowContextBinding,
-    WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowScriptApiEndpoint,
+    TransitionCondition, ValidationIssue, ValidationSeverity, WorkflowAgentCallRuntimeState,
+    WorkflowAgentCallSourceBindingRef, WorkflowContextBinding, WorkflowHookRuleSpec,
+    WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowScriptApiEndpoint,
     WorkflowScriptBashCommand, WorkflowScriptCapabilitySummary, WorkflowScriptDefinition,
     WorkflowScriptDefinitionScope, WorkflowScriptDefinitionStatus,
     WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
     WorkflowSessionTerminalState, mcp_capability_key, mcp_tool_capability_path,
     reduce_tool_capability_directives, workflow_script_source_digest,
+};
+pub use workflow_executor_effect::{
+    WORKFLOW_EXECUTOR_EFFECT_COLUMNS, WORKFLOW_EXECUTOR_EFFECT_PRIMARY_KEY,
+    WORKFLOW_EXECUTOR_EFFECT_TABLE, WORKFLOW_EXECUTOR_EFFECT_UNIQUE_KEYS,
+    WorkflowExecutorEffectIdentity, WorkflowExecutorEffectRepository,
+    WorkflowExecutorEffectRepositoryError, WorkflowFunctionEffectRecord,
+    WorkflowFunctionEffectRequest, WorkflowFunctionTerminalResult, WorkflowHumanGateOpenEffect,
+    WorkflowHumanGateOpenReceipt, WorkflowHumanGateResolutionEffect,
+    WorkflowHumanGateResolutionReceipt,
 };

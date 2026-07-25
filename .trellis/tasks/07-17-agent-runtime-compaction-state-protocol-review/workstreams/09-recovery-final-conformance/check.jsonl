@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"逐项签核 AC1-AC21。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md","reason":"检查最终实现无 owner/依赖/状态语义漂移。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/implement.md","reason":"检查九个工作包、commands 与删除门禁完成。"}
+{"file":".trellis/spec/backend/architecture.md","reason":"最终 crate/layer dependency audit。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"最终 schema/migration/constraint audit。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"最终 Rust/API/frontend contract audit。"}

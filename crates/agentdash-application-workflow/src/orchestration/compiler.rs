@@ -329,7 +329,7 @@ impl<'a> Compiler<'a> {
                         "unsupported_agent_executor_policy",
                         format!(
                             "Agent activity `{}` uses unsupported policy pair `{:?}` + `{:?}`",
-                            activity.key, spec.agent_reuse_policy, spec.runtime_session_policy
+                            activity.key, spec.agent_reuse_policy, spec.runtime_thread_policy
                         ),
                         source_path,
                     ));
@@ -339,7 +339,7 @@ impl<'a> Compiler<'a> {
                     ExecutorSpec::AgentProcedure {
                         procedure: AgentProcedureExecutionSpec::by_key(spec.procedure_key.clone()),
                         agent_reuse_policy: spec.agent_reuse_policy,
-                        runtime_session_policy: spec.runtime_session_policy,
+                        runtime_thread_policy: spec.runtime_thread_policy,
                     },
                 )
             }
@@ -921,7 +921,7 @@ mod tests {
         ActivityCompletionPolicy, ActivityIterationPolicy, AgentActivityExecutorSpec,
         AgentReusePolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy, BashExecExecutorSpec,
         ContextStrategy, DefinitionSource, GateStrategy, HumanActivityExecutorSpec,
-        HumanApprovalExecutorSpec, InputPortDefinition, OutputPortDefinition, RuntimeSessionPolicy,
+        HumanApprovalExecutorSpec, InputPortDefinition, OutputPortDefinition, RuntimeThreadPolicy,
         StandaloneFulfillment,
     };
     use chrono::{TimeZone, Utc};
@@ -1282,7 +1282,7 @@ mod tests {
         unsupported.executor = ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
             procedure_key: "workflow.unsupported".to_string(),
             agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
-            runtime_session_policy: RuntimeSessionPolicy::DeliverToCurrentTrace,
+            runtime_thread_policy: RuntimeThreadPolicy::DeliverToCurrentThread,
         });
         unsupported.iteration_policy.max_attempts = None;
         let mut entry = agent_activity("entry");

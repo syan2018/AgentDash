@@ -3,7 +3,7 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 
 import { SessionProjectionView } from "./SessionProjectionView";
 
-import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
+import type { SessionMessageRefDto } from "../../../generated/agent-run-interaction-contracts";
 import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
@@ -31,6 +31,8 @@ import type { ImageAttachment } from "./composer/useImageAttachments";
 import { ImageAttachmentPreview } from "./composer/ImageAttachmentPreview";
 import { ComposerSendButton } from "./composer/ComposerSendButton";
 import { ComposerPlusMenu } from "./composer/ComposerPlusMenu";
+import { DisclosureRow } from "../../../components/ui/disclosure";
+import { getTurnSectionKey } from "./turnSectionIdentity";
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
 type ExecutorConfigState = ReturnType<typeof useExecutorConfig>;
@@ -269,9 +271,9 @@ export function SessionChatStream({
         <div className="mx-auto w-full max-w-4xl space-y-1.5 px-5 py-6">
           {streamPrefixContent}
           {turnSegments && turnSegments.length > 0 ? (
-            turnSegments.map((segment, idx) => (
+            turnSegments.map((segment) => (
               <TurnSection
-                key={segment.turnId ?? `gap-${idx}`}
+                key={getTurnSectionKey(segment)}
                 segment={segment}
                 agentRunTarget={agentRunTarget}
                 companionSubagents={companionSubagents}
@@ -396,6 +398,29 @@ function useActiveTurnElapsedMs(startedAtMs: number | undefined, active: boolean
   return Math.max(clock - startedAtMs, 0);
 }
 
+function TurnSectionDisclosureHeader({
+  expanded,
+  label,
+  durationMs,
+  onToggle,
+}: {
+  expanded: boolean;
+  label: string;
+  durationMs: number | undefined;
+  onToggle: () => void;
+}) {
+  return (
+    <DisclosureRow
+      expanded={expanded}
+      onClick={onToggle}
+      className="rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/50 transition-colors hover:bg-secondary/30 hover:text-muted-foreground/70"
+    >
+      <span>{label}{formatTurnDurationSuffix(durationMs)}</span>
+      <span className="h-px flex-1 bg-border/40" />
+    </DisclosureRow>
+  );
+}
+
 function TurnSection({
   segment,
   agentRunTarget,
@@ -409,20 +434,11 @@ function TurnSection({
   streamingEntryId: string | null;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
 }) {
-  const isTerminal = segment.status !== "active";
-  const terminalLabel = terminalTurnLabel(segment.status);
+  const terminalLabel = segment.turnId ? terminalTurnLabel(segment.status) : null;
   const headerLabel = terminalLabel ?? (segment.turnId ? "执行中" : null);
   const activeElapsedMs = useActiveTurnElapsedMs(segment.startedAtMs, segment.status === "active");
   const displayDurationMs = segment.durationMs ?? activeElapsedMs;
   const [collapsed, setCollapsed] = useState(false);
-  const [prevStatus, setPrevStatus] = useState(segment.status);
-
-  if (segment.status !== prevStatus) {
-    setPrevStatus(segment.status);
-    if (isTerminal && prevStatus === "active") {
-      setCollapsed(true);
-    }
-  }
 
   if (!collapsed) {
     return (
@@ -430,16 +446,18 @@ function TurnSection({
         {segment.activity && (
           <TurnActivityStrip activity={segment.activity} />
         )}
+        {segment.errorMessage && (
+          <div className="rounded-[8px] border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {segment.errorMessage}
+          </div>
+        )}
         {headerLabel && (
-          <button
-            type="button"
-            onClick={() => setCollapsed(true)}
-            className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/40 transition-colors hover:text-muted-foreground/60 hover:bg-secondary/30"
-          >
-            <span className="h-px flex-1 max-w-6 bg-border/40" />
-            <span>{headerLabel}{formatTurnDurationSuffix(displayDurationMs)}</span>
-            <span className="h-px flex-1 bg-border/40" />
-          </button>
+          <TurnSectionDisclosureHeader
+            expanded
+            label={headerLabel}
+            durationMs={displayDurationMs}
+            onToggle={() => setCollapsed(true)}
+          />
         )}
         {segment.items.map((item, idx) => {
           const key = getItemKey(item);
@@ -467,15 +485,12 @@ function TurnSection({
   // 折叠态：只显示 summary bar + 最终输出
   return (
     <div className="space-y-1.5">
-      <button
-        type="button"
-        onClick={() => setCollapsed(false)}
-        className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/50 transition-colors hover:text-muted-foreground/70 hover:bg-secondary/30"
-      >
-        <span className="text-muted-foreground/40">▶</span>
-        <span>{headerLabel ?? "会话段落"}{formatTurnDurationSuffix(displayDurationMs)}</span>
-        <span className="h-px flex-1 bg-border/40" />
-      </button>
+      <TurnSectionDisclosureHeader
+        expanded={false}
+        label={headerLabel ?? "会话段落"}
+        durationMs={displayDurationMs}
+        onToggle={() => setCollapsed(false)}
+      />
       {segment.finalOutput && (
         <SessionEntry
           item={segment.finalOutput}
@@ -483,6 +498,11 @@ function TurnSection({
           companionSubagents={companionSubagents}
           isStreaming={getItemKey(segment.finalOutput) === streamingEntryId}
         />
+      )}
+      {segment.errorMessage && (
+        <div className="rounded-[8px] border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {segment.errorMessage}
+        </div>
       )}
       <RoundActionToolbar
         actionModel={buildRoundActionModel(segment)}
@@ -643,7 +663,6 @@ export function SessionChatComposer({
     providerId: string;
     modelId: string;
     thinkingLevel: string;
-    permissionPolicy: string;
   }) => void;
   onPlusMenuFiles: (files: FileList) => void;
   onRemoveImage: (id: string) => void;

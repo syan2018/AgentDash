@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "frozen_base": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
+  "component": "w2-dash-core",
+  "agent_core_direct_consumers": [
+    "agentdash-agent"
+  ],
+  "agent_core_test_or_adapter_consumers": [],
+  "direct_consumers_before": 14,
+  "removed_by_component": [
+    "agentdash-agent",
+    "agentdash-contracts",
+    "agentdash-executor",
+    "agentdash-infrastructure",
+    "agentdash-integration-native-agent"
+  ],
+  "remaining_final_owner_consumers": [
+    {
+      "crate": "agentdash-agent-protocol",
+      "owner": "W8",
+      "action": "删除 legacy protocol；Native journal/context projector 已由 W5 物理删除，不再保留协议到 Core 的 adapter"
+    },
+    {
+      "crate": "agentdash-api",
+      "owner": "W7",
+      "action": "生产装配只消费 Business Surface、Tool Broker 与 Host callbacks"
+    },
+    {
+      "crate": "agentdash-application",
+      "owner": "W7",
+      "action": "工具产出改为平台 contribution/requirement"
+    },
+    {
+      "crate": "agentdash-application-agentrun",
+      "owner": "W7",
+      "action": "context/read 改读 Runtime snapshot/change"
+    },
+    {
+      "crate": "agentdash-application-lifecycle",
+      "owner": "W7",
+      "action": "workflow 工具只声明平台 contribution"
+    },
+    {
+      "crate": "agentdash-application-ports",
+      "owner": "W7+W8",
+      "action": "MCP discovery 返回平台 descriptor/call route；删除 RuntimeSession live port"
+    },
+    {
+      "crate": "agentdash-application-runtime-gateway",
+      "owner": "W8",
+      "action": "删除 legacy tool/session/MCP execution modules"
+    },
+    {
+      "crate": "agentdash-application-vfs",
+      "owner": "W7",
+      "action": "VFS 产出平台 tool contribution"
+    },
+    {
+      "crate": "agentdash-spi",
+      "owner": "W8",
+      "action": "删除 Agent re-export/connector tool assembly并收敛为 platform SPI"
+    }
+  ],
+  "atomic_order": [
+    "W2 type move and Native owner physical deletion",
+    "W7 caller cutover",
+    "W8 PostgreSQL composition and remaining legacy deletion"
+  ],
+  "native_removed_symbols": [
+    "NativeAgentDriver",
+    "NativeAgentDriverFactory",
+    "NativeAgentRuntimeIntegration",
+    "NativeBridgeResolver",
+    "project_native_core_input",
+    "project_native_core_transcript",
+    "native_agent_contribution",
+    "native_runtime_profile",
+    "native_runtime_trust_manifest"
+  ],
+  "cross_owner_switches": [
+    {
+      "paths": [
+        "crates/agentdash-infrastructure/src/agent_runtime_composition.rs"
+      ],
+      "owner": "W8",
+      "action": "实现 DashCompleteAgentStore PostgreSQL adapter 并装配唯一 native_complete_agent_registration"
+    },
+    {
+      "paths": [
+        "crates/agentdash-infrastructure/src/agent_runtime_workers.rs"
+      ],
+      "owner": "W7",
+      "action": "删除 Native journal/context projector consumer，改读 Complete Agent snapshot/change 与平台 context"
+    },
+    {
+      "paths": [
+        "crates/agentdash-api/src/bootstrap/enterprise_remote_e2e.rs",
+        "crates/agentdash-api/src/bootstrap/production_tools_e2e.rs",
+        "crates/agentdash-api/src/bootstrap/agent_runtime_surface.rs",
+        "crates/agentdash-api/src/relay/registry.rs"
+      ],
+      "owner": "W7",
+      "action": "删除 legacy Native driver/profile consumer，覆盖唯一 Complete Agent registration 与 Business Surface route"
+    }
+  ],
+  "excluded_component_paths": [
+    {
+      "path": "Cargo.lock",
+      "owner": "W8",
+      "action": "clean component tip 保持 frozen base；局部验证临时解析后恢复，W8 从 combined final manifests 唯一生成并提交"
+    }
+  ],
+  "forbidden": [
+    "Core facade or re-export from agentdash-agent",
+    "serde transcode between protocol and Core",
+    "temporary Application dependency on Dash or Core",
+    "production dual registration"
+  ]
+}

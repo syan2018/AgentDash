@@ -19,15 +19,24 @@
 | [Diagnostics Guidelines](./diagnostics-guidelines.md) | 平台过程诊断 `diag!` facade、Subsystem、落地与查询 |
 | [Logging Guidelines](./logging-guidelines.md) | 日志级别 / 字段 / 脱敏通用约定 |
 | [Runtime Gateway](./runtime-gateway.md) | runtime action 调用边界 |
+| [In-Memory Agent Runtime Kernel](./agent-runtime-kernel.md) | 同步 command handoff、Agent read/inspect、live normalize 与重连合同 |
+| [Managed Agent Runtime Context](./agent-runtime-context.md) | ContextRecipe/checkpoint/head fidelity与managed compaction activation/recovery合同 |
+| [Agent Runtime 持久化权威](./agent-runtime-persistence.md) | Product owner document、concrete Agent authority 与 Runtime/Host 纯内存边界 |
+| [Managed Agent Runtime Hook Orchestration](./agent-runtime-hooks.md) | immutable HookPlan、canonical HookRun、failure policy、effect与恢复合同 |
+| [Business Agent Surface and Platform Tool Broker](./agent-runtime-surface-tool-broker.md) | capability编译、profile binding与callable tool执行合同 |
+| [Integration Complete Agent Host](./agent-runtime-driver-host.md) | service contribution、live attachment、surface、route 与 callback fencing合同 |
+| [Dash Complete Agent 与 Clean Agent Core](./agent-runtime-native-adapter.md) | Dash source authority、真实 execution callbacks 与 Clean Core合同 |
+| [Codex App Server Runtime Adapter](./agent-runtime-codex-adapter.md) | App Server lifecycle、typed input/interaction、opaque context与native Hook合同 |
+| [AgentRun Product / Agent Facade](./agent-runtime-agentrun-facade.md) | 同步 input handoff、Product shell、Agent read/live 组合合同 |
 | [Embedded Skill Bundles](./embedded-skill-bundles.md) | 源码内嵌 skill bundle 契约 |
 
 ## 模块 Architecture
 
 | 模块 | 主文档 | Appendices |
 | --- | --- | --- |
-| session | [Session Architecture](./session/architecture.md) | [startup](./session/session-startup-pipeline.md), [runtime state](./session/runtime-execution-state.md), [agentrun mailbox](./session/agentrun-mailbox.md), [execution frames](./session/execution-context-frames.md), [bundle](./session/bundle-main-datasource.md), [streaming](./session/streaming-protocol.md), [pi-agent streaming](./session/pi-agent-streaming.md), [context compaction projection](./session/context-compaction-projection.md) |
+| agent runtime conversation | [Agent Runtime Conversation Architecture](./session/architecture.md) | [runtime kernel](./agent-runtime-kernel.md), [persistence](./agent-runtime-persistence.md), [context](./agent-runtime-context.md), [facade](./agent-runtime-agentrun-facade.md) |
 | workflow | [Workflow Architecture](./workflow/architecture.md) | [activity lifecycle](./workflow/activity-lifecycle.md), [lifecycle edge](./workflow/lifecycle-edge.md), [lifecycle run link](./workflow/lifecycle-run-link.md), [story task runtime](./story-task-runtime.md) |
 | vfs | [VFS Architecture](./vfs/architecture.md) | [vfs access](./vfs/vfs-access.md), [materialization](./vfs/vfs-materialization.md) |
 | hooks | [Hooks Architecture](./hooks/architecture.md) | [execution hook runtime](./hooks/execution-hook-runtime.md), [hook script engine](./hooks/hook-script-engine.md) |
 | capability | [Capability Architecture](./capability/architecture.md) | [tool pipeline](./capability/tool-capability-pipeline.md), [dimension pipeline](./capability/capability-dimension-pipeline.md), [LLM model config](./capability/llm-model-config.md), [integration api](./capability/integration-api.md) |
-| permission | [Permission Architecture](./permission/architecture.md) | [grant lifecycle](./permission/grant-lifecycle.md), [policy engine](./permission/policy-engine.md) |
+| permission | [Permission Architecture](./permission/architecture.md) | AgentRun facade、RuntimeInteraction 与未来 LifecycleRun-scoped Grant |

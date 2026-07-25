@@ -1,17 +1,12 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use agentdash_domain::agent_run_mailbox::{
-    ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
-    NewAgentRunMailboxMessage,
-};
 use agentdash_domain::channel::{
     Channel, ChannelAddress, ChannelBinding, ChannelBindingId, ChannelBindingStatus,
     ChannelCapabilityRef, ChannelDeliveryIntent, ChannelDeliveryState, ChannelDeliveryTarget,
     ChannelEgressPolicy, ChannelIngressPolicy, ChannelMessage, ChannelOperation, ChannelOwner,
     ChannelParticipant, ChannelParticipantRef, ChannelPolicy, ChannelReadiness, ChannelRecord,
     ChannelRef, ChannelRegistryDocument, ChannelRegistryMutation, ChannelTopology,
-    channel_address_to_mailbox_source_identity,
 };
 use agentdash_domain::workflow::LifecycleRunRepository;
 use async_trait::async_trait;
@@ -135,12 +130,6 @@ pub struct ProviderNeutralPublishIntent {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ChannelMailboxMaterializationCommand {
-    pub delivery_id: Uuid,
-    pub message: NewAgentRunMailboxMessage,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct ChannelGateMaterializationCommand {
     pub delivery_id: Uuid,
     pub message_id: Uuid,
@@ -190,7 +179,7 @@ impl ChannelBindingResolver for UnsupportedChannelBindingResolver {
 pub enum ChannelIngressOutcome {
     Resolved {
         owner: ChannelOwner,
-        message: ChannelMessage,
+        message: Box<ChannelMessage>,
     },
     Unresolved,
     Unsupported {
@@ -408,7 +397,10 @@ impl ChannelService {
                 );
                 message.provider_event_ref = envelope.key.provider_event_ref;
                 message.correlation_ref = envelope.correlation_ref;
-                Ok(ChannelIngressOutcome::Resolved { owner, message })
+                Ok(ChannelIngressOutcome::Resolved {
+                    owner,
+                    message: Box::new(message),
+                })
             }
             ChannelBindingResolution::Unresolved => Ok(ChannelIngressOutcome::Unresolved),
             ChannelBindingResolution::Unsupported { provider } => {
@@ -512,59 +504,6 @@ impl ChannelService {
         })
     }
 
-    pub fn materialize_delivery_to_mailbox(
-        &self,
-        intent: &ChannelDeliveryIntent,
-    ) -> Result<ChannelMailboxMaterializationCommand, ApplicationError> {
-        let (run_id, agent_id) = match &intent.target {
-            ChannelDeliveryTarget::Mailbox { run_id, agent_id } => (*run_id, *agent_id),
-            _ => {
-                return Err(ApplicationError::BadRequest(format!(
-                    "channel delivery {} target is not mailbox",
-                    intent.id
-                )));
-            }
-        };
-        let source = channel_address_to_mailbox_source_identity(&intent.message.address);
-        let correlation_ref = channel_message_correlation_ref(&intent.message);
-        let payload_json = serde_json::json!({
-            "channel": {
-                "channel_id": intent.message.channel_id,
-                "message_id": intent.message.id,
-                "delivery_id": intent.id,
-                "correlation_ref": correlation_ref,
-                "thread_ref": intent.message.thread_ref,
-                "provider_event_ref": intent.message.provider_event_ref,
-            },
-            "payload": intent.message.payload.clone(),
-            "content_refs": intent.message.content_refs.clone(),
-        });
-        Ok(ChannelMailboxMaterializationCommand {
-            delivery_id: intent.id,
-            message: NewAgentRunMailboxMessage {
-                run_id,
-                agent_id,
-                delivery_runtime_session_id: None,
-                origin: mailbox_origin_from_channel_address(&intent.message.address),
-                source,
-                delivery: MailboxDelivery::LaunchOrContinueTurn,
-                barrier: ConsumptionBarrier::ImmediateIfIdle,
-                drain_mode: MailboxDrainMode::One,
-                priority: 0,
-                source_dedup_key: Some(format!("channel_delivery:{}", intent.id)),
-                queued_agent_run_turn_id: None,
-                expected_active_agent_run_turn_id: None,
-                command_receipt_id: None,
-                payload_json: Some(payload_json),
-                executor_config_json: None,
-                launch_planning_input: None,
-                preview: channel_message_preview(&intent.message),
-                has_images: false,
-                retain_payload: true,
-            },
-        })
-    }
-
     pub fn materialize_delivery_to_gate(
         &self,
         intent: &ChannelDeliveryIntent,
@@ -587,26 +526,6 @@ impl ChannelService {
             address: intent.message.address.clone(),
         })
     }
-}
-
-fn mailbox_origin_from_channel_address(address: &ChannelAddress) -> MailboxMessageOrigin {
-    match address.namespace.as_str() {
-        "companion" => MailboxMessageOrigin::Companion,
-        "workflow" => MailboxMessageOrigin::Workflow,
-        "core" => MailboxMessageOrigin::User,
-        namespace if namespace.starts_with("im.") => MailboxMessageOrigin::System,
-        _ => MailboxMessageOrigin::System,
-    }
-}
-
-fn channel_message_preview(message: &ChannelMessage) -> String {
-    let preview = message
-        .payload
-        .text
-        .as_deref()
-        .filter(|text| !text.trim().is_empty())
-        .unwrap_or(message.payload.kind.as_str());
-    preview.chars().take(280).collect()
 }
 
 fn channel_message_correlation_ref(message: &ChannelMessage) -> Option<String> {
@@ -659,7 +578,7 @@ fn participant_to_delivery_target(
     match participant.participant_ref {
         ChannelParticipantRef::AgentRun { run_id, agent_id }
         | ChannelParticipantRef::LifecycleAgent { run_id, agent_id } => {
-            Some(ChannelDeliveryTarget::Mailbox { run_id, agent_id })
+            Some(ChannelDeliveryTarget::AgentInput { run_id, agent_id })
         }
         ChannelParticipantRef::User { user_id } | ChannelParticipantRef::Human { user_id } => {
             Some(ChannelDeliveryTarget::Notification { user_id })
@@ -802,7 +721,7 @@ mod tests {
         assert_eq!(intents.len(), 1);
         assert!(matches!(
             intents[0].target,
-            ChannelDeliveryTarget::Mailbox { .. }
+            ChannelDeliveryTarget::AgentInput { .. }
         ));
         let registry = service.load_registry(&owner).await.expect("load registry");
         assert!(registry.channels[0].delivery_state.is_empty());
@@ -948,69 +867,6 @@ mod tests {
 
         assert_eq!(intent.provider, "slack");
         assert_eq!(intent.external_room_ref.as_deref(), Some("room-1"));
-    }
-
-    #[test]
-    fn address_mapper_uses_mailbox_display_key_semantics() {
-        let address = ChannelAddress::new("companion", "dispatch", "agent")
-            .with_source_ref("dispatch-1")
-            .with_correlation_ref("dispatch-1")
-            .with_route("child")
-            .with_display_label_key("channel.source.companion.dispatch");
-
-        let source = channel_address_to_mailbox_source_identity(&address);
-
-        assert_eq!(source.namespace, "companion");
-        assert_eq!(source.kind, "dispatch");
-        assert_eq!(source.source_ref.as_deref(), Some("dispatch-1"));
-        assert_eq!(
-            source.display_label_key,
-            "mailbox.source.companion.dispatch"
-        );
-    }
-
-    #[test]
-    fn mailbox_materializer_outputs_message_command_without_queue_state() {
-        let service = ChannelService::new(
-            Arc::new(UnsupportedOwnerStore),
-            Arc::new(UnsupportedChannelBindingResolver),
-        );
-        let channel_id = Uuid::new_v4();
-        let run_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        let message = ChannelMessage::new(
-            channel_id,
-            ChannelParticipantRef::System {
-                key: "system".to_string(),
-            },
-            ChannelPayload::text("dispatch", "review this"),
-            ChannelAddress::new("companion", "dispatch", "agent")
-                .with_source_ref("dispatch-1")
-                .with_correlation_ref("dispatch-1"),
-        );
-        let intent = ChannelDeliveryIntent::new(
-            message,
-            ChannelDeliveryTarget::Mailbox { run_id, agent_id },
-        );
-
-        let command = service
-            .materialize_delivery_to_mailbox(&intent)
-            .expect("mailbox materialization");
-
-        assert_eq!(command.message.run_id, run_id);
-        assert_eq!(command.message.agent_id, agent_id);
-        assert_eq!(command.message.origin, MailboxMessageOrigin::Companion);
-        assert_eq!(
-            command.message.source_dedup_key,
-            Some(format!("channel_delivery:{}", intent.id))
-        );
-        let payload = command.message.payload_json.expect("payload refs");
-        assert_eq!(
-            payload["channel"]["channel_id"],
-            serde_json::json!(channel_id)
-        );
-        assert!(payload.get("mailbox_queue_state").is_none());
-        assert!(payload.get("gate_payload").is_none());
     }
 
     #[test]

@@ -4,12 +4,74 @@ import type { ExecutorConfigSource } from "../../executor-selector/model/types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { SessionEventEnvelope } from "../model/types";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import {
-  agentRunJournalSessionId,
-  type AgentRunJournalIdentityTarget,
-} from "../model/agentRunJournalIdentity";
-import { extractPlatformEventType, isRecord } from "../model/platformEvent";
+  extractContextFrameValue,
+  extractPlatformEventType,
+  isRecord,
+} from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
+import type {
+  SessionChatCommandModel,
+  SessionChatInitialSubmit,
+  SessionChatSubmitIntent,
+} from "./SessionChatViewTypes";
+
+/**
+ * Snapshot hydration is not eligible for live Product side effects.
+ *
+ * A gap reload may advance the replay boundary while the page and its refs stay mounted, so the
+ * previous live cursor must always be fenced by the latest baseline boundary.
+ */
+export function liveSideEffectCursor(
+  previous: number | null,
+  historyReplayBoundarySeq: number,
+): number {
+  return Math.max(previous ?? historyReplayBoundarySeq, historyReplayBoundarySeq);
+}
+
+export function dispatchLiveSessionEvents(
+  rawEvents: SessionEventEnvelope[],
+  previous: number | null,
+  historyReplayBoundarySeq: number,
+  dispatch: (event: BackboneEvent) => void,
+): number {
+  let lastSeenSeq = liveSideEffectCursor(previous, historyReplayBoundarySeq);
+  const liveEvents = rawEvents
+    .filter((event) => event.event_seq > lastSeenSeq)
+    .sort((left, right) => left.event_seq - right.event_seq);
+  for (const event of liveEvents) {
+    dispatch(event.notification.event);
+    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+  }
+  return lastSeenSeq;
+}
+
+export function resolveSessionInitialSubmit(input: {
+  initialSubmit?: SessionChatInitialSubmit;
+  isConnected: boolean;
+  historyReplayBoundarySeq: number | null;
+  isSending: boolean;
+  commands: SessionChatCommandModel[];
+  primaryCommandId?: string;
+}): SessionChatSubmitIntent | null {
+  if (
+    !input.initialSubmit
+    || !input.isConnected
+    || input.historyReplayBoundarySeq == null
+    || input.isSending
+  ) {
+    return null;
+  }
+  const command = input.commands.find(
+    (candidate) => candidate.command_id === input.primaryCommandId,
+  );
+  if (!command?.enabled) return null;
+  return {
+    ...input.initialSubmit.intent,
+    command_id: command.command_id,
+  };
+}
 
 export type SessionTurnLifecycleEventType =
   | "turn_started"
@@ -27,15 +89,16 @@ export function isAgentRunWorkspaceActionRunning(input: {
 
 export function rawEventsBelongToRuntimeStreamTarget(input: {
   rawEvents: SessionEventEnvelope[];
-  agentRunTarget?: AgentRunJournalIdentityTarget | null;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
+  boundTargetKey: string | null;
 }): boolean {
-  const expectedSessionId = input.agentRunTarget
-    ? agentRunJournalSessionId(input.agentRunTarget)
+  const expectedTargetKey = input.agentRunTarget
+    ? `${input.agentRunTarget.runId}:${input.agentRunTarget.agentId}`
     : null;
-  if (!expectedSessionId) {
+  if (!expectedTargetKey) {
     return input.rawEvents.length === 0;
   }
-  return input.rawEvents.every((event) => event.session_id === expectedSessionId);
+  return input.boundTargetKey === expectedTargetKey;
 }
 
 export function toExecutorConfigSource(
@@ -47,7 +110,6 @@ export function toExecutorConfigSource(
   if (defaults.provider_id) source.providerId = defaults.provider_id;
   if (defaults.model_id) source.modelId = defaults.model_id;
   if (defaults.thinking_level) source.thinkingLevel = defaults.thinking_level;
-  if (defaults.permission_policy) source.permissionPolicy = defaults.permission_policy;
   return Object.keys(source).length === 0 ? null : source;
 }
 
@@ -131,80 +193,8 @@ export function collectRenderableSystemEvents(
 
 export const collectNewSystemEvents = collectRenderableSystemEvents;
 
-export function collectAllPlatformEvents(
-  rawEvents: SessionEventEnvelope[],
-  afterSeq: number,
-): {
-  items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }>;
-  lastSeenSeq: number;
-} {
-  const items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }> = [];
-  let lastSeenSeq = afterSeq;
-
-  for (const event of rawEvents) {
-    if (event.event_seq <= afterSeq) {
-      continue;
-    }
-    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-    const bbEvent = event.notification.event;
-    if (bbEvent.type !== "platform") {
-      continue;
-    }
-    const eventType = extractPlatformEventType(bbEvent);
-    if (!eventType) {
-      continue;
-    }
-    items.push({
-      eventSeq: event.event_seq,
-      eventType,
-      event: bbEvent,
-    });
-  }
-
-  return { items, lastSeenSeq };
-}
-
-export function collectTurnLifecycleEvents(
-  rawEvents: SessionEventEnvelope[],
-  afterSeq: number,
-): {
-  items: Array<{ eventSeq: number; eventType: SessionTurnLifecycleEventType; event: BackboneEvent }>;
-  lastSeenSeq: number;
-} {
-  const items: Array<{ eventSeq: number; eventType: SessionTurnLifecycleEventType; event: BackboneEvent }> = [];
-  let lastSeenSeq = afterSeq;
-
-  for (const event of rawEvents) {
-    if (event.event_seq <= afterSeq) {
-      continue;
-    }
-    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-    const bbEvent = event.notification.event;
-    const eventType = extractTurnLifecycleEventType(bbEvent);
-    if (!eventType) {
-      continue;
-    }
-    items.push({
-      eventSeq: event.event_seq,
-      eventType,
-      event: bbEvent,
-    });
-  }
-
-  return { items, lastSeenSeq };
-}
-
 function isCompactionSummaryFrame(event: BackboneEvent): boolean {
-  if (
-    event.type !== "platform" ||
-    event.payload.kind !== "session_meta_update" ||
-    event.payload.data.key !== "context_frame"
-  ) {
-    return false;
-  }
-  const value = event.payload.data.value;
-  return value !== null && typeof value === "object" && !Array.isArray(value) &&
-    value.kind === "compaction_summary";
+  return extractContextFrameValue(event)?.kind === "compaction_summary";
 }
 
 function isSessionRewindRefreshEvent(event: BackboneEvent): boolean {

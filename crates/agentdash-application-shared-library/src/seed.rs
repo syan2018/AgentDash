@@ -20,12 +20,12 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::WorkflowTemplate,
         key: "trellis_dag_task",
-        version: "1.0.1",
+        version: "1.0.2",
     },
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::WorkflowTemplate,
         key: "builtin_workflow_admin",
-        version: "1.0.1",
+        version: "1.0.2",
     },
 ];
 

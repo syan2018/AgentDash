@@ -7,56 +7,50 @@ use agentdash_domain::workflow::{
     AgentFrame, AgentProcedure, AgentProcedureContract, AgentProcedureExecutionSpec, ExecutorSpec,
     LifecycleAgent, LifecycleRun,
 };
-use agentdash_spi::ConnectorError;
+use agentdash_platform_spi::PlatformRuntimeError;
 
 use crate::agent_run::frame::AgentFrameSurfaceExt;
 use crate::agent_run::frame::FrameLaunchEnvelope;
 use crate::agent_run::frame::FrameLaunchEnvelopeConstructionInput;
 
 use super::{
-    FrameConstructionService, LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit,
+    FrameConstructionService, LifecycleNodeSpec, compose_lifecycle_node_to_frame,
     connector_internal, frame_builder_from_existing,
 };
 
 pub(super) async fn compose(
     svc: &FrameConstructionService,
     frame: &AgentFrame,
-    agent: LifecycleAgent,
+    _agent: LifecycleAgent,
     run: LifecycleRun,
     input: &FrameLaunchEnvelopeConstructionInput,
-) -> Result<FrameLaunchEnvelope, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
     let command = &input.command;
-    let anchor = svc
-        .repos
-        .execution_anchor_repo
-        .find_by_session(input.session_id.as_str())
+    let association =
+        agentdash_application_lifecycle::resolve_activity_runtime_association_from_runtime_thread(
+            input.runtime_thread_id.as_str(),
+            svc.repos.agent_frame_repo.as_ref(),
+            svc.repos.lifecycle_agent_repo.as_ref(),
+            svc.repos.lifecycle_run_repo.as_ref(),
+            Some(svc.product_runtime_bindings.as_ref()),
+        )
         .await
         .map_err(connector_internal)?
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!(
-                "RuntimeSession {} 缺少 orchestration anchor",
-                input.session_id
+            PlatformRuntimeError::InvalidConfig(format!(
+                "RuntimeThread {} 缺少 lifecycle runtime association",
+                input.runtime_thread_id
             ))
         })?;
-    let orchestration_id = anchor.orchestration_id.ok_or_else(|| {
-        ConnectorError::InvalidConfig(format!(
-            "RuntimeSession {} anchor 缺少 orchestration_id",
-            input.session_id
-        ))
-    })?;
-    let node_path = anchor.node_path.clone().ok_or_else(|| {
-        ConnectorError::InvalidConfig(format!(
-            "RuntimeSession {} anchor 缺少 node_path",
-            input.session_id
-        ))
-    })?;
-    let attempt = anchor.node_attempt.unwrap_or(1);
+    let orchestration_id = association.orchestration_id;
+    let node_path = association.node_path;
+    let attempt = association.attempt;
     let orchestration = run
         .orchestrations
         .iter()
         .find(|item| item.orchestration_id == orchestration_id)
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!(
+            PlatformRuntimeError::InvalidConfig(format!(
                 "LifecycleRun {} 中不存在 orchestration {}",
                 run.id, orchestration_id
             ))
@@ -67,7 +61,7 @@ pub(super) async fn compose(
         .iter()
         .find(|item| item.node_path == node_path)
         .ok_or_else(|| {
-            ConnectorError::InvalidConfig(format!(
+            PlatformRuntimeError::InvalidConfig(format!(
                 "Orchestration {} 中不存在 node_path `{}`",
                 orchestration_id, node_path
             ))
@@ -91,13 +85,13 @@ pub(super) async fn compose(
         .clone()
         .or_else(|| frame.typed_execution_profile());
     let base_vfs = frame.typed_vfs();
-    let builder =
-        frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;
-    let (builder, extras) = compose_lifecycle_node_to_frame_with_audit(
+    let builder = frame_builder_from_existing(frame, command.reason_tag())?;
+    let (builder, extras) = compose_lifecycle_node_to_frame(
         builder,
         &svc.repos,
         svc.platform_config.as_ref(),
         svc.lifecycle_surface_projection.as_ref(),
+        svc.product_runtime_bindings.as_ref(),
         LifecycleNodeSpec {
             run: &run,
             orchestration_id,
@@ -110,21 +104,17 @@ pub(super) async fn compose(
             workflow_label: workflow_label.as_deref(),
             inherited_executor_config,
         },
-        Some(svc.audit_bus.clone()),
-        Some(input.session_id.as_str()),
-        Some(&run.id.to_string()),
-        Some(&agent.id.to_string()),
+        Some(input.runtime_thread_id.as_str()),
     )
     .await
-    .map_err(ConnectorError::InvalidConfig)?;
+    .map_err(PlatformRuntimeError::InvalidConfig)?;
 
     svc.compose_pending_frame(
         builder,
         extras,
         command,
-        input.session_id.as_str(),
+        input.runtime_thread_id.as_str(),
         None,
-        &input.requested_runtime_commands,
     )
     .await
 }

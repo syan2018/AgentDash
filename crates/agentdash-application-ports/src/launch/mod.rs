@@ -6,6 +6,5 @@ pub use command::{
     LaunchPlanningInput, LaunchPromptInput, LaunchSource,
 };
 pub use modifier::{
-    CompanionLaunchSource, CompanionLaunchWorkflowSource, LaunchModifier, LocalRelayLaunchPayload,
-    RoutineLaunchSource,
+    CompanionLaunchSource, CompanionLaunchWorkflowSource, LaunchModifier, RoutineLaunchSource,
 };

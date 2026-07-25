@@ -1,0 +1,19 @@
+[package]
+name = "agentdash-integration-native-agent"
+description = "First-party Dash Complete Agent adapter for AgentDash host callbacks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-agent = { workspace = true }
+agentdash-agent-protocol = { workspace = true }
+agentdash-agent-service-api = { workspace = true }
+agentdash-integration-api = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"复核callable channel、identity与terminal"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"复核所有broker访问的VFS enforcement"}
+{"file":".trellis/spec/backend/permission/policy-engine.md","reason":"复核approval/policy不被绕过"}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"复核outer/broker/inner hook语义强度"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"复核required Hook不静默降级"}
+{"file":".trellis/spec/backend/agent-runtime-surface-tool-broker.md","reason":"复核Surface兼容矩阵、Broker顺序、恢复与credential边界"}

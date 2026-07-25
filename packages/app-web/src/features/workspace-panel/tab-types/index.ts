@@ -6,7 +6,6 @@
 
 import { tabTypeRegistry } from "../tab-type-registry";
 import { contextTabType } from "./context-tab";
-import { inspectorTabType } from "./inspector-tab";
 import { canvasTabType } from "./canvas-tab";
 import { vfsTabType } from "./vfs-tab";
 import { terminalTabType } from "./terminal-tab";
@@ -18,14 +17,12 @@ export function registerBuiltinTabTypes(): void {
   registered = true;
 
   tabTypeRegistry.register(contextTabType);
-  tabTypeRegistry.register(inspectorTabType);
   tabTypeRegistry.register(canvasTabType);
   tabTypeRegistry.register(vfsTabType);
   tabTypeRegistry.register(terminalTabType);
 }
 
 export { contextTabType } from "./context-tab";
-export { inspectorTabType } from "./inspector-tab";
 export { canvasTabType } from "./canvas-tab";
 export { vfsTabType } from "./vfs-tab";
 export { terminalTabType } from "./terminal-tab";

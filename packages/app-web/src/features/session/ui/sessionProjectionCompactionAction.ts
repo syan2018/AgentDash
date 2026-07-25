@@ -1,7 +1,7 @@
 import type {
   AgentRunCommandPreconditionView,
   AgentRunContextCompactionCommandResponse,
-} from "../../../generated/agent-run-mailbox-contracts";
+} from "../../../generated/agent-run-interaction-contracts";
 import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 
 export function commandPrecondition(command: ConversationCommandView): AgentRunCommandPreconditionView {

@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use agentdash_application_runtime_gateway::RuntimeSurface;
+use agentdash_application_extension_gateway::RuntimeSurface;
 use agentdash_application_vfs::VfsService;
 use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasImportMap};
-use agentdash_spi::Vfs;
+use agentdash_platform_spi::Vfs;
 
 use super::{CanvasRuntimeResourceService, canvas_vfs_mount_id};
 
@@ -12,7 +12,7 @@ pub struct CanvasRuntimeSnapshot {
     pub canvas_id: uuid::Uuid,
     pub canvas_mount_id: String,
     pub vfs_mount_id: String,
-    pub session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_surface_ref: Option<String>,
     pub entry: String,
@@ -78,7 +78,7 @@ impl CanvasRuntimeBridgeSnapshot {
 
 pub fn build_runtime_snapshot(
     canvas: &Canvas,
-    session_id: Option<String>,
+    runtime_thread_id: Option<String>,
 ) -> CanvasRuntimeSnapshot {
     let files = canvas
         .files
@@ -92,17 +92,17 @@ pub fn build_runtime_snapshot(
 
     let bindings = Vec::new();
 
-    let runtime_bridge = if session_id.is_some() {
+    let runtime_bridge = if runtime_thread_id.is_some() {
         CanvasRuntimeBridgeSnapshot::disabled("Canvas runtime bridge surface 尚未装配")
     } else {
-        CanvasRuntimeBridgeSnapshot::disabled("Canvas runtime snapshot 尚未绑定 Session")
+        CanvasRuntimeBridgeSnapshot::disabled("Canvas runtime snapshot 尚未绑定 RuntimeThread")
     };
 
     CanvasRuntimeSnapshot {
         canvas_id: canvas.id,
         canvas_mount_id: canvas.mount_id.clone(),
         vfs_mount_id: canvas_vfs_mount_id(&canvas.mount_id),
-        session_id,
+        runtime_thread_id,
         resource_surface_ref: None,
         entry: canvas.entry_file.clone(),
         files,
@@ -115,12 +115,12 @@ pub fn build_runtime_snapshot(
 
 pub async fn build_runtime_snapshot_with_bindings(
     canvas: &Canvas,
-    session_id: Option<String>,
+    runtime_thread_id: Option<String>,
     vfs: Option<&Vfs>,
     vfs_service: &VfsService,
 ) -> CanvasRuntimeSnapshot {
     CanvasRuntimeResourceService::new(vfs_service)
-        .build_snapshot_with_bindings(canvas, session_id, vfs)
+        .build_snapshot_with_bindings(canvas, runtime_thread_id, vfs)
         .await
 }
 
@@ -187,7 +187,7 @@ mod tests {
     use crate::canvas::{
         CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY, CanvasMountAccess, build_canvas_mount,
     };
-    use agentdash_application_runtime_gateway::{
+    use agentdash_application_extension_gateway::{
         RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeContext,
         RuntimeSurface,
     };
@@ -206,7 +206,7 @@ mod tests {
             "console.log('ok')".to_string(),
         )];
 
-        let snapshot = build_runtime_snapshot(&canvas, Some("session-1".to_string()));
+        let snapshot = build_runtime_snapshot(&canvas, Some("runtime-thread-1".to_string()));
 
         assert_eq!(snapshot.entry, "src/main.tsx");
         assert!(snapshot.resource_surface_ref.is_none());
@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn build_runtime_snapshot_disables_bridge_without_session_surface() {
+    fn build_runtime_snapshot_disables_bridge_without_runtime_thread_surface() {
         let canvas = Canvas::new(
             Uuid::new_v4(),
             "cvs-demo".to_string(),
@@ -240,7 +240,7 @@ mod tests {
                 .disabled_reason
                 .as_deref()
                 .unwrap_or_default()
-                .contains("Session")
+                .contains("RuntimeThread")
         );
     }
 
@@ -257,7 +257,7 @@ mod tests {
 
         let snapshot = build_runtime_snapshot_with_bindings(
             &canvas,
-            Some("session-1".to_string()),
+            Some("runtime-thread-1".to_string()),
             Some(&vfs),
             &service,
         )
@@ -265,7 +265,7 @@ mod tests {
 
         assert_eq!(
             snapshot.resource_surface_ref.as_deref(),
-            Some("session-runtime:session-1")
+            Some("runtime-thread:runtime-thread-1")
         );
     }
 
@@ -295,7 +295,7 @@ mod tests {
 
         let snapshot = build_runtime_snapshot_with_bindings(
             &canvas,
-            Some("session-1".to_string()),
+            Some("runtime-thread-1".to_string()),
             Some(&vfs),
             &service,
         )
@@ -315,14 +315,14 @@ mod tests {
     #[test]
     fn canvas_runtime_bridge_snapshot_can_attach_actor_surface() {
         let surface = RuntimeSurface {
-            context: RuntimeContext::Session {
-                session_id: "session-1".to_string(),
+            context: RuntimeContext::RuntimeThread {
+                runtime_thread_id: "runtime-thread-1".to_string(),
                 project_id: None,
                 workspace_id: None,
             },
             actions: vec![RuntimeActionDescriptor {
                 action_key: RuntimeActionKey::parse("mcp.list_tools").expect("valid action key"),
-                kind: RuntimeActionKind::SessionRuntime,
+                kind: RuntimeActionKind::RuntimeThread,
                 description: Some("list tools".to_string()),
                 input_schema: Some(json!({ "type": "object" })),
                 output_schema: None,

@@ -157,6 +157,9 @@ pub enum LifecycleRunTopology {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleRun {
     pub id: Uuid,
+    /// Aggregate revision used by repository compare-and-swap writes.
+    #[serde(default)]
+    pub revision: u64,
     pub project_id: Uuid,
     #[serde(default = "default_created_by_user_id")]
     pub created_by_user_id: String,
@@ -186,6 +189,7 @@ impl LifecycleRun {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
+            revision: 0,
             project_id,
             created_by_user_id: normalize_created_by_user_id(created_by_user_id),
             topology: LifecycleRunTopology::WorkflowGraph,
@@ -208,6 +212,7 @@ impl LifecycleRun {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
+            revision: 0,
             project_id,
             created_by_user_id: normalize_created_by_user_id(created_by_user_id),
             topology: LifecycleRunTopology::Plain,
@@ -582,7 +587,7 @@ mod tests {
         AgentProcedureExecutionSpec, AgentReusePolicy, BashExecExecutorSpec, ExecutorSpec,
         FunctionActivityExecutorSpec, HumanActivityExecutorSpec, HumanApprovalExecutorSpec,
         OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus, PlanNode,
-        PlanNodeKind, RuntimeSessionPolicy, WorkflowContextBinding, WorkflowInjectionSpec,
+        PlanNodeKind, RuntimeThreadPolicy, WorkflowContextBinding, WorkflowInjectionSpec,
     };
 
     fn contract() -> AgentProcedureContract {
@@ -654,7 +659,7 @@ mod tests {
         ExecutorSpec::AgentProcedure {
             procedure: AgentProcedureExecutionSpec::by_key("workflow.plan"),
             agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
-            runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+            runtime_thread_policy: RuntimeThreadPolicy::CreateNew,
         }
     }
 
@@ -937,6 +942,7 @@ mod tests {
             inputs: Vec::new(),
             outputs: Vec::new(),
             executor_run_ref: None,
+            agent_call: None,
             children: Vec::new(),
             phase_path: Vec::new(),
             started_at: None,

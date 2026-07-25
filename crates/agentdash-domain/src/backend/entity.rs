@@ -87,18 +87,6 @@ impl BackendShareScopeKind {
     }
 }
 
-/// 视图配置
-///
-/// 用户自定义的跨后端看板视图，聚合来自不同后端的 Story。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ViewConfig {
-    pub id: String,
-    pub name: String,
-    pub backend_ids: Vec<String>,
-    pub filters: serde_json::Value,
-    pub sort_by: Option<String>,
-}
-
 /// Desktop 本机 runtime 领取/确保 local backend 的输入。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalBackendClaim {

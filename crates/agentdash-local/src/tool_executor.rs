@@ -39,6 +39,9 @@ pub enum ToolError {
     #[error("IO 错误: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("路径不存在: {0}")]
+    NotFound(String),
+
     #[error("Shell 执行超时（{0}ms）")]
     Timeout(u64),
 
@@ -282,7 +285,7 @@ pub(crate) fn resolve_existing_path_with_root(
     };
 
     if !candidate.exists() {
-        return Err(ToolError::InvalidPath(relative_path.to_string()));
+        return Err(ToolError::NotFound(relative_path.to_string()));
     }
 
     let canonical = std::fs::canonicalize(&candidate)?;
@@ -634,6 +637,19 @@ mod tests {
             .resolve_existing_path(file.to_string_lossy().as_ref(), &root)
             .expect_err("absolute path should be rejected");
         assert!(matches!(error, ToolError::InvalidPath(_)));
+    }
+
+    #[test]
+    fn resolve_existing_path_reports_missing_relative_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let error = executor
+            .resolve_existing_path("missing", &root)
+            .expect_err("missing relative path");
+
+        assert!(matches!(error, ToolError::NotFound(path) if path == "missing"));
     }
 
     #[tokio::test]

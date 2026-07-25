@@ -16,7 +16,7 @@ use agentdash_application_ports::frame_launch_envelope as launch_port;
 use agentdash_domain::backend::{
     RuntimeBackendAnchor, RuntimeBackendAnchorError, RuntimeBackendAnchorSource,
 };
-use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, Vfs};
+use agentdash_platform_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
@@ -24,7 +24,7 @@ use crate::agent_run::frame::surface::FrameSurfaceDraft;
 // ─── 共享子结构：直接复用 ports 定义 ───
 //
 // context / diagnostics / frame / command 四组只承载共享类型
-// (agentdash-spi / agentdash-domain / agent-protocol)，因此直接复用 ports 中性 DTO
+// (agentdash-platform-spi / agentdash-domain / agent-protocol)，因此直接复用 ports 中性 DTO
 // 的定义，构造侧不再重复声明。只有 runtime surface（含 construction 专属的
 // `surface_draft`）与顶层 `FrameLaunchEnvelope` 保持 agentrun 独有。
 pub use launch_port::{
@@ -237,12 +237,12 @@ impl FrameLaunchEnvelope {
     }
 
     /// Convert the AgentRun-owned construction envelope into the neutral
-    /// RuntimeSession launch DTO consumed through application ports.
+    /// Product launch DTO consumed through application ports.
     ///
     /// `frame` / `command` / `context` / `diagnostics` 四组已直接复用 ports 定义，
     /// 因此原样 move；只有 `runtime` 因携带 construction 专属的 `surface_draft`，
     /// 需要投影为不含 draft 的 ports runtime surface。
-    pub fn into_runtime_session_launch_envelope(self) -> launch_port::FrameLaunchEnvelope {
+    pub fn into_product_launch_envelope(self) -> launch_port::FrameLaunchEnvelope {
         launch_port::FrameLaunchEnvelope {
             frame: self.frame,
             command: self.command,
@@ -270,7 +270,7 @@ mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
-    use agentdash_spi::{
+    use agentdash_platform_spi::{
         DiscoveredGuideline, McpTransportConfig, MemoryDiscoveryOutput, ToolCluster,
     };
 
@@ -290,7 +290,7 @@ mod tests {
         assert_eq!(surface.agent_id, agent_id);
         assert_eq!(surface.frame_id, frame.id);
         assert_eq!(surface.frame_revision, 3);
-        assert_eq!(surface.runtime_session_id, Some(session_id.to_string()));
+        assert_eq!(surface.runtime_thread_id, Some(session_id.to_string()));
         assert_eq!(
             surface.capability_surface,
             serde_json::json!({"file_read": true})
@@ -310,7 +310,7 @@ mod tests {
 
         assert_eq!(surface.agent_id, agent_id);
         assert_eq!(surface.frame_revision, 1);
-        assert!(surface.runtime_session_id.is_none());
+        assert!(surface.runtime_thread_id.is_none());
         assert!(surface.capability_surface.is_null());
         assert!(surface.context_slice.is_null());
         assert!(surface.vfs_surface.is_null());
@@ -318,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn frame_runtime_surface_uses_explicit_runtime_session_policy() {
+    fn frame_runtime_surface_uses_explicit_runtime_thread_policy() {
         let agent_id = Uuid::new_v4();
         let s1 = Uuid::new_v4();
         let s2 = Uuid::new_v4();
@@ -326,8 +326,8 @@ mod tests {
 
         let primary = FrameRuntimeSurface::from_frame(&frame, Some(s1.to_string()));
         let latest = FrameRuntimeSurface::from_frame(&frame, Some(s2.to_string()));
-        assert_eq!(primary.runtime_session_id, Some(s1.to_string()));
-        assert_eq!(latest.runtime_session_id, Some(s2.to_string()));
+        assert_eq!(primary.runtime_thread_id, Some(s1.to_string()));
+        assert_eq!(latest.runtime_thread_id, Some(s2.to_string()));
     }
 
     fn test_vfs(root: &str) -> Vfs {
@@ -570,9 +570,9 @@ mod tests {
     }
 
     #[test]
-    fn into_runtime_session_envelope_preserves_grouping() {
+    fn into_product_launch_envelope_preserves_grouping() {
         let envelope = grouped_envelope();
-        let port = envelope.into_runtime_session_launch_envelope();
+        let port = envelope.into_product_launch_envelope();
 
         // command intent 只保留请求事实
         assert_eq!(port.command.environment_variables["A"], "B");
@@ -599,7 +599,7 @@ mod tests {
 
         // frame refs
         assert_eq!(
-            port.frame.surface.runtime_session_id.as_deref(),
+            port.frame.surface.runtime_thread_id.as_deref(),
             Some("sess")
         );
         assert!(port.frame.pending_frame.is_none());

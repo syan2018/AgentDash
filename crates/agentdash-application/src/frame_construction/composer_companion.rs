@@ -1,7 +1,7 @@
 //! Companion launch modifier — 在已判定的 owner surface 上叠加 parent slice / workflow facts。
 
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::ConnectorError;
+use agentdash_platform_spi::PlatformRuntimeError;
 
 use crate::agent_run::frame::FrameLaunchEnvelope;
 use agentdash_application_ports::launch::CompanionLaunchSource;
@@ -18,17 +18,16 @@ pub(super) async fn compose_project_agent_owner_modifier(
     frame: &AgentFrame,
     companion: CompanionLaunchSource,
     input: &FrameLaunchEnvelopeConstructionInput,
-) -> Result<FrameLaunchEnvelope, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
     let command = &input.command;
-    let builder =
-        frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;
+    let builder = frame_builder_from_existing(frame, command.reason_tag())?;
     let (builder, extras) = svc
         .assembler()
         .compose_companion_to_frame(
             builder,
             CompanionParentSpec {
                 parent_session_id: &companion.parent_session_id,
-                child_session_id: input.session_id.as_str(),
+                child_session_id: input.runtime_thread_id.as_str(),
                 slice_mode: companion.slice_mode,
                 companion_executor_config: companion.companion_executor_config,
                 dispatch_prompt: companion.dispatch_prompt,
@@ -37,15 +36,14 @@ pub(super) async fn compose_project_agent_owner_modifier(
             },
         )
         .await
-        .map_err(ConnectorError::InvalidConfig)?;
+        .map_err(PlatformRuntimeError::InvalidConfig)?;
 
     svc.compose_pending_frame(
         builder,
         extras,
         command,
-        input.session_id.as_str(),
+        input.runtime_thread_id.as_str(),
         None,
-        &input.requested_runtime_commands,
     )
     .await
 }
@@ -55,16 +53,15 @@ pub(super) async fn compose_lifecycle_node_owner_modifier(
     frame: &AgentFrame,
     companion: CompanionLaunchSource,
     input: &FrameLaunchEnvelopeConstructionInput,
-) -> Result<FrameLaunchEnvelope, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, PlatformRuntimeError> {
     let command = &input.command;
     let workflow = companion.workflow.ok_or_else(|| {
-        ConnectorError::InvalidConfig(format!(
-            "RuntimeSession {} 的 LifecycleNode companion modifier 缺少 workflow facts",
-            input.session_id
+        PlatformRuntimeError::InvalidConfig(format!(
+            "RuntimeThread {} 的 LifecycleNode companion modifier 缺少 workflow facts",
+            input.runtime_thread_id
         ))
     })?;
-    let builder =
-        frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;
+    let builder = frame_builder_from_existing(frame, command.reason_tag())?;
     let (builder, extras) = svc
         .assembler()
         .compose_companion_with_workflow_to_frame(
@@ -72,7 +69,7 @@ pub(super) async fn compose_lifecycle_node_owner_modifier(
             CompanionParentWorkflowSpec {
                 companion: CompanionParentSpec {
                     parent_session_id: &companion.parent_session_id,
-                    child_session_id: input.session_id.as_str(),
+                    child_session_id: input.runtime_thread_id.as_str(),
                     slice_mode: companion.slice_mode,
                     companion_executor_config: companion.companion_executor_config,
                     dispatch_prompt: companion.dispatch_prompt,
@@ -89,15 +86,14 @@ pub(super) async fn compose_lifecycle_node_owner_modifier(
             },
         )
         .await
-        .map_err(ConnectorError::InvalidConfig)?;
+        .map_err(PlatformRuntimeError::InvalidConfig)?;
 
     svc.compose_pending_frame(
         builder,
         extras,
         command,
-        input.session_id.as_str(),
+        input.runtime_thread_id.as_str(),
         None,
-        &input.requested_runtime_commands,
     )
     .await
 }

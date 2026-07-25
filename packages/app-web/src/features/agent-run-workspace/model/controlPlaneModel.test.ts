@@ -1,20 +1,16 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import type {
-  BackboneEvent,
-  ControlPlaneProjection,
-  ControlPlaneProjectionChangeReason,
-} from "../../../generated/backbone-protocol";
 import type {
   AgentRunOwnershipView,
   ConversationCommandPlacement,
   ConversationCommandView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
+import type { ProjectEventStreamEnvelope } from "../../../generated/project-contracts";
 import type {
   ConversationCommandKind,
   ConversationCommandStaleGuardView,
-} from "../../../generated/agent-run-mailbox-contracts";
+} from "../../../generated/agent-run-interaction-contracts";
 import type { ProjectAgentSummary } from "../../../types";
 import {
   type AgentRunChatSubmitIntent,
@@ -22,12 +18,13 @@ import {
   buildDraftConversationCommandState,
 } from "./conversationCommandState";
 import {
-  planAgentRunMessageSent,
-  planAgentRunSystemEvent,
+  planAgentRunLiveEvent,
+  planAgentRunProjectEvent,
   planAgentRunTurnEnded,
-  planAgentRunWorkspaceModuleOpened,
+  planAgentRunTurnStarted,
   resolveAgentRunSubmitCommand,
 } from "./controlPlaneModel";
+import { applyAgentRunControlPlaneEffectPlan } from "./useAgentRunWorkspaceControlPlane";
 
 function staleGuard(commandId: string): ConversationCommandStaleGuardView {
   return {
@@ -72,37 +69,6 @@ function submitIntent(commandId: string): AgentRunChatSubmitIntent {
   return {
     command_id: commandId,
     prompt: "继续",
-  };
-}
-
-function controlPlaneProjectionEvent(data: {
-  projection: ControlPlaneProjection;
-  reason: ControlPlaneProjectionChangeReason;
-  workspace_module_presentation?: {
-    module_id: string;
-    view_key: string;
-    renderer_kind: string;
-    presentation_uri: string;
-    title: string;
-    payload: null;
-    diagnostics: null;
-  } | null;
-}): BackboneEvent {
-  return {
-    type: "platform",
-    payload: {
-      kind: "control_plane_projection_changed",
-      data: {
-        run_id: "run-1",
-        agent_id: "agent-1",
-        frame_id: null,
-        gate_id: null,
-        mailbox_message_id: null,
-        delivery_runtime_session_id: null,
-        workspace_module_presentation: null,
-        ...data,
-      },
-    },
   };
 }
 
@@ -192,115 +158,277 @@ describe("AgentRun control-plane model", () => {
     });
   });
 
-  it("plans message and manual workspace-module refresh effects", () => {
-    expect(planAgentRunMessageSent()).toEqual({
+  it("uses canonical turn boundaries as the only execution refresh source", () => {
+    expect(planAgentRunTurnStarted()).toEqual({
       refreshWorkspaceState: true,
-      hookRuntimeRefresh: { reason: "message_sent", immediate: true },
-      refreshAgentRunListReason: "message_sent",
+      refreshAgentRunListReason: "turn_started",
     });
     expect(planAgentRunTurnEnded()).toEqual({
       refreshWorkspaceState: true,
       refreshAgentRunListReason: "turn_ended",
     });
-    expect(planAgentRunWorkspaceModuleOpened()).toEqual({
-      refreshWorkspaceState: true,
-      refreshWorkspaceModuleCatalog: true,
-      hookRuntimeRefresh: { reason: "workspace_module_user_opened" },
-    });
   });
 
-  it("plans workspace and list refresh from typed control-plane projection changes", () => {
-    const plan = planAgentRunSystemEvent(
-      "control_plane_projection_changed",
-      controlPlaneProjectionEvent({
-        projection: "mailbox",
-        reason: "mailbox_state_changed",
-      }),
-    );
-
-    expect(plan).toEqual({
-      refreshWorkspaceState: true,
-      refreshAgentRunListReason: "control_plane:mailbox:mailbox_state_changed",
+  it("refreshes workspace and list after a standard thread name update", () => {
+    const plan = planAgentRunLiveEvent({
+      type: "thread_name_updated",
+      payload: {
+        threadId: "native-thread-1",
+        threadName: "修复登录态刷新",
+      },
     });
-  });
-
-  it("plans resource surface and hook refresh from typed capability projection changes", () => {
-    const plan = planAgentRunSystemEvent(
-      "control_plane_projection_changed",
-      controlPlaneProjectionEvent({
-        projection: "resource_surface",
-        reason: "capability_state_changed",
-      }),
-    );
 
     expect(plan).toEqual({
-      refreshWorkspaceState: true,
-      refreshWorkspaceModuleCatalog: true,
-      hookRuntimeRefresh: {
-        reason: "control_plane:resource_surface:capability_state_changed",
+      effects: {
+        refreshWorkspaceState: true,
+        refreshAgentRunListReason: "thread_name_updated",
       },
     });
   });
 
-  it("opens Canvas presentation from typed projection payload after refreshing runtime surface", () => {
-    const plan = planAgentRunSystemEvent(
-      "control_plane_projection_changed",
-      controlPlaneProjectionEvent({
-        projection: "resource_surface",
-        reason: "capability_state_changed",
-        workspace_module_presentation: {
-          module_id: "canvas:canvas-1",
-          view_key: "preview",
-          renderer_kind: "canvas",
-          presentation_uri: "canvas://canvas-1",
-          title: "Canvas Preview",
-          payload: null,
-          diagnostics: null,
+  it("uses the same refresh plan when the standard thread name is cleared", () => {
+    const plan = planAgentRunLiveEvent({
+      type: "thread_name_updated",
+      payload: {
+        threadId: "native-thread-1",
+      },
+    });
+
+    expect(plan).toEqual({
+      effects: {
+        refreshWorkspaceState: true,
+        refreshAgentRunListReason: "thread_name_updated",
+      },
+    });
+  });
+
+  it("keeps terminal display metadata out of control-plane refresh", () => {
+    const plan = planAgentRunLiveEvent({
+      type: "platform",
+      payload: {
+        kind: "session_meta_update",
+        data: {
+          key: "turn_terminal",
+          value: {
+            terminal_type: "turn_failed",
+          },
         },
-      }),
+      },
+    });
+
+    expect(plan).toEqual({ effects: {} });
+  });
+
+  it("refreshes execution state once for each canonical turn boundary", () => {
+    expect(planAgentRunLiveEvent({
+      type: "turn_started",
+      payload: {
+        threadId: "native-thread-1",
+        turn: {
+          id: "turn-1",
+          items: [],
+          itemsView: "full",
+          status: "inProgress",
+          error: null,
+        },
+      },
+    }).effects).toEqual({
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "turn_started",
+    });
+
+    expect(planAgentRunLiveEvent({
+      type: "turn_completed",
+      payload: {
+        threadId: "native-thread-1",
+        turn: {
+          id: "turn-1",
+          items: [],
+          itemsView: "full",
+          status: "completed",
+          error: null,
+        },
+      },
+    }).effects).toEqual({
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "turn_ended",
+    });
+  });
+
+  it("keeps Agent-native ContextFrame changes inside the canonical feed lane", () => {
+    const plan = planAgentRunLiveEvent({
+      type: "platform",
+      payload: {
+        kind: "context_frame_changed",
+        data: {
+          frame: {
+            id: "frame-capability-1",
+            kind: "capability_state_delta",
+            source: "runtime_context_update",
+            delivery_status: "applied_before_prompt",
+            delivery_channel: "connector_context",
+            message_role: "system",
+            delivery_metadata: {
+              delivery_phase: "turn_runtime",
+              delivery_order: 1,
+              cache_policy: "turn_ephemeral",
+              model_channel: "system",
+              agent_consumption: {
+                target: "dash-agent",
+                mode: "system_append",
+                reason: "materialized_surface",
+              },
+              frontend_label: "Capability",
+              connector_profile: {
+                profile_id: "dash-agent",
+                declared_consumption_modes: ["system_append"],
+              },
+            },
+            rendered_text: "Capability updated",
+            sections: [],
+            created_at_ms: 1n,
+          },
+        },
+      },
+    });
+
+    expect(plan).toEqual({ effects: {} });
+  });
+
+  it("refreshes the Task owner after a successful completed task_write", () => {
+    const plan = planAgentRunLiveEvent({
+      type: "item_completed",
+      payload: {
+        threadId: "native-thread-1",
+        turnId: "turn-1",
+        completedAtMs: 10,
+        item: {
+          type: "dynamicToolCall",
+          id: "task-write-1",
+          tool: "task_write",
+          arguments: { operation: "update_status" },
+          status: "completed",
+          success: true,
+        },
+      },
+    });
+
+    expect(plan).toEqual({ effects: { refreshTaskPlan: true } });
+  });
+
+  it("does not refresh Task owner for failed or unrelated completed tools", () => {
+    for (const item of [
+      {
+        type: "dynamicToolCall" as const,
+        id: "task-write-failed",
+        tool: "task_write",
+        arguments: {},
+        status: "failed" as const,
+        success: false,
+      },
+      {
+        type: "dynamicToolCall" as const,
+        id: "task-read-completed",
+        tool: "task_read",
+        arguments: {},
+        status: "completed" as const,
+        success: true,
+      },
+    ]) {
+      expect(planAgentRunLiveEvent({
+        type: "item_completed",
+        payload: {
+          threadId: "native-thread-1",
+          turnId: "turn-1",
+          completedAtMs: 10,
+          item,
+        },
+      })).toEqual({ effects: {} });
+    }
+  });
+
+  it("executes the Task owner refresh effect exactly once", () => {
+    const refreshTaskPlan = vi.fn().mockResolvedValue(null);
+
+    applyAgentRunControlPlaneEffectPlan(
+      { refreshTaskPlan: true },
+      {
+        refreshAgentRunWorkspaceState: vi.fn().mockResolvedValue(null),
+        openWorkspacePanel: vi.fn(),
+        refreshAgentRunList: vi.fn(),
+        refreshTaskPlan,
+      },
     );
 
-    expect(plan).toEqual({
-      refreshWorkspaceState: true,
-      refreshWorkspaceModuleCatalog: true,
-      hookRuntimeRefresh: {
-        reason: "control_plane:resource_surface:capability_state_changed",
+    expect(refreshTaskPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the exact Workspace Module from the canonical presentation event", () => {
+    const plan = planAgentRunLiveEvent({
+      type: "platform",
+      payload: {
+        kind: "workspace_module_presentation_requested",
+        data: {
+          module_id: "canvas:cvs-live",
+          view_key: "default",
+          renderer_kind: "canvas",
+          presentation_uri: "canvas://cvs-live",
+          title: "Live Canvas",
+        },
       },
+    });
+
+    expect(plan.effects).toEqual({
+      refreshWorkspaceState: true,
       openWorkspacePanel: {
         afterWorkspaceRefresh: true,
+        presentation: {
+          module_id: "canvas:cvs-live",
+          view_key: "default",
+          renderer_kind: "canvas",
+          presentation_uri: "canvas://cvs-live",
+          title: "Live Canvas",
+        },
         target: {
           typeId: "canvas",
-          uri: "canvas://canvas-1",
+          uri: "canvas://cvs-live",
           options: { refreshContent: false },
         },
       },
     });
   });
 
-  it("does not synthesize Canvas presentation URI from view_key", () => {
-    const plan = planAgentRunSystemEvent(
-      "control_plane_projection_changed",
-      controlPlaneProjectionEvent({
-        projection: "resource_surface",
-        reason: "capability_state_changed",
-        workspace_module_presentation: {
-          module_id: "canvas:canvas-1",
-          view_key: "canvas-1",
-          renderer_kind: "canvas",
-          presentation_uri: "",
-          title: "Canvas Preview",
-          payload: null,
-          diagnostics: null,
+  it("refreshes the exact AgentRun workspace from the typed title invalidation", () => {
+    const event: ProjectEventStreamEnvelope = {
+      type: "ControlPlaneProjectionChanged",
+      data: {
+        project_id: "project-1",
+        change: {
+          projection: "agent_run_list",
+          reason: "title_changed",
+          run_id: "run-1",
+          agent_id: "agent-1",
+          frame_id: null,
+          gate_id: null,
         },
-      }),
-    );
-
-    expect(plan).toEqual({
-      refreshWorkspaceState: true,
-      refreshWorkspaceModuleCatalog: true,
-      hookRuntimeRefresh: {
-        reason: "control_plane:resource_surface:capability_state_changed",
       },
+    };
+
+    expect(
+      planAgentRunProjectEvent(event, {
+        runId: "run-1",
+        agentId: "agent-1",
+      }),
+    ).toEqual({
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "control_plane:agent_run_list:title_changed",
     });
+    expect(
+      planAgentRunProjectEvent(event, {
+        runId: "run-1",
+        agentId: "another-agent",
+      }),
+    ).toEqual({});
   });
+
 });

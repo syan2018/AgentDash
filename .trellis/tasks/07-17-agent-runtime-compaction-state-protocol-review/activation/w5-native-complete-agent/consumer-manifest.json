@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "frozen_base": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
+  "component": "w5-native-complete-agent",
+  "producer": {
+    "function": "native_complete_agent_registration",
+    "output": "NativeCompleteAgentRegistration",
+    "fields": [
+      "instance_id",
+      "service"
+    ],
+    "required_inputs": [
+      "DashExecutionDependencies",
+      "AgentHostCallbacks",
+      "DashCompleteAgentStore",
+      "DashCompleteAtomicCommit",
+      "DashCompleteSourceMutation"
+    ]
+  },
+  "composition_consumer": {
+    "owner": "W8",
+    "action": "实现 DashCompleteAgentStore + DashAgentRepositoryStore PostgreSQL adapter，将 instance_id/service 注册到唯一 CompleteAgentHost"
+  },
+  "completed_native_owner_deletions": [
+    "agentdash_integration_native_agent::native_agent_contribution",
+    "NativeAgentRuntimeIntegration",
+    "NativeAgentDriverFactory",
+    "NativeAgentDriver",
+    "crates/agentdash-integration-native-agent/src/driver.rs",
+    "crates/agentdash-integration-native-agent/src/context.rs",
+    "crates/agentdash-integration-native-agent/src/core_projection.rs",
+    "crates/agentdash-integration-native-agent/src/hook.rs",
+    "crates/agentdash-integration-native-agent/src/mapping.rs",
+    "crates/agentdash-integration-native-agent/src/presentation.rs",
+    "crates/agentdash-integration-native-agent/src/tool.rs",
+    "crates/agentdash-integration-native-agent/tests/native_driver.rs",
+    "crates/agentdash-integration-native-agent/fixtures/main-oracle-presentation.json",
+    "Native-produced RuntimeJournalFact paths",
+    "legacy Native tool registry/materialization paths"
+  ],
+  "required_same_revision_consumer_switches": [
+    "agentdash-api production integration collection",
+    "agentdash-infrastructure production runtime composition",
+    "agentdash-local runtime driver contribution wiring",
+    "W7 AgentRun/Product callers"
+  ],
+  "kept_native_modules": [
+    "service.rs",
+    "core_callbacks.rs"
+  ],
+  "exact_atomic_consumers": [
+    {
+      "consumer": "DashAgentCompleteService",
+      "path": "crates/agentdash-integration-native-agent/src/service.rs",
+      "usage": "constructs effect CAS and Create/CompareAndSwap source mutations"
+    },
+    {
+      "consumer": "RecordingCompleteStore",
+      "path": "crates/agentdash-integration-native-agent/tests/complete_agent_service.rs",
+      "usage": "executable atomicity and crash-gap contract fixture"
+    },
+    {
+      "consumer": "W8 PostgreSQL adapter",
+      "path_owner": "W8",
+      "usage": "single database transaction implementation of DashCompleteAgentStore::commit"
+    }
+  ],
+  "durable_effect_kinds": [
+    "create",
+    "resume",
+    "fork",
+    "execute",
+    "apply_surface",
+    "revoke_surface"
+  ],
+  "production_dual_registration_allowed": false
+}

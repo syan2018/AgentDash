@@ -71,7 +71,7 @@ function buildActivityTooltip(step: ActivityDefinition, procedureName: string | 
   if (step.description) lines.push(step.description);
   if (step.executor.kind === "agent") {
     lines.push(
-      `Agent · ${procedureName ?? step.executor.procedure_key} · ${step.executor.agent_reuse_policy} / ${step.executor.runtime_session_policy}`,
+      `Agent · ${procedureName ?? step.executor.procedure_key} · ${step.executor.agent_reuse_policy} / ${step.executor.runtime_thread_policy}`,
     );
   } else if (step.executor.kind === "human") {
     lines.push(`Human · ${step.executor.title ?? step.executor.form_schema_key}`);

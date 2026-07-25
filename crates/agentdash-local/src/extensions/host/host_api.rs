@@ -665,7 +665,7 @@ mod tests {
             asset_refs: vec![],
             runtime_actions: vec![ExtensionRuntimeActionDefinition {
                 action_key: "local-hello.profile".to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Profile".to_string(),
                 input_schema: json!(true),
                 output_schema: json!(true),

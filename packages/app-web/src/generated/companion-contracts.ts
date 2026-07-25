@@ -5,4 +5,4 @@ import type { JsonValue } from "./common-contracts";
 
 export type CompanionGateRespondRequest = { payload: JsonValue, };
 
-export type CompanionGateRespondResponse = { responded: boolean, gate_id: string, request_id: string, delivery_runtime_session_id?: string, gate_resolved: boolean, };
+export type CompanionGateRespondResponse = { responded: boolean, gate_id: string, request_id: string, gate_resolved: boolean, };

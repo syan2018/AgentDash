@@ -1,26 +1,25 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-// ─── re-exports from agent-types ────────────────────────────
+// ─── Core-owned primitive re-exports ────────────────────────
 
-pub use agentdash_agent_types::{
+pub use crate::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegateSet, AgentRuntimeError,
     AgentTool, AgentToolError, AgentToolResult, BeforeProviderRequestInput, BeforeStopInput,
     BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, CompactionFailureInput,
     CompactionImplementation, CompactionMetadata, CompactionNoopInput, CompactionParams,
     CompactionPhase, CompactionReason, CompactionResult, CompactionStrategy, CompactionTrigger,
-    CompactionTriggerStats, ContentPart, DynAgentTool, DynRuntimeCompactionDelegate,
-    DynRuntimeContextTransformDelegate, DynRuntimeProviderObserverDelegate,
-    DynRuntimeToolPolicyDelegate, DynRuntimeTurnBoundaryDelegate, EvaluateCompactionInput,
-    MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind, ProviderVisibleContextStats,
-    RuntimeCompactionDelegate, RuntimeContextTransformDelegate, RuntimeProviderObserverDelegate,
-    RuntimeToolPolicyDelegate, RuntimeTurnBoundaryDelegate, StopDecision, StopReason, TokenUsage,
-    ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolDefinition,
-    ToolUpdateCallback, TransformContextInput, TransformContextOutput, TurnControlDecision,
-    estimate_message_tokens, estimate_request_tokens, now_millis,
+    CompactionTriggerStats, ContentPart, DynAgentTool, DynRuntimeContextTransformDelegate,
+    DynRuntimeProviderObserverDelegate, DynRuntimeToolPolicyDelegate,
+    DynRuntimeTurnBoundaryDelegate, MessageRef, ProjectedEntry, ProjectedTranscript,
+    ProjectionKind, ProviderVisibleContextStats, RuntimeContextTransformDelegate,
+    RuntimeProviderObserverDelegate, RuntimeToolPolicyDelegate, RuntimeTurnBoundaryDelegate,
+    StopDecision, StopReason, ThinkingLevel, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest,
+    ToolCallDecision, ToolCallInfo, ToolDefinition, ToolProtocolProjector, ToolUpdateCallback,
+    TransformContextInput, TransformContextOutput, TurnControlDecision, estimate_message_tokens,
+    estimate_request_tokens, now_millis,
 };
-pub use agentdash_domain::common::ThinkingLevel;
 
 // ─── Agent-specific types (不属于通用 SPI) ──────────────────
 

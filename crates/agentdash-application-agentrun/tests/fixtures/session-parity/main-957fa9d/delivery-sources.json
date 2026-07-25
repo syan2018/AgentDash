@@ -1,0 +1,117 @@
+{
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "scenario": "delivery_system_workflow_companion",
+    "capture_method": "fixed_main_contract_golden",
+    "source_producers": [
+      {
+        "path": "crates/agentdash-application-runtime-session/src/session/launch/commit.rs",
+        "sha256": "dfc4e70d3d33ca7c79202b6181608776febb996eff5ada7375f3d9678f239f95"
+      }
+    ],
+    "clock": "2026-07-10T12:00:00Z"
+  },
+  "cases": {
+    "system": {
+      "first_event": {
+        "type": "platform",
+        "payload": {
+          "kind": "session_meta_update",
+          "data": {
+            "key": "system_message",
+            "value": {
+              "kind": "system_delivery",
+              "origin": "system",
+              "source": { "namespace": "runtime_launch", "kind": "system_delivery", "actor": "system" },
+              "status": "delivered",
+              "summary": "system wake",
+              "message": "system wake",
+              "turn_id": "turn-system-0001"
+            }
+          }
+        }
+      }
+    },
+    "workflow": {
+      "first_event": {
+        "type": "platform",
+        "payload": {
+          "kind": "session_meta_update",
+          "data": {
+            "key": "system_message",
+            "value": {
+              "kind": "workflow_delivery",
+              "origin": "system",
+              "source": { "namespace": "runtime_launch", "kind": "workflow_orchestrator", "actor": "system" },
+              "status": "delivered",
+              "summary": "workflow continue",
+              "message": "workflow continue",
+              "turn_id": "turn-workflow-0001"
+            }
+          }
+        }
+      }
+    },
+    "routine": {
+      "first_event": {
+        "type": "platform",
+        "payload": {
+          "kind": "session_meta_update",
+          "data": {
+            "key": "system_message",
+            "value": {
+              "kind": "routine_delivery",
+              "origin": "system",
+              "source": { "namespace": "runtime_launch", "kind": "routine_executor", "actor": "system" },
+              "status": "delivered",
+              "summary": "routine wake",
+              "message": "routine wake",
+              "turn_id": "turn-routine-0001"
+            }
+          }
+        }
+      }
+    },
+    "companion": {
+      "first_event": {
+        "type": "user_input_submitted",
+        "payload": {
+          "threadId": "session-companion-0001",
+          "turnId": "turn-companion-0001",
+          "itemId": "turn-companion-0001:user-input:0",
+          "submissionKind": "prompt",
+          "source": {
+            "namespace": "companion",
+            "kind": "dispatch",
+            "actor": "agent",
+            "route": "sub",
+            "displayLabelKey": "mailbox.source.companion.dispatch"
+          },
+          "content": [
+            { "type": "text", "text": "companion dispatch", "text_elements": [] }
+          ]
+        }
+      }
+    },
+    "companion_marker": {
+      "first_event": {
+        "type": "platform",
+        "payload": {
+          "kind": "session_meta_update",
+          "data": {
+            "key": "system_message",
+            "value": {
+              "kind": "subagent_notification",
+              "origin": "system",
+              "source": { "namespace": "runtime_launch", "kind": "companion_dispatch", "actor": "agent" },
+              "status": "delivered",
+              "summary": "<subagent_notification>{\"status\":\"completed\"}</subagent_notification>",
+              "message": "<subagent_notification>{\"status\":\"completed\"}</subagent_notification>",
+              "turn_id": "turn-companion-marker-0001"
+            }
+          }
+        }
+      }
+    }
+  }
+}

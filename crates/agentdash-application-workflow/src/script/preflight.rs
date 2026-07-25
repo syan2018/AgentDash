@@ -2,7 +2,7 @@ use agentdash_domain::workflow::{
     OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNodeKind, ValidationSeverity,
     WorkflowScriptCapabilitySummary, WorkflowScriptProvenance,
 };
-use agentdash_spi::WorkflowScriptEvaluator;
+use agentdash_platform_spi::WorkflowScriptEvaluator;
 use serde_json::{Map, Value};
 
 use super::capability_summary::extract_workflow_script_capability_summary;

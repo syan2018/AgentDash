@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   AgentRunForkResponse,
   AgentRunMessageCommandResponse,
-} from "../../../generated/agent-run-mailbox-contracts";
+} from "../../../generated/agent-run-interaction-contracts";
 import {
   forkAgentRunFromMessageRef,
   resolveAgentRunCommandRedirect,
@@ -15,7 +15,7 @@ function forkCommandResponse(): AgentRunMessageCommandResponse {
       status: "accepted",
       duplicate: false,
     },
-    outcome: "queued",
+    outcome: "launched",
     accepted_refs: {
       run_ref: { run_id: "child-run" },
       agent_ref: { run_id: "child-run", agent_id: "child-agent" },

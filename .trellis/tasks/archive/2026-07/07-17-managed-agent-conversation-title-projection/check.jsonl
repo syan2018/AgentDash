@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/07-17-managed-agent-conversation-title-projection/research/current-chain.md", "reason": "核对实现是否修复研究中确认的真实断点且未恢复main双写链路。"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "检查名称journal/projection原子性、重放、重复与generation隔离。"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "检查命名业务位于Agent层、Native异步触发与Core依赖边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-codex-adapter.md", "reason": "检查Codex bind/live均无损复用标准名称事件。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "检查list/workspace只读RuntimeSnapshot且没有跨层事实复制。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查旧RuntimeSession/SessionMeta标题事实源没有回归。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "检查自有标题事件删除、标准payload immutable与事件矩阵完整。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查schema/codegen/contracts与API/frontend一致。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查提交后project invalidation与workspace/list refresh无客户端事实分叉。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查generated TypeScript单一事实源与exhaustive handling。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "执行跨层数据流、错误路径、重启恢复与删除遗留的最终审计。"}

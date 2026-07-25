@@ -1,0 +1,17 @@
+{"file":".trellis/spec/backend/architecture.md","reason":"约束后端层次、依赖方向与composition root"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"对齐现有runtime gateway与executor边界规范"}
+{"file":".trellis/spec/backend/capability/integration-api.md","reason":"沿用受信Integration扩展taxonomy并重构Agent service contribution"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"核对AgentRun/session业务边界与状态所有权"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"实现统一AgentRun facade、canonical snapshot/event/mailbox与context/compaction事务边界"}
+{"file":".trellis/spec/backend/hooks/architecture.md","reason":"保留Hook loop外解析、因果边界执行与业务authority原则"}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"迁移现有Hook触发、decision、trace、mailbox与runtime facet业务知识"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"设计journal/checkpoint/head/outbox的migration与事务"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"将Backbone收敛为owned Runtime Event presentation/wire"}
+{"file":".trellis/spec/cross-layer/deployment-runtime.md","reason":"重建cloud/local/Relay placement边界"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/architecture-baseline.md","reason":"现状模块与依赖图证据"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/runtime-seam-options-comparison.md","reason":"三套独立seam设计比较与组合依据"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/codex-app-server-l4-vocabulary.md","reason":"Codex完整词汇与L4参考边界"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"HookPlan/HookProfile/HookRun分层与execution site设计"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/codex-hook-projection.md","reason":"Codex native hooks、artifact bridge、trust与decision映射"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/acp-event-projection.md","reason":"ACP仅作可选read-side presentation且首期跳过的依据"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/external-agent-feature-integration-matrix.md","reason":"外部Agent工具、feature、profile与availability矩阵"}

@@ -4,7 +4,7 @@
 /// - 所有 LLM 调用默认走 streaming
 /// - `StreamChunk` 对应 pi-mono 的 `AssistantMessageEvent`
 ///
-/// `LlmBridge` trait 定义在此；具体实现在 `agentdash-executor` 中。
+/// `LlmBridge` trait 定义在此；具体实现由 LLM Provider adapter 提供。
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -49,6 +49,7 @@ pub struct BridgeRequest {
     pub system_prompt: Option<String>,
     pub messages: Vec<AgentMessage>,
     pub tools: Vec<ToolDefinition>,
+    pub thinking_level: Option<crate::ThinkingLevel>,
 }
 
 #[derive(Debug, Clone)]

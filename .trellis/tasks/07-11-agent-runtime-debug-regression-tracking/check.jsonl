@@ -1,0 +1,13 @@
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"检查 execution profile 未被错误等同于实例级 Runtime offer。"}
+{"file":".trellis/spec/backend/capability/llm-model-config.md","reason":"检查全局 Provider credential 与交互用户身份正确解耦。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 API、授权与真实 PostgreSQL/启动路径验证要求。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查前端、API 与桌面 bridge 契约一致。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 selector 与 OAuth action 的前端测试和错误呈现。"}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"检查 default mount 来自 canonical Project/workspace surface且无临时 fallback。"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"检查 VFS access、backend placement与本机路径边界。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"检查 Lifecycle dispatch 与 immutable AgentFrame Business Surface 的顺序。"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"检查 launch-anchor/current AgentFrame 在 provision 前已闭包完整 surface。"}
+{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"检查 tool capability provenance 与稀疏 policy 未被混用。"}
+{"file":".trellis/spec/backend/agent-runtime-kernel.md","reason":"检查 SurfaceAdopt CAS、operation identity与Managed Runtime snapshot事实源。"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"检查candidate compile与presentation使用同一exact AgentFrame。"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"检查不存在跨repository拼装current或兼容读路径。"}

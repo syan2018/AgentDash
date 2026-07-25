@@ -1,41 +1,34 @@
 //! 本机 relay 命令 router。
 //!
 //! 按职责域拆分为子模块：
-//! - `prompt`：Agent prompt / cancel / discover
 //! - `workspace`：workspace 探测 + 目录浏览
 //! - `tool_calls`：PiAgent tool call（文件/Shell/搜索）
 //! - `mcp_relay`：MCP probe / list_tools / call_tool / close
 //! - `materialization`：VFS 资源物化到本机 cache / working copy
 //! - `terminal`：交互式终端 spawn / input / resize / kill
-//! - `relay_mcp_servers`：relay MCP Server typed DTO 转换
 
 mod extension;
 mod materialization;
 mod mcp_relay;
-mod prompt;
-pub(crate) mod relay_mcp_servers;
 mod terminal;
 mod tool_calls;
 mod workspace;
 pub use workspace::browse_directory;
 
 use agentdash_diagnostics::{Subsystem, diag};
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_relay::*;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 
 use extension::{ExtensionCommandHandler, ExtensionCommandHandlerConfig};
 use materialization::MaterializationCommandHandler;
 use mcp_relay::McpCommandHandler;
-use prompt::{PromptCommandHandler, PromptCommandHandlerConfig};
 use terminal::TerminalCommandHandler;
 use tool_calls::ToolCommandHandler;
 use workspace::WorkspaceCommandHandler;
 
-use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::materialization::MaterializationStore;
 use crate::mcp_client_manager::McpClientManager;
 use crate::shell_session_manager::ShellSessionManager;
@@ -44,8 +37,6 @@ use crate::{
     LocalExtensionBackendServiceManager, LocalExtensionBackendServiceManagerConfig,
     LocalExtensionHostManager,
 };
-use agentdash_application_runtime_session::session::SessionRuntimeServices;
-use agentdash_spi::AgentConnector;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandExecutionMode {
@@ -71,7 +62,6 @@ impl CommandDispatchPlan {
 /// 本机命令 router，只负责 relay envelope 分发。
 #[derive(Clone)]
 pub struct LocalCommandRouter {
-    prompt: PromptCommandHandler,
     workspace: WorkspaceCommandHandler,
     tool: ToolCommandHandler,
     materialization: MaterializationCommandHandler,
@@ -84,10 +74,7 @@ pub struct LocalCommandRouterConfig {
     pub backend_id: String,
     pub workspace_roots: Vec<PathBuf>,
     pub tool_executor: ToolExecutor,
-    pub session_runtime: Option<SessionRuntimeServices>,
-    pub connector: Option<Arc<dyn AgentConnector>>,
     pub mcp_manager: Option<Arc<McpClientManager>>,
-    pub workspace_contract_config: WorkspaceContractRuntimeConfig,
     pub extension_host: LocalExtensionHostManager,
     pub extension_artifact_api_base_url: String,
     pub extension_artifact_access_token: String,
@@ -102,17 +89,7 @@ impl LocalCommandRouter {
             config.event_tx.clone(),
         ));
         let materialization_store = Arc::new(MaterializationStore::new(config.backend_id.clone()));
-        let session_forwarders = Arc::new(Mutex::new(HashSet::new()));
-
         Self {
-            prompt: PromptCommandHandler::new(PromptCommandHandlerConfig {
-                session_runtime: config.session_runtime,
-                connector: config.connector,
-                tool_executor: config.tool_executor.clone(),
-                workspace_contract_config: config.workspace_contract_config,
-                event_tx: config.event_tx.clone(),
-                session_forwarders,
-            }),
             workspace: WorkspaceCommandHandler,
             tool: ToolCommandHandler::new(
                 config.tool_executor.clone(),
@@ -139,10 +116,6 @@ impl LocalCommandRouter {
         }
     }
 
-    pub fn list_executors(&self) -> Vec<AgentInfoRelay> {
-        self.prompt.list_executors()
-    }
-
     pub(crate) fn dispatch_plan(&self, msg: &RelayMessage) -> CommandDispatchPlan {
         dispatch_plan_for_message(msg)
     }
@@ -159,23 +132,6 @@ impl LocalCommandRouter {
                         client_time: payload.server_time,
                     },
                 }]
-            }
-
-            // ── Agent prompt / cancel / discover ──
-            RelayMessage::CommandPrompt { id, payload } => {
-                vec![self.prompt.handle_prompt(id, *payload).await]
-            }
-            RelayMessage::CommandCancel { id, payload } => {
-                vec![self.prompt.handle_cancel(id, payload).await]
-            }
-            RelayMessage::CommandSteer { id, payload } => {
-                vec![self.prompt.handle_steer(id, payload).await]
-            }
-            RelayMessage::CommandDiscover { id, .. } => {
-                vec![self.prompt.handle_discover(id).await]
-            }
-            RelayMessage::CommandDiscoverOptions { id, payload } => {
-                vec![self.prompt.handle_discover_options(id, payload).await]
             }
 
             // ── Workspace 探测 + 目录浏览 ──
@@ -294,6 +250,9 @@ impl LocalCommandRouter {
             RelayMessage::CommandTerminalKill { id, payload } => {
                 vec![self.terminal.handle_terminal_kill(id, payload).await]
             }
+            RelayMessage::CommandTerminalInventory { id, payload } => {
+                vec![self.terminal.handle_terminal_inventory(id, payload).await]
+            }
 
             other => {
                 diag!(Debug, Subsystem::AgentRun,
@@ -305,8 +264,7 @@ impl LocalCommandRouter {
 }
 
 pub(crate) fn dispatch_plan_for_message(msg: &RelayMessage) -> CommandDispatchPlan {
-    PromptCommandHandler::dispatch_plan(msg)
-        .or_else(|| WorkspaceCommandHandler::dispatch_plan(msg))
+    WorkspaceCommandHandler::dispatch_plan(msg)
         .or_else(|| ToolCommandHandler::dispatch_plan(msg))
         .or_else(|| MaterializationCommandHandler::dispatch_plan(msg))
         .or_else(|| McpCommandHandler::dispatch_plan(msg))

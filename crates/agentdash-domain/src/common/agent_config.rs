@@ -48,8 +48,6 @@ pub struct AgentPresetConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
@@ -79,7 +77,9 @@ pub struct AgentPresetConfig {
     /// 此 Agent 可见的 Workspace Module ref 白名单（形如 `ext:{key}` / `canvas:{canvas_mount_id}`）。
     ///
     /// 事实源为 ProjectAgent 定义，frame construction 据此填充
-    /// `AgentFrame.visible_workspace_module_refs_json`。`None`/空 → 全集可见；非空 → 仅白名单。
+    /// ProjectAgent 声明式 workspace module 授权输入。启动时编译进
+    /// `CapabilityState.workspace_module`；运行期当前 Canvas 由 canonical VFS mount 表达，
+    /// 不复制这份配置列表。`None`/空 → 全集可见；非空 → 仅白名单。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub visible_workspace_module_refs: Option<Vec<String>>,
 }
@@ -104,7 +104,6 @@ impl AgentPresetConfig {
             model_id,
             agent_id,
             thinking_level,
-            permission_policy,
             system_prompt,
             display_name,
             description,
@@ -131,7 +130,6 @@ impl AgentPresetConfig {
             model_id: self.model_id.clone(),
             agent_id: self.agent_id.clone(),
             thinking_level: self.thinking_level,
-            permission_policy: self.permission_policy.clone(),
             system_prompt: self.system_prompt.clone(),
         }
     }
@@ -225,7 +223,6 @@ struct AgentPresetConfigWire {
     model_id: Option<String>,
     agent_id: Option<String>,
     thinking_level: Option<ThinkingLevel>,
-    permission_policy: Option<String>,
     system_prompt: Option<String>,
     display_name: Option<String>,
     description: Option<String>,
@@ -251,7 +248,6 @@ impl<'de> Deserialize<'de> for AgentPresetConfig {
             model_id: wire.model_id,
             agent_id: wire.agent_id,
             thinking_level: wire.thinking_level,
-            permission_policy: wire.permission_policy,
             system_prompt: wire.system_prompt,
             display_name: wire.display_name,
             description: wire.description,
@@ -283,7 +279,7 @@ pub struct ProjectVfsMountExposureGrant {
 ///
 /// 只包含执行器运行所需的参数（executor / model / prompt 等），
 /// 不包含 capability / companion / MCP 等配置（由 `AgentPresetConfig` 承载）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub executor: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -294,8 +290,6 @@ pub struct AgentConfig {
     pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
 }
@@ -310,7 +304,6 @@ impl AgentConfig {
             model_id: None,
             agent_id: None,
             thinking_level: None,
-            permission_policy: None,
             system_prompt: None,
         }
     }

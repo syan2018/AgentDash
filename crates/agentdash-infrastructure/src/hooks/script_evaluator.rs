@@ -8,7 +8,7 @@ use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error}
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use agentdash_spi::HookScriptEvaluator;
+use agentdash_platform_spi::HookScriptEvaluator;
 use rhai::{AST, Dynamic, Engine};
 
 use crate::script_runtime::RhaiScriptRuntime;

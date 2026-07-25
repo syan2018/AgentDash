@@ -17,7 +17,7 @@ pub struct GateTransitionOutcome {
 
 #[derive(Debug, Clone)]
 pub enum GateDeliveryIntent {
-    MailboxWake(GateMailboxWakeIntent),
+    InputHandoffWake(GateInputHandoffWakeIntent),
     CompanionHumanResponse(CompanionHumanResponseDeliveryIntent),
     CompanionParentRequest(CompanionParentRequestDeliveryIntent),
     CompanionParentResponseToChild(CompanionParentResponseDeliveryIntent),
@@ -25,15 +25,15 @@ pub enum GateDeliveryIntent {
 }
 
 #[derive(Debug, Clone)]
-pub struct GateMailboxWakeIntent {
+pub struct GateInputHandoffWakeIntent {
     pub gate_id: Uuid,
     pub namespace: String,
     pub request_id: String,
     pub target_run_id: Uuid,
     pub target_agent_id: Uuid,
-    pub target_delivery_runtime_session_id: String,
+    pub target_runtime_thread_id: String,
     pub producer_agent_id: Uuid,
-    pub producer_delivery_runtime_session_id: Option<String>,
+    pub producer_runtime_thread_id: Option<String>,
     pub resolved_turn_id: String,
     pub client_command_id: String,
     pub payload: Value,
@@ -56,9 +56,9 @@ pub struct CompanionParentRequestDeliveryIntent {
     pub request_id: String,
     pub run_id: Uuid,
     pub parent_agent_id: Uuid,
-    pub parent_delivery_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub child_agent_id: Uuid,
-    pub child_delivery_runtime_session_id: String,
+    pub child_runtime_thread_id: String,
     pub turn_id: String,
     pub wait: bool,
     pub payload: Value,
@@ -70,9 +70,9 @@ pub struct CompanionParentResponseDeliveryIntent {
     pub request_id: String,
     pub run_id: Uuid,
     pub parent_agent_id: Uuid,
-    pub parent_delivery_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub child_agent_id: Uuid,
-    pub child_delivery_runtime_session_id: String,
+    pub child_runtime_thread_id: String,
     pub resolved_turn_id: String,
     pub payload: Value,
 }
@@ -83,9 +83,9 @@ pub struct CompanionChildResultDeliveryIntent {
     pub request_id: String,
     pub run_id: Uuid,
     pub parent_agent_id: Uuid,
-    pub parent_delivery_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub child_agent_id: Uuid,
-    pub child_delivery_runtime_session_id: Option<String>,
+    pub child_runtime_thread_id: Option<String>,
     pub resolved_turn_id: String,
     pub payload: Value,
 }

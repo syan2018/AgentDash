@@ -1,7 +1,9 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { AgentFrameRuntimeView, AgentRunWorkspaceView } from "../../../types";
-import type { AgentFrameHookRuntimeInfo } from "../../../types";
+import type {
+  AgentFrameRuntimeView,
+  AgentRunWorkspaceView,
+} from "../../../types";
 import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { fetchAgentRunWorkspace } from "../../../services/lifecycle";
@@ -14,7 +16,6 @@ export interface AgentRunWorkspaceState {
   status: WorkspaceRuntimeStateStatus;
   workspace: AgentRunWorkspaceView | null;
   runtime_surface: ResolvedVfsSurface | null;
-  hook_runtime: AgentFrameHookRuntimeInfo | null;
   frame: AgentFrameRuntimeView | null;
   runtime_surface_error: string | null;
   error: string | null;
@@ -36,7 +37,6 @@ export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceState {
     status: "idle",
     workspace: null,
     runtime_surface: null,
-    hook_runtime: null,
     frame: null,
     runtime_surface_error: null,
     error: null,
@@ -136,14 +136,9 @@ export function useAgentRunWorkspaceState({
     try {
       const workspace = await fetchAgentRunWorkspace(rid, aid);
       const runtimeSurface = agentRunWorkspaceResourceSurface(workspace);
-
       if (!canCommit()) return workspace;
-      if (workspace.agent) {
-        setAgent(workspace.agent);
-      }
-      if (workspace.frame_runtime) {
-        setFrame(workspace.frame_runtime);
-      }
+      if (workspace.agent) setAgent(workspace.agent);
+      if (workspace.frame_runtime) setFrame(workspace.frame_runtime);
       setState({
         run_id: rid,
         agent_id: aid,
@@ -151,7 +146,6 @@ export function useAgentRunWorkspaceState({
         status: "ready",
         workspace,
         runtime_surface: runtimeSurface,
-        hook_runtime: null,
         frame: workspace.frame_runtime ?? null,
         runtime_surface_error: null,
         error: null,
@@ -160,7 +154,14 @@ export function useAgentRunWorkspaceState({
     } catch (error: unknown) {
       if (!canCommit()) return null;
       const message = errorMessage(error);
-      setState((current) => failAgentRunWorkspaceStateLoad(current, rid, aid, skey, mode, message));
+      setState((current) => failAgentRunWorkspaceStateLoad(
+        current,
+        rid,
+        aid,
+        skey,
+        mode,
+        message,
+      ));
       return null;
     }
   }, [setAgent, setFrame]);
@@ -192,6 +193,5 @@ export function useAgentRunWorkspaceState({
   return {
     state: activeState,
     refreshWorkspaceState,
-    refreshHookRuntime: refreshWorkspaceState,
   };
 }

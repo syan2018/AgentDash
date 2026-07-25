@@ -12,7 +12,7 @@ import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { parseBoundedOutputText } from "./boundedOutput";
 import { getPlatformEventPolicy } from "./systemEventPolicy";
-import { isRecord } from "./platformEvent";
+import { extractContextFrameValue, isRecord } from "./platformEvent";
 import { isToolBurstEligible } from "./threadItemKind";
 import type {
   AggregatedContextFrameGroup,
@@ -37,10 +37,12 @@ export interface UseSessionFeedResult {
   rawEntries: SessionDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
   historyReplayBoundarySeq: number | null;
+  boundTargetKey: string | null;
   isConnected: boolean;
   isLoading: boolean;
   isReceiving: boolean;
   error: Error | null;
+  refresh: () => Promise<void>;
   reconnect: () => void;
   close: () => void;
   streamingEntryId: string | null;
@@ -100,11 +102,7 @@ function hasBoundedOutputEntry(entry: SessionDisplayEntry): boolean {
 }
 
 function isContextFrameEvent(event: BackboneEvent): boolean {
-  return (
-    event.type === "platform" &&
-    event.payload.kind === "session_meta_update" &&
-    event.payload.data.key === "context_frame"
-  );
+  return extractContextFrameValue(event) != null;
 }
 
 function isWillRetryErrorEvent(event: BackboneEvent): boolean {
@@ -552,6 +550,7 @@ export interface TurnSegment {
   startedAtMs?: number;
   durationMs?: number;
   activity?: TurnActivityStatus;
+  errorMessage?: string;
   items: SessionDisplayItem[];
   /** 最后一条 agent message（轮次折叠时只显示这个） */
   finalOutput: SessionDisplayItem | null;
@@ -570,9 +569,18 @@ function extractTurnId(item: SessionDisplayItem): string | undefined {
   return undefined;
 }
 
+function isContextFrameDisplayItem(item: SessionDisplayItem): boolean {
+  if ("type" in item && item.type === "aggregated_context_frames") {
+    return true;
+  }
+  return "event" in item && isContextFrameEvent(item.event);
+}
+
 function isAgentMessageItem(item: SessionDisplayItem): boolean {
   if (!("event" in item)) return false;
-  return (item as SessionDisplayEntry).event.type === "agent_message_delta";
+  const event = (item as SessionDisplayEntry).event;
+  if (event.type === "agent_message_delta") return true;
+  return extractThreadItem(event)?.type === "agentMessage";
 }
 
 function isProjectedTranscriptItem(item: SessionDisplayItem): boolean {
@@ -591,6 +599,7 @@ interface TurnMeta {
   startedAtMs?: number;
   durationMs?: number;
   activity?: TurnActivityStatus;
+  errorMessage?: string;
 }
 
 function readStringField(record: Record<string, unknown>, key: string): string | undefined {
@@ -645,6 +654,7 @@ function updateTurnMeta(
   if (patch.startedAtMs !== undefined) meta.startedAtMs = patch.startedAtMs;
   if (patch.durationMs !== undefined) meta.durationMs = patch.durationMs;
   if (patch.activity !== undefined) meta.activity = patch.activity;
+  if (patch.errorMessage !== undefined) meta.errorMessage = patch.errorMessage;
 }
 
 function turnStartedAtMs(startedAtSeconds: number | null | undefined): number | undefined {
@@ -666,6 +676,7 @@ function extractTurnTerminalMeta(event: SessionEventEnvelope): {
   status: TurnStatus;
   startedAtMs?: number;
   durationMs?: number;
+  errorMessage?: string;
 } | null {
   const bbEvent = event.notification.event;
   if (bbEvent.type === "turn_completed") {
@@ -675,6 +686,7 @@ function extractTurnTerminalMeta(event: SessionEventEnvelope): {
       status: normalizeTurnStatus(turn.status),
       startedAtMs: turnStartedAtMs(turn.startedAt),
       durationMs: turn.durationMs ?? undefined,
+      errorMessage: turn.error?.message ?? undefined,
     };
   }
 
@@ -728,6 +740,7 @@ export function segmentByTurn(
         status: terminal.status,
         startedAtMs: terminal.startedAtMs,
         durationMs: terminal.durationMs,
+        errorMessage: terminal.errorMessage,
       });
     }
 
@@ -735,7 +748,7 @@ export function segmentByTurn(
 
   if (displayItems.length === 0) {
     return [...turnMeta.entries()]
-      .filter(([, meta]) => meta.activity)
+      .filter(([, meta]) => meta.activity || meta.status !== "active")
       .sort((a, b) => a[1].firstSeq - b[1].firstSeq)
       .map(([turnId, meta]) => ({
         turnId,
@@ -743,6 +756,7 @@ export function segmentByTurn(
         startedAtMs: meta.startedAtMs,
         durationMs: meta.durationMs,
         activity: meta.activity,
+        errorMessage: meta.errorMessage,
         items: [],
         finalOutput: null,
       }));
@@ -752,6 +766,17 @@ export function segmentByTurn(
   const seenTurnIds = new Set<string>();
   let currentTurnId: string | null = null;
   let currentItems: SessionDisplayItem[] = [];
+  const followingTurnIds = new Array<string | null>(displayItems.length).fill(null);
+  let followingTurnId: string | null = null;
+  for (let index = displayItems.length - 1; index >= 0; index -= 1) {
+    const item = displayItems[index]!;
+    if (isUserInputItem(item)) {
+      followingTurnId = null;
+      continue;
+    }
+    followingTurnIds[index] = followingTurnId;
+    followingTurnId = extractTurnId(item) ?? followingTurnId;
+  }
   const fallbackStatus = (turnId: string | null, items: SessionDisplayItem[]): TurnSegment["status"] => {
     if (activeTurnId !== undefined) {
       return turnId != null && turnId === activeTurnId ? "active" : "completed";
@@ -778,6 +803,7 @@ export function segmentByTurn(
       startedAtMs: meta?.startedAtMs,
       durationMs: meta?.durationMs,
       activity: meta?.activity,
+      errorMessage: meta?.errorMessage,
       items: currentItems,
       finalOutput,
     });
@@ -796,7 +822,7 @@ export function segmentByTurn(
     });
   };
 
-  for (const item of displayItems) {
+  for (const [index, item] of displayItems.entries()) {
     if (isUserInputItem(item)) {
       flush();
       currentTurnId = null;
@@ -804,7 +830,10 @@ export function segmentByTurn(
       continue;
     }
 
-    const turnId = extractTurnId(item) ?? null;
+    let turnId = extractTurnId(item) ?? null;
+    if (turnId == null && isContextFrameDisplayItem(item)) {
+      turnId = currentTurnId ?? followingTurnIds[index] ?? null;
+    }
     if (turnId !== currentTurnId) {
       flush();
       currentTurnId = turnId;
@@ -815,7 +844,7 @@ export function segmentByTurn(
 
   const missingStatusSegments = [...turnMeta.entries()]
     .filter(([turnId]) => !seenTurnIds.has(turnId))
-    .filter(([, meta]) => meta.activity)
+    .filter(([, meta]) => meta.activity || meta.status !== "active")
     .sort((a, b) => a[1].firstSeq - b[1].firstSeq)
     .map(([turnId, meta]): TurnSegment => ({
       turnId,
@@ -823,6 +852,7 @@ export function segmentByTurn(
       startedAtMs: meta.startedAtMs,
       durationMs: meta.durationMs,
       activity: meta.activity,
+      errorMessage: meta.errorMessage,
       items: [],
       finalOutput: null,
     }));
@@ -845,12 +875,14 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     entries,
     rawEvents,
     historyReplayBoundarySeq,
+    boundTargetKey,
     providerWaitingSeqs,
     isConnected,
     isLoading,
     isReceiving,
     error,
     tokenUsage,
+    refresh,
     reconnect,
     close,
   } = useSessionStream({
@@ -885,10 +917,12 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     rawEntries: entries,
     rawEvents,
     historyReplayBoundarySeq,
+    boundTargetKey,
     isConnected,
     isLoading,
     isReceiving,
     error,
+    refresh,
     reconnect,
     close,
     streamingEntryId,

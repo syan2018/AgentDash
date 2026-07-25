@@ -262,6 +262,16 @@ async fn run_cron_loop(
         }
 
         let now = Utc::now();
+        if let Err(err) = executor.recover_pending(64).await {
+            let context = DiagnosticErrorContext::new("cron.scheduler.recover", "recover_pending");
+            diag_error!(
+                Warn,
+                Subsystem::Cron,
+                context = &context,
+                error = &err,
+                "Routine AgentRun delivery recovery 本轮未完成"
+            );
+        }
         for entry in entries.iter_mut() {
             if now < entry.next_fire {
                 continue;

@@ -94,7 +94,6 @@ DTO 层 `crates/agentdash-api/src/dto/shared_library.rs` 直接透传 `serde_jso
     "model_id": "string?",
     "agent_id": "string?",
     "thinking_level": "ThinkingLevel?",
-    "permission_policy": "string?",
     "system_prompt": "string?",
     "system_prompt_mode": "SystemPromptMode?",
     "capability_directives": ["ToolCapabilityDirective"],

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { parseContextFrame, type ContextFrame } from "../model/contextFrame";
+import {
+  parseContextFrame,
+  type ContextFrame,
+  type ToolSchemaDeltaSection,
+} from "../model/contextFrame";
 import { ContextFrameCard } from "./ContextFrameCard";
+import { ToolSchemaDeltaBody } from "./contextFrame/SectionRenderers";
 
 describe("ContextFrameCard", () => {
   it("默认折叠时仅渲染 header", () => {
@@ -48,6 +53,78 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("mcp:code-analyzer");
     expect(markup).toContain("1 params");
     expect(markup).toContain("Agent 实际原文");
+  });
+
+  it("added 与 changed tool 展开后展示完整 structured parameters schema", () => {
+    const section: ToolSchemaDeltaSection = {
+      kind: "tool_schema_delta",
+      added_tools: [
+        {
+          name: "mcp_code_analyzer_scan_repo",
+          description: "扫描仓库并返回结构化结果",
+          capability_key: "mcp:code-analyzer",
+          source: "mcp:code-analyzer",
+          parameters_schema: {
+            type: "object",
+            properties: {
+              request: {
+                type: "object",
+                properties: {
+                  root: { type: "string" },
+                },
+              },
+              output_format: {
+                type: "string",
+                enum: ["summary", "detailed"],
+              },
+            },
+            required: ["request"],
+          },
+        },
+      ],
+      removed_tools: [],
+      changed_tools: [
+        {
+          name: "workspace_module_invoke",
+          description: "调用 workspace module operation",
+          capability_key: "workspace_module",
+          source: "platform:workspace",
+          parameters_schema: {
+            type: "object",
+            properties: {
+              operation: {
+                type: "object",
+                properties: {
+                  operation_key: { type: "string" },
+                },
+              },
+              mode: {
+                type: "string",
+                enum: ["read", "write"],
+              },
+            },
+            required: ["operation"],
+          },
+        },
+      ],
+    };
+
+    const markup = renderToStaticMarkup(
+      <ToolSchemaDeltaBody section={section} defaultExpandedTools />,
+    );
+
+    expect(markup.match(/aria-expanded="true"/g)).toHaveLength(2);
+    expect(markup).toContain("扫描仓库并返回结构化结果");
+    expect(markup).toContain("调用 workspace module operation");
+    expect(markup).toContain("workspace_module");
+    expect(markup.match(/mcp:code-analyzer/g)).toHaveLength(2);
+    expect(markup).toContain("platform:workspace");
+    expect(markup).toContain("root");
+    expect(markup).toContain("operation_key");
+    expect(markup).toContain("required");
+    expect(markup).toContain("enum");
+    expect(markup).toContain("detailed");
+    expect(markup).toContain("write");
   });
 
   it("assignment_context 解析并渲染 ASN token", () => {

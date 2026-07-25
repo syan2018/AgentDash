@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/shared-library.md","reason":"清理可复用Agent Core的依赖与职责"}
+{"file":".trellis/spec/backend/agent-runtime-native-adapter.md","reason":"迁移Native流式、tool与terminal业务知识"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"实现Native exact context activation"}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"映射Native inner runtime hooks"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/agent-core-executor.md","reason":"Agent Core污染与executor消费链证据"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"Clean Core callback facets与Native exact Hook映射"}
+{"file":".trellis/spec/backend/agent-runtime-native-adapter.md","reason":"实现Native contribution、truthful driver、exact context与Clean Core合同"}

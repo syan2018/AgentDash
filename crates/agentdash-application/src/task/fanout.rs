@@ -55,7 +55,7 @@ impl TaskFanoutCommand {
             selector: TaskFanoutSelector::default(),
             parent_agent_id: None,
             workflow_graph_ref: None,
-            runtime_policy: RuntimePolicy::CreateRuntimeSession,
+            runtime_policy: RuntimePolicy::ProvisionRuntimeThread,
         }
     }
 }
@@ -68,7 +68,6 @@ pub struct TaskFanoutDispatch {
     pub assigned_agent_id: Uuid,
     pub runtime_refs: AgentRuntimeRefs,
     pub subject_execution_ref: agentdash_domain::workflow::SubjectExecutionRef,
-    pub delivery_runtime_ref: Option<Uuid>,
     pub task: LifecycleTaskPlanItem,
 }
 
@@ -167,6 +166,7 @@ pub async fn fanout_tasks(
         let result = dispatcher
             .dispatch_task_subject(SubjectExecutionIntent {
                 project_id: candidate.project_id,
+                project_agent_id: None,
                 source: agentdash_domain::workflow::ExecutionSource::ParentAgent,
                 created_by_user_id: None,
                 subject_ref: SubjectRef::new("task", candidate.task.id),
@@ -202,7 +202,6 @@ pub async fn fanout_tasks(
             assigned_agent_id,
             runtime_refs: result.runtime_refs,
             subject_execution_ref: result.subject_execution_ref,
-            delivery_runtime_ref: result.delivery_runtime_ref,
             task,
         });
     }
@@ -437,7 +436,7 @@ mod tests {
                     subject_ref: intent.subject_ref,
                     association_id: Uuid::new_v4(),
                 },
-                delivery_runtime_ref: Some(Uuid::new_v4()),
+                delivery_runtime_ref: Uuid::new_v4(),
             })
         }
     }
@@ -550,7 +549,7 @@ mod tests {
                 },
                 parent_agent_id: Some(Uuid::new_v4()),
                 workflow_graph_ref: None,
-                runtime_policy: RuntimePolicy::CreateRuntimeSession,
+                runtime_policy: RuntimePolicy::ProvisionRuntimeThread,
             },
         )
         .await

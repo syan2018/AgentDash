@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"最终 AC1-AC21 验收清单。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md","reason":"故障矩阵、dependency gates 与完成定义。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/implement.md","reason":"W9 commands、negative gates 与 handoff。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"最终 Rust/test 质量门。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"最终 frontend 质量门。"}

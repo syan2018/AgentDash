@@ -285,15 +285,9 @@ fn product_tool_definition(
             RuntimeToolPermission::ProductRead,
             RuntimeToolEffect::ReadOnly,
         ),
-        ProductRuntimeToolKind::WorkspaceModuleOperate => (
-            "workspace_module_operate",
-            "Apply a Workspace Module operation through the canonical Product runtime surface.",
-            RuntimeToolPermission::ProductWrite,
-            RuntimeToolEffect::ProductMutation,
-        ),
         ProductRuntimeToolKind::WorkspaceModuleInvoke => (
             "workspace_module_invoke",
-            "Invoke a Workspace Module operation through its declared Product dispatch.",
+            "Invoke an exact Workspace Module OperationRef through the canonical OperationGateway.",
             RuntimeToolPermission::ProductWrite,
             RuntimeToolEffect::ProductMutation,
         ),
@@ -912,7 +906,6 @@ mod tests {
             ProductRuntimeToolKind::CompanionRespond,
             ProductRuntimeToolKind::WorkspaceModuleList,
             ProductRuntimeToolKind::WorkspaceModuleDescribe,
-            ProductRuntimeToolKind::WorkspaceModuleOperate,
             ProductRuntimeToolKind::WorkspaceModuleInvoke,
         ]
         .into_iter()
@@ -936,7 +929,6 @@ mod tests {
                 "companion_respond",
                 "workspace_module_list",
                 "workspace_module_describe",
-                "workspace_module_operate",
                 "workspace_module_invoke",
             ]
         );

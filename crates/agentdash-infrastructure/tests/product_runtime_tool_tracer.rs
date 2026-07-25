@@ -229,13 +229,9 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
     let invoke_service = Arc::new(RecordingProductToolService::new(
         ProductRuntimeToolKind::WorkspaceModuleInvoke,
     ));
-    let operate_service = Arc::new(RecordingProductToolService::new(
-        ProductRuntimeToolKind::WorkspaceModuleOperate,
-    ));
     let services: Vec<Arc<dyn ProductRuntimeToolService>> = vec![
         list_service.clone(),
         describe_service.clone(),
-        operate_service.clone(),
         invoke_service.clone(),
     ];
     let mut executors = product_runtime_tool_catalog(services);
@@ -257,12 +253,6 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
         "workspace_module_describe",
         RuntimeToolPermission::ProductRead,
         RuntimeToolEffect::ReadOnly,
-    );
-    assert_workspace_definition(
-        &definitions,
-        "workspace_module_operate",
-        RuntimeToolPermission::ProductWrite,
-        RuntimeToolEffect::ProductMutation,
     );
     assert_workspace_definition(
         &definitions,
@@ -290,24 +280,6 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
             "workspace-describe-effect",
             "workspace-describe-callback",
             json!({"module_id": "module-1"}),
-        ),
-        (
-            "workspace_module_operate",
-            "workspace-create-effect",
-            "workspace-create-callback",
-            json!({"operation": "canvas.create", "input": {"title": "Tracer"}}),
-        ),
-        (
-            "workspace_module_operate",
-            "workspace-attach-effect",
-            "workspace-attach-callback",
-            json!({"operation": "canvas.attach", "input": {"canvas_mount_id": "tracer"}}),
-        ),
-        (
-            "workspace_module_operate",
-            "workspace-copy-effect",
-            "workspace-copy-callback",
-            json!({"operation": "canvas.copy", "input": {"source_mount_id": "tracer"}}),
         ),
         (
             "workspace_module_invoke",
@@ -361,22 +333,7 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
 
     assert_eq!(list_service.calls.load(Ordering::SeqCst), 1);
     assert_eq!(describe_service.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(operate_service.calls.load(Ordering::SeqCst), 3);
     assert_eq!(invoke_service.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        operate_service
-            .requests
-            .lock()
-            .await
-            .iter()
-            .map(|request| request.arguments["operation"].clone())
-            .collect::<Vec<_>>(),
-        vec![
-            json!("canvas.create"),
-            json!("canvas.attach"),
-            json!("canvas.copy"),
-        ]
-    );
     assert_eq!(
         invoke_service.requests.lock().await[0].context.effect_id,
         "workspace-invoke-effect"
@@ -741,7 +698,6 @@ fn runtime_tool_name(kind: ProductRuntimeToolKind) -> &'static str {
         ProductRuntimeToolKind::CompanionRespond => "companion_respond",
         ProductRuntimeToolKind::WorkspaceModuleList => "workspace_module_list",
         ProductRuntimeToolKind::WorkspaceModuleDescribe => "workspace_module_describe",
-        ProductRuntimeToolKind::WorkspaceModuleOperate => "workspace_module_operate",
         ProductRuntimeToolKind::WorkspaceModuleInvoke => "workspace_module_invoke",
     }
 }

@@ -18,10 +18,21 @@ export interface OpenUserCanvasModuleParams {
   openOrActivate: (typeId: string, uri: string, refreshContent?: boolean) => void;
 }
 
-export function canvasMountIdFromPresentationUri(uri: string): string | null {
+export type ParsedCanvasSurfaceUri =
+  | { kind: "definition"; id: string }
+  | { kind: "interaction"; id: string };
+
+export function parseCanvasSurfaceUri(uri: string): ParsedCanvasSurfaceUri | null {
   const trimmed = uri.trim();
-  if (!isConcreteCanvasPresentationUri(trimmed)) return null;
-  return trimmed.slice("canvas://".length).trim() || null;
+  if (isConcreteCanvasPresentationUri(trimmed)) {
+    const id = trimmed.slice("canvas://".length).trim();
+    return id ? { kind: "definition", id } : null;
+  }
+  if (trimmed.startsWith("interaction://")) {
+    const id = trimmed.slice("interaction://".length).trim();
+    return id ? { kind: "interaction", id } : null;
+  }
+  return null;
 }
 
 export function selectCanvasModuleOpenOptions(

@@ -24,15 +24,16 @@ fn product_control_plane_routes_expose_runtime_backed_capabilities() {
     let _: fn(Arc<AppState>) -> Router = routes::create_router;
 
     assert_routes(
-        routes::canvases::router(),
+        routes::interactions::router(),
         &[
-            "/projects/{project_id}/canvases",
-            "/canvases/{id}",
-            "/canvases/{id}/promote-extension",
-            "/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-observation",
-            "/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/interaction-snapshot",
-            "/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-snapshot",
-            "/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-invoke",
+            "/projects/{project_id}/interaction-definitions/canvas",
+            "/interaction-definitions/{definition_id}",
+            "/interaction-definitions/{definition_id}/promote-extension",
+            "/interaction-definitions/{definition_id}/instances",
+            "/projects/{project_id}/interaction-instances",
+            "/interaction-instances/{instance_id}",
+            "/interaction-instances/{instance_id}/commands",
+            "/interaction-instances/{instance_id}/presentation",
         ],
     );
     assert_routes(

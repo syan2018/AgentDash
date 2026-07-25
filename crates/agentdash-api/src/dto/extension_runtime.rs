@@ -7,6 +7,7 @@ use agentdash_domain::shared_library::{
     ExtensionBundleKind, ExtensionCommandHandler, ExtensionDependencyDeclaration,
     ExtensionFlagType, ExtensionPermissionAccess, ExtensionPermissionDeclaration,
     ExtensionProcessPermissionAccess, ExtensionRendererDeclaration, ExtensionRuntimeActionKind,
+    ExtensionUiComponentRendererDeclaration, ExtensionUiComponentSandboxProfile,
     ExtensionWorkspaceTabRendererDeclaration,
 };
 
@@ -22,9 +23,11 @@ pub use agentdash_contracts::extension_runtime::{
     ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
     ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
     ExtensionPermissionDeclarationResponse, ExtensionPermissionProjectionResponse,
-    ExtensionProcessPermissionAccessResponse, ExtensionProtocolChannelMethodProjectionResponse,
-    ExtensionProtocolChannelProjectionResponse, ExtensionRuntimeActionKindResponse,
+    ExtensionProcessPermissionAccessResponse, ExtensionProtocolMethodProjectionResponse,
+    ExtensionProtocolProjectionResponse, ExtensionRuntimeActionKindResponse,
     ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeProjectionResponse,
+    ExtensionUiComponentProjectionResponse, ExtensionUiComponentRendererResponse,
+    ExtensionUiComponentSandboxProfileResponse, ExtensionUiComponentSizingResponse,
     ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
 };
@@ -130,19 +133,19 @@ pub fn extension_runtime_projection_response(
                 permissions: action.permissions,
             })
             .collect(),
-        protocol_channels: projection
-            .protocol_channels
+        protocols: projection
+            .protocols
             .into_iter()
-            .map(|channel| ExtensionProtocolChannelProjectionResponse {
-                extension_key: channel.extension_key,
-                extension_id: channel.extension_id,
-                channel_key: channel.channel_key,
-                version: channel.version,
-                description: channel.description,
-                methods: channel
+            .map(|protocol| ExtensionProtocolProjectionResponse {
+                extension_key: protocol.extension_key,
+                extension_id: protocol.extension_id,
+                protocol_key: protocol.protocol_key,
+                version: protocol.version,
+                description: protocol.description,
+                methods: protocol
                     .methods
                     .into_iter()
-                    .map(|method| ExtensionProtocolChannelMethodProjectionResponse {
+                    .map(|method| ExtensionProtocolMethodProjectionResponse {
                         name: method.name,
                         description: method.description,
                         input_schema: method.input_schema,
@@ -174,9 +177,6 @@ pub fn extension_runtime_projection_response(
                     ExtensionWorkspaceTabRendererDeclaration::Webview { entry } => {
                         ExtensionWorkspaceTabRendererResponse::Webview { entry }
                     }
-                    ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => {
-                        ExtensionWorkspaceTabRendererResponse::CanvasPanel { entry }
-                    }
                 },
                 loadability: ExtensionWorkspaceTabLoadabilityResponse {
                     available: tab.loadability.available,
@@ -184,12 +184,53 @@ pub fn extension_runtime_projection_response(
                         ExtensionWorkspaceTabLoadabilityMode::ExtensionHost => {
                             ExtensionWorkspaceTabLoadabilityModeResponse::ExtensionHost
                         }
-                        ExtensionWorkspaceTabLoadabilityMode::UiOnly => {
-                            ExtensionWorkspaceTabLoadabilityModeResponse::UiOnly
-                        }
                     },
                     reason: tab.loadability.reason,
                 },
+            })
+            .collect(),
+        ui_components: projection
+            .ui_components
+            .into_iter()
+            .map(|component| ExtensionUiComponentProjectionResponse {
+                extension_key: component.extension_key,
+                extension_id: component.extension_id,
+                component_key: component.descriptor.component_key,
+                contract_version: component.descriptor.contract_version,
+                renderer: match component.descriptor.renderer {
+                    ExtensionUiComponentRendererDeclaration::Iframe { entry } => {
+                        ExtensionUiComponentRendererResponse::Iframe { entry }
+                    }
+                },
+                props_schema: component.descriptor.props_schema,
+                events_schema: component.descriptor.events_schema,
+                state_projection_schema: component.descriptor.state_projection_schema,
+                slots: component.descriptor.slots,
+                sizing: ExtensionUiComponentSizingResponse {
+                    min_width: component.descriptor.sizing.min_width,
+                    min_height: component.descriptor.sizing.min_height,
+                    max_width: component.descriptor.sizing.max_width,
+                    max_height: component.descriptor.sizing.max_height,
+                },
+                sandbox_profile: match component.descriptor.sandbox_profile {
+                    ExtensionUiComponentSandboxProfile::IsolatedV1 => {
+                        ExtensionUiComponentSandboxProfileResponse::IsolatedV1
+                    }
+                },
+                package_artifact: component.package_artifact.map(|artifact| {
+                    ExtensionPackageArtifactRefResponse {
+                        artifact_id: artifact.artifact_id.to_string(),
+                        package_name: artifact.package_name,
+                        package_version: artifact.package_version,
+                        asset_version: artifact.asset_version,
+                        source_version: artifact.source_version,
+                        storage_ref: artifact.storage_ref,
+                        archive_digest: artifact.archive_digest,
+                        manifest_digest: artifact.manifest_digest,
+                    }
+                }),
+                available: component.available,
+                reason: component.reason,
             })
             .collect(),
         permissions: projection
@@ -287,11 +328,17 @@ fn extension_operation_dispatch_response(
         ExtensionGeneratedOperationDispatch::RuntimeAction { action_key } => {
             ExtensionGeneratedOperationDispatchResponse::RuntimeAction { action_key }
         }
-        ExtensionGeneratedOperationDispatch::ProtocolChannel {
-            channel_key,
+        ExtensionGeneratedOperationDispatch::ProtocolMethod {
+            provider_extension_key,
+            provider_extension_id,
+            protocol_key,
+            protocol_version,
             method,
-        } => ExtensionGeneratedOperationDispatchResponse::ProtocolChannel {
-            channel_key,
+        } => ExtensionGeneratedOperationDispatchResponse::ProtocolMethod {
+            provider_extension_key,
+            provider_extension_id,
+            protocol_key,
+            protocol_version,
             method,
         },
         ExtensionGeneratedOperationDispatch::BackendService { service_key, route } => {
@@ -310,11 +357,11 @@ fn extension_fetch_route_target_response(
         ExtensionFetchRouteTargetProjection::RuntimeAction { action_key } => {
             ExtensionFetchRouteTargetResponse::RuntimeAction { action_key }
         }
-        ExtensionFetchRouteTargetProjection::ProtocolChannel {
-            channel_key,
+        ExtensionFetchRouteTargetProjection::ProtocolMethod {
+            protocol_key,
             method,
-        } => ExtensionFetchRouteTargetResponse::ProtocolChannel {
-            channel_key,
+        } => ExtensionFetchRouteTargetResponse::ProtocolMethod {
+            protocol_key,
             method,
         },
         ExtensionFetchRouteTargetProjection::BackendService { service_key, route } => {
@@ -357,11 +404,11 @@ fn extension_permission_response(
         ExtensionPermissionDeclaration::RuntimeAction { action_key } => {
             ExtensionPermissionDeclarationResponse::RuntimeAction { action_key }
         }
-        ExtensionPermissionDeclaration::ExtensionChannel {
-            channel_key,
+        ExtensionPermissionDeclaration::ExtensionProtocol {
+            protocol_key,
             methods,
-        } => ExtensionPermissionDeclarationResponse::ExtensionChannel {
-            channel_key,
+        } => ExtensionPermissionDeclarationResponse::ExtensionProtocol {
+            protocol_key,
             methods,
         },
         ExtensionPermissionDeclaration::BackendService {
@@ -381,7 +428,7 @@ fn extension_dependency_response(
         alias: dependency.alias,
         extension_id: dependency.extension_id,
         version: dependency.version,
-        channels: dependency.channels,
+        protocols: dependency.protocols,
     }
 }
 

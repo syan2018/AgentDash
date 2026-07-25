@@ -15,8 +15,8 @@ const hostApiClient = createHostApiClient({
     return runtime?.invocationContextParams(extensionKey) ?? {
       extension_key: extensionKey,
       action_key: null,
-      channel_key: null,
-      channel_method: null,
+      protocol_key: null,
+      protocol_method: null,
     };
   },
 });

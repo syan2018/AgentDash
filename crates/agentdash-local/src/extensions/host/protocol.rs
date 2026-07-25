@@ -93,9 +93,9 @@ mod tests {
         let channel = RunnerRequest {
             kind: "request",
             id: "local-3",
-            method: "invoke_channel",
+            method: "invoke_protocol",
             params: json!({
-                "channel_key": "local-hello.api",
+                "protocol_key": "local-hello.api",
                 "method": "echo",
                 "input": { "source": "panel" },
             }),
@@ -107,7 +107,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_string(&channel).expect("serialize channel"),
-            r#"{"kind":"request","id":"local-3","method":"invoke_channel","params":{"channel_key":"local-hello.api","method":"echo","input":{"source":"panel"}}}"#,
+            r#"{"kind":"request","id":"local-3","method":"invoke_protocol","params":{"protocol_key":"local-hello.api","method":"echo","input":{"source":"panel"}}}"#,
         );
     }
 

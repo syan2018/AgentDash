@@ -1107,6 +1107,112 @@ impl InlineMountFilePayload {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionUiComponentSizing {
+    pub min_width: u32,
+    pub min_height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_height: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionUiComponentRendererDeclaration {
+    Iframe { entry: String },
+}
+
+impl ExtensionUiComponentRendererDeclaration {
+    pub fn entry(&self) -> &str {
+        match self {
+            Self::Iframe { entry } => entry,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionUiComponentSandboxProfile {
+    IsolatedV1,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionUiComponentDefinition {
+    pub component_key: String,
+    pub contract_version: u16,
+    pub renderer: ExtensionUiComponentRendererDeclaration,
+    pub props_schema: Value,
+    #[serde(default)]
+    pub events_schema: BTreeMap<String, Value>,
+    pub state_projection_schema: Value,
+    #[serde(default)]
+    pub slots: Vec<String>,
+    pub sizing: ExtensionUiComponentSizing,
+    pub sandbox_profile: ExtensionUiComponentSandboxProfile,
+}
+
+impl ExtensionUiComponentDefinition {
+    fn validate(&self) -> Result<(), DomainError> {
+        validate_extension_qualified_id(
+            "extension_template.ui_components[].component_key",
+            &self.component_key,
+        )?;
+        if self.contract_version != 1 {
+            return Err(DomainError::InvalidConfig(
+                "extension_template.ui_components[].contract_version 必须为 1".to_string(),
+            ));
+        }
+        require_non_empty(
+            "extension_template.ui_components[].renderer.entry",
+            self.renderer.entry(),
+        )?;
+        validate_json_schema(
+            "extension_template.ui_components[].props_schema",
+            &self.props_schema,
+        )?;
+        validate_json_schema(
+            "extension_template.ui_components[].state_projection_schema",
+            &self.state_projection_schema,
+        )?;
+        for (event_key, schema) in &self.events_schema {
+            validate_extension_qualified_id(
+                "extension_template.ui_components[].events_schema key",
+                event_key,
+            )?;
+            validate_json_schema(
+                "extension_template.ui_components[].events_schema value",
+                schema,
+            )?;
+        }
+        let mut slots = BTreeSet::new();
+        for slot in &self.slots {
+            validate_extension_qualified_id("extension_template.ui_components[].slots[]", slot)?;
+            if !slots.insert(slot) {
+                return Err(DomainError::InvalidConfig(format!(
+                    "extension_template.ui_components[].slots[] 重复: {slot}"
+                )));
+            }
+        }
+        if self.sizing.min_width == 0
+            || self.sizing.min_height == 0
+            || self
+                .sizing
+                .max_width
+                .is_some_and(|maximum| maximum < self.sizing.min_width)
+            || self
+                .sizing
+                .max_height
+                .is_some_and(|maximum| maximum < self.sizing.min_height)
+        {
+            return Err(DomainError::InvalidConfig(
+                "extension_template.ui_components[].sizing 边界无效".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExtensionTemplatePayload {
     pub manifest_version: String,
@@ -1126,11 +1232,13 @@ pub struct ExtensionTemplatePayload {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub runtime_actions: Vec<ExtensionRuntimeActionDefinition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub protocol_channels: Vec<ExtensionProtocolChannelDefinition>,
+    pub protocols: Vec<ExtensionProtocolDefinition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extension_dependencies: Vec<ExtensionDependencyDeclaration>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspace_tabs: Vec<ExtensionWorkspaceTabDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ui_components: Vec<ExtensionUiComponentDefinition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub permissions: Vec<ExtensionPermissionDeclaration>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1167,7 +1275,7 @@ impl ExtensionTemplatePayload {
         for action in &self.runtime_actions {
             action.validate()?;
         }
-        for channel in &self.protocol_channels {
+        for channel in &self.protocols {
             channel.validate()?;
         }
         for dependency in &self.extension_dependencies {
@@ -1175,6 +1283,16 @@ impl ExtensionTemplatePayload {
         }
         for tab in &self.workspace_tabs {
             tab.validate()?;
+        }
+        let mut component_keys = BTreeSet::new();
+        for component in &self.ui_components {
+            component.validate()?;
+            if !component_keys.insert(&component.component_key) {
+                return Err(DomainError::InvalidConfig(format!(
+                    "extension_template.ui_components[].component_key 重复: {}",
+                    component.component_key
+                )));
+            }
         }
         for permission in &self.permissions {
             permission.validate()?;
@@ -1196,8 +1314,9 @@ impl ExtensionTemplatePayload {
 
     pub fn requires_package_artifact(&self) -> bool {
         !self.runtime_actions.is_empty()
-            || !self.protocol_channels.is_empty()
+            || !self.protocols.is_empty()
             || !self.workspace_tabs.is_empty()
+            || !self.ui_components.is_empty()
             || !self.backend_services.is_empty()
             || !self.bundles.is_empty()
     }
@@ -1322,8 +1441,8 @@ fn classify_extension_permission_key(permission: &str) -> &'static str {
         "process_env"
     } else if permission.starts_with("runtime.invoke") {
         "runtime_action"
-    } else if permission.starts_with("extension.channel.invoke") {
-        "extension_channel"
+    } else if permission.starts_with("extension.protocol.invoke") {
+        "extension_protocol"
     } else if permission.starts_with("backend_service") {
         "backend_service"
     } else {
@@ -1496,31 +1615,28 @@ impl ExtensionRuntimeActionDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ExtensionProtocolChannelDefinition {
-    pub channel_key: String,
+pub struct ExtensionProtocolDefinition {
+    pub protocol_key: String,
     pub version: String,
     pub description: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub methods: Vec<ExtensionProtocolChannelMethodDefinition>,
+    pub methods: Vec<ExtensionProtocolMethodDefinition>,
 }
 
-impl ExtensionProtocolChannelDefinition {
+impl ExtensionProtocolDefinition {
     fn validate(&self) -> Result<(), DomainError> {
         validate_namespaced_extension_key(
-            "extension_template.protocol_channels[].channel_key",
-            &self.channel_key,
+            "extension_template.protocols[].protocol_key",
+            &self.protocol_key,
         )?;
+        require_non_empty("extension_template.protocols[].version", &self.version)?;
         require_non_empty(
-            "extension_template.protocol_channels[].version",
-            &self.version,
-        )?;
-        require_non_empty(
-            "extension_template.protocol_channels[].description",
+            "extension_template.protocols[].description",
             &self.description,
         )?;
         if self.methods.is_empty() {
             return Err(DomainError::InvalidConfig(
-                "extension_template.protocol_channels[].methods 不能为空".to_string(),
+                "extension_template.protocols[].methods 不能为空".to_string(),
             ));
         }
         for method in &self.methods {
@@ -1531,7 +1647,7 @@ impl ExtensionProtocolChannelDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ExtensionProtocolChannelMethodDefinition {
+pub struct ExtensionProtocolMethodDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
@@ -1540,27 +1656,24 @@ pub struct ExtensionProtocolChannelMethodDefinition {
     pub permissions: Vec<String>,
 }
 
-impl ExtensionProtocolChannelMethodDefinition {
+impl ExtensionProtocolMethodDefinition {
     fn validate(&self) -> Result<(), DomainError> {
-        validate_protocol_method_name(
-            "extension_template.protocol_channels[].methods[].name",
-            &self.name,
-        )?;
+        validate_protocol_method_name("extension_template.protocols[].methods[].name", &self.name)?;
         require_non_empty(
-            "extension_template.protocol_channels[].methods[].description",
+            "extension_template.protocols[].methods[].description",
             &self.description,
         )?;
         validate_json_schema(
-            "extension_template.protocol_channels[].methods[].input_schema",
+            "extension_template.protocols[].methods[].input_schema",
             &self.input_schema,
         )?;
         validate_json_schema(
-            "extension_template.protocol_channels[].methods[].output_schema",
+            "extension_template.protocols[].methods[].output_schema",
             &self.output_schema,
         )?;
         for permission in &self.permissions {
             validate_permission_key(
-                "extension_template.protocol_channels[].methods[].permissions[]",
+                "extension_template.protocols[].methods[].permissions[]",
                 permission,
             )?;
         }
@@ -1574,7 +1687,7 @@ pub struct ExtensionDependencyDeclaration {
     pub extension_id: String,
     pub version: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub channels: Vec<String>,
+    pub protocols: Vec<String>,
 }
 
 impl ExtensionDependencyDeclaration {
@@ -1591,14 +1704,14 @@ impl ExtensionDependencyDeclaration {
             "extension_template.extension_dependencies[].version",
             &self.version,
         )?;
-        if self.channels.is_empty() {
+        if self.protocols.is_empty() {
             return Err(DomainError::InvalidConfig(
-                "extension_template.extension_dependencies[].channels 不能为空".to_string(),
+                "extension_template.extension_dependencies[].protocols 不能为空".to_string(),
             ));
         }
-        for channel in &self.channels {
+        for channel in &self.protocols {
             validate_namespaced_extension_key(
-                "extension_template.extension_dependencies[].channels[]",
+                "extension_template.extension_dependencies[].protocols[]",
                 channel,
             )?;
         }
@@ -1633,16 +1746,12 @@ impl ExtensionWorkspaceTabDefinition {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionWorkspaceTabRendererDeclaration {
     Webview { entry: String },
-    CanvasPanel { entry: String },
 }
 
 impl ExtensionWorkspaceTabRendererDeclaration {
     fn validate(&self) -> Result<(), DomainError> {
         match self {
             Self::Webview { entry } => {
-                require_non_empty("extension_template.workspace_tabs[].renderer.entry", entry)
-            }
-            Self::CanvasPanel { entry } => {
                 require_non_empty("extension_template.workspace_tabs[].renderer.entry", entry)
             }
         }
@@ -1686,8 +1795,8 @@ pub enum ExtensionPermissionDeclaration {
     RuntimeAction {
         action_key: String,
     },
-    ExtensionChannel {
-        channel_key: String,
+    ExtensionProtocol {
+        protocol_key: String,
         methods: Vec<String>,
     },
     BackendService {
@@ -1710,13 +1819,13 @@ impl ExtensionPermissionDeclaration {
                 "extension_template.permissions[].action_key",
                 action_key,
             ),
-            Self::ExtensionChannel {
-                channel_key,
+            Self::ExtensionProtocol {
+                protocol_key,
                 methods,
             } => {
                 validate_namespaced_extension_key(
-                    "extension_template.permissions[].channel_key",
-                    channel_key,
+                    "extension_template.permissions[].protocol_key",
+                    protocol_key,
                 )?;
                 if methods.is_empty() {
                     return Err(DomainError::InvalidConfig(
@@ -1758,8 +1867,8 @@ pub enum ExtensionGeneratedOperationDispatch {
     RuntimeAction {
         action_key: String,
     },
-    ProtocolChannel {
-        channel_key: String,
+    ProtocolMethod {
+        protocol_key: String,
         #[serde(alias = "method_name")]
         method: String,
     },
@@ -1776,13 +1885,13 @@ impl ExtensionGeneratedOperationDispatch {
                 "extension_template.operation_catalog[].dispatch.action_key",
                 action_key,
             ),
-            Self::ProtocolChannel {
-                channel_key,
+            Self::ProtocolMethod {
+                protocol_key,
                 method,
             } => {
                 validate_namespaced_extension_key(
-                    "extension_template.operation_catalog[].dispatch.channel_key",
-                    channel_key,
+                    "extension_template.operation_catalog[].dispatch.protocol_key",
+                    protocol_key,
                 )?;
                 validate_protocol_method_name(
                     "extension_template.operation_catalog[].dispatch.method",
@@ -1888,12 +1997,12 @@ pub enum ExtensionFetchRouteTargetDefinition {
     RuntimeAction {
         action_key: String,
     },
-    CustomChannel {
-        channel_key: String,
+    CustomProtocol {
+        protocol_key: String,
         method: String,
     },
-    ProtocolChannel {
-        channel_key: String,
+    ProtocolMethod {
+        protocol_key: String,
         method: String,
     },
     BackendService {
@@ -1934,17 +2043,17 @@ impl ExtensionFetchRouteTargetDefinition {
                 "extension_template.fetch_routes[].target.action_key",
                 action_key,
             ),
-            Self::CustomChannel {
-                channel_key,
+            Self::CustomProtocol {
+                protocol_key,
                 method,
             }
-            | Self::ProtocolChannel {
-                channel_key,
+            | Self::ProtocolMethod {
+                protocol_key,
                 method,
             } => {
                 validate_namespaced_extension_key(
-                    "extension_template.fetch_routes[].target.channel_key",
-                    channel_key,
+                    "extension_template.fetch_routes[].target.protocol_key",
+                    protocol_key,
                 )?;
                 validate_protocol_method_name(
                     "extension_template.fetch_routes[].target.method",
@@ -2539,11 +2648,11 @@ mod tests {
                     "http.fetch:gitlab.example",
                     "env.read:GITLAB_TOKEN",
                     "process.exec",
-                    "extension.channel.invoke:gitlab-review.api.listMergeRequests"
+                    "extension.protocol.invoke:gitlab-review.api.listMergeRequests"
                 ]
             }],
-            "protocol_channels": [{
-                "channel_key": "gitlab-review.api",
+            "protocols": [{
+                "protocol_key": "gitlab-review.api",
                 "version": "1.0.0",
                 "description": "GitLab review API channel",
                 "methods": [{
@@ -2558,7 +2667,7 @@ mod tests {
                 "alias": "gitlab",
                 "extension_id": "gitlab-review",
                 "version": "^1.0.0",
-                "channels": ["gitlab-review.api"]
+                "protocols": ["gitlab-review.api"]
             }],
             "workspace_tabs": [{
                 "type_id": "gitlab-review.summary-panel",
@@ -2581,8 +2690,8 @@ mod tests {
                 "kind": "process",
                 "access": "execute"
             }, {
-                "kind": "extension_channel",
-                "channel_key": "gitlab-review.api",
+                "kind": "extension_protocol",
+                "protocol_key": "gitlab-review.api",
                 "methods": ["listMergeRequests"]
             }],
             "bundles": [{
@@ -2626,9 +2735,9 @@ mod tests {
         }));
         assert!(runtime_action.requires_package_artifact());
 
-        let protocol_channel = extension_template_from_json(json!({
-            "protocol_channels": [{
-                "channel_key": "demo.api",
+        let protocol_method = extension_template_from_json(json!({
+            "protocols": [{
+                "protocol_key": "demo.api",
                 "version": "1.0.0",
                 "description": "Demo API",
                 "methods": [{
@@ -2639,7 +2748,7 @@ mod tests {
                 }]
             }]
         }));
-        assert!(protocol_channel.requires_package_artifact());
+        assert!(protocol_method.requires_package_artifact());
 
         let workspace_tab = extension_template_from_json(json!({
             "workspace_tabs": [{
@@ -2855,8 +2964,8 @@ mod tests {
                     "version": "0.1.0"
                 },
                 "asset_version": "0.1.0",
-                "protocol_channels": [{
-                    "channel_key": "bad.api",
+                "protocols": [{
+                    "protocol_key": "bad.api",
                     "version": "1.0.0",
                     "description": "Bad API",
                     "methods": [{
@@ -2892,6 +3001,68 @@ mod tests {
         {
             LibraryAssetPayload::ExtensionTemplate(payload) => payload,
             other => panic!("unexpected payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extension_ui_component_contract_is_versioned_and_requires_package_artifact() {
+        let payload = extension_template_from_json(json!({
+            "ui_components": [{
+                "component_key": "demo.review-card",
+                "contract_version": 1,
+                "renderer": { "kind": "iframe", "entry": "dist/components/review-card/index.html" },
+                "props_schema": { "type": "object" },
+                "events_schema": { "review.submit": { "type": "object" } },
+                "state_projection_schema": true,
+                "slots": ["review.actions"],
+                "sizing": { "min_width": 320, "min_height": 180, "max_width": 960 },
+                "sandbox_profile": "isolated_v1"
+            }]
+        }));
+        assert!(payload.requires_package_artifact());
+        assert_eq!(payload.ui_components[0].contract_version, 1);
+    }
+
+    #[test]
+    fn extension_ui_component_rejects_unversioned_or_invalid_sizing_contract() {
+        for component in [
+            json!({
+                "component_key": "demo.review-card",
+                "contract_version": 2,
+                "renderer": { "kind": "iframe", "entry": "dist/component.html" },
+                "props_schema": true,
+                "events_schema": {},
+                "state_projection_schema": true,
+                "slots": [],
+                "sizing": { "min_width": 160, "min_height": 120 },
+                "sandbox_profile": "isolated_v1"
+            }),
+            json!({
+                "component_key": "demo.review-card",
+                "contract_version": 1,
+                "renderer": { "kind": "iframe", "entry": "dist/component.html" },
+                "props_schema": true,
+                "events_schema": {},
+                "state_projection_schema": true,
+                "slots": [],
+                "sizing": { "min_width": 320, "min_height": 120, "max_width": 160 },
+                "sandbox_profile": "isolated_v1"
+            }),
+        ] {
+            let mut payload = json!({
+                "manifest_version": "2",
+                "extension_id": "demo",
+                "package": { "name": "@agentdash/demo", "version": "0.1.0" },
+                "asset_version": "0.1.0",
+                "ui_components": [component]
+            });
+            assert!(
+                LibraryAssetPayload::from_value(
+                    LibraryAssetType::ExtensionTemplate,
+                    payload.take(),
+                )
+                .is_err()
+            );
         }
     }
 
@@ -2932,9 +3103,10 @@ mod tests {
                 output_schema: json!({}),
                 permissions: action_permissions,
             }],
-            protocol_channels: vec![],
+            protocols: vec![],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
+            ui_components: vec![],
             permissions,
             fetch_routes: vec![],
             operation_catalog: vec![],

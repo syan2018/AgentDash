@@ -141,7 +141,6 @@ fn authorize_surface(
         | "companion_respond"
         | "workspace_module_list"
         | "workspace_module_describe"
-        | "workspace_module_operate"
         | "workspace_module_invoke"
         | "workspace_module_present" => RuntimeToolResourceGrant::Product,
         name if name.starts_with("mcp_") => RuntimeToolResourceGrant::Product,

@@ -12,6 +12,7 @@ members = [
     "crates/agentdash-domain",
     "crates/agentdash-application-ports",
     "crates/agentdash-application-extension-gateway",
+    "crates/agentdash-application-operation-gateway",
     "crates/agentdash-application-vfs",
     "crates/agentdash-application-skill",
     "crates/agentdash-application-agentrun",
@@ -111,6 +112,7 @@ agentdash-integration-remote-runtime = { path = "crates/agentdash-integration-re
 agentdash-agent-runtime-test-support = { path = "crates/agentdash-agent-runtime-test-support" }
 agentdash-application-ports = { path = "crates/agentdash-application-ports" }
 agentdash-application-extension-gateway = { path = "crates/agentdash-application-extension-gateway" }
+agentdash-application-operation-gateway = { path = "crates/agentdash-application-operation-gateway" }
 agentdash-application-vfs = { path = "crates/agentdash-application-vfs" }
 agentdash-application-skill = { path = "crates/agentdash-application-skill" }
 agentdash-application-agentrun = { path = "crates/agentdash-application-agentrun" }

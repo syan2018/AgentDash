@@ -15,7 +15,6 @@ pub enum ProductRuntimeToolKind {
     CompanionRespond,
     WorkspaceModuleList,
     WorkspaceModuleDescribe,
-    WorkspaceModuleOperate,
     WorkspaceModuleInvoke,
 }
 

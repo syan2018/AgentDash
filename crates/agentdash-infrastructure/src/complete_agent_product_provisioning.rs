@@ -1232,7 +1232,6 @@ fn static_tool_enabled(capability_state: &CapabilityState, name: &str) -> bool {
         "task_read" | "task_write" => ToolCluster::Task,
         "workspace_module_list"
         | "workspace_module_describe"
-        | "workspace_module_operate"
         | "workspace_module_invoke"
         | "workspace_module_present" => ToolCluster::WorkspaceModule,
         "companion_request" | "companion_respond" => ToolCluster::Collaboration,
@@ -1625,14 +1624,14 @@ mod tests {
             .skill
             .skills
             .push(agentdash_platform_spi::SkillEntry {
-                name: "canvas-system".to_owned(),
-                capability_key: "workspace/canvas-system".to_owned(),
+                name: "workspace-module-system".to_owned(),
+                capability_key: "workspace/workspace-module-system".to_owned(),
                 provider_key: "workspace".to_owned(),
-                local_name: "canvas-system".to_owned(),
-                display_name: Some("Canvas".to_owned()),
-                description: "Create and edit Canvas modules.".to_owned(),
-                file_path: "lifecycle://skills/canvas-system/SKILL.md".to_owned(),
-                base_dir: Some("lifecycle://skills/canvas-system".to_owned()),
+                local_name: "workspace-module-system".to_owned(),
+                display_name: Some("Workspace Module".to_owned()),
+                description: "Discover and invoke Workspace Module operations.".to_owned(),
+                file_path: "lifecycle://skills/workspace-module-system/SKILL.md".to_owned(),
+                base_dir: Some("lifecycle://skills/workspace-module-system".to_owned()),
                 exposure: agentdash_platform_spi::SkillContextExposure::DefaultExposed,
                 disable_model_invocation: false,
             });
@@ -1653,8 +1652,8 @@ mod tests {
                 text,
                 presentation: AgentSurfaceInstructionPresentation::CapabilityManifest { manifest },
             } if channel == "capabilities"
-                && text.contains("Canvas")
-                && text.contains("lifecycle://skills/canvas-system/SKILL.md")
+                && text.contains("Workspace Module")
+                && text.contains("lifecycle://skills/workspace-module-system/SKILL.md")
                 && text.contains("agentdash-workflow-tools")
                 && manifest.skills.len() == 1
                 && manifest.mcp_servers.len() == 1

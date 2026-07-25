@@ -16,9 +16,9 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
     PostgresAgentLineageRepository, PostgresAuthSessionRepository,
-    PostgresBackendExecutionLeaseRepository, PostgresBackendRepository, PostgresCanvasRepository,
-    PostgresCanvasRuntimeStateRepository, PostgresExtensionPackageArtifactRepository,
-    PostgresInlineFileRepository, PostgresLifecycleAgentRepository,
+    PostgresBackendExecutionLeaseRepository, PostgresBackendRepository,
+    PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
+    PostgresInteractionRepository, PostgresLifecycleAgentRepository,
     PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
     PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
     PostgresMcpPresetRepository, PostgresProjectAgentRepository,
@@ -80,9 +80,7 @@ pub(crate) async fn build_repositories(
         .map_err(|error| anyhow::anyhow!("{error}"))?;
 
     let project_repo = Arc::new(PostgresProjectRepository::new(pool.clone()));
-    let canvas_repo = Arc::new(PostgresCanvasRepository::new(pool.clone()));
-    let canvas_runtime_state_repo =
-        Arc::new(PostgresCanvasRuntimeStateRepository::new(pool.clone()));
+    let interaction_repo = Arc::new(PostgresInteractionRepository::new(pool.clone()));
     let workspace_repo = Arc::new(PostgresWorkspaceRepository::new(pool.clone()));
     let story_repo = Arc::new(PostgresStoryRepository::new(pool.clone()));
     let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
@@ -175,8 +173,11 @@ pub(crate) async fn build_repositories(
 
     let repos = RepositorySet {
         project_repo,
-        canvas_repo,
-        canvas_runtime_state_repo,
+        interaction_definition_repo: interaction_repo.clone(),
+        interaction_instance_repo: interaction_repo.clone(),
+        interaction_command_transaction: interaction_repo.clone(),
+        interaction_event_repo: interaction_repo.clone(),
+        interaction_presentation_repo: interaction_repo,
         workspace_repo,
         story_repo,
         state_change_repo,

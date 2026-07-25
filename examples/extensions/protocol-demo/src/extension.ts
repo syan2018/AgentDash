@@ -3,7 +3,7 @@ import { defineExtension, type JsonObject, type JsonValue } from "@agentdash/ext
 import { DemoProtocolClient, asRecord } from "./protocol/demo-client";
 import {
   PROTOCOL_DEMO_ACTIONS,
-  PROTOCOL_DEMO_CHANNEL_KEY,
+  PROTOCOL_DEMO_PROTOCOL_KEY,
 } from "./shared/schema";
 
 export default defineExtension({
@@ -22,20 +22,20 @@ export default defineExtension({
     ctx.permissions.require({ kind: "env", names: ["PATH"], access: "read" });
     ctx.permissions.require({ kind: "process", access: "execute" });
     ctx.permissions.require({
-      kind: "extension_channel",
-      channel_key: PROTOCOL_DEMO_CHANNEL_KEY,
+      kind: "extension_protocol",
+      protocol_key: PROTOCOL_DEMO_PROTOCOL_KEY,
       methods: ["greet", "inspectWorkspace", "runShell"],
     });
 
     const client = new DemoProtocolClient(ctx.api);
 
-    ctx.channels.register({
-      channel_key: "api",
+    ctx.protocols.register({
+      protocol_key: "api",
       version: "1.0.0",
       description: "Protocol Demo API channel",
       methods: {
         greet: {
-          description: "Return a greeting from the provider channel",
+          description: "Return a greeting from the provider protocol",
           input_schema: true,
           output_schema: true,
           invoke(input: JsonValue) {
@@ -43,7 +43,7 @@ export default defineExtension({
           },
         },
         inspectWorkspace: {
-          description: "Use workspace VFS through the provider channel",
+          description: "Use workspace VFS through the provider protocol",
           input_schema: true,
           output_schema: true,
           permissions: ["workspace.vfs.write", "workspace.vfs.read", "workspace.vfs.list"],
@@ -52,7 +52,7 @@ export default defineExtension({
           },
         },
         runShell: {
-          description: "Run a trusted local shell command through the provider channel",
+          description: "Run a trusted local shell command through the provider protocol",
           input_schema: true,
           output_schema: true,
           permissions: ["process.shell", "env.read:PATH"],
@@ -111,20 +111,20 @@ export default defineExtension({
     });
 
     ctx.runtime.registerAction<JsonObject, JsonObject>({
-      action_key: PROTOCOL_DEMO_ACTIONS.consumeDemoChannel,
+      action_key: PROTOCOL_DEMO_ACTIONS.consumeDemoProtocol,
       kind: "session_runtime",
-      description: "Consume the extension's own protocol channel through the self shortcut",
+      description: "Consume the extension's own protocol through the self shortcut",
       input_schema: true,
       output_schema: true,
       permissions: [
-        "extension.channel.invoke:protocol-demo.api.greet",
-        "extension.channel.invoke:protocol-demo.api.runShell",
+        "extension.protocol.invoke:protocol-demo.api.greet",
+        "extension.protocol.invoke:protocol-demo.api.runShell",
       ],
       async invoke(input) {
-        const selfChannel = ctx.api.channels.self("api");
-        const dependencyChannel = ctx.api.channels.from("demo", "api");
-        const greeting = await selfChannel.invoke<JsonObject, JsonObject>("greet", input);
-        const shell = await dependencyChannel.invoke<JsonObject, JsonObject>("runShell", {
+        const selfProtocol = ctx.api.protocols.self("api");
+        const dependencyProtocol = ctx.api.protocols.from("demo", "api");
+        const greeting = await selfProtocol.invoke<JsonObject, JsonObject>("greet", input);
+        const shell = await dependencyProtocol.invoke<JsonObject, JsonObject>("runShell", {
           label: "dependency-alias",
         });
         return {

@@ -97,11 +97,6 @@ pub enum RuntimeActor {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent_id: Option<String>,
     },
-    UserCanvas {
-        runtime_thread_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        canvas_id: Option<Uuid>,
-    },
     WorkflowNode {
         runtime_thread_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -128,9 +123,6 @@ impl RuntimeActor {
     pub fn runtime_thread_id(&self) -> Option<&str> {
         match self {
             RuntimeActor::AgentRuntimeThread {
-                runtime_thread_id, ..
-            }
-            | RuntimeActor::UserCanvas {
                 runtime_thread_id, ..
             }
             | RuntimeActor::WorkflowNode {

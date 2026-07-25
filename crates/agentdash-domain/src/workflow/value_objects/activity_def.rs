@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::operation::OperationRef;
+
 use super::{InputPortDefinition, OutputPortDefinition};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -95,6 +97,56 @@ impl AgentActivityExecutorSpec {
 pub enum FunctionActivityExecutorSpec {
     ApiRequest(ApiRequestExecutorSpec),
     BashExec(BashExecExecutorSpec),
+    OperationScript(OperationScriptExecutorSpec),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OperationScriptExecutorSpec {
+    pub language: String,
+    pub host_api_version: u16,
+    pub source: String,
+    pub input_binding: OperationScriptInputBinding,
+    pub requested_operations: Vec<OperationRef>,
+    pub limits: OperationScriptExecutorLimits,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationScriptInputBinding {
+    NodeInput,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OperationScriptExecutorLimits {
+    pub timeout_ms: u64,
+    pub max_source_bytes: u64,
+    pub max_input_bytes: u64,
+    pub max_output_bytes: u64,
+    pub max_rhai_operations: u64,
+    pub max_call_levels: u64,
+    pub max_string_size: u64,
+    pub max_array_size: u64,
+    pub max_map_size: u64,
+    pub max_operation_calls: u64,
+    pub max_parallel_operations: u64,
+}
+
+impl Default for OperationScriptExecutorLimits {
+    fn default() -> Self {
+        Self {
+            timeout_ms: 30_000,
+            max_source_bytes: 256 * 1024,
+            max_input_bytes: 1024 * 1024,
+            max_output_bytes: 1024 * 1024,
+            max_rhai_operations: 100_000,
+            max_call_levels: 32,
+            max_string_size: 1024 * 1024,
+            max_array_size: 1_000,
+            max_map_size: 500,
+            max_operation_calls: 32,
+            max_parallel_operations: 4,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

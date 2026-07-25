@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Component, Path};
 
-use flate2::read::GzDecoder;
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -13,19 +13,22 @@ use agentdash_domain::extension_package::{
     ExtensionPackageArtifact, ExtensionPackageArtifactOwner, ExtensionPackageArtifactRef,
     validate_sha256_digest,
 };
+use agentdash_domain::interaction::InteractionDefinitionRevision;
 use agentdash_domain::shared_library::{
-    ExtensionTemplatePayload, ExtensionWorkspaceTabRendererDeclaration,
-    ProjectExtensionInstallation,
+    ExtensionTemplatePayload, ExtensionWorkspaceTabDefinition,
+    ExtensionWorkspaceTabRendererDeclaration, ProjectExtensionInstallation,
 };
 pub use agentdash_platform_spi::extension_package::{
     ExtensionPackageArtifactStorage, ExtensionPackageArtifactStorageError,
 };
+use tar::{Builder, Header};
 
 use crate::repository_set::RepositorySet;
 
 const EXTENSION_MANIFEST_PATH: &str = "agentdash.extension.json";
 const PACKAGE_JSON_PATH: &str = "package.json";
 const INSTALL_LIFECYCLE_SCRIPTS: &[&str] = &["preinstall", "install", "postinstall", "prepare"];
+const INTERACTION_SOURCE_METADATA_PATH: &str = "agentdash.interaction-source.json";
 
 #[derive(Debug, Clone)]
 pub struct ValidatedExtensionPackageArchive {
@@ -33,6 +36,143 @@ pub struct ValidatedExtensionPackageArchive {
     pub manifest_digest: String,
     pub manifest: ExtensionTemplatePayload,
     pub byte_size: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct InteractionDefinitionExtensionPackage {
+    pub archive_bytes: Vec<u8>,
+    pub archive_digest: String,
+    pub manifest_digest: String,
+    pub manifest: ExtensionTemplatePayload,
+    pub definition_id: Uuid,
+    pub definition_revision_id: Uuid,
+    pub source_bundle_digest: String,
+}
+
+pub fn build_interaction_definition_extension_package(
+    revision: &InteractionDefinitionRevision,
+    package_version: Option<&str>,
+    asset_version: Option<&str>,
+) -> Result<InteractionDefinitionExtensionPackage, DomainError> {
+    revision
+        .validate()
+        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+    let package_version = package_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("0.1.0")
+        .to_string();
+    let asset_version = asset_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&package_version)
+        .to_string();
+    let extension_id = format!("canvas-{}", revision.definition_id);
+    let entry = format!("dist/canvas/{}", revision.source_bundle.entry_file);
+    let manifest = ExtensionTemplatePayload {
+        manifest_version: "2".into(),
+        extension_id: extension_id.clone(),
+        package: agentdash_domain::extension_package::ExtensionPackageMetadata {
+            name: format!("@agentdash/{extension_id}"),
+            version: package_version.clone(),
+        },
+        asset_version,
+        commands: Vec::new(),
+        flags: Vec::new(),
+        message_renderers: Vec::new(),
+        capability_directives: Vec::new(),
+        asset_refs: Vec::new(),
+        runtime_actions: Vec::new(),
+        protocols: Vec::new(),
+        extension_dependencies: Vec::new(),
+        workspace_tabs: vec![ExtensionWorkspaceTabDefinition {
+            type_id: format!("{extension_id}.panel"),
+            label: revision.title.clone(),
+            uri_scheme: extension_id.clone(),
+            renderer: ExtensionWorkspaceTabRendererDeclaration::Webview {
+                entry: entry.clone(),
+            },
+        }],
+        ui_components: Vec::new(),
+        permissions: Vec::new(),
+        fetch_routes: Vec::new(),
+        operation_catalog: Vec::new(),
+        backend_services: Vec::new(),
+        bundles: Vec::new(),
+    };
+    let package_json = serde_json::json!({
+        "name": manifest.package.name,
+        "version": package_version,
+        "private": true,
+        "type": "module"
+    });
+    let source_metadata = serde_json::json!({
+        "format_version": 1,
+        "definition_id": revision.definition_id,
+        "definition_revision_id": revision.revision_id,
+        "definition_revision_number": revision.revision_number,
+        "source_bundle_digest": revision.source_bundle.digest,
+        "source_bundle_format_version": revision.source_bundle.format_version,
+        "entry": entry,
+    });
+    let mut files = vec![
+        (
+            EXTENSION_MANIFEST_PATH.to_string(),
+            serde_json::to_vec_pretty(&manifest).map_err(DomainError::Serialization)?,
+        ),
+        (
+            PACKAGE_JSON_PATH.to_string(),
+            serde_json::to_vec_pretty(&package_json).map_err(DomainError::Serialization)?,
+        ),
+        (
+            INTERACTION_SOURCE_METADATA_PATH.to_string(),
+            serde_json::to_vec_pretty(&source_metadata).map_err(DomainError::Serialization)?,
+        ),
+    ];
+    files.extend(revision.source_bundle.files.iter().map(|file| {
+        (
+            format!("dist/canvas/{}", file.path),
+            file.content.as_bytes().to_vec(),
+        )
+    }));
+    let archive_bytes = build_extension_archive(files)?;
+    let validated = validate_extension_package_archive(&archive_bytes, None)?;
+    Ok(InteractionDefinitionExtensionPackage {
+        archive_bytes,
+        archive_digest: validated.archive_digest,
+        manifest_digest: validated.manifest_digest,
+        manifest: validated.manifest,
+        definition_id: revision.definition_id,
+        definition_revision_id: revision.revision_id,
+        source_bundle_digest: revision.source_bundle.digest.clone(),
+    })
+}
+
+fn build_extension_archive(files: Vec<(String, Vec<u8>)>) -> Result<Vec<u8>, DomainError> {
+    let encoder = GzEncoder::new(Vec::new(), Compression::default());
+    let mut builder = Builder::new(encoder);
+    for (path, bytes) in files {
+        let mut header = Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_mtime(0);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, path, bytes.as_slice())
+            .map_err(|error| {
+                DomainError::InvalidConfig(format!("Extension archive 构建失败: {error}"))
+            })?;
+    }
+    builder.finish().map_err(|error| {
+        DomainError::InvalidConfig(format!("Extension archive 构建失败: {error}"))
+    })?;
+    builder
+        .into_inner()
+        .map_err(|error| {
+            DomainError::InvalidConfig(format!("Extension archive 构建失败: {error}"))
+        })?
+        .finish()
+        .map_err(|error| DomainError::InvalidConfig(format!("Extension archive 构建失败: {error}")))
 }
 
 #[derive(Debug, Clone)]
@@ -522,8 +662,7 @@ fn validate_workspace_tab_entries(
 
 fn workspace_tab_renderer_entry(renderer: &ExtensionWorkspaceTabRendererDeclaration) -> &str {
     match renderer {
-        ExtensionWorkspaceTabRendererDeclaration::Webview { entry }
-        | ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => entry,
+        ExtensionWorkspaceTabRendererDeclaration::Webview { entry } => entry,
     }
 }
 
@@ -668,9 +807,10 @@ mod tests {
             capability_directives: vec![],
             asset_refs: vec![],
             runtime_actions: vec![],
-            protocol_channels: vec![],
+            protocols: vec![],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
+            ui_components: vec![],
             permissions: vec![],
             fetch_routes: vec![],
             operation_catalog: vec![],
@@ -719,7 +859,7 @@ mod tests {
         );
     }
 
-    fn canvas_panel_manifest() -> Value {
+    fn webview_panel_manifest() -> Value {
         serde_json::json!({
             "manifest_version": "2",
             "extension_id": "canvas-demo",
@@ -733,8 +873,8 @@ mod tests {
                 "label": "Canvas Demo",
                 "uri_scheme": "canvas-demo",
                 "renderer": {
-                    "kind": "canvas_panel",
-                    "entry": "dist/canvas/runtime-snapshot.json"
+                    "kind": "webview",
+                    "entry": "dist/panel/index.html"
                 }
             }]
         })
@@ -793,11 +933,11 @@ mod tests {
     }
 
     #[test]
-    fn validates_canvas_panel_renderer_entry() {
+    fn validates_webview_renderer_entry() {
         let bytes = archive_bytes(vec![
             (
                 EXTENSION_MANIFEST_PATH,
-                serde_json::to_vec(&canvas_panel_manifest()).expect("manifest bytes"),
+                serde_json::to_vec(&webview_panel_manifest()).expect("manifest bytes"),
             ),
             (
                 PACKAGE_JSON_PATH,
@@ -808,8 +948,8 @@ mod tests {
                 .expect("package bytes"),
             ),
             (
-                "dist/canvas/runtime-snapshot.json",
-                br#"{"canvas_id":"00000000-0000-0000-0000-000000000000"}"#.to_vec(),
+                "dist/panel/index.html",
+                b"<!doctype html><main>Canvas Demo</main>".to_vec(),
             ),
         ]);
 
@@ -823,7 +963,7 @@ mod tests {
         let bytes = archive_bytes(vec![
             (
                 EXTENSION_MANIFEST_PATH,
-                serde_json::to_vec(&canvas_panel_manifest()).expect("manifest bytes"),
+                serde_json::to_vec(&webview_panel_manifest()).expect("manifest bytes"),
             ),
             (
                 PACKAGE_JSON_PATH,

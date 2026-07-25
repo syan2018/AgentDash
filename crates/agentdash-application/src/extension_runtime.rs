@@ -7,12 +7,12 @@ pub use agentdash_workspace_module::extension_runtime::{
     ExtensionGeneratedOperationDispatch, ExtensionGeneratedOperationProjection,
     ExtensionGeneratedOperationProvenance, ExtensionGeneratedOperationVisibility,
     ExtensionInstallationProjection, ExtensionMessageRendererProjection,
-    ExtensionPermissionProjection, ExtensionProtocolChannelMethodProjection,
-    ExtensionProtocolChannelProjection, ExtensionRuntimeActionProjection,
-    ExtensionRuntimeProjection, ExtensionWorkspaceTabLoadabilityMode,
-    ExtensionWorkspaceTabLoadabilityProjection, ExtensionWorkspaceTabProjection,
-    UninstallExtensionInstallationInput, UninstallExtensionInstallationOutput,
-    extension_runtime_projection_from_installations, uninstall_extension_installation_with_repo,
+    ExtensionPermissionProjection, ExtensionProtocolMethodProjection, ExtensionProtocolProjection,
+    ExtensionRuntimeActionProjection, ExtensionRuntimeProjection,
+    ExtensionWorkspaceTabLoadabilityMode, ExtensionWorkspaceTabLoadabilityProjection,
+    ExtensionWorkspaceTabProjection, UninstallExtensionInstallationInput,
+    UninstallExtensionInstallationOutput, extension_runtime_projection_from_installations,
+    uninstall_extension_installation_with_repo,
 };
 
 use crate::repository_set::RepositorySet;

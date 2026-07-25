@@ -10,15 +10,15 @@ export function createExtensionRuntime({
   let currentInvocation = null;
   let invocationDepth = 0;
 
-  function canonicalChannelKey(extensionKey, channelKey) {
-    if (typeof channelKey !== "string" || channelKey.trim() === "") {
-      throw new Error("channel_key is required");
+  function canonicalProtocolKey(extensionKey, protocolKey) {
+    if (typeof protocolKey !== "string" || protocolKey.trim() === "") {
+      throw new Error("protocol_key is required");
     }
-    return channelKey.includes(".") ? channelKey : `${extensionKey}.${channelKey}`;
+    return protocolKey.includes(".") ? protocolKey : `${extensionKey}.${protocolKey}`;
   }
 
-  function channelHandlerKey(channelKey, method) {
-    return `${channelKey}#${method}`;
+  function protocolHandlerKey(protocolKey, method) {
+    return `${protocolKey}#${method}`;
   }
 
   function normalizeChannelMethods(methods) {
@@ -28,17 +28,17 @@ export function createExtensionRuntime({
     if (methods && typeof methods === "object") {
       return Object.entries(methods).map(([name, method]) => ({ ...method, name: method.name ?? name }));
     }
-    throw new Error("protocol channel methods must be an array or object");
+    throw new Error("protocol methods must be an array or object");
   }
 
   function createExtensionContext(extensionKey) {
     const actions = new Map();
-    const channels = new Map();
+    const protocols = new Map();
     const contributions = {
       commands: [],
       flags: [],
       runtime_actions: [],
-      protocol_channels: [],
+      protocols: [],
       workspace_panels: [],
       permissions: [],
     };
@@ -103,32 +103,32 @@ export function createExtensionRuntime({
             return await requestHostApi("process.shell", { command, options: toJsonValue(options) }, extensionKey);
           },
         },
-        channels: {
-          async invoke(channelKey, method, input) {
-            const canonical = canonicalChannelKey(extensionKey, channelKey);
+        protocols: {
+          async invoke(protocolKey, method, input) {
+            const canonical = canonicalProtocolKey(extensionKey, protocolKey);
             const local = findChannel(canonical, method);
             if (local) {
               return await invokeRegisteredChannel(local.extensionKey, canonical, method, input);
             }
             throwChannelMethodNotLoaded(canonical, method);
           },
-          self(channelKey = "api") {
-            const canonical = canonicalChannelKey(extensionKey, channelKey);
+          self(protocolKey = "api") {
+            const canonical = canonicalProtocolKey(extensionKey, protocolKey);
             return {
               async invoke(method, input) {
                 return await invokeRegisteredChannel(extensionKey, canonical, method, input);
               },
             };
           },
-          from(alias, channelKey = null) {
+          from(alias, protocolKey = null) {
             return {
               async invoke(method, input) {
-                const resolved = resolveDependencyChannel(extensionKey, alias, channelKey);
-                const local = findChannel(resolved.channelKey, method);
+                const resolved = resolveDependencyProtocol(extensionKey, alias, protocolKey);
+                const local = findChannel(resolved.protocolKey, method);
                 if (local) {
-                  return await invokeRegisteredChannel(local.extensionKey, resolved.channelKey, method, input);
+                  return await invokeRegisteredChannel(local.extensionKey, resolved.protocolKey, method, input);
                 }
-                throwChannelMethodNotLoaded(resolved.channelKey, method);
+                throwChannelMethodNotLoaded(resolved.protocolKey, method);
               },
             };
           },
@@ -154,28 +154,28 @@ export function createExtensionRuntime({
           contributions.runtime_actions.push(toJsonValue(serializable));
         },
       },
-      channels: {
+      protocols: {
         register(definition) {
-          if (!definition || typeof definition.channel_key !== "string") {
-            throw new Error("protocol channel must include channel_key");
+          if (!definition || typeof definition.protocol_key !== "string") {
+            throw new Error("protocol must include protocol_key");
           }
-          const canonical = canonicalChannelKey(extensionKey, definition.channel_key);
+          const canonical = canonicalProtocolKey(extensionKey, definition.protocol_key);
           const methods = normalizeChannelMethods(definition.methods);
           if (methods.length === 0) {
-            throw new Error("protocol channel must include at least one method");
+            throw new Error("protocol must include at least one method");
           }
           const serializableMethods = [];
           for (const method of methods) {
             if (!method || typeof method.name !== "string" || typeof method.invoke !== "function") {
-              throw new Error("protocol channel method must include name and invoke");
+              throw new Error("protocol method must include name and invoke");
             }
-            channels.set(channelHandlerKey(canonical, method.name), method);
+            protocols.set(protocolHandlerKey(canonical, method.name), method);
             const { invoke, ...serializable } = method;
             serializableMethods.push(toJsonValue(serializable));
           }
-          contributions.protocol_channels.push(toJsonValue({
+          contributions.protocols.push(toJsonValue({
             ...definition,
-            channel_key: canonical,
+            protocol_key: canonical,
             methods: serializableMethods,
           }));
         },
@@ -192,7 +192,7 @@ export function createExtensionRuntime({
       },
       contributions,
     };
-    return { ctx, actions, channels, contributions };
+    return { ctx, actions, protocols, contributions };
   }
 
   function findAction(actionKey) {
@@ -203,16 +203,16 @@ export function createExtensionRuntime({
     return null;
   }
 
-  function findChannel(channelKey, method) {
-    const key = channelHandlerKey(channelKey, method);
+  function findChannel(protocolKey, method) {
+    const key = protocolHandlerKey(protocolKey, method);
     for (const [extensionKey, record] of extensions) {
-      if (record.channels.has(key)) return { extensionKey, handler: record.channels.get(key) };
+      if (record.protocols.has(key)) return { extensionKey, handler: record.protocols.get(key) };
     }
     return null;
   }
 
-  function throwChannelMethodNotLoaded(channelKey, method) {
-    throw new Error(`extension channel method is not loaded in current extension host: ${channelKey}.${method}`);
+  function throwChannelMethodNotLoaded(protocolKey, method) {
+    throw new Error(`extension protocol method is not loaded in current extension host: ${protocolKey}.${method}`);
   }
 
   function ensureRuntimeInvokeAllowed(consumerExtensionKey, targetExtensionKey, targetActionKey) {
@@ -233,11 +233,11 @@ export function createExtensionRuntime({
         .find((action) => action?.action_key === currentInvocation.actionKey);
       return stringArray(manifestAction?.permissions);
     }
-    if (currentInvocation.channelKey && currentInvocation.channelMethod) {
-      const manifestChannel = (record.manifest?.protocol_channels ?? [])
-        .find((channel) => channel?.channel_key === currentInvocation.channelKey);
+    if (currentInvocation.protocolKey && currentInvocation.protocolMethod) {
+      const manifestChannel = (record.manifest?.protocols ?? [])
+        .find((channel) => channel?.protocol_key === currentInvocation.protocolKey);
       const manifestMethod = (manifestChannel?.methods ?? [])
-        .find((method) => method?.name === currentInvocation.channelMethod);
+        .find((method) => method?.name === currentInvocation.protocolMethod);
       return stringArray(manifestMethod?.permissions);
     }
     return [];
@@ -251,24 +251,24 @@ export function createExtensionRuntime({
     return await withInvocationContext({
       extensionKey,
       actionKey: action.action_key,
-      channelKey: null,
-      channelMethod: null,
+      protocolKey: null,
+      protocolMethod: null,
     }, async () => {
       return toJsonValue(await action.invoke(toJsonValue(input)));
     });
   }
 
-  async function invokeRegisteredChannel(extensionKey, channelKey, method, input) {
+  async function invokeRegisteredChannel(extensionKey, protocolKey, method, input) {
     const record = extensions.get(extensionKey);
-    const handler = record?.channels.get(channelHandlerKey(channelKey, method));
+    const handler = record?.protocols.get(protocolHandlerKey(protocolKey, method));
     if (!handler) {
-      throwChannelMethodNotLoaded(channelKey, method);
+      throwChannelMethodNotLoaded(protocolKey, method);
     }
     return await withInvocationContext({
       extensionKey,
       actionKey: null,
-      channelKey,
-      channelMethod: method,
+      protocolKey,
+      protocolMethod: method,
     }, async () => {
       return toJsonValue(await handler.invoke(toJsonValue(input)));
     });
@@ -289,30 +289,30 @@ export function createExtensionRuntime({
     }
   }
 
-  function resolveDependencyChannel(extensionKey, alias, channelKey) {
+  function resolveDependencyProtocol(extensionKey, alias, protocolKey) {
     const record = extensions.get(extensionKey);
     if (!record) throw new Error(`extension is not active: ${extensionKey}`);
     const dependency = (record.manifest?.extension_dependencies ?? []).find((item) => item.alias === alias);
     if (!dependency) throw new Error(`extension dependency alias is not declared: ${alias}`);
-    const requested = typeof channelKey === "string" ? channelKey.trim() : "";
+    const requested = typeof protocolKey === "string" ? protocolKey.trim() : "";
     if (requested === "") {
-      const first = dependency.channels?.[0];
-      if (!first) throw new Error(`extension dependency has no channels: ${alias}`);
-      return { channelKey: first, alias };
+      const first = dependency.protocols?.[0];
+      if (!first) throw new Error(`extension dependency has no protocols: ${alias}`);
+      return { protocolKey: first, alias };
     }
     const matched = requested.includes(".")
-      ? dependency.channels.find((item) => item === requested)
-      : dependency.channels.find((item) => item.split(".").at(-1) === requested);
+      ? dependency.protocols.find((item) => item === requested)
+      : dependency.protocols.find((item) => item.split(".").at(-1) === requested);
     if (!matched) throw new Error(`extension dependency channel is not declared: ${alias}.${requested}`);
-    return { channelKey: matched, alias };
+    return { protocolKey: matched, alias };
   }
 
   function invocationContextParams(extensionKey) {
     return {
       extension_key: extensionKey,
       action_key: currentInvocation?.extensionKey === extensionKey ? currentInvocation.actionKey : null,
-      channel_key: currentInvocation?.extensionKey === extensionKey ? currentInvocation.channelKey : null,
-      channel_method: currentInvocation?.extensionKey === extensionKey ? currentInvocation.channelMethod : null,
+      protocol_key: currentInvocation?.extensionKey === extensionKey ? currentInvocation.protocolKey : null,
+      protocol_method: currentInvocation?.extensionKey === extensionKey ? currentInvocation.protocolMethod : null,
     };
   }
 
@@ -323,13 +323,13 @@ export function createExtensionRuntime({
     }
     await deactivate({ extension_key: extensionKey });
     const extension = await loadExtension(params.bundle_path);
-    const { ctx, actions, channels, contributions } = createExtensionContext(extensionKey);
+    const { ctx, actions, protocols, contributions } = createExtensionContext(extensionKey);
     const record = {
       extension,
       manifest: params.manifest,
       extensionKey,
       actions,
-      channels,
+      protocols,
       contributions,
     };
     extensions.set(extensionKey, record);
@@ -375,35 +375,35 @@ export function createExtensionRuntime({
     return await invokeRegisteredAction(found.extensionKey, found.action, params.input);
   }
 
-  async function invokeChannel(params) {
+  async function invokeProtocol(params) {
     const method = params.method;
     if (typeof method !== "string" || method.trim() === "") {
-      throw new Error("extension channel method is required");
+      throw new Error("extension protocol method is required");
     }
     const scope = typeof params.extension_key === "string" ? params.extension_key : defaultExtensionKey;
-    const channelKey = params.channel_key?.includes(".")
-      ? params.channel_key
-      : canonicalChannelKey(scope, params.channel_key);
-    const found = findChannel(channelKey, method);
-    if (!found) throwChannelMethodNotLoaded(channelKey, method);
-    return await invokeRegisteredChannel(found.extensionKey, channelKey, method, params.input);
+    const protocolKey = params.protocol_key?.includes(".")
+      ? params.protocol_key
+      : canonicalProtocolKey(scope, params.protocol_key);
+    const found = findChannel(protocolKey, method);
+    if (!found) throwChannelMethodNotLoaded(protocolKey, method);
+    return await invokeRegisteredChannel(found.extensionKey, protocolKey, method, params.input);
   }
 
   function healthPayload() {
     const defaultRecord = defaultExtensionKey ? extensions.get(defaultExtensionKey) : null;
     const actionKeys = [];
-    const channelKeys = new Set();
+    const protocolKeys = new Set();
     for (const record of extensions.values()) {
       actionKeys.push(...record.actions.keys());
-      for (const key of record.channels.keys()) {
-        channelKeys.add(key.split("#")[0]);
+      for (const key of record.protocols.keys()) {
+        protocolKeys.add(key.split("#")[0]);
       }
     }
     return {
       active: extensions.size > 0,
       extension_id: defaultRecord?.manifest?.extension_id ?? null,
       action_keys: actionKeys.sort(),
-      channel_keys: [...channelKeys].sort(),
+      protocol_keys: [...protocolKeys].sort(),
       pid: process.pid,
     };
   }
@@ -424,23 +424,23 @@ export function createExtensionRuntime({
     }
 
     const manifestMethods = new Set();
-    for (const channel of record.manifest?.protocol_channels ?? []) {
-      if (typeof channel?.channel_key !== "string") continue;
-      const channelKey = canonicalChannelKey(record.extensionKey, channel.channel_key);
+    for (const channel of record.manifest?.protocols ?? []) {
+      if (typeof channel?.protocol_key !== "string") continue;
+      const protocolKey = canonicalProtocolKey(record.extensionKey, channel.protocol_key);
       for (const method of channel.methods ?? []) {
         if (typeof method?.name === "string") {
-          manifestMethods.add(channelHandlerKey(channelKey, method.name));
+          manifestMethods.add(protocolHandlerKey(protocolKey, method.name));
         }
       }
     }
-    for (const handlerKey of record.channels.keys()) {
+    for (const handlerKey of record.protocols.keys()) {
       if (!manifestMethods.has(handlerKey)) {
-        throw new Error(`extension channel method is registered but not declared in manifest: ${handlerKey.replace("#", ".")}`);
+        throw new Error(`extension protocol method is registered but not declared in manifest: ${handlerKey.replace("#", ".")}`);
       }
     }
     for (const handlerKey of manifestMethods) {
-      if (!record.channels.has(handlerKey)) {
-        throw new Error(`extension channel method is declared in manifest but not registered: ${handlerKey.replace("#", ".")}`);
+      if (!record.protocols.has(handlerKey)) {
+        throw new Error(`extension protocol method is declared in manifest but not registered: ${handlerKey.replace("#", ".")}`);
       }
     }
   }
@@ -456,8 +456,8 @@ export function createExtensionRuntime({
         return await deactivate(message.params ?? {});
       case "invoke_action":
         return await invokeAction(message.params ?? {});
-      case "invoke_channel":
-        return await invokeChannel(message.params ?? {});
+      case "invoke_protocol":
+        return await invokeProtocol(message.params ?? {});
       case "health":
         return healthPayload();
       default:

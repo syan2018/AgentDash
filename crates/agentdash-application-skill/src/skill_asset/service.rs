@@ -1140,8 +1140,8 @@ mod tests {
         assert_eq!(first.len(), list_builtin_skill_asset_templates().len());
         let asset = first
             .iter()
-            .find(|asset| asset.key == "canvas-system")
-            .expect("canvas-system")
+            .find(|asset| asset.key == "workspace-module-system")
+            .expect("workspace-module-system")
             .clone();
 
         let edited_description = "用户编辑后的描述";

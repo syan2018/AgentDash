@@ -412,7 +412,6 @@ pub struct OrchestrationNodeEvidenceRef {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinLifecycleSkill {
-    CanvasSystem,
     CompanionSystem,
     WorkspaceModuleSystem,
     RoutineMemory,

@@ -1,7 +1,7 @@
+mod agent_run_workspace;
 pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;
-pub mod canvases;
 pub mod companion_gates;
 pub mod diagnostics;
 pub mod execution_profiles;
@@ -10,6 +10,7 @@ pub mod extension_runtime;
 pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
+pub mod interactions;
 pub mod lifecycle_agents;
 mod lifecycle_contracts;
 pub mod lifecycle_views;
@@ -17,6 +18,7 @@ pub mod llm_providers;
 pub mod marketplace;
 pub mod mcp_presets;
 pub mod me;
+pub mod operation_workshop;
 pub mod project_agents;
 pub mod project_extensions;
 pub mod project_vfs_mounts;
@@ -36,7 +38,6 @@ pub mod vfs_surfaces;
 pub mod workflows;
 pub mod workspace_module;
 pub mod workspaces;
-mod agent_run_workspace;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -83,7 +84,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(workspaces::router())
         .merge(backend_access::router())
         .merge(stories::router())
-        .merge(canvases::router())
+        .merge(interactions::router())
+        .merge(operation_workshop::router())
         .merge(companion_gates::router())
         .merge(task_plan::router())
         .merge(lifecycle_agents::router())

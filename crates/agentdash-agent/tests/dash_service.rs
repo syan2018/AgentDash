@@ -197,7 +197,7 @@ impl DashProvider for SurfaceChangingProvider {
                 Ok(DashProviderEvent::ToolCall {
                     call: DashToolCall {
                         call_id: "create-canvas".into(),
-                        name: "workspace_module_operate".into(),
+                        name: "workspace_module_invoke".into(),
                         arguments: serde_json::json!({"operation": "canvas.create"}),
                     },
                 }),
@@ -375,7 +375,7 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
             digest: "canvas-surface".into(),
             instructions: Vec::new(),
             tools: vec![test_tool(
-                "workspace_module_operate",
+                "workspace_module_invoke",
                 agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
             )],
             context_frames: vec![accepted_system_append_frame(
@@ -440,7 +440,7 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<Vec<_>>(),
-        ["workspace_module_operate"]
+        ["workspace_module_invoke"]
     );
     assert!(requests[0].system_prompt.contains("revision one"));
     assert_eq!(

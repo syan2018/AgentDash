@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/prd.md", "reason": "逐项核对 acceptance criteria 与 scope"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/design.md", "reason": "复核 ownership、依赖方向、worktree 和回滚点"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/implement.md", "reason": "复核主题化实施顺序和验证门禁"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/research/pr93-conflict-map.md", "reason": "复核显式冲突、migration 与 delete/modify 取舍"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/research/pr93-architecture.md", "reason": "复核 PR 主干不变量未被破坏"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/research/current-branch-adaptation.md", "reason": "复核当前分支能力没有遗漏或恢复旧路径"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/research/coupling-root-cause.md", "reason": "复核 95 个重叠路径的根因处置与模块独立性 before/after 证据"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Operation authority/placement/provider 验收"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Rust/TS/API contract 收敛检查"}

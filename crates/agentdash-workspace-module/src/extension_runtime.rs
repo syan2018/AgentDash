@@ -9,10 +9,10 @@ use agentdash_domain::shared_library::{
     ExtensionFlagType, ExtensionGeneratedOperationDefinition,
     ExtensionGeneratedOperationDispatch as DomainGeneratedOperationDispatch,
     ExtensionGeneratedOperationVisibility as DomainGeneratedOperationVisibility,
-    ExtensionPermissionDeclaration, ExtensionProtocolChannelDefinition,
-    ExtensionProtocolChannelMethodDefinition, ExtensionRendererDeclaration,
-    ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration, InstalledAssetSource,
-    ProjectExtensionInstallation, ProjectExtensionInstallationRepository,
+    ExtensionPermissionDeclaration, ExtensionProtocolDefinition, ExtensionProtocolMethodDefinition,
+    ExtensionRendererDeclaration, ExtensionRuntimeActionKind, ExtensionUiComponentDefinition,
+    ExtensionWorkspaceTabRendererDeclaration, InstalledAssetSource, ProjectExtensionInstallation,
+    ProjectExtensionInstallationRepository,
 };
 use uuid::Uuid;
 
@@ -23,9 +23,10 @@ pub struct ExtensionRuntimeProjection {
     pub flags: Vec<ExtensionFlagProjection>,
     pub message_renderers: Vec<ExtensionMessageRendererProjection>,
     pub runtime_actions: Vec<ExtensionRuntimeActionProjection>,
-    pub protocol_channels: Vec<ExtensionProtocolChannelProjection>,
+    pub protocols: Vec<ExtensionProtocolProjection>,
     pub extension_dependencies: Vec<ExtensionDependencyProjection>,
     pub workspace_tabs: Vec<ExtensionWorkspaceTabProjection>,
+    pub ui_components: Vec<ExtensionUiComponentProjection>,
     pub permissions: Vec<ExtensionPermissionProjection>,
     pub bundles: Vec<ExtensionBundleProjection>,
     pub fetch_routes: Vec<ExtensionFetchRouteProjection>,
@@ -83,17 +84,17 @@ pub struct ExtensionRuntimeActionProjection {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExtensionProtocolChannelProjection {
+pub struct ExtensionProtocolProjection {
     pub extension_key: String,
     pub extension_id: String,
-    pub channel_key: String,
+    pub protocol_key: String,
     pub version: String,
     pub description: String,
-    pub methods: Vec<ExtensionProtocolChannelMethodProjection>,
+    pub methods: Vec<ExtensionProtocolMethodProjection>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExtensionProtocolChannelMethodProjection {
+pub struct ExtensionProtocolMethodProjection {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
@@ -119,10 +120,19 @@ pub struct ExtensionWorkspaceTabProjection {
     pub loadability: ExtensionWorkspaceTabLoadabilityProjection,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionUiComponentProjection {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub descriptor: ExtensionUiComponentDefinition,
+    pub package_artifact: Option<ExtensionPackageArtifactRef>,
+    pub available: bool,
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtensionWorkspaceTabLoadabilityMode {
     ExtensionHost,
-    UiOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,9 +172,20 @@ impl ExtensionGeneratedOperationVisibility {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExtensionGeneratedOperationDispatch {
-    RuntimeAction { action_key: String },
-    ProtocolChannel { channel_key: String, method: String },
-    BackendService { service_key: String, route: String },
+    RuntimeAction {
+        action_key: String,
+    },
+    ProtocolMethod {
+        provider_extension_key: String,
+        provider_extension_id: String,
+        protocol_key: String,
+        protocol_version: String,
+        method: String,
+    },
+    BackendService {
+        service_key: String,
+        route: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,10 +211,20 @@ pub struct ExtensionGeneratedOperationProjection {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionFetchRouteTargetProjection {
-    HttpProxy { capability_key: String },
-    RuntimeAction { action_key: String },
-    ProtocolChannel { channel_key: String, method: String },
-    BackendService { service_key: String, route: String },
+    HttpProxy {
+        capability_key: String,
+    },
+    RuntimeAction {
+        action_key: String,
+    },
+    ProtocolMethod {
+        protocol_key: String,
+        method: String,
+    },
+    BackendService {
+        service_key: String,
+        route: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,8 +290,9 @@ pub fn extension_runtime_projection_from_installations(
 ) -> Result<ExtensionRuntimeProjection, DomainError> {
     let mut projection = ExtensionRuntimeProjection::default();
     let mut action_keys = BTreeMap::new();
-    let mut channel_keys = BTreeMap::new();
+    let mut protocol_keys = BTreeMap::new();
     let mut workspace_tab_type_ids = BTreeMap::new();
+    let mut ui_component_keys = BTreeMap::new();
     let mut uri_schemes = BTreeMap::new();
     for installation in installations {
         let extension_key = installation.extension_key.clone();
@@ -278,11 +310,11 @@ pub fn extension_runtime_projection_from_installations(
                 &extension_key,
             )?;
         }
-        for channel in &manifest.protocol_channels {
+        for channel in &manifest.protocols {
             claim_unique_extension_runtime_key(
-                &mut channel_keys,
-                "protocol channel key",
-                &channel.channel_key,
+                &mut protocol_keys,
+                "protocol key",
+                &channel.protocol_key,
                 &extension_key,
             )?;
         }
@@ -300,6 +332,15 @@ pub fn extension_runtime_projection_from_installations(
                 &extension_key,
             )?;
         }
+        for component in &manifest.ui_components {
+            claim_unique_extension_runtime_key(
+                &mut ui_component_keys,
+                "UI component key",
+                &component.component_key,
+                &extension_key,
+            )?;
+        }
+        let package_artifact = installation.package_artifact.clone();
         projection
             .installations
             .push(ExtensionInstallationProjection {
@@ -308,7 +349,7 @@ pub fn extension_runtime_projection_from_installations(
                 extension_id: extension_id.clone(),
                 display_name: installation.display_name.clone(),
                 installed_source: installation.installed_source,
-                package_artifact: installation.package_artifact,
+                package_artifact: package_artifact.clone(),
             });
         projection
             .commands
@@ -361,11 +402,12 @@ pub fn extension_runtime_projection_from_installations(
                     permissions: action.permissions,
                 }
             }));
-        projection.protocol_channels.extend(
-            manifest
-                .protocol_channels
-                .into_iter()
-                .map(|channel| protocol_channel_projection(&extension_key, &extension_id, channel)),
+        let protocols = manifest.protocols;
+        projection.protocols.extend(
+            protocols
+                .iter()
+                .cloned()
+                .map(|channel| protocol_method_projection(&extension_key, &extension_id, channel)),
         );
         projection
             .extension_dependencies
@@ -394,6 +436,20 @@ pub fn extension_runtime_projection_from_installations(
                         has_extension_host_bundle,
                     ),
                     renderer: tab.renderer,
+                }
+            }));
+        projection
+            .ui_components
+            .extend(manifest.ui_components.into_iter().map(|descriptor| {
+                let available = package_artifact.is_some();
+                ExtensionUiComponentProjection {
+                    extension_key: extension_key.clone(),
+                    extension_id: extension_id.clone(),
+                    descriptor,
+                    package_artifact: package_artifact.clone(),
+                    available,
+                    reason: (!available)
+                        .then(|| "UI component 需要 exact packaged artifact".to_string()),
                 }
             }));
         projection
@@ -428,7 +484,7 @@ pub fn extension_runtime_projection_from_installations(
         projection
             .operation_catalog
             .extend(manifest.operation_catalog.into_iter().map(|operation| {
-                generated_operation_projection(&extension_key, &extension_id, operation)
+                generated_operation_projection(&extension_key, &extension_id, &protocols, operation)
             }));
         projection
             .backend_services
@@ -489,15 +545,15 @@ fn fetch_route_target_projection(
                 action_key: action_key.clone(),
             }
         }
-        ExtensionFetchRouteTargetDefinition::CustomChannel {
-            channel_key,
+        ExtensionFetchRouteTargetDefinition::CustomProtocol {
+            protocol_key,
             method,
         }
-        | ExtensionFetchRouteTargetDefinition::ProtocolChannel {
-            channel_key,
+        | ExtensionFetchRouteTargetDefinition::ProtocolMethod {
+            protocol_key,
             method,
-        } => ExtensionFetchRouteTargetProjection::ProtocolChannel {
-            channel_key: channel_key.clone(),
+        } => ExtensionFetchRouteTargetProjection::ProtocolMethod {
+            protocol_key: protocol_key.clone(),
             method: method.clone(),
         },
         ExtensionFetchRouteTargetDefinition::BackendService {
@@ -513,6 +569,7 @@ fn fetch_route_target_projection(
 fn generated_operation_projection(
     extension_key: &str,
     extension_id: &str,
+    protocols: &[ExtensionProtocolDefinition],
     operation: ExtensionGeneratedOperationDefinition,
 ) -> ExtensionGeneratedOperationProjection {
     ExtensionGeneratedOperationProjection {
@@ -535,13 +592,23 @@ fn generated_operation_projection(
             DomainGeneratedOperationDispatch::RuntimeAction { action_key } => {
                 ExtensionGeneratedOperationDispatch::RuntimeAction { action_key }
             }
-            DomainGeneratedOperationDispatch::ProtocolChannel {
-                channel_key,
+            DomainGeneratedOperationDispatch::ProtocolMethod {
+                protocol_key,
                 method,
-            } => ExtensionGeneratedOperationDispatch::ProtocolChannel {
-                channel_key,
-                method,
-            },
+            } => {
+                let protocol_version = protocols
+                    .iter()
+                    .find(|protocol| protocol.protocol_key == protocol_key)
+                    .map(|protocol| protocol.version.clone())
+                    .expect("validated operation protocol must exist in manifest");
+                ExtensionGeneratedOperationDispatch::ProtocolMethod {
+                    provider_extension_key: extension_key.to_string(),
+                    provider_extension_id: extension_id.to_string(),
+                    protocol_key,
+                    protocol_version,
+                    method,
+                }
+            }
             DomainGeneratedOperationDispatch::BackendService { service_key, route } => {
                 ExtensionGeneratedOperationDispatch::BackendService { service_key, route }
             }
@@ -610,55 +677,32 @@ fn workspace_tab_loadability(
                 reason: None,
             }
         }
-        ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => {
-            if !has_package_artifact {
-                return ExtensionWorkspaceTabLoadabilityProjection {
-                    available: false,
-                    mode: ExtensionWorkspaceTabLoadabilityMode::UiOnly,
-                    reason: Some(
-                        "extension package artifact 缺失，Canvas panel 无法加载".to_string(),
-                    ),
-                };
-            }
-            if entry.trim().is_empty() {
-                return ExtensionWorkspaceTabLoadabilityProjection {
-                    available: false,
-                    mode: ExtensionWorkspaceTabLoadabilityMode::UiOnly,
-                    reason: Some("Canvas panel renderer entry 为空".to_string()),
-                };
-            }
-            ExtensionWorkspaceTabLoadabilityProjection {
-                available: true,
-                mode: ExtensionWorkspaceTabLoadabilityMode::UiOnly,
-                reason: None,
-            }
-        }
     }
 }
 
-fn protocol_channel_projection(
+fn protocol_method_projection(
     extension_key: &str,
     extension_id: &str,
-    channel: ExtensionProtocolChannelDefinition,
-) -> ExtensionProtocolChannelProjection {
-    ExtensionProtocolChannelProjection {
+    channel: ExtensionProtocolDefinition,
+) -> ExtensionProtocolProjection {
+    ExtensionProtocolProjection {
         extension_key: extension_key.to_string(),
         extension_id: extension_id.to_string(),
-        channel_key: channel.channel_key,
+        protocol_key: channel.protocol_key,
         version: channel.version,
         description: channel.description,
         methods: channel
             .methods
             .into_iter()
-            .map(protocol_channel_method_projection)
+            .map(protocol_method_method_projection)
             .collect(),
     }
 }
 
-fn protocol_channel_method_projection(
-    method: ExtensionProtocolChannelMethodDefinition,
-) -> ExtensionProtocolChannelMethodProjection {
-    ExtensionProtocolChannelMethodProjection {
+fn protocol_method_method_projection(
+    method: ExtensionProtocolMethodDefinition,
+) -> ExtensionProtocolMethodProjection {
+    ExtensionProtocolMethodProjection {
         name: method.name,
         description: method.description,
         input_schema: method.input_schema,
@@ -703,9 +747,11 @@ mod tests {
         ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
         ExtensionCommandHandler, ExtensionDependencyDeclaration, ExtensionFlagDefinition,
         ExtensionFlagType, ExtensionMessageRendererDefinition, ExtensionPermissionAccess,
-        ExtensionPermissionDeclaration, ExtensionProtocolChannelDefinition,
-        ExtensionProtocolChannelMethodDefinition, ExtensionRendererDeclaration,
+        ExtensionPermissionDeclaration, ExtensionProtocolDefinition,
+        ExtensionProtocolMethodDefinition, ExtensionRendererDeclaration,
         ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
+        ExtensionUiComponentDefinition, ExtensionUiComponentRendererDeclaration,
+        ExtensionUiComponentSandboxProfile, ExtensionUiComponentSizing,
         ExtensionWorkspaceTabDefinition, ExtensionWorkspaceTabRendererDeclaration,
         InstalledAssetSource, ProjectExtensionInstallation,
     };
@@ -762,11 +808,11 @@ mod tests {
                 output_schema: serde_json::json!({}),
                 permissions: vec!["local.profile.read".to_string()],
             }],
-            protocol_channels: vec![ExtensionProtocolChannelDefinition {
-                channel_key: format!("{extension_id}.api"),
+            protocols: vec![ExtensionProtocolDefinition {
+                protocol_key: format!("{extension_id}.api"),
                 version: "1.0.0".to_string(),
                 description: "demo API channel".to_string(),
-                methods: vec![ExtensionProtocolChannelMethodDefinition {
+                methods: vec![ExtensionProtocolMethodDefinition {
                     name: "readProfile".to_string(),
                     description: "read profile through channel".to_string(),
                     input_schema: serde_json::json!({}),
@@ -778,7 +824,7 @@ mod tests {
                 alias: "self_api".to_string(),
                 extension_id: extension_id.to_string(),
                 version: "^1.0.0".to_string(),
-                channels: vec![format!("{extension_id}.api")],
+                protocols: vec![format!("{extension_id}.api")],
             }],
             workspace_tabs: vec![ExtensionWorkspaceTabDefinition {
                 type_id: tab_type_id.to_string(),
@@ -788,6 +834,7 @@ mod tests {
                     entry: "dist/panel/index.html".to_string(),
                 },
             }],
+            ui_components: vec![],
             permissions: vec![ExtensionPermissionDeclaration::LocalProfile {
                 access: ExtensionPermissionAccess::Read,
             }],
@@ -836,39 +883,6 @@ mod tests {
         }
     }
 
-    fn canvas_panel_manifest(extension_id: &str) -> ExtensionTemplatePayload {
-        ExtensionTemplatePayload {
-            manifest_version: "2".to_string(),
-            extension_id: extension_id.to_string(),
-            package: ExtensionPackageMetadata {
-                name: format!("@agentdash/{extension_id}"),
-                version: "1.0.0".to_string(),
-            },
-            asset_version: "1.0.0".to_string(),
-            commands: vec![],
-            flags: vec![],
-            message_renderers: vec![],
-            capability_directives: vec![],
-            asset_refs: vec![],
-            runtime_actions: vec![],
-            protocol_channels: vec![],
-            extension_dependencies: vec![],
-            workspace_tabs: vec![ExtensionWorkspaceTabDefinition {
-                type_id: format!("{extension_id}.panel"),
-                label: "Canvas".to_string(),
-                uri_scheme: extension_id.to_string(),
-                renderer: ExtensionWorkspaceTabRendererDeclaration::CanvasPanel {
-                    entry: "dist/canvas/runtime-snapshot.json".to_string(),
-                },
-            }],
-            permissions: vec![],
-            fetch_routes: vec![],
-            operation_catalog: vec![],
-            backend_services: vec![],
-            bundles: vec![],
-        }
-    }
-
     #[test]
     fn flattens_enabled_extension_runtime_projection() {
         let projection = extension_runtime_projection_from_installations(vec![installation(
@@ -884,11 +898,8 @@ mod tests {
         assert_eq!(projection.flags[0].name, "demo.verbose");
         assert_eq!(projection.message_renderers[0].custom_type, "demo.card");
         assert_eq!(projection.runtime_actions[0].action_key, "demo.profile");
-        assert_eq!(projection.protocol_channels[0].channel_key, "demo.api");
-        assert_eq!(
-            projection.protocol_channels[0].methods[0].name,
-            "readProfile"
-        );
+        assert_eq!(projection.protocols[0].protocol_key, "demo.api");
+        assert_eq!(projection.protocols[0].methods[0].name, "readProfile");
         assert_eq!(
             projection.extension_dependencies[0].dependency.alias,
             "self_api"
@@ -971,26 +982,59 @@ mod tests {
     }
 
     #[test]
-    fn canvas_panel_tab_is_ui_only_and_loadable_without_extension_host_bundle() {
+    fn ui_component_projection_carries_exact_artifact_pin() {
         let project_id = uuid::Uuid::new_v4();
+        let mut component_manifest = manifest(
+            "component-demo",
+            "component-demo.action",
+            "component-demo.panel",
+            "component-demo",
+        );
+        component_manifest.ui_components = vec![ExtensionUiComponentDefinition {
+            component_key: "component-demo.review-card".to_string(),
+            contract_version: 1,
+            renderer: ExtensionUiComponentRendererDeclaration::Iframe {
+                entry: "dist/components/review-card/index.html".to_string(),
+            },
+            props_schema: serde_json::Value::Bool(true),
+            events_schema: std::collections::BTreeMap::new(),
+            state_projection_schema: serde_json::Value::Bool(true),
+            slots: vec![],
+            sizing: ExtensionUiComponentSizing {
+                min_width: 160,
+                min_height: 120,
+                max_width: None,
+                max_height: None,
+            },
+            sandbox_profile: ExtensionUiComponentSandboxProfile::IsolatedV1,
+        }];
+        let expected_artifact = artifact_ref("component-demo");
         let installation = ProjectExtensionInstallation::new_packaged(
             project_id,
-            "canvas-demo",
-            "Canvas Demo",
-            canvas_panel_manifest("canvas-demo"),
-            artifact_ref("canvas-demo"),
+            "component-demo",
+            "Component Demo",
+            component_manifest,
+            expected_artifact.clone(),
         )
-        .expect("packaged canvas panel installation");
+        .expect("packaged component installation");
 
         let projection = extension_runtime_projection_from_installations(vec![installation])
             .expect("projection");
-
-        assert!(projection.bundles.is_empty());
-        let tab = &projection.workspace_tabs[0];
-        assert!(tab.loadability.available);
+        let component = &projection.ui_components[0];
+        assert!(component.available);
         assert_eq!(
-            tab.loadability.mode,
-            ExtensionWorkspaceTabLoadabilityMode::UiOnly
+            component
+                .package_artifact
+                .as_ref()
+                .map(|artifact| artifact.artifact_id),
+            Some(expected_artifact.artifact_id)
+        );
+        assert_eq!(
+            component
+                .package_artifact
+                .as_ref()
+                .map(|artifact| artifact.archive_digest.as_str()),
+            Some(expected_artifact.archive_digest.as_str())
         );
     }
 

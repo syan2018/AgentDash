@@ -3,7 +3,7 @@
 
 import type { JsonValue } from "./common-contracts";
 
-export type ProjectExtensionCapabilitySummaryResponse = { commands: number, flags: number, message_renderers: number, runtime_actions: number, protocol_channels: number, workspace_tabs: number, permissions: number, bundles: number, };
+export type ProjectExtensionCapabilitySummaryResponse = { commands: number, flags: number, message_renderers: number, runtime_actions: number, protocols: number, workspace_tabs: number, permissions: number, bundles: number, };
 
 export type ProjectExtensionInstalledSourceResponse = { library_asset_id: string, source_ref: string, source_version: string, source_digest: string, installed_at: string, };
 

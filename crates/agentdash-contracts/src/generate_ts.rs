@@ -44,20 +44,6 @@ use agentdash_contracts::backend::{
     RunnerRegistrationTokenRotateResponse, RunnerRegistrationTokenStatus, RuntimeHealthStatus,
     UpdateProjectBackendAccessRequest,
 };
-use agentdash_contracts::canvas::{
-    CanvasAccessDto, CanvasAgentInputSubmitRequest, CanvasAgentRunRuntimeSnapshotDto,
-    CanvasFileDto, CanvasImportMapDto, CanvasInteractionEventDto, CanvasInteractionSnapshot,
-    CanvasInteractionSnapshotUpsertRequest, CanvasListScopeDto, CanvasResponse,
-    CanvasRuntimeBindingDto, CanvasRuntimeBindingUpsertRequest, CanvasRuntimeBridgeSnapshotDto,
-    CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto, CanvasRuntimeFileDto,
-    CanvasRuntimeInvokeRequest, CanvasRuntimeObservation, CanvasRuntimeObservationStatusDto,
-    CanvasRuntimeObservationUpsertRequest, CanvasRuntimeSnapshotDto, CanvasRuntimeViewportDto,
-    CanvasSandboxConfigDto, CanvasScopeDto, CopyCanvasToPersonalRequest, CreateCanvasRequest,
-    DeleteCanvasResponse, ListCanvasesQuery, PublishCanvasToProjectRequest,
-    RuntimeActionDescriptorDto, RuntimeActionKindDto, RuntimeContextDto,
-    RuntimeInvocationOutputDto, RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto,
-    RuntimeTraceDto, UnpublishCanvasResponse, UpdateCanvasRequest,
-};
 use agentdash_contracts::common_response::{
     DeletedFlagResponse, DeletedIdResponse, PendingExecutionResponse, RevokedIdResponse,
     UpdatedIdResponse,
@@ -100,13 +86,15 @@ use agentdash_contracts::extension_runtime::{
     ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
     ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
     ExtensionPermissionDeclarationResponse, ExtensionPermissionProjectionResponse,
-    ExtensionProcessPermissionAccessResponse, ExtensionProtocolChannelMethodProjectionResponse,
-    ExtensionProtocolChannelProjectionResponse, ExtensionRuntimeActionKindResponse,
+    ExtensionProcessPermissionAccessResponse, ExtensionProtocolMethodProjectionResponse,
+    ExtensionProtocolProjectionResponse, ExtensionRuntimeActionKindResponse,
     ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeInvocationOutputResponse,
     ExtensionRuntimeInvokeActionRequest, ExtensionRuntimeInvokeActionResponse,
     ExtensionRuntimeInvokeBackendServiceRequest, ExtensionRuntimeInvokeBackendServiceResponse,
-    ExtensionRuntimeInvokeChannelRequest, ExtensionRuntimeInvokeChannelResponse,
+    ExtensionRuntimeInvokeProtocolRequest, ExtensionRuntimeInvokeProtocolResponse,
     ExtensionRuntimeProjectionResponse, ExtensionRuntimeTraceResponse,
+    ExtensionUiComponentProjectionResponse, ExtensionUiComponentRendererResponse,
+    ExtensionUiComponentSandboxProfileResponse, ExtensionUiComponentSizingResponse,
     ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
     UninstallExtensionInstallationResponse,
@@ -119,6 +107,21 @@ use agentdash_contracts::external_marketplace::{
     MarketplaceInstallRequirementKindDto, MarketplaceSourceDto, MarketplaceSourceProviderKindDto,
     MarketplaceSourceTrustLevelDto, RefreshExternalMarketplaceAssetRequest,
     RefreshExternalMarketplaceAssetResponse,
+};
+use agentdash_contracts::interaction::{
+    ArchiveInteractionDefinitionResponse, CanvasDefinitionDto, CanvasDefinitionListScopeDto,
+    CloseInteractionInstanceRequestDto, CommitCanvasDefinitionRequest,
+    CreateCanvasDefinitionRequest, CreateInteractionInstanceRequestDto,
+    DistributeCanvasDefinitionRequest, InteractionCommandActorPolicyDto,
+    InteractionCommandDefinitionDto, InteractionCommandRequestDto, InteractionCommandResponseDto,
+    InteractionComponentBindingDto, InteractionComponentEventBindingDto,
+    InteractionDefinitionAccessDto, InteractionDefinitionLineageDto,
+    InteractionDefinitionLineageKindDto, InteractionDefinitionStatusDto, InteractionInstanceDto,
+    InteractionInstanceViewDto, InteractionOperationRefDto, InteractionOwnerDto,
+    InteractionPinnedArtifactDto, InteractionResourceSlotDto, InteractionResourceSlotKindDto,
+    InteractionRuntimeBindingDto, InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto,
+    InteractionSourceChangesetDto, InteractionSourceFileChangeDto, InteractionSourceFileDto,
+    InteractionSourceSandboxDto, InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery,
 };
 use agentdash_contracts::llm_provider::{
     CodexOAuthCredentialTargetDto, CodexOAuthFlowStatusDto, CodexOAuthStatusResponse,
@@ -245,11 +248,13 @@ use agentdash_contracts::workspace::{
     WorkspaceResolutionPolicy, WorkspaceResponse, WorkspaceStatus,
 };
 use agentdash_contracts::workspace_module::{
-    WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
-    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationReadiness,
-    WorkspaceModuleOperationReadinessKind, WorkspaceModuleOperationVisibility,
-    WorkspaceModulePresentRequest, WorkspaceModulePresentation, WorkspaceModuleStatus,
-    WorkspaceModuleStatusKind, WorkspaceModuleSummary, WorkspaceModuleUiEntry,
+    WorkspaceModuleDescriptor, WorkspaceModuleKind, WorkspaceModuleOperation,
+    WorkspaceModuleOperationEffect, WorkspaceModuleOperationProvenance,
+    WorkspaceModuleOperationReadiness, WorkspaceModuleOperationReadinessKind,
+    WorkspaceModuleOperationRef, WorkspaceModuleOperationReplayPolicy,
+    WorkspaceModuleOperationVisibility, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
+    WorkspaceModuleStatus, WorkspaceModuleStatusKind, WorkspaceModuleSummary,
+    WorkspaceModuleUiEntry,
 };
 use ts_rs::TS;
 
@@ -793,9 +798,11 @@ fn main() {
             export_all::<WorkspaceModuleStatus>(dir);
             export_all::<WorkspaceModuleSummary>(dir);
             export_all::<WorkspaceModuleUiEntry>(dir);
-            export_all::<WorkspaceModuleCanvasHostAction>(dir);
             export_all::<WorkspaceModuleOperationVisibility>(dir);
-            export_all::<WorkspaceModuleOperationDispatch>(dir);
+            export_all::<WorkspaceModuleOperationRef>(dir);
+            export_all::<WorkspaceModuleOperationProvenance>(dir);
+            export_all::<WorkspaceModuleOperationEffect>(dir);
+            export_all::<WorkspaceModuleOperationReplayPolicy>(dir);
             export_all::<WorkspaceModuleOperationReadinessKind>(dir);
             export_all::<WorkspaceModuleOperationReadiness>(dir);
             export_all::<WorkspaceModuleOperation>(dir);
@@ -928,52 +935,47 @@ fn main() {
         },
     );
 
-    // --- canvas-contracts.ts ---
+    // --- interaction-contracts.ts ---
     emit_domain(
         &generated_dir,
-        "canvas-contracts.ts",
+        "interaction-contracts.ts",
         &mut upstream,
         check,
         |dir| {
-            export_all::<CanvasFileDto>(dir);
-            export_all::<CanvasImportMapDto>(dir);
-            export_all::<CanvasSandboxConfigDto>(dir);
-            export_all::<CanvasScopeDto>(dir);
-            export_all::<CanvasListScopeDto>(dir);
-            export_all::<CanvasAccessDto>(dir);
-            export_all::<ListCanvasesQuery>(dir);
-            export_all::<CanvasResponse>(dir);
-            export_all::<CreateCanvasRequest>(dir);
-            export_all::<UpdateCanvasRequest>(dir);
-            export_all::<DeleteCanvasResponse>(dir);
-            export_all::<PublishCanvasToProjectRequest>(dir);
-            export_all::<CopyCanvasToPersonalRequest>(dir);
-            export_all::<UnpublishCanvasResponse>(dir);
-            export_all::<CanvasRuntimeFileDto>(dir);
-            export_all::<CanvasRuntimeBindingDto>(dir);
-            export_all::<CanvasRuntimeBindingUpsertRequest>(dir);
-            export_all::<RuntimeActionKindDto>(dir);
-            export_all::<RuntimePolicyDto>(dir);
-            export_all::<RuntimeActionDescriptorDto>(dir);
-            export_all::<RuntimeContextDto>(dir);
-            export_all::<RuntimeSurfaceDto>(dir);
-            export_all::<CanvasRuntimeBridgeSnapshotDto>(dir);
-            export_all::<CanvasRuntimeSnapshotDto>(dir);
-            export_all::<CanvasAgentRunRuntimeSnapshotDto>(dir);
-            export_all::<CanvasRuntimeInvokeRequest>(dir);
-            export_all::<CanvasRuntimeObservationStatusDto>(dir);
-            export_all::<CanvasRuntimeViewportDto>(dir);
-            export_all::<CanvasRuntimeDocumentStateDto>(dir);
-            export_all::<CanvasRuntimeDiagnosticDto>(dir);
-            export_all::<CanvasRuntimeObservationUpsertRequest>(dir);
-            export_all::<CanvasRuntimeObservation>(dir);
-            export_all::<CanvasInteractionEventDto>(dir);
-            export_all::<CanvasInteractionSnapshotUpsertRequest>(dir);
-            export_all::<CanvasInteractionSnapshot>(dir);
-            export_all::<CanvasAgentInputSubmitRequest>(dir);
-            export_all::<RuntimeTraceDto>(dir);
-            export_all::<RuntimeInvocationOutputDto>(dir);
-            export_all::<RuntimeInvocationResultDto>(dir);
+            export_all::<InteractionOwnerDto>(dir);
+            export_all::<InteractionDefinitionStatusDto>(dir);
+            export_all::<CanvasDefinitionListScopeDto>(dir);
+            export_all::<InteractionDefinitionAccessDto>(dir);
+            export_all::<InteractionSourceFileDto>(dir);
+            export_all::<InteractionSourceSandboxDto>(dir);
+            export_all::<InteractionSourceBundleDto>(dir);
+            export_all::<InteractionDefinitionLineageKindDto>(dir);
+            export_all::<InteractionDefinitionLineageDto>(dir);
+            export_all::<CanvasDefinitionDto>(dir);
+            export_all::<ListCanvasDefinitionsQuery>(dir);
+            export_all::<CreateCanvasDefinitionRequest>(dir);
+            export_all::<InteractionSourceFileChangeDto>(dir);
+            export_all::<InteractionSourceChangesetDto>(dir);
+            export_all::<InteractionCommandActorPolicyDto>(dir);
+            export_all::<InteractionOperationRefDto>(dir);
+            export_all::<InteractionStatePatchV1ContractDto>(dir);
+            export_all::<InteractionCommandDefinitionDto>(dir);
+            export_all::<InteractionComponentEventBindingDto>(dir);
+            export_all::<InteractionComponentBindingDto>(dir);
+            export_all::<InteractionResourceSlotKindDto>(dir);
+            export_all::<InteractionResourceSlotDto>(dir);
+            export_all::<CommitCanvasDefinitionRequest>(dir);
+            export_all::<DistributeCanvasDefinitionRequest>(dir);
+            export_all::<ArchiveInteractionDefinitionResponse>(dir);
+            export_all::<InteractionInstanceDto>(dir);
+            export_all::<InteractionPinnedArtifactDto>(dir);
+            export_all::<InteractionRuntimeBindingTargetDto>(dir);
+            export_all::<InteractionRuntimeBindingDto>(dir);
+            export_all::<InteractionInstanceViewDto>(dir);
+            export_all::<CreateInteractionInstanceRequestDto>(dir);
+            export_all::<CloseInteractionInstanceRequestDto>(dir);
+            export_all::<InteractionCommandRequestDto>(dir);
+            export_all::<InteractionCommandResponseDto>(dir);
         },
     );
 
@@ -999,6 +1001,9 @@ fn main() {
             export_all::<ExtensionCommandHandlerResponse>(dir);
             export_all::<ExtensionMessageRendererDeclarationResponse>(dir);
             export_all::<ExtensionWorkspaceTabRendererResponse>(dir);
+            export_all::<ExtensionUiComponentRendererResponse>(dir);
+            export_all::<ExtensionUiComponentSizingResponse>(dir);
+            export_all::<ExtensionUiComponentSandboxProfileResponse>(dir);
             export_all::<ExtensionPermissionDeclarationResponse>(dir);
             export_all::<ExtensionInstalledAssetSourceResponse>(dir);
             export_all::<ExtensionPackageArtifactRefResponse>(dir);
@@ -1007,23 +1012,24 @@ fn main() {
             export_all::<ExtensionFlagProjectionResponse>(dir);
             export_all::<ExtensionMessageRendererProjectionResponse>(dir);
             export_all::<ExtensionRuntimeActionProjectionResponse>(dir);
-            export_all::<ExtensionProtocolChannelMethodProjectionResponse>(dir);
-            export_all::<ExtensionProtocolChannelProjectionResponse>(dir);
+            export_all::<ExtensionProtocolMethodProjectionResponse>(dir);
+            export_all::<ExtensionProtocolProjectionResponse>(dir);
             export_all::<ExtensionDependencyDeclarationResponse>(dir);
             export_all::<ExtensionDependencyProjectionResponse>(dir);
             export_all::<ExtensionWorkspaceTabLoadabilityModeResponse>(dir);
             export_all::<ExtensionWorkspaceTabLoadabilityResponse>(dir);
             export_all::<ExtensionWorkspaceTabProjectionResponse>(dir);
+            export_all::<ExtensionUiComponentProjectionResponse>(dir);
             export_all::<ExtensionPermissionProjectionResponse>(dir);
             export_all::<ExtensionBundleProjectionResponse>(dir);
             export_all::<ExtensionRuntimeProjectionResponse>(dir);
             export_all::<ExtensionRuntimeInvokeActionRequest>(dir);
-            export_all::<ExtensionRuntimeInvokeChannelRequest>(dir);
+            export_all::<ExtensionRuntimeInvokeProtocolRequest>(dir);
             export_all::<ExtensionRuntimeInvokeBackendServiceRequest>(dir);
             export_all::<ExtensionRuntimeTraceResponse>(dir);
             export_all::<ExtensionRuntimeInvocationOutputResponse>(dir);
             export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
-            export_all::<ExtensionRuntimeInvokeChannelResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeProtocolResponse>(dir);
             export_all::<ExtensionBackendServiceInvokeMetadataResponse>(dir);
             export_all::<ExtensionBackendServiceHttpResponse>(dir);
             export_all::<ExtensionBackendServiceReadinessResponse>(dir);

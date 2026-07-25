@@ -2,7 +2,6 @@ use std::sync::{Arc, OnceLock};
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_domain::agent_run_target::AgentRunTarget;
-use agentdash_domain::canvas::CanvasDataBinding;
 use agentdash_domain::workflow::SubjectRef;
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -63,14 +62,6 @@ impl RuntimeSurfaceUpdateRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeSurfaceChange {
-    CanvasBindingChanged {
-        canvas_mount_id: String,
-        binding: CanvasDataBinding,
-    },
-    CanvasVisibilityRequested {
-        canvas_mount_id: String,
-        reason: CanvasVisibilityReason,
-    },
     McpPresetChanged {
         preset_key: String,
     },
@@ -95,9 +86,6 @@ pub enum RuntimeSurfaceChange {
 impl RuntimeSurfaceChange {
     pub fn surface_kind(&self) -> RuntimeSurfaceKind {
         match self {
-            Self::CanvasBindingChanged { .. } | Self::CanvasVisibilityRequested { .. } => {
-                RuntimeSurfaceKind::Canvas
-            }
             Self::McpPresetChanged { .. } => RuntimeSurfaceKind::Mcp,
             Self::ProjectVfsMountChanged { .. } => RuntimeSurfaceKind::Vfs,
             Self::WorkspaceModuleVisibilityChanged { .. } => RuntimeSurfaceKind::WorkspaceModule,
@@ -107,16 +95,8 @@ impl RuntimeSurfaceChange {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CanvasVisibilityReason {
-    Created,
-    Presented,
-    ExplicitRefresh,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeSurfaceKind {
-    Canvas,
     Mcp,
     Vfs,
     WorkspaceModule,

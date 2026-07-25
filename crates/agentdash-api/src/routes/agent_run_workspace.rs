@@ -16,14 +16,10 @@ use agentdash_contracts::workflow::{
     RuntimeThreadRefDto, SubjectRefDto, ValidationSeverity,
 };
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
-use agentdash_workspace_module::workspace_module::{
-    WorkspaceModuleVisibilityInput, project_agent_run_workspace_module_visibility,
-};
 use uuid::Uuid;
 
 use crate::{
     app_state::AppState,
-    auth::project_authorization_context,
     routes::{
         vfs_surfaces::dto as vfs_surface_dto, workspace_module::load_project_workspace_modules,
     },
@@ -81,21 +77,15 @@ pub(crate) async fn load(
                     ApiError::NotFound(format!("AgentFrame `{frame_id}` does not exist"))
                 })?;
             let capability_state = project_capability_state_from_frame(&frame);
-            let runtime_vfs = capability_state.vfs.active.clone().unwrap_or_default();
-            let project_modules = load_project_workspace_modules(
-                state,
-                &project_authorization_context(current_user),
-                snapshot.run.project_id,
-            )
-            .await?;
-            project_agent_run_workspace_module_visibility(
-                project_modules,
-                WorkspaceModuleVisibilityInput {
-                    base_visibility: &capability_state.workspace_module,
-                    runtime_vfs: &runtime_vfs,
-                },
-            )
-            .modules
+            load_project_workspace_modules(state, current_user, snapshot.run.project_id)
+                .await?
+                .into_iter()
+                .filter(|module| {
+                    capability_state
+                        .workspace_module
+                        .allows(&module.summary.module_id)
+                })
+                .collect()
         }
         None => Vec::new(),
     };

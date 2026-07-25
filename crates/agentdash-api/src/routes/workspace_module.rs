@@ -12,19 +12,18 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::app_state::AppState;
-use crate::auth::{
-    CurrentUser, ProjectPermission, load_project_with_permission, project_authorization_context,
-};
+use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::rpc::ApiError;
-use agentdash_application::canvas::{CanvasListScopeFilter, list_canvases_for_user};
 use agentdash_application::extension_runtime::extension_runtime_projection_from_installations;
+use agentdash_application_operation_gateway::UserWorkshopOperationHost;
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
 };
+use agentdash_domain::interaction::{InteractionDefinitionStatus, InteractionOwner};
 use agentdash_workspace_module::workspace_module::{
-    WorkspaceModulePresentationError, build_workspace_module_presentation,
-    build_workspace_modules_with_canvas_access,
+    WorkspaceModulePresentationError, build_workspace_module_presentation, build_workspace_modules,
 };
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Deserialize)]
 pub struct ProjectWorkspaceModulePath {
@@ -61,23 +60,7 @@ pub async fn get_project_workspace_modules(
     )
     .await?;
 
-    let installations = state
-        .repos
-        .project_extension_installation_repo
-        .list_enabled_by_project(project_id)
-        .await
-        .map_err(ApiError::from)?;
-    let projection = extension_runtime_projection_from_installations(installations)?;
-    let current_user_context = project_authorization_context(&current_user);
-    let canvases = list_canvases_for_user(
-        &state.repos,
-        &current_user_context,
-        project_id,
-        CanvasListScopeFilter::All,
-    )
-    .await
-    .map_err(ApiError::from)?;
-    let modules = build_workspace_modules_with_canvas_access(&projection, &canvases);
+    let modules = load_project_workspace_modules(state.as_ref(), &current_user, project_id).await?;
     Ok(Json(modules))
 }
 
@@ -108,9 +91,7 @@ pub async fn present_workspace_module(
             "module_id 与 view_key 不能为空".to_string(),
         ));
     }
-    let current_user_context = project_authorization_context(&current_user);
-    let modules =
-        load_project_workspace_modules(state.as_ref(), &current_user_context, project_id).await?;
+    let modules = load_project_workspace_modules(state.as_ref(), &current_user, project_id).await?;
     let module = modules
         .iter()
         .find(|module| module.summary.module_id == module_id)
@@ -130,7 +111,7 @@ pub async fn present_workspace_module(
 
 pub(crate) async fn load_project_workspace_modules(
     state: &AppState,
-    current_user: &agentdash_domain::project::ProjectAuthorizationContext,
+    current_user: &agentdash_platform_spi::AuthIdentity,
     project_id: Uuid,
 ) -> Result<Vec<WorkspaceModuleDescriptor>, ApiError> {
     let installations = state
@@ -140,16 +121,49 @@ pub(crate) async fn load_project_workspace_modules(
         .await
         .map_err(ApiError::from)?;
     let projection = extension_runtime_projection_from_installations(installations)?;
-    let canvases = list_canvases_for_user(
-        &state.repos,
-        current_user,
+    let definitions = state
+        .repos
+        .interaction_definition_repo
+        .list_canvas_by_project(project_id)
+        .await?;
+    let mut revisions = Vec::new();
+    for definition in definitions {
+        let owner_visible = match &definition.owner {
+            InteractionOwner::Project(owner) => *owner == project_id,
+            InteractionOwner::User(owner) => owner == &current_user.user_id,
+        };
+        if definition.status != InteractionDefinitionStatus::Active || !owner_visible {
+            continue;
+        }
+        let revision = state
+            .repos
+            .interaction_definition_repo
+            .get_revision(definition.current_revision_id)
+            .await?
+            .ok_or_else(|| {
+                ApiError::Internal("InteractionDefinition current revision 缺失".to_string())
+            })?;
+        revisions.push(revision);
+    }
+    let host = UserWorkshopOperationHost::project(
+        state.services.operation_gateway.clone(),
+        current_user.clone(),
         project_id,
-        CanvasListScopeFilter::All,
     )
-    .await
-    .map_err(ApiError::from)?;
-    Ok(build_workspace_modules_with_canvas_access(
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let surface = host
+        .discover(CancellationToken::new())
+        .await
+        .map_err(|error| ApiError::Forbidden(error.to_string()))?;
+    let operations = surface
+        .catalog
+        .descriptors()
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(build_workspace_modules(
         &projection,
-        &canvases,
+        &revisions,
+        &operations,
     ))
 }

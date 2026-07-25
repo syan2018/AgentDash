@@ -22,7 +22,7 @@ pub use agentdash_application_ports::extension_gateway_setup::{
 };
 pub use agentdash_application_ports::extension_runtime::{
     ExtensionBackendServiceTransport, ExtensionRuntimeActionTransport,
-    ExtensionRuntimeActionTransportError, ExtensionRuntimeChannelTransport,
+    ExtensionRuntimeActionTransportError, ExtensionRuntimeProtocolTransport,
 };
 pub use error::{RuntimeInvocationError, RuntimeInvocationErrorKind};
 pub use extension_actions::{
@@ -31,8 +31,8 @@ pub use extension_actions::{
     EXTENSION_RUNTIME_DESCRIPTOR_INSTALLATION_ID_METADATA, ExtensionInvocationWorkspaceContext,
     ExtensionRuntimeActionProvider, ExtensionRuntimeBackendServiceInvokeRequest,
     ExtensionRuntimeBackendServiceInvokeResult, ExtensionRuntimeBackendServiceInvoker,
-    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
-    ExtensionRuntimeChannelInvokeResult, ExtensionRuntimeChannelInvoker,
+    ExtensionRuntimeProtocolConsumer, ExtensionRuntimeProtocolInvokeRequest,
+    ExtensionRuntimeProtocolInvokeResult, ExtensionRuntimeProtocolInvoker,
     attach_extension_invocation_workspace,
 };
 pub use extension_workspace::{

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   invokeAgentRunExtensionBackendService,
   invokeAgentRunExtensionRuntimeAction,
-  invokeAgentRunExtensionRuntimeChannel,
+  invokeAgentRunExtensionRuntimeProtocol,
 } from "../../../services/extensionRuntime";
 import { readSurfaceFile, writeSurfaceFile } from "../../../services/vfs";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
@@ -32,7 +32,7 @@ const webviewBridgeServices: ExtensionWebviewBridgeServices = {
     useWorkspaceTabStore.getState().openOrActivate(typeId, uri);
   },
   invokeAction: invokeAgentRunExtensionRuntimeAction,
-  invokeChannel: invokeAgentRunExtensionRuntimeChannel,
+  invokeProtocol: invokeAgentRunExtensionRuntimeProtocol,
   invokeBackendService: invokeAgentRunExtensionBackendService,
   readFile: readSurfaceFile,
   writeFile: writeSurfaceFile,

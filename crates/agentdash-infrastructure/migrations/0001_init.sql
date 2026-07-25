@@ -43,21 +43,6 @@ CREATE TABLE public.agent_procedures (
     installed_at timestamp with time zone
 );
 
-CREATE TABLE public.agent_run_canvas_state (
-    run_id text NOT NULL,
-    agent_id text NOT NULL,
-    canvas_mount_id text NOT NULL,
-    canvas_id text NOT NULL,
-    agent_run_canvas_ref text NOT NULL,
-    delivery_trace_ref text,
-    current_agent_frame_id text,
-    frame_id text NOT NULL,
-    runtime_observation jsonb,
-    interaction_snapshot jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
 CREATE TABLE public.agent_run_lineages (
     id text NOT NULL,
     parent_run_id text NOT NULL,
@@ -218,32 +203,6 @@ CREATE TABLE public.backends (
     capability_slot text DEFAULT 'default'::text NOT NULL
 );
 
-CREATE TABLE public.canvas_files (
-    canvas_id text NOT NULL,
-    path text NOT NULL,
-    content text DEFAULT ''::text NOT NULL
-);
-
-CREATE TABLE public.canvases (
-    id text NOT NULL,
-    project_id text NOT NULL,
-    mount_id text DEFAULT ''::text NOT NULL,
-    title text NOT NULL,
-    description text DEFAULT ''::text NOT NULL,
-    entry_file text NOT NULL,
-    sandbox_config jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    owner_user_id text,
-    scope text DEFAULT 'project'::text NOT NULL,
-    published_from_canvas_id text,
-    shared_canvas_id text,
-    cloned_from_canvas_id text,
-    published_at timestamp with time zone,
-    published_by_user_id text,
-    CONSTRAINT canvases_scope_check CHECK ((scope = ANY (ARRAY['personal'::text, 'project'::text])))
-);
-
 CREATE TABLE public.dash_complete_effect (
     effect_id text NOT NULL,
     record jsonb NOT NULL,
@@ -381,7 +340,7 @@ CREATE TABLE public.lifecycle_runs (
     orchestrations jsonb DEFAULT '[]'::jsonb NOT NULL,
     tasks jsonb DEFAULT '[]'::jsonb NOT NULL,
     created_by_user_id text DEFAULT 'system'::text NOT NULL,
-    channel_registry jsonb DEFAULT '{}'::jsonb NOT NULL,
+    channel_registry jsonb DEFAULT '{"schema_version":2,"channels":[]}'::jsonb NOT NULL,
     revision bigint DEFAULT 0 NOT NULL,
     CONSTRAINT lifecycle_runs_revision_check CHECK ((revision >= 0))
 );
@@ -788,9 +747,6 @@ ALTER TABLE ONLY public.agent_lineages
 ALTER TABLE ONLY public.agent_procedures
     ADD CONSTRAINT agent_procedures_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.agent_run_canvas_state
-    ADD CONSTRAINT agent_run_canvas_state_pkey PRIMARY KEY (run_id, agent_id, canvas_mount_id);
-
 ALTER TABLE ONLY public.agent_run_lineages
     ADD CONSTRAINT agent_run_lineages_child_unique UNIQUE (child_run_id, child_agent_id);
 
@@ -835,12 +791,6 @@ ALTER TABLE ONLY public.backend_workspace_inventory
 
 ALTER TABLE ONLY public.backends
     ADD CONSTRAINT backends_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.canvas_files
-    ADD CONSTRAINT canvas_files_pkey PRIMARY KEY (canvas_id, path);
-
-ALTER TABLE ONLY public.canvases
-    ADD CONSTRAINT canvases_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.dash_complete_effect
     ADD CONSTRAINT dash_complete_effect_pkey PRIMARY KEY (effect_id);
@@ -978,20 +928,6 @@ CREATE UNIQUE INDEX agent_run_terminal_projection_change_output_key ON public.ag
 
 CREATE UNIQUE INDEX agent_run_terminal_projection_change_source_key ON public.agent_run_terminal_projection_change USING btree (terminal_owner_epoch_id, source_sequence) WHERE (source_sequence IS NOT NULL);
 
-CREATE INDEX canvases_cloned_from_canvas_id_idx ON public.canvases USING btree (cloned_from_canvas_id);
-
-CREATE UNIQUE INDEX canvases_project_mount_id_uidx ON public.canvases USING btree (project_id, mount_id);
-
-CREATE INDEX canvases_project_owner_scope_idx ON public.canvases USING btree (project_id, owner_user_id, scope);
-
-CREATE UNIQUE INDEX canvases_project_publication_source_uidx ON public.canvases USING btree (published_from_canvas_id) WHERE ((published_from_canvas_id IS NOT NULL) AND (scope = 'project'::text));
-
-CREATE INDEX canvases_project_scope_idx ON public.canvases USING btree (project_id, scope);
-
-CREATE INDEX canvases_published_from_canvas_id_idx ON public.canvases USING btree (published_from_canvas_id);
-
-CREATE INDEX canvases_shared_canvas_id_idx ON public.canvases USING btree (shared_canvas_id);
-
 CREATE INDEX idx_agent_lineages_child ON public.agent_lineages USING btree (child_agent_id);
 
 CREATE INDEX idx_agent_lineages_parent ON public.agent_lineages USING btree (parent_agent_id) WHERE (parent_agent_id IS NOT NULL);
@@ -1001,8 +937,6 @@ CREATE INDEX idx_agent_lineages_run_id ON public.agent_lineages USING btree (run
 CREATE INDEX idx_agent_procedures_library_asset_id ON public.agent_procedures USING btree (library_asset_id);
 
 CREATE UNIQUE INDEX idx_agent_procedures_project_key ON public.agent_procedures USING btree (project_id, key);
-
-CREATE INDEX idx_agent_run_canvas_state_canvas ON public.agent_run_canvas_state USING btree (canvas_id);
 
 CREATE INDEX idx_agent_run_lineages_child ON public.agent_run_lineages USING btree (child_run_id, child_agent_id);
 
@@ -1132,15 +1066,6 @@ ALTER TABLE ONLY public.agent_lineages
 ALTER TABLE ONLY public.agent_lineages
     ADD CONSTRAINT agent_lineages_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.lifecycle_runs(id) ON DELETE CASCADE;
 
-ALTER TABLE ONLY public.agent_run_canvas_state
-    ADD CONSTRAINT agent_run_canvas_state_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.lifecycle_agents(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_run_canvas_state
-    ADD CONSTRAINT agent_run_canvas_state_canvas_id_fkey FOREIGN KEY (canvas_id) REFERENCES public.canvases(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_run_canvas_state
-    ADD CONSTRAINT agent_run_canvas_state_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.lifecycle_runs(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.agent_run_lineages
     ADD CONSTRAINT agent_run_lineages_child_agent_id_fkey FOREIGN KEY (child_agent_id) REFERENCES public.lifecycle_agents(id) ON DELETE CASCADE;
 
@@ -1164,9 +1089,6 @@ ALTER TABLE ONLY public.agent_run_terminal_projection_head
 
 ALTER TABLE ONLY public.backend_execution_leases
     ADD CONSTRAINT backend_execution_leases_backend_id_fkey FOREIGN KEY (backend_id) REFERENCES public.backends(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.canvas_files
-    ADD CONSTRAINT canvas_files_canvas_id_fkey FOREIGN KEY (canvas_id) REFERENCES public.canvases(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.lifecycle_agents
     ADD CONSTRAINT lifecycle_agents_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.lifecycle_runs(id) ON DELETE CASCADE;
@@ -1194,3 +1116,206 @@ ALTER TABLE ONLY public.workflow_executor_effects
 
 ALTER TABLE ONLY public.workflow_executor_effects
     ADD CONSTRAINT workflow_executor_effects_lifecycle_run_id_fkey FOREIGN KEY (lifecycle_run_id) REFERENCES public.lifecycle_runs(id) ON DELETE CASCADE;
+
+CREATE TABLE public.interaction_definitions (
+    id uuid PRIMARY KEY,
+    project_id text NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+    owner_kind text NOT NULL CHECK (owner_kind IN ('user', 'project')),
+    owner_id text NOT NULL,
+    kind text NOT NULL CHECK (kind = 'canvas'),
+    current_revision_id uuid NOT NULL,
+    status text NOT NULL CHECK (status IN ('active', 'archived')),
+    document jsonb NOT NULL,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    CHECK (owner_kind <> 'project' OR owner_id = project_id)
+);
+
+CREATE INDEX idx_interaction_definitions_project_catalog
+    ON public.interaction_definitions (project_id, kind, status, updated_at DESC, id);
+CREATE INDEX idx_interaction_definitions_owner
+    ON public.interaction_definitions (owner_kind, owner_id, updated_at DESC, id);
+
+CREATE TABLE public.interaction_source_bundles (
+    digest text PRIMARY KEY CHECK (digest ~ '^sha256:[0-9a-fA-F]{64}$'),
+    format_version smallint NOT NULL CHECK (format_version = 1),
+    entry_file text NOT NULL,
+    sandbox jsonb NOT NULL,
+    created_at timestamptz NOT NULL
+);
+
+CREATE TABLE public.interaction_source_files (
+    source_bundle_digest text NOT NULL REFERENCES public.interaction_source_bundles(digest) ON DELETE RESTRICT,
+    path text NOT NULL,
+    content text NOT NULL,
+    media_type text,
+    PRIMARY KEY (source_bundle_digest, path)
+);
+
+CREATE TABLE public.interaction_definition_revisions (
+    revision_id uuid PRIMARY KEY,
+    definition_id uuid NOT NULL REFERENCES public.interaction_definitions(id) ON DELETE RESTRICT,
+    revision_number bigint NOT NULL CHECK (revision_number > 0),
+    project_id text NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+    owner_kind text NOT NULL CHECK (owner_kind IN ('user', 'project')),
+    owner_id text NOT NULL,
+    source_bundle_digest text NOT NULL REFERENCES public.interaction_source_bundles(digest) ON DELETE RESTRICT,
+    document jsonb NOT NULL,
+    created_at timestamptz NOT NULL,
+    UNIQUE (definition_id, revision_number),
+    UNIQUE (revision_id, definition_id),
+    CHECK (owner_kind <> 'project' OR owner_id = project_id)
+);
+
+ALTER TABLE public.interaction_definitions
+    ADD CONSTRAINT interaction_definitions_current_revision_fkey
+    FOREIGN KEY (current_revision_id, id)
+    REFERENCES public.interaction_definition_revisions(revision_id, definition_id)
+    DEFERRABLE INITIALLY DEFERRED;
+
+CREATE INDEX idx_interaction_definition_revisions_definition
+    ON public.interaction_definition_revisions (definition_id, revision_number DESC);
+
+CREATE TABLE public.interaction_definition_lineage (
+    definition_revision_id uuid PRIMARY KEY REFERENCES public.interaction_definition_revisions(revision_id) ON DELETE CASCADE,
+    lineage_kind text NOT NULL CHECK (lineage_kind IN ('published_from', 'copied_from')),
+    source_definition_id uuid NOT NULL REFERENCES public.interaction_definitions(id) ON DELETE RESTRICT,
+    source_revision_id uuid NOT NULL REFERENCES public.interaction_definition_revisions(revision_id) ON DELETE RESTRICT,
+    source_bundle_digest text NOT NULL REFERENCES public.interaction_source_bundles(digest) ON DELETE RESTRICT
+);
+
+CREATE INDEX idx_interaction_definition_lineage_source
+    ON public.interaction_definition_lineage (source_definition_id, lineage_kind, definition_revision_id);
+
+CREATE TABLE public.interaction_instances (
+    id uuid PRIMARY KEY,
+    owner_kind text NOT NULL CHECK (owner_kind IN ('user', 'project')),
+    owner_id text NOT NULL,
+    definition_id uuid NOT NULL REFERENCES public.interaction_definitions(id) ON DELETE RESTRICT,
+    definition_revision_id uuid NOT NULL REFERENCES public.interaction_definition_revisions(revision_id) ON DELETE RESTRICT,
+    contract_version smallint NOT NULL CHECK (contract_version = 1),
+    state_revision bigint NOT NULL CHECK (state_revision >= 0),
+    status text NOT NULL CHECK (status IN ('open', 'closed')),
+    state jsonb NOT NULL,
+    document jsonb NOT NULL,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    closed_at timestamptz,
+    CHECK ((status = 'open' AND closed_at IS NULL) OR (status = 'closed' AND closed_at IS NOT NULL))
+);
+
+CREATE INDEX idx_interaction_instances_owner
+    ON public.interaction_instances (owner_kind, owner_id, status, updated_at DESC, id);
+CREATE INDEX idx_interaction_instances_definition_revision
+    ON public.interaction_instances (definition_revision_id, status, id);
+
+CREATE TABLE public.interaction_state_revisions (
+    instance_id uuid NOT NULL REFERENCES public.interaction_instances(id) ON DELETE CASCADE,
+    state_revision bigint NOT NULL CHECK (state_revision >= 0),
+    source_event_id uuid,
+    state jsonb NOT NULL,
+    created_at timestamptz NOT NULL,
+    PRIMARY KEY (instance_id, state_revision),
+    UNIQUE (source_event_id)
+);
+
+CREATE TABLE public.interaction_attachments (
+    id uuid PRIMARY KEY,
+    instance_id uuid NOT NULL REFERENCES public.interaction_instances(id) ON DELETE CASCADE,
+    subject_kind text NOT NULL CHECK (subject_kind IN ('agent_run', 'user_workshop', 'workflow_run')),
+    subject_id text NOT NULL,
+    role text NOT NULL CHECK (role IN ('editor', 'observer', 'renderer', 'automation')),
+    document jsonb NOT NULL,
+    created_at timestamptz NOT NULL,
+    detached_at timestamptz
+);
+
+CREATE UNIQUE INDEX interaction_attachments_active_subject_unique
+    ON public.interaction_attachments (instance_id, subject_kind, subject_id)
+    WHERE detached_at IS NULL;
+CREATE INDEX idx_interaction_attachments_subject
+    ON public.interaction_attachments (subject_kind, subject_id, detached_at, instance_id);
+
+CREATE TABLE public.interaction_runtime_bindings (
+    id uuid PRIMARY KEY,
+    instance_id uuid NOT NULL REFERENCES public.interaction_instances(id) ON DELETE CASCADE,
+    attachment_id uuid REFERENCES public.interaction_attachments(id) ON DELETE CASCADE,
+    attachment_scope text GENERATED ALWAYS AS (COALESCE(attachment_id::text, '')) STORED,
+    slot_key text NOT NULL,
+    document jsonb NOT NULL,
+    created_at timestamptz NOT NULL,
+    UNIQUE (instance_id, attachment_scope, slot_key)
+);
+
+CREATE INDEX idx_interaction_runtime_bindings_instance
+    ON public.interaction_runtime_bindings (instance_id, attachment_scope, slot_key);
+
+CREATE TABLE public.interaction_presentation_states (
+    id uuid PRIMARY KEY,
+    instance_id uuid NOT NULL REFERENCES public.interaction_instances(id) ON DELETE CASCADE,
+    user_id text NOT NULL,
+    presentation_key text NOT NULL,
+    revision bigint NOT NULL CHECK (revision > 0),
+    value jsonb NOT NULL,
+    updated_at timestamptz NOT NULL,
+    UNIQUE (instance_id, user_id, presentation_key)
+);
+
+CREATE TABLE public.interaction_renderer_leases (
+    id uuid PRIMARY KEY,
+    instance_id uuid NOT NULL REFERENCES public.interaction_instances(id) ON DELETE CASCADE,
+    renderer_key text NOT NULL,
+    user_id text NOT NULL,
+    revision bigint NOT NULL CHECK (revision > 0),
+    acquired_at timestamptz NOT NULL,
+    renewed_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    CHECK (renewed_at >= acquired_at),
+    CHECK (expires_at > renewed_at),
+    CHECK (expires_at <= renewed_at + interval '5 minutes'),
+    UNIQUE (instance_id, renderer_key)
+);
+
+CREATE INDEX idx_interaction_renderer_leases_active
+    ON public.interaction_renderer_leases (instance_id, expires_at);
+
+CREATE TABLE public.interaction_events (
+    id uuid PRIMARY KEY,
+    instance_id uuid NOT NULL REFERENCES public.interaction_instances(id) ON DELETE CASCADE,
+    sequence bigint NOT NULL CHECK (sequence > 0),
+    command_id uuid NOT NULL,
+    document jsonb NOT NULL,
+    created_at timestamptz NOT NULL,
+    UNIQUE (instance_id, sequence),
+    UNIQUE (instance_id, command_id)
+);
+
+ALTER TABLE public.interaction_state_revisions
+    ADD CONSTRAINT interaction_state_revisions_source_event_fkey
+    FOREIGN KEY (source_event_id) REFERENCES public.interaction_events(id) ON DELETE RESTRICT;
+
+CREATE TABLE public.interaction_operation_effect_intents (
+    effect_id uuid PRIMARY KEY,
+    instance_id uuid NOT NULL REFERENCES public.interaction_instances(id) ON DELETE CASCADE,
+    source_event_id uuid NOT NULL UNIQUE REFERENCES public.interaction_events(id) ON DELETE RESTRICT,
+    status text NOT NULL CHECK (status IN ('pending', 'claimed', 'succeeded', 'retry_scheduled', 'terminal_failed')),
+    next_attempt_at timestamptz NOT NULL,
+    claim_token uuid,
+    claim_expires_at timestamptz,
+    document jsonb NOT NULL,
+    CHECK ((status = 'claimed' AND claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)
+        OR (status <> 'claimed' AND claim_token IS NULL AND claim_expires_at IS NULL))
+);
+
+CREATE INDEX idx_interaction_effect_intents_claim
+    ON public.interaction_operation_effect_intents (status, next_attempt_at, claim_expires_at, effect_id);
+
+CREATE TABLE public.interaction_command_receipts (
+    instance_id uuid NOT NULL REFERENCES public.interaction_instances(id) ON DELETE CASCADE,
+    command_id uuid NOT NULL,
+    request_digest text NOT NULL,
+    event_id uuid NOT NULL UNIQUE REFERENCES public.interaction_events(id) ON DELETE RESTRICT,
+    effect_id uuid REFERENCES public.interaction_operation_effect_intents(effect_id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL,
+    PRIMARY KEY (instance_id, command_id)
+);

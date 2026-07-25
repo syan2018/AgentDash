@@ -9,8 +9,8 @@ import type {
   ExtensionRuntimeInvokeActionResponse,
   ExtensionRuntimeInvokeBackendServiceRequest,
   ExtensionRuntimeInvokeBackendServiceResponse,
-  ExtensionRuntimeInvokeChannelRequest,
-  ExtensionRuntimeInvokeChannelResponse,
+  ExtensionRuntimeInvokeProtocolRequest,
+  ExtensionRuntimeInvokeProtocolResponse,
   ExtensionRuntimeProjectionResponse,
   UninstallExtensionInstallationResponse,
 } from "../generated/extension-runtime-contracts";
@@ -33,12 +33,12 @@ export async function invokeAgentRunExtensionRuntimeAction(
   );
 }
 
-export async function invokeAgentRunExtensionRuntimeChannel(
+export async function invokeAgentRunExtensionRuntimeProtocol(
   target: AgentRunRuntimeTarget,
-  request: ExtensionRuntimeInvokeChannelRequest,
-): Promise<ExtensionRuntimeInvokeChannelResponse> {
-  return api.post<ExtensionRuntimeInvokeChannelResponse>(
-    agentRunScopedPath(target, "/extension-runtime/invoke-channel"),
+  request: ExtensionRuntimeInvokeProtocolRequest,
+): Promise<ExtensionRuntimeInvokeProtocolResponse> {
+  return api.post<ExtensionRuntimeInvokeProtocolResponse>(
+    agentRunScopedPath(target, "/extension-runtime/invoke-protocol"),
     request,
   );
 }
@@ -74,5 +74,28 @@ export function buildExtensionWebviewAssetUrl(
     .join("/");
   return buildApiPath(
     `/projects/${encodeURIComponent(projectId)}/extension-runtime/webviews/${encodeURIComponent(extensionKey)}/${encodedAssetPath}`,
+  );
+}
+
+export function buildExactExtensionComponentAssetUrl(
+  projectId: string,
+  artifactId: string,
+  archiveDigest: string,
+  componentKey: string,
+  assetPath: string,
+): string {
+  const digestHex = archiveDigest.startsWith("sha256:")
+    ? archiveDigest.slice("sha256:".length)
+    : archiveDigest;
+  if (!/^[a-fA-F0-9]{64}$/.test(digestHex)) {
+    throw new Error("Extension component archive digest 必须为 sha256");
+  }
+  const encodedAssetPath = assetPath
+    .split("/")
+    .filter((segment) => segment.trim() !== "")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return buildApiPath(
+    `/projects/${encodeURIComponent(projectId)}/extension-runtime/artifacts/${encodeURIComponent(artifactId)}/${digestHex}/components/${encodeURIComponent(componentKey)}/${encodedAssetPath}`,
   );
 }

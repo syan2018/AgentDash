@@ -19,7 +19,7 @@ const NATIVE_CONSTRAINT_FIELDS = ["gypfile", "binary", "os", "cpu", "libc"];
 /**
  * @typedef {{ [key: string]: unknown }} UnknownRecord
  * @typedef {{ errors: string[], warnings: string[], manifest: UnknownRecord | null, package_json: UnknownRecord | null }} ValidationResult
- * @typedef {{ runtime_actions?: unknown, protocol_channels?: unknown }} ExtensionContributionsRecord
+ * @typedef {{ runtime_actions?: unknown, protocols?: unknown }} ExtensionContributionsRecord
  */
 
 /**
@@ -85,9 +85,10 @@ export function validateManifest(manifest, errors) {
   validateCommandDefs(arrayField(manifest, "commands", errors), errors);
   validateFlagDefs(arrayField(manifest, "flags", errors), errors);
   validateRuntimeActions(arrayField(manifest, "runtime_actions", errors), errors);
-  validateProtocolChannels(arrayField(manifest, "protocol_channels", errors), errors);
+  validateProtocolMethods(arrayField(manifest, "protocols", errors), errors);
   validateExtensionDependencies(arrayField(manifest, "extension_dependencies", errors), errors);
   validateWorkspaceTabs(arrayField(manifest, "workspace_tabs", errors), errors);
+  validateUiComponents(arrayField(manifest, "ui_components", errors), errors);
   validatePermissions(arrayField(manifest, "permissions", errors), errors);
   validateBundleDefs(arrayField(manifest, "bundles", errors), errors);
   validateFetchRoutes(arrayField(manifest, "fetch_routes", errors), errors);
@@ -106,9 +107,9 @@ export function validateRuntimeSurfaceParity(manifest, contributions, errors) {
   const registeredActions = actionKeySet(arrayField(contributions, "runtime_actions"));
   compareSet("runtime action", manifestActions, registeredActions, errors);
 
-  const manifestMethods = manifestChannelMethodSet(extensionId, arrayField(manifest, "protocol_channels"));
-  const registeredMethods = registeredChannelMethodSet(extensionId, arrayField(contributions, "protocol_channels"));
-  compareSet("protocol channel method", manifestMethods, registeredMethods, errors);
+  const manifestMethods = manifestProtocolMethodSet(extensionId, arrayField(manifest, "protocols"));
+  const registeredMethods = registeredProtocolMethodSet(extensionId, arrayField(contributions, "protocols"));
+  compareSet("protocol method", manifestMethods, registeredMethods, errors);
 }
 
 /**
@@ -303,8 +304,8 @@ function validateRuntimeActions(actions, errors) {
     }
     validateQualifiedKey(record, "action_key", "runtime_actions[].action_key", errors);
     const kind = stringField(record, "kind");
-    if (kind !== "session_runtime" && kind !== "setup") {
-      errors.push("runtime_actions[].kind 必须是 session_runtime 或 setup");
+    if (kind !== "runtime" && kind !== "setup") {
+      errors.push("runtime_actions[].kind 必须是 runtime 或 setup");
     }
     validateJsonSchemaField(record, "input_schema", "runtime_actions[].input_schema", errors);
     validateJsonSchemaField(record, "output_schema", "runtime_actions[].output_schema", errors);
@@ -313,47 +314,47 @@ function validateRuntimeActions(actions, errors) {
 }
 
 /**
- * @param {unknown[]} channels
+ * @param {unknown[]} protocols
  * @param {string[]} errors
  */
-function validateProtocolChannels(channels, errors) {
-  for (const channel of channels) {
+function validateProtocolMethods(protocols, errors) {
+  for (const channel of protocols) {
     const record = asRecord(channel);
     if (!record) {
-      errors.push("protocol_channels[] 必须是对象");
+      errors.push("protocols[] 必须是对象");
       continue;
     }
-    validateNamespacedKey(record, "channel_key", "protocol_channels[].channel_key", errors);
-    requireString(record, "version", errors, "protocol_channels[].version");
-    requireString(record, "description", errors, "protocol_channels[].description");
+    validateNamespacedKey(record, "protocol_key", "protocols[].protocol_key", errors);
+    requireString(record, "version", errors, "protocols[].version");
+    requireString(record, "description", errors, "protocols[].description");
     const methods = record.methods;
     if (!Array.isArray(methods) || methods.length === 0) {
-      errors.push("protocol_channels[].methods 必须是非空数组");
+      errors.push("protocols[].methods 必须是非空数组");
       continue;
     }
     for (const method of methods) {
       const methodRecord = asRecord(method);
       if (!methodRecord) {
-        errors.push("protocol_channels[].methods[] 必须是对象");
+        errors.push("protocols[].methods[] 必须是对象");
         continue;
       }
-      validateMethodName(methodRecord, "name", "protocol_channels[].methods[].name", errors);
-      requireString(methodRecord, "description", errors, "protocol_channels[].methods[].description");
+      validateMethodName(methodRecord, "name", "protocols[].methods[].name", errors);
+      requireString(methodRecord, "description", errors, "protocols[].methods[].description");
       validateJsonSchemaField(
         methodRecord,
         "input_schema",
-        "protocol_channels[].methods[].input_schema",
+        "protocols[].methods[].input_schema",
         errors,
       );
       validateJsonSchemaField(
         methodRecord,
         "output_schema",
-        "protocol_channels[].methods[].output_schema",
+        "protocols[].methods[].output_schema",
         errors,
       );
       validatePermissionStrings(
         arrayField(methodRecord, "permissions"),
-        "protocol_channels[].methods[].permissions[]",
+        "protocols[].methods[].permissions[]",
         errors,
       );
     }
@@ -374,15 +375,15 @@ function validateExtensionDependencies(dependencies, errors) {
     validateAlias(record, "alias", "extension_dependencies[].alias", errors);
     validatePackageKey(record, "extension_id", "extension_dependencies[].extension_id", errors);
     requireString(record, "version", errors, "extension_dependencies[].version");
-    const channels = record.channels;
-    if (!Array.isArray(channels) || channels.length === 0) {
-      errors.push("extension_dependencies[].channels 必须是非空数组");
+    const protocols = record.protocols;
+    if (!Array.isArray(protocols) || protocols.length === 0) {
+      errors.push("extension_dependencies[].protocols 必须是非空数组");
       continue;
     }
-    for (const channel of channels) {
+    for (const channel of protocols) {
       validateNamespacedKeyValue(
         channel,
-        "extension_dependencies[].channels[]",
+        "extension_dependencies[].protocols[]",
         errors,
       );
     }
@@ -410,12 +411,89 @@ function validateWorkspaceTabs(tabs, errors) {
     const rendererKind = stringField(renderer ?? {}, "kind");
     if (
       !renderer
-      || (rendererKind !== "webview" && rendererKind !== "canvas_panel")
+      || rendererKind !== "webview"
       || !stringField(renderer, "entry")
     ) {
-      errors.push("workspace_tabs[].renderer 必须是 webview 或 canvas_panel 且包含 entry");
+      errors.push("workspace_tabs[].renderer 必须是 webview 且包含 entry");
     }
   }
+}
+
+/**
+ * @param {unknown[]} components
+ * @param {string[]} errors
+ */
+function validateUiComponents(components, errors) {
+  const keys = new Set();
+  for (const component of components) {
+    const record = asRecord(component);
+    if (!record) {
+      errors.push("ui_components[] 必须是对象");
+      continue;
+    }
+    validateQualifiedKey(record, "component_key", "ui_components[].component_key", errors);
+    const componentKey = stringField(record, "component_key");
+    if (componentKey && keys.has(componentKey)) {
+      errors.push(`ui_components[].component_key 重复: ${componentKey}`);
+    }
+    if (componentKey) keys.add(componentKey);
+    if (record.contract_version !== 1) {
+      errors.push("ui_components[].contract_version 当前必须为 1");
+    }
+    const renderer = asRecord(record.renderer);
+    if (!renderer || stringField(renderer, "kind") !== "iframe" || !stringField(renderer, "entry")) {
+      errors.push("ui_components[].renderer 必须是包含 entry 的 iframe");
+    }
+    validateJsonSchemaField(record, "props_schema", "ui_components[].props_schema", errors);
+    validateJsonSchemaField(
+      record,
+      "state_projection_schema",
+      "ui_components[].state_projection_schema",
+      errors,
+    );
+    const events = asRecord(record.events_schema);
+    if (!events) {
+      errors.push("ui_components[].events_schema 必须是对象");
+    } else {
+      for (const [eventType, schema] of Object.entries(events)) {
+        if (!/^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/.test(eventType)) {
+          errors.push(`ui_components[].events_schema event type 非法: ${eventType}`);
+        }
+        if (typeof schema !== "boolean" && !asRecord(schema)) {
+          errors.push(`ui_components[].events_schema.${eventType} 必须是 JSON Schema`);
+        }
+      }
+    }
+    const slots = arrayField(record, "slots", errors);
+    const slotSet = new Set();
+    for (const slot of slots) {
+      if (typeof slot !== "string" || !/^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/.test(slot)) {
+        errors.push("ui_components[].slots[] 必须是 qualified key");
+      } else if (slotSet.has(slot)) {
+        errors.push(`ui_components[].slots[] 重复: ${slot}`);
+      } else {
+        slotSet.add(slot);
+      }
+    }
+    const sizing = asRecord(record.sizing);
+    const minWidth = sizing?.min_width;
+    const minHeight = sizing?.min_height;
+    const maxWidth = sizing?.max_width;
+    const maxHeight = sizing?.max_height;
+    if (!sizing || !positiveNumber(minWidth) || !positiveNumber(minHeight)
+      || (maxWidth !== undefined && (!positiveNumber(maxWidth) || Number(maxWidth) < Number(minWidth)))
+      || (maxHeight !== undefined && (!positiveNumber(maxHeight) || Number(maxHeight) < Number(minHeight)))) {
+      errors.push("ui_components[].sizing 边界无效");
+    }
+    if (record.sandbox_profile !== "isolated_v1") {
+      errors.push("ui_components[].sandbox_profile 当前必须为 isolated_v1");
+    }
+  }
+}
+
+/** @param {unknown} value */
+function positiveNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 /**
@@ -453,8 +531,8 @@ function validatePermissions(permissions, errors) {
       }
     } else if (kind === "runtime_action") {
       validateQualifiedKey(record, "action_key", "permissions[].action_key", errors);
-    } else if (kind === "extension_channel") {
-      validateNamespacedKey(record, "channel_key", "permissions[].channel_key", errors);
+    } else if (kind === "extension_protocol") {
+      validateNamespacedKey(record, "protocol_key", "permissions[].protocol_key", errors);
       const methods = record.methods;
       if (!Array.isArray(methods) || methods.length === 0) {
         errors.push("permissions[].methods 必须是非空数组");
@@ -538,13 +616,13 @@ function validateFetchRouteTarget(target, errors) {
     if (baseUrl && !isHttpUrl(baseUrl)) errors.push("fetch_routes[].target.base_url 必须是 http(s) URL");
   } else if (kind === "runtime_action") {
     validateQualifiedKey(target, "action_key", "fetch_routes[].target.action_key", errors);
-  } else if (kind === "custom_channel" || kind === "protocol_channel") {
-    validateNamespacedKey(target, "channel_key", "fetch_routes[].target.channel_key", errors);
+  } else if (kind === "custom_protocol" || kind === "protocol_method") {
+    validateNamespacedKey(target, "protocol_key", "fetch_routes[].target.protocol_key", errors);
     validateMethodName(target, "method", "fetch_routes[].target.method", errors);
   } else if (kind === "backend_service") {
     validateQualifiedKey(target, "service_key", "fetch_routes[].target.service_key", errors);
   } else {
-    errors.push("fetch_routes[].target.kind 必须是 http_proxy、runtime_action、custom_channel、protocol_channel 或 backend_service");
+    errors.push("fetch_routes[].target.kind 必须是 http_proxy、runtime_action、custom_protocol、protocol_method 或 backend_service");
   }
 }
 
@@ -593,15 +671,15 @@ function validateOperationDispatch(dispatch, errors) {
   const kind = stringField(dispatch, "kind");
   if (kind === "runtime_action") {
     validateQualifiedKey(dispatch, "action_key", "operation_catalog[].dispatch.action_key", errors);
-  } else if (kind === "protocol_channel") {
-    validateNamespacedKey(dispatch, "channel_key", "operation_catalog[].dispatch.channel_key", errors);
+  } else if (kind === "protocol_method") {
+    validateNamespacedKey(dispatch, "protocol_key", "operation_catalog[].dispatch.protocol_key", errors);
     const method = stringField(dispatch, "method") ?? stringField(dispatch, "method_name");
     validateMethodNameValue(method, "operation_catalog[].dispatch.method", errors);
   } else if (kind === "backend_service") {
     validateQualifiedKey(dispatch, "service_key", "operation_catalog[].dispatch.service_key", errors);
     requireString(dispatch, "route", errors, "operation_catalog[].dispatch.route");
   } else {
-    errors.push("operation_catalog[].dispatch.kind 必须是 runtime_action、protocol_channel 或 backend_service");
+    errors.push("operation_catalog[].dispatch.kind 必须是 runtime_action、protocol_method 或 backend_service");
   }
 }
 
@@ -781,7 +859,7 @@ function isKnownRuntimePermissionString(permission) {
     || permission === "process.shell"
     || hasPermissionScope(permission, "process.env.set")
     || hasPermissionScope(permission, "runtime.invoke")
-    || hasPermissionScope(permission, "extension.channel.invoke");
+    || hasPermissionScope(permission, "extension.protocol.invoke");
 }
 
 /**
@@ -962,21 +1040,21 @@ function compareSet(label, manifestItems, registeredItems, errors) {
 
 /**
  * @param {string} extensionId
- * @param {unknown[]} channels
+ * @param {unknown[]} protocols
  * @returns {Set<string>}
  */
-function manifestChannelMethodSet(extensionId, channels) {
+function manifestProtocolMethodSet(extensionId, protocols) {
   /** @type {Set<string>} */
   const result = new Set();
-  for (const channel of channels) {
+  for (const channel of protocols) {
     const record = asRecord(channel);
     if (!record) continue;
-    const channelKey = stringField(record, "channel_key");
-    if (!channelKey) continue;
+    const protocolKey = stringField(record, "protocol_key");
+    if (!protocolKey) continue;
     for (const method of arrayField(record, "methods")) {
       const methodRecord = asRecord(method);
       const methodName = methodRecord ? stringField(methodRecord, "name") : null;
-      if (methodName) result.add(`${canonicalChannelKey(extensionId, channelKey)}.${methodName}`);
+      if (methodName) result.add(`${canonicalProtocolKey(extensionId, protocolKey)}.${methodName}`);
     }
   }
   return result;
@@ -984,21 +1062,21 @@ function manifestChannelMethodSet(extensionId, channels) {
 
 /**
  * @param {string} extensionId
- * @param {unknown[]} channels
+ * @param {unknown[]} protocols
  * @returns {Set<string>}
  */
-function registeredChannelMethodSet(extensionId, channels) {
+function registeredProtocolMethodSet(extensionId, protocols) {
   /** @type {Set<string>} */
   const result = new Set();
-  for (const channel of channels) {
+  for (const channel of protocols) {
     const record = asRecord(channel);
     if (!record) continue;
-    const channelKey = stringField(record, "channel_key");
-    if (!channelKey) continue;
+    const protocolKey = stringField(record, "protocol_key");
+    if (!protocolKey) continue;
     for (const method of arrayField(record, "methods")) {
       const methodRecord = asRecord(method);
       const methodName = methodRecord ? stringField(methodRecord, "name") : null;
-      if (methodName) result.add(`${canonicalChannelKey(extensionId, channelKey)}.${methodName}`);
+      if (methodName) result.add(`${canonicalProtocolKey(extensionId, protocolKey)}.${methodName}`);
     }
   }
   return result;
@@ -1006,9 +1084,9 @@ function registeredChannelMethodSet(extensionId, channels) {
 
 /**
  * @param {string} extensionId
- * @param {string} channelKey
+ * @param {string} protocolKey
  * @returns {string}
  */
-function canonicalChannelKey(extensionId, channelKey) {
-  return channelKey.includes(".") ? channelKey : `${extensionId}.${channelKey}`;
+function canonicalProtocolKey(extensionId, protocolKey) {
+  return protocolKey.includes(".") ? protocolKey : `${extensionId}.${protocolKey}`;
 }

@@ -355,6 +355,14 @@ impl<'a> Compiler<'a> {
                     spec: FunctionActivityExecutorSpec::BashExec(spec.clone()),
                 },
             ),
+            ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::OperationScript(spec)) => {
+                (
+                    PlanNodeKind::Function,
+                    ExecutorSpec::Function {
+                        spec: FunctionActivityExecutorSpec::OperationScript(spec.clone()),
+                    },
+                )
+            }
             ActivityExecutorSpec::Human(spec) => (
                 PlanNodeKind::HumanGate,
                 ExecutorSpec::Human { spec: spec.clone() },

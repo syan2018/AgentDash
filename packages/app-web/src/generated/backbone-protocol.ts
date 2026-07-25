@@ -1035,10 +1035,10 @@ export type ContextDeliveryPhase = "stable_system" | "session_policy" | "run_sta
 export type ContextDeliveryStatus = "accepted" | "prepared_for_connector" | "queued_for_transform_context" | "applied_before_prompt" | "applied_to_compacted_context";
 
 /**
- * AgentDash-owned context presentation payload.
+ * AgentDash-owned model-context delivery payload.
  *
- * This is a presentation/audit projection of the materialized agent surface. It is not the
- * model context itself and must never be used as the execution adapter's input contract.
+ * A concrete Agent accepts these frames, consumes `rendered_text` according to the delivery
+ * metadata, and publishes the same value for history, live presentation, and audit.
  */
 export type ContextFrame = { id: string, kind: ContextFrameKind, source: ContextFrameSource, phase_node?: string | null, apply_mode?: string | null, delivery_status: ContextDeliveryStatus, delivery_channel: ContextDeliveryChannel, message_role: ContextMessageRole, delivery_metadata: ContextDeliveryMetadata, rendered_text: string, sections: Array<ContextFrameSection>, created_at_ms: bigint, };
 

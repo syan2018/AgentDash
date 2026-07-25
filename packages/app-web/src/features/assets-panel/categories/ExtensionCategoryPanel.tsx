@@ -621,7 +621,7 @@ function capabilityLabels(extension: ProjectExtensionManagementItemResponse): st
   const labels: string[] = [];
   if (summary.workspace_tabs > 0) labels.push(`${summary.workspace_tabs} tabs`);
   if (summary.runtime_actions > 0) labels.push(`${summary.runtime_actions} actions`);
-  if (summary.protocol_channels > 0) labels.push(`${summary.protocol_channels} channels`);
+  if (summary.protocols > 0) labels.push(`${summary.protocols} protocols`);
   if (summary.commands > 0) labels.push(`${summary.commands} commands`);
   if (summary.flags > 0) labels.push(`${summary.flags} flags`);
   if (summary.message_renderers > 0) labels.push(`${summary.message_renderers} renderers`);

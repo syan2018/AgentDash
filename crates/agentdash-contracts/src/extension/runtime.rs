@@ -49,9 +49,20 @@ pub enum ExtensionGeneratedOperationVisibilityResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionGeneratedOperationDispatchResponse {
-    RuntimeAction { action_key: String },
-    ProtocolChannel { channel_key: String, method: String },
-    BackendService { service_key: String, route: String },
+    RuntimeAction {
+        action_key: String,
+    },
+    ProtocolMethod {
+        provider_extension_key: String,
+        provider_extension_id: String,
+        protocol_key: String,
+        protocol_version: String,
+        method: String,
+    },
+    BackendService {
+        service_key: String,
+        route: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -78,10 +89,20 @@ pub struct ExtensionGeneratedOperationProjectionResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionFetchRouteTargetResponse {
-    HttpProxy { capability_key: String },
-    RuntimeAction { action_key: String },
-    ProtocolChannel { channel_key: String, method: String },
-    BackendService { service_key: String, route: String },
+    HttpProxy {
+        capability_key: String,
+    },
+    RuntimeAction {
+        action_key: String,
+    },
+    ProtocolMethod {
+        protocol_key: String,
+        method: String,
+    },
+    BackendService {
+        service_key: String,
+        route: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -90,7 +111,7 @@ pub struct ExtensionFetchRouteProjectionResponse {
     pub extension_id: String,
     pub route_key: String,
     pub pattern: String,
-    /// Fetch routes are panel bridge compatibility routes. Agent exposure is represented only by operation_catalog.
+    /// Fetch routes serve the panel bridge; Agent exposure is represented only by operation_catalog.
     pub panel_only: bool,
     pub target: ExtensionFetchRouteTargetResponse,
 }
@@ -124,14 +145,12 @@ pub enum ExtensionMessageRendererDeclarationResponse {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionWorkspaceTabRendererResponse {
     Webview { entry: String },
-    CanvasPanel { entry: String },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionWorkspaceTabLoadabilityModeResponse {
     ExtensionHost,
-    UiOnly,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -165,8 +184,8 @@ pub enum ExtensionPermissionDeclarationResponse {
     RuntimeAction {
         action_key: String,
     },
-    ExtensionChannel {
-        channel_key: String,
+    ExtensionProtocol {
+        protocol_key: String,
         methods: Vec<String>,
     },
     BackendService {
@@ -246,7 +265,7 @@ pub struct ExtensionRuntimeActionProjectionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ExtensionProtocolChannelMethodProjectionResponse {
+pub struct ExtensionProtocolMethodProjectionResponse {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
@@ -255,13 +274,13 @@ pub struct ExtensionProtocolChannelMethodProjectionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ExtensionProtocolChannelProjectionResponse {
+pub struct ExtensionProtocolProjectionResponse {
     pub extension_key: String,
     pub extension_id: String,
-    pub channel_key: String,
+    pub protocol_key: String,
     pub version: String,
     pub description: String,
-    pub methods: Vec<ExtensionProtocolChannelMethodProjectionResponse>,
+    pub methods: Vec<ExtensionProtocolMethodProjectionResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -269,7 +288,7 @@ pub struct ExtensionDependencyDeclarationResponse {
     pub alias: String,
     pub extension_id: String,
     pub version: String,
-    pub channels: Vec<String>,
+    pub protocols: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -288,6 +307,44 @@ pub struct ExtensionWorkspaceTabProjectionResponse {
     pub uri_scheme: String,
     pub renderer: ExtensionWorkspaceTabRendererResponse,
     pub loadability: ExtensionWorkspaceTabLoadabilityResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionUiComponentRendererResponse {
+    Iframe { entry: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionUiComponentSizingResponse {
+    pub min_width: u32,
+    pub min_height: u32,
+    pub max_width: Option<u32>,
+    pub max_height: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionUiComponentSandboxProfileResponse {
+    IsolatedV1,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionUiComponentProjectionResponse {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub component_key: String,
+    pub contract_version: u16,
+    pub renderer: ExtensionUiComponentRendererResponse,
+    pub props_schema: Value,
+    pub events_schema: BTreeMap<String, Value>,
+    pub state_projection_schema: Value,
+    pub slots: Vec<String>,
+    pub sizing: ExtensionUiComponentSizingResponse,
+    pub sandbox_profile: ExtensionUiComponentSandboxProfileResponse,
+    pub package_artifact: Option<ExtensionPackageArtifactRefResponse>,
+    pub available: bool,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -313,9 +370,10 @@ pub struct ExtensionRuntimeProjectionResponse {
     pub flags: Vec<ExtensionFlagProjectionResponse>,
     pub message_renderers: Vec<ExtensionMessageRendererProjectionResponse>,
     pub runtime_actions: Vec<ExtensionRuntimeActionProjectionResponse>,
-    pub protocol_channels: Vec<ExtensionProtocolChannelProjectionResponse>,
+    pub protocols: Vec<ExtensionProtocolProjectionResponse>,
     pub extension_dependencies: Vec<ExtensionDependencyProjectionResponse>,
     pub workspace_tabs: Vec<ExtensionWorkspaceTabProjectionResponse>,
+    pub ui_components: Vec<ExtensionUiComponentProjectionResponse>,
     pub permissions: Vec<ExtensionPermissionProjectionResponse>,
     pub bundles: Vec<ExtensionBundleProjectionResponse>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -334,8 +392,12 @@ pub struct ExtensionRuntimeInvokeActionRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ExtensionRuntimeInvokeChannelRequest {
-    pub channel_key: String,
+pub struct ExtensionRuntimeInvokeProtocolRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_extension_key: Option<String>,
+    pub protocol_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
     pub method: String,
     #[serde(default)]
     pub input: Value,
@@ -382,8 +444,11 @@ pub struct ExtensionRuntimeInvokeActionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ExtensionRuntimeInvokeChannelResponse {
-    pub channel_key: String,
+pub struct ExtensionRuntimeInvokeProtocolResponse {
+    pub provider_extension_key: String,
+    pub provider_extension_id: String,
+    pub protocol_key: String,
+    pub protocol_version: String,
     pub method: String,
     pub trace: ExtensionRuntimeTraceResponse,
     pub output: ExtensionRuntimeInvocationOutputResponse,

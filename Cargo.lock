@@ -217,6 +217,7 @@ dependencies = [
  "agentdash-application-extension-gateway",
  "agentdash-application-hooks",
  "agentdash-application-lifecycle",
+ "agentdash-application-operation-gateway",
  "agentdash-application-ports",
  "agentdash-application-shared-library",
  "agentdash-application-vfs",
@@ -281,6 +282,7 @@ dependencies = [
  "agentdash-application-extension-gateway",
  "agentdash-application-hooks",
  "agentdash-application-lifecycle",
+ "agentdash-application-operation-gateway",
  "agentdash-application-ports",
  "agentdash-application-shared-library",
  "agentdash-application-skill",
@@ -425,6 +427,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentdash-application-operation-gateway"
+version = "0.1.0"
+dependencies = [
+ "agentdash-application-ports",
+ "agentdash-diagnostics",
+ "agentdash-domain",
+ "agentdash-platform-spi",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "agentdash-application-ports"
 version = "0.1.0"
 dependencies = [
@@ -432,7 +453,6 @@ dependencies = [
  "agentdash-agent-runtime-contract",
  "agentdash-domain",
  "agentdash-platform-spi",
- "agentdash-relay",
  "async-trait",
  "chrono",
  "schemars 1.2.1",
@@ -441,6 +461,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "ts-rs",
  "uuid",
 ]
@@ -523,10 +544,13 @@ name = "agentdash-application-workflow"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-runtime-contract",
+ "agentdash-application-operation-gateway",
  "agentdash-application-ports",
  "agentdash-diagnostics",
  "agentdash-domain",
+ "agentdash-infrastructure",
  "agentdash-platform-spi",
+ "agentdash-test-support",
  "async-trait",
  "chrono",
  "schemars 1.2.1",
@@ -535,6 +559,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]
@@ -893,6 +918,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-runtime-contract",
  "agentdash-application-extension-gateway",
+ "agentdash-application-operation-gateway",
  "agentdash-application-ports",
  "agentdash-application-vfs",
  "agentdash-contracts",

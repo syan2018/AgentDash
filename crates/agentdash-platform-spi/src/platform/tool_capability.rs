@@ -79,7 +79,7 @@ pub const CAP_FILE_WRITE: &str = "file_write";
 /// 命令执行：shell_exec
 pub const CAP_SHELL_EXECUTE: &str = "shell_execute";
 /// Workspace module：workspace_module_list, workspace_module_describe,
-/// workspace_module_operate, workspace_module_invoke, workspace_module_present
+/// workspace_module_invoke, workspace_module_present
 pub const CAP_WORKSPACE_MODULE: &str = "workspace_module";
 pub const CAP_WORKFLOW: &str = "workflow";
 pub const CAP_COLLABORATION: &str = "collaboration";
@@ -124,7 +124,6 @@ pub const CLUSTER_TASK_TOOLS: &[&str] = &["task_read", "task_write"];
 pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] = &[
     "workspace_module_list",
     "workspace_module_describe",
-    "workspace_module_operate",
     "workspace_module_invoke",
     "workspace_module_present",
 ];
@@ -351,16 +350,9 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             CAP_WORKSPACE_MODULE,
         ),
         ToolDescriptor::platform(
-            "workspace_module_operate",
-            "Operate Workspace Module",
-            "执行 workspace module 平台操作；Canvas 使用 operation=canvas.create/canvas.attach/canvas.copy 后返回 canvas:{canvas_mount_id}",
-            ToolCluster::WorkspaceModule,
-            CAP_WORKSPACE_MODULE,
-        ),
-        ToolDescriptor::platform(
             "workspace_module_invoke",
             "Invoke Workspace Module",
-            "按 module_id + operation_key + input 调用 workspace module 的 operation（宿主解析内部路由并分支派发）",
+            "按 exact Operation reference 与 input 调用 workspace module 暴露的 canonical Operation",
             ToolCluster::WorkspaceModule,
             CAP_WORKSPACE_MODULE,
         ),

@@ -1,7 +1,7 @@
 import type {
   AgentDashBackendServiceOptions,
   AgentDashCapabilityRecipe,
-  AgentDashCustomChannelOptions,
+  AgentDashCustomProtocolOptions,
   AgentDashHttpProxyOptions,
   AgentDashLocalCommandOptions,
   AgentDashWorkspaceFilesOptions,
@@ -19,8 +19,8 @@ export function workspaceFiles(options: AgentDashWorkspaceFilesOptions = {}): Ag
   return { kind: "workspace_files", options };
 }
 
-export function customChannel(options: AgentDashCustomChannelOptions): AgentDashCapabilityRecipe {
-  return { kind: "custom_channel", options };
+export function customProtocol(options: AgentDashCustomProtocolOptions): AgentDashCapabilityRecipe {
+  return { kind: "custom_protocol", options };
 }
 
 export function backendService(options: AgentDashBackendServiceOptions): AgentDashCapabilityRecipe {

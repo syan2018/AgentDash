@@ -322,7 +322,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
             let builtin_skills =
                 ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::Project(vec![
                     ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
-                    ports_lifecycle_surface::BuiltinLifecycleSkill::CanvasSystem,
                     ports_lifecycle_surface::BuiltinLifecycleSkill::WorkspaceModuleSystem,
                 ]);
             let surface = if let Some(workflow) = active_workflow {

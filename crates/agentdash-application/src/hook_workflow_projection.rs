@@ -71,12 +71,11 @@ impl HookWorkflowProjectionPort for ProductHookWorkflowProjection {
             node_path: workflow.node_path.clone(),
             attempt: workflow.active_attempt.attempt,
         };
-        let fulfilled_output_ports =
-            agentdash_application_lifecycle::load_scoped_port_output_map(
-                self.repos.inline_file_repo.as_ref(),
-                &artifact_scope,
-            )
-            .await;
+        let fulfilled_output_ports = agentdash_application_lifecycle::load_scoped_port_output_map(
+            self.repos.inline_file_repo.as_ref(),
+            &artifact_scope,
+        )
+        .await;
 
         Ok(HookWorkflowProjection {
             run_context: Some(run_context),

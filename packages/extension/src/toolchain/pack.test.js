@@ -74,7 +74,7 @@ test("packProject rejects TS runtime registrations missing from manifest", async
       "  activate(ctx) {",
       "    ctx.runtime.registerAction({",
       "      action_key: 'local-hello.profile',",
-      "      kind: 'session_runtime',",
+      "      kind: 'runtime',",
       "      description: 'Read profile',",
       "      input_schema: true,",
       "      output_schema: true,",

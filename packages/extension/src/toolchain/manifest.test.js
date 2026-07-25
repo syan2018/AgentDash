@@ -14,13 +14,7 @@ test("validateProject accepts a packaged manifest shape", async () => {
   assert.deepEqual(result.errors, []);
 });
 
-test("validateProject accepts canvas panel renderer", async () => {
-  const root = await fixtureProject({ rendererKind: "canvas_panel" });
-  const result = await validateProject(root);
-  assert.deepEqual(result.errors, []);
-});
-
-test("validateProject accepts protocol channels, dependencies, and trusted host capabilities", async () => {
+test("validateProject accepts protocols, dependencies, and trusted host capabilities", async () => {
   const root = await fixtureProject({ withProtocol: true });
   const result = await validateProject(root);
   assert.deepEqual(result.errors, []);
@@ -68,11 +62,11 @@ test("validateProject rejects unknown runtime process permission key", async () 
   assert.match(result.errors.join("\n"), /未知 permission key: process\.execute/);
 });
 
-test("validateProject rejects invalid protocol channel declarations", async () => {
+test("validateProject rejects invalid protocol declarations", async () => {
   const root = await fixtureProject({ withInvalidProtocol: true });
   const result = await validateProject(root);
-  assert.match(result.errors.join("\n"), /protocol_channels\[\]\.channel_key/);
-  assert.match(result.errors.join("\n"), /protocol_channels\[\]\.methods\[\]\.name/);
+  assert.match(result.errors.join("\n"), /protocols\[\]\.protocol_key/);
+  assert.match(result.errors.join("\n"), /protocols\[\]\.methods\[\]\.name/);
   assert.match(result.errors.join("\n"), /extension_dependencies\[\]\.alias/);
 });
 
@@ -108,7 +102,7 @@ test("validateProject rejects non self-contained dependencies and native constra
 });
 
 /**
- * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel", withProtocol?: boolean, withProjectionFields?: boolean, withInvalidProtocol?: boolean, unknownRuntimePermission?: string, omitActionSchema?: boolean, nullActionSchema?: boolean, backendServiceOverride?: Record<string, unknown>, omitBackendServiceEntryFile?: boolean }} [options]
+ * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview", withProtocol?: boolean, withProjectionFields?: boolean, withInvalidProtocol?: boolean, unknownRuntimePermission?: string, omitActionSchema?: boolean, nullActionSchema?: boolean, backendServiceOverride?: Record<string, unknown>, omitBackendServiceEntryFile?: boolean }} [options]
  * @returns {Promise<string>}
  */
 async function fixtureProject(options = {}) {
@@ -139,16 +133,16 @@ async function fixtureProject(options = {}) {
       runtime_actions: [
         runtimeAction(options),
       ],
-      protocol_channels: options.withProtocol
+      protocols: options.withProtocol
         ? [
             {
-              channel_key: "local-hello.api",
+              protocol_key: "local-hello.api",
               version: "1.0.0",
-              description: "Local hello protocol channel",
+              description: "Local hello protocol",
               methods: [
                 {
                   name: "readProfile",
-                  description: "Read local profile through the provider channel",
+                  description: "Read local profile through the provider protocol",
                   input_schema: true,
                   output_schema: true,
                   permissions: ["local.profile.read"],
@@ -159,7 +153,7 @@ async function fixtureProject(options = {}) {
         : options.withInvalidProtocol
           ? [
               {
-                channel_key: "api",
+                protocol_key: "api",
                 version: "1.0.0",
                 description: "Invalid channel",
                 methods: [{ name: "bad-name", description: "bad" }],
@@ -172,7 +166,7 @@ async function fixtureProject(options = {}) {
               alias: "hello",
               extension_id: "local-hello",
               version: "^1.0.0",
-              channels: ["local-hello.api"],
+              protocols: ["local-hello.api"],
             },
           ]
         : options.withInvalidProtocol
@@ -181,7 +175,7 @@ async function fixtureProject(options = {}) {
                 alias: "BadAlias",
                 extension_id: "local-hello",
                 version: "^1.0.0",
-                channels: ["api"],
+                protocols: ["api"],
               },
             ]
           : undefined,
@@ -199,7 +193,7 @@ async function fixtureProject(options = {}) {
             { kind: "http", hosts: ["example.com"], access: "read" },
             { kind: "env", names: ["DEMO_TOKEN"], access: "read" },
             { kind: "process", access: "execute" },
-            { kind: "extension_channel", channel_key: "local-hello.api", methods: ["readProfile"] },
+            { kind: "extension_protocol", protocol_key: "local-hello.api", methods: ["readProfile"] },
           ]
         : options.withProjectionFields
           ? [
@@ -279,7 +273,7 @@ function runtimeAction(options) {
     : ["local.profile.read"];
   const action = {
     action_key: "local-hello.profile",
-    kind: "session_runtime",
+    kind: "runtime",
     description: "Read profile",
     output_schema: {},
     permissions,

@@ -5,20 +5,20 @@ use agentdash_application_ports::extension_runtime::{
     ExtensionBackendServiceHttpResponsePayload, ExtensionBackendServiceInvokeDiagnosticPayload,
     ExtensionBackendServiceInvokeMetadataPayload, ExtensionBackendServiceInvokeRequest,
     ExtensionBackendServiceInvokeResponse, ExtensionBackendServiceReadinessPayload,
-    ExtensionBackendServiceTransport, ExtensionChannelConsumerPayload,
-    ExtensionChannelInvokeRequest, ExtensionChannelInvokeResponse,
-    ExtensionInvocationWorkspacePayload, ExtensionPackageArtifactPayload,
+    ExtensionBackendServiceTransport, ExtensionInvocationWorkspacePayload,
+    ExtensionPackageArtifactPayload, ExtensionProtocolConsumerPayload,
+    ExtensionProtocolInvokeRequest, ExtensionProtocolInvokeResponse,
     ExtensionRuntimeActionTransport, ExtensionRuntimeActionTransportError,
-    ExtensionRuntimeChannelTransport, ExtensionRuntimeHostPayload,
+    ExtensionRuntimeHostPayload, ExtensionRuntimeProtocolTransport,
 };
 use agentdash_relay::{
     CommandExtensionActionInvokePayload, CommandExtensionBackendServiceInvokePayload,
-    CommandExtensionChannelInvokePayload, ExtensionBackendServiceHttpResponseRelay,
+    CommandExtensionProtocolInvokePayload, ExtensionBackendServiceHttpResponseRelay,
     ExtensionBackendServiceInvokeDiagnosticRelay, ExtensionBackendServiceInvokeMetadataRelay,
-    ExtensionBackendServiceReadinessRelay, ExtensionChannelConsumerRelay,
-    ExtensionInvocationWorkspaceRelay, ExtensionPackageArtifactRelay, ExtensionRuntimeHostRelay,
+    ExtensionBackendServiceReadinessRelay, ExtensionInvocationWorkspaceRelay,
+    ExtensionPackageArtifactRelay, ExtensionProtocolConsumerRelay, ExtensionRuntimeHostRelay,
     RelayMessage, ResponseExtensionActionInvokePayload,
-    ResponseExtensionBackendServiceInvokePayload, ResponseExtensionChannelInvokePayload,
+    ResponseExtensionBackendServiceInvokePayload, ResponseExtensionProtocolInvokePayload,
 };
 use async_trait::async_trait;
 
@@ -59,33 +59,33 @@ impl ExtensionRuntimeActionTransport for BackendRegistry {
 }
 
 #[async_trait]
-impl ExtensionRuntimeChannelTransport for BackendRegistry {
-    async fn invoke_extension_channel(
+impl ExtensionRuntimeProtocolTransport for BackendRegistry {
+    async fn invoke_extension_protocol(
         &self,
         backend_id: &str,
-        request: ExtensionChannelInvokeRequest,
-    ) -> Result<ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError> {
-        let command = RelayMessage::CommandExtensionChannelInvoke {
+        request: ExtensionProtocolInvokeRequest,
+    ) -> Result<ExtensionProtocolInvokeResponse, ExtensionRuntimeActionTransportError> {
+        let command = RelayMessage::CommandExtensionProtocolInvoke {
             id: RelayMessage::new_id("ext-channel"),
-            payload: channel_request_to_relay(request),
+            payload: protocol_request_to_relay(request),
         };
         let response = self
             .send_command_with_timeout(backend_id, command, Duration::from_secs(30))
             .await
             .map_err(transport_error_from_backend)?;
         match response {
-            RelayMessage::ResponseExtensionChannelInvoke {
+            RelayMessage::ResponseExtensionProtocolInvoke {
                 payload: Some(payload),
                 error: None,
                 ..
             } => Ok(channel_response_from_relay(payload)),
-            RelayMessage::ResponseExtensionChannelInvoke {
+            RelayMessage::ResponseExtensionProtocolInvoke {
                 error: Some(error), ..
             } => Err(ExtensionRuntimeActionTransportError::Failed(
                 error.to_string(),
             )),
             other => Err(ExtensionRuntimeActionTransportError::Failed(format!(
-                "unexpected extension channel relay response: {}",
+                "unexpected extension protocol relay response: {}",
                 other.id()
             ))),
         }
@@ -134,7 +134,7 @@ fn action_request_to_relay(
         extension_id: request.extension_id,
         action_key: request.action_key,
         project_id: request.project_id,
-        session_id: request.session_id,
+        execution_id: request.execution_id,
         input: request.input,
         package_artifact: request.package_artifact.map(package_artifact_to_relay),
         runtime_extensions: request
@@ -160,16 +160,17 @@ fn action_response_from_relay(
     }
 }
 
-fn channel_request_to_relay(
-    request: ExtensionChannelInvokeRequest,
-) -> CommandExtensionChannelInvokePayload {
-    CommandExtensionChannelInvokePayload {
+fn protocol_request_to_relay(
+    request: ExtensionProtocolInvokeRequest,
+) -> CommandExtensionProtocolInvokePayload {
+    CommandExtensionProtocolInvokePayload {
         provider_extension_key: request.provider_extension_key,
         provider_extension_id: request.provider_extension_id,
-        channel_key: request.channel_key,
+        protocol_key: request.protocol_key,
+        protocol_version: request.protocol_version,
         method: request.method,
         project_id: request.project_id,
-        session_id: request.session_id,
+        execution_id: request.execution_id,
         input: request.input,
         package_artifact: package_artifact_to_relay(request.package_artifact),
         consumer: consumer_to_relay(request.consumer),
@@ -180,12 +181,13 @@ fn channel_request_to_relay(
 }
 
 fn channel_response_from_relay(
-    response: ResponseExtensionChannelInvokePayload,
-) -> ExtensionChannelInvokeResponse {
-    ExtensionChannelInvokeResponse {
+    response: ResponseExtensionProtocolInvokePayload,
+) -> ExtensionProtocolInvokeResponse {
+    ExtensionProtocolInvokeResponse {
         provider_extension_key: response.provider_extension_key,
         provider_extension_id: response.provider_extension_id,
-        channel_key: response.channel_key,
+        protocol_key: response.protocol_key,
+        protocol_version: response.protocol_version,
         method: response.method,
         output: response.output,
         metadata: response.metadata,
@@ -207,7 +209,7 @@ fn backend_service_request_to_relay(
             trace_id: request.trace_id,
             invocation_id: request.invocation_id,
         },
-        session_id: request.session_id,
+        execution_id: request.execution_id,
         method: request.method,
         headers: request.headers,
         body: request.body,
@@ -315,8 +317,8 @@ fn runtime_host_to_relay(host: ExtensionRuntimeHostPayload) -> ExtensionRuntimeH
     }
 }
 
-fn consumer_to_relay(consumer: ExtensionChannelConsumerPayload) -> ExtensionChannelConsumerRelay {
-    ExtensionChannelConsumerRelay {
+fn consumer_to_relay(consumer: ExtensionProtocolConsumerPayload) -> ExtensionProtocolConsumerRelay {
+    ExtensionProtocolConsumerRelay {
         kind: consumer.kind,
         extension_key: consumer.extension_key,
         extension_id: consumer.extension_id,
@@ -583,7 +585,7 @@ mod tests {
             extension_id: "local-hello".to_string(),
             action_key: "local-hello.profile".to_string(),
             project_id: "project-1".to_string(),
-            session_id: "session-1".to_string(),
+            execution_id: "session-1".to_string(),
             input: json!({}),
             package_artifact: None,
             runtime_extensions: vec![],
@@ -600,7 +602,7 @@ mod tests {
             service_key: "local-webapp.api".to_string(),
             route: "/api/search".to_string(),
             project_id: "project-1".to_string(),
-            session_id: "session-1".to_string(),
+            execution_id: "session-1".to_string(),
             method: "POST".to_string(),
             headers: std::collections::BTreeMap::from([(
                 "content-type".to_string(),

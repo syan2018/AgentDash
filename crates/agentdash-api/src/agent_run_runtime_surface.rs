@@ -28,48 +28,6 @@ pub(crate) struct ApiAgentRunCurrentRuntimeSurfaceWithBackend {
     pub runtime_backend_anchor: RuntimeBackendAnchor,
 }
 
-pub(crate) async fn resolve_current_runtime_surface_for_project_for_api(
-    state: &Arc<AppState>,
-    current_user: &AuthIdentity,
-    runtime_thread_id: &str,
-    expected_project_id: Uuid,
-    purpose: RuntimeSurfaceQueryPurpose,
-    subject: &str,
-) -> Result<ApiCurrentRuntimeSurface, ApiError> {
-    let binding = state
-        .services
-        .agent_run_product_runtime_bindings
-        .load_product_binding_by_runtime_thread(
-            &agentdash_agent_runtime_contract::RuntimeThreadId::new(runtime_thread_id)
-                .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-        )
-        .await
-        .map_err(ApiError::Internal)?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "{} 缺少 Product RuntimeThread binding: {}",
-                purpose.component, runtime_thread_id
-            ))
-        })?;
-    let surface = load_applied_surface(state, &binding.target).await?;
-    if surface.project_id != expected_project_id {
-        return Err(ApiError::Conflict(format!(
-            "{subject} Project 与 Product applied resource surface 不一致: expected {expected_project_id}, actual {}",
-            surface.project_id
-        )));
-    }
-    load_project_with_permission(
-        state.as_ref(),
-        current_user,
-        surface.project_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    Ok(ApiCurrentRuntimeSurface {
-        vfs: applied_vfs(&surface),
-    })
-}
-
 pub(crate) async fn resolve_current_runtime_surface_with_backend_for_agent_run_for_api(
     state: &Arc<AppState>,
     current_user: &AuthIdentity,

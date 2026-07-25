@@ -5,7 +5,6 @@ pub mod agent_run_list;
 mod agent_run_projection;
 pub mod auth;
 pub mod backend;
-pub mod canvas;
 pub mod capability;
 pub mod channel;
 pub mod companion;
@@ -15,6 +14,7 @@ pub mod extension_management;
 pub mod extension_package;
 pub mod extension_runtime;
 pub mod frame_construction;
+pub mod interaction;
 pub mod lifecycle {
     pub use agentdash_application_lifecycle::*;
 }
@@ -23,7 +23,6 @@ pub mod mcp_preset;
 pub mod mcp_relay_adapter;
 pub mod platform_config;
 pub mod product_runtime_surface;
-pub mod product_runtime_surface_update;
 pub mod project;
 pub mod project_agent_run_start;
 pub mod repository_set;

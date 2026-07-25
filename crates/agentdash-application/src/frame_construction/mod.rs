@@ -768,7 +768,7 @@ mod existing_surface_discovery_tests {
         let mut vfs = frame.typed_vfs().expect("VFS");
         vfs.mounts[0].metadata = serde_json::json!({
             "skill_asset_project_id": Uuid::new_v4().to_string(),
-            "skill_asset_keys": ["canvas-system"],
+            "skill_asset_keys": ["workspace-module-system"],
         });
         let mut capability_state = frame.typed_capability_state().expect("capability state");
         capability_state.vfs.active = Some(vfs.clone());
@@ -790,7 +790,7 @@ mod existing_surface_discovery_tests {
         )
         .await
         .expect_err("declared SkillAsset must be discovered from the final VFS");
-        assert!(error.to_string().contains("canvas-system"));
+        assert!(error.to_string().contains("workspace-module-system"));
     }
 
     /// 若持久化 frame 缺少 VFS surface，ExistingSurface 无法闭包 launch surface，

@@ -17,7 +17,8 @@ pub use activity_def::{
     ActivityJoinPolicy, ActivityTransition, ActivityTransitionKind, AgentActivityExecutorSpec,
     AgentReusePolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
     BashExecExecutorSpec, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
-    HumanApprovalExecutorSpec, RuntimeThreadPolicy, TransitionCondition,
+    HumanApprovalExecutorSpec, OperationScriptExecutorLimits, OperationScriptExecutorSpec,
+    OperationScriptInputBinding, RuntimeThreadPolicy, TransitionCondition,
 };
 pub use capability::{
     CapabilityConfig, ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction,

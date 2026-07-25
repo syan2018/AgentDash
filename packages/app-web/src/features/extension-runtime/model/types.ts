@@ -13,9 +13,10 @@ export function emptyExtensionRuntimeProjection(): ExtensionRuntimeProjectionRes
     flags: [],
     message_renderers: [],
     runtime_actions: [],
-    protocol_channels: [],
+    protocols: [],
     extension_dependencies: [],
     workspace_tabs: [],
+    ui_components: [],
     permissions: [],
     bundles: [],
   };

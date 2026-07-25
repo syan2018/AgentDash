@@ -26,8 +26,8 @@ use agentdash_application::extension_runtime::{
     uninstall_extension_installation,
 };
 use agentdash_application_extension_gateway::{
-    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
-    ExtensionRuntimeChannelInvokeResult, RuntimeActionKey, RuntimeActor, RuntimeContext,
+    ExtensionRuntimeProtocolConsumer, ExtensionRuntimeProtocolInvokeRequest,
+    ExtensionRuntimeProtocolInvokeResult, RuntimeActionKey, RuntimeActor, RuntimeContext,
     RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
     attach_extension_invocation_workspace, resolve_extension_invocation_workspace,
 };
@@ -46,8 +46,8 @@ use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
     ExtensionRuntimeInvokeActionResponse, ExtensionRuntimeInvokeBackendServiceRequest,
     ExtensionRuntimeInvokeBackendServiceResponse,
-    ExtensionRuntimeInvokeChannelRequest as ExtensionRuntimeInvokeChannelRequestDto,
-    ExtensionRuntimeInvokeChannelResponse, ExtensionRuntimeTraceResponse,
+    ExtensionRuntimeInvokeProtocolRequest as ExtensionRuntimeInvokeProtocolRequestDto,
+    ExtensionRuntimeInvokeProtocolResponse, ExtensionRuntimeTraceResponse,
     UninstallExtensionInstallationResponse,
 };
 use agentdash_domain::DomainError;
@@ -68,8 +68,8 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::post(invoke_agent_run_extension_runtime_action),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/extension-runtime/invoke-channel",
-            axum::routing::post(invoke_agent_run_extension_runtime_channel),
+            "/agent-runs/{run_id}/agents/{agent_id}/extension-runtime/invoke-protocol",
+            axum::routing::post(invoke_agent_run_extension_runtime_protocol),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/extension-runtime/invoke-backend-service",
@@ -178,13 +178,13 @@ pub async fn invoke_agent_run_extension_runtime_action(
     Ok(Json(extension_runtime_invoke_response(result)))
 }
 
-/// POST `/api/agent-runs/:run_id/agents/:agent_id/extension-runtime/invoke-channel`
-pub async fn invoke_agent_run_extension_runtime_channel(
+/// POST `/api/agent-runs/:run_id/agents/:agent_id/extension-runtime/invoke-protocol`
+pub async fn invoke_agent_run_extension_runtime_protocol(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<AgentRunExtensionRuntimePath>,
-    Json(req): Json<ExtensionRuntimeInvokeChannelRequestDto>,
-) -> Result<Json<ExtensionRuntimeInvokeChannelResponse>, ApiError> {
+    Json(req): Json<ExtensionRuntimeInvokeProtocolRequestDto>,
+) -> Result<Json<ExtensionRuntimeInvokeProtocolResponse>, ApiError> {
     let runtime_surface = resolve_current_runtime_surface_with_backend_for_agent_run_for_api(
         &state,
         &current_user,
@@ -199,9 +199,9 @@ pub async fn invoke_agent_run_extension_runtime_channel(
     let runtime_thread_id = runtime_surface.runtime_thread_id.clone();
     let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
-    if req.channel_key.trim().is_empty() {
+    if req.protocol_key.trim().is_empty() {
         return Err(ApiError::BadRequest(
-            "extension channel invoke 缺少 channel_key".into(),
+            "extension protocol invoke 缺少 protocol_key".into(),
         ));
     }
     if req.method.trim().is_empty() {
@@ -218,28 +218,30 @@ pub async fn invoke_agent_run_extension_runtime_channel(
         .consumer_extension_key
         .as_ref()
         .map(
-            |extension_key| ExtensionRuntimeChannelConsumer::ExtensionPanel {
+            |extension_key| ExtensionRuntimeProtocolConsumer::ExtensionPanel {
                 extension_key: extension_key.trim().to_string(),
             },
         )
-        .unwrap_or(ExtensionRuntimeChannelConsumer::RuntimeThreadUser);
+        .unwrap_or(ExtensionRuntimeProtocolConsumer::RuntimeThreadUser);
     let result = state
         .services
-        .extension_runtime_channel_invoker
-        .invoke(ExtensionRuntimeChannelInvokeRequest {
+        .extension_runtime_protocol_invoker
+        .invoke(ExtensionRuntimeProtocolInvokeRequest {
             project_id,
             runtime_thread_id,
             backend_id,
             workspace,
             consumer,
-            channel_key: req.channel_key,
+            provider_extension_key: req.provider_extension_key,
+            protocol_key: req.protocol_key,
+            protocol_version: req.protocol_version,
             dependency_alias: req.dependency_alias,
             method: req.method,
             input: req.input,
             trace: RuntimeTrace::new(),
         })
         .await?;
-    Ok(Json(extension_runtime_channel_invoke_response(result)))
+    Ok(Json(extension_runtime_protocol_invoke_response(result)))
 }
 
 /// POST `/api/agent-runs/:run_id/agents/:agent_id/extension-runtime/invoke-backend-service`
@@ -342,7 +344,7 @@ pub async fn invoke_agent_run_extension_backend_service(
                 service_key,
                 route,
                 project_id: project_id.to_string(),
-                session_id: runtime_thread_id,
+                execution_id: runtime_thread_id,
                 method,
                 headers: req.headers,
                 body: req.body,
@@ -500,11 +502,14 @@ fn extension_runtime_invoke_response(
     }
 }
 
-fn extension_runtime_channel_invoke_response(
-    result: ExtensionRuntimeChannelInvokeResult,
-) -> ExtensionRuntimeInvokeChannelResponse {
-    ExtensionRuntimeInvokeChannelResponse {
-        channel_key: result.channel_key,
+fn extension_runtime_protocol_invoke_response(
+    result: ExtensionRuntimeProtocolInvokeResult,
+) -> ExtensionRuntimeInvokeProtocolResponse {
+    ExtensionRuntimeInvokeProtocolResponse {
+        provider_extension_key: result.provider_extension_key,
+        provider_extension_id: result.provider_extension_id,
+        protocol_key: result.protocol_key,
+        protocol_version: result.protocol_version,
         method: result.method,
         trace: extension_runtime_trace_response(&result.trace),
         output: ExtensionRuntimeInvocationOutputResponse {

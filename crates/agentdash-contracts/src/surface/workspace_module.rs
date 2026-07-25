@@ -58,7 +58,7 @@ impl WorkspaceModuleStatus {
 /// `list` 返回的摘要——不含完整 schema。
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct WorkspaceModuleSummary {
-    /// 稳定 id：`ext:{extension_key}` / `canvas:{canvas_mount_id}` / `builtin:{key}`。
+    /// 稳定 id：`ext:{extension_key}` / `canvas:{definition_id}` / `builtin:{key}`。
     pub module_id: String,
     pub kind: WorkspaceModuleKind,
     pub title: String,
@@ -92,15 +92,6 @@ pub struct WorkspaceModuleUiEntry {
     pub title: String,
 }
 
-/// 宿主拥有的 Canvas module operation。
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceModuleCanvasHostAction {
-    BindData,
-    Inspect,
-    GetInteractionState,
-}
-
 /// Operation exposure target.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -111,30 +102,35 @@ pub enum WorkspaceModuleOperationVisibility {
     AgentAndPanel,
 }
 
-/// operation 的来源专属派发分量。
-///
-/// `origin` 是给人/UI 看的扁平标签；`dispatch` 承载 invoke 元工具据以**直接路由**的
-/// 结构化分量，由聚合层（`build_workspace_modules`）在构造 operation 时一并填好。
-/// invoke 据 `dispatch` 派发，**不再字符串拆 `operation_key`**（避免 channel method
-/// 名含驼峰时的反解析脆弱）。
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum WorkspaceModuleOperationDispatch {
-    /// extension runtime action：直接以 `action_key` 走 RuntimeGateway。
-    RuntimeAction { action_key: String },
-    /// extension protocol channel method：走 ExtensionRuntimeChannelInvoker，不经 action_key。
-    ProtocolChannel {
-        channel_key: String,
-        method_name: String,
-    },
-    /// Extension-owned backend service route. M3 local lifecycle manager owns execution.
-    BackendService { service_key: String, route: String },
-    /// 宿主 Canvas 资产操作：走 application use case，不进入 iframe/runtime action。
-    HostCanvas {
-        canvas_action: WorkspaceModuleCanvasHostAction,
-    },
-    /// builtin module operation：预留，本轮 invoke 返回 unimplemented。
-    Builtin { builtin_key: String },
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct WorkspaceModuleOperationRef {
+    pub namespace: String,
+    pub provider_key: String,
+    pub operation_key: String,
+    pub contract_version: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct WorkspaceModuleOperationProvenance {
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_digest: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceModuleOperationEffect {
+    Read,
+    LocalMutation,
+    ExternalSideEffect,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceModuleOperationReplayPolicy {
+    NonReplayable,
+    Idempotent,
+    ReplaySafe,
 }
 
 /// Operation 调用就绪状态；它只描述当前 operation 是否可调用，
@@ -143,12 +139,7 @@ pub enum WorkspaceModuleOperationDispatch {
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceModuleOperationReadinessKind {
     Ready,
-    MissingExtensionGateway,
-    MissingChannelTransport,
-    MissingRuntimeBackendAnchor,
-    BackendUnavailable,
-    RuntimeActionUnavailable,
-    BackendServiceUnavailable,
+    Unavailable,
 }
 
 /// 当前 runtime 中 operation 调用可用性的结构化诊断。
@@ -156,24 +147,25 @@ pub enum WorkspaceModuleOperationReadinessKind {
 pub struct WorkspaceModuleOperationReadiness {
     pub kind: WorkspaceModuleOperationReadinessKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 impl WorkspaceModuleOperationReadiness {
     pub fn ready() -> Self {
         Self {
             kind: WorkspaceModuleOperationReadinessKind::Ready,
-            reason: None,
+            code: None,
+            message: None,
         }
     }
 
-    pub fn unavailable(
-        kind: WorkspaceModuleOperationReadinessKind,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub fn unavailable(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            kind,
-            reason: Some(reason.into()),
+            kind: WorkspaceModuleOperationReadinessKind::Unavailable,
+            code: Some(code.into()),
+            message: Some(message.into()),
         }
     }
 
@@ -182,12 +174,11 @@ impl WorkspaceModuleOperationReadiness {
     }
 }
 
-/// 单个 operation（extension action / protocol channel method / host canvas / builtin 同构呈现）。
+/// 单个 operation（extension action / protocol method / host canvas / builtin 同构呈现）。
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct WorkspaceModuleOperation {
+    pub operation_ref: WorkspaceModuleOperationRef,
     pub operation_key: String,
-    /// "runtime_action" | "protocol_channel" | "host_canvas" | "builtin"。
-    pub origin: String,
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_schema: Option<Value>,
@@ -195,11 +186,9 @@ pub struct WorkspaceModuleOperation {
     pub output_schema: Option<Value>,
     pub permission_summary: Vec<String>,
     pub visibility: WorkspaceModuleOperationVisibility,
-    /// Generated projection provenance, e.g. capability/exposure keys and source layer.
-    #[serde(default, skip_serializing_if = "Value::is_null")]
-    pub provenance: Value,
-    /// 来源专属路由分量，invoke 据此直接派发（不拆 operation_key）。
-    pub dispatch: WorkspaceModuleOperationDispatch,
+    pub effect: WorkspaceModuleOperationEffect,
+    pub replay_policy: WorkspaceModuleOperationReplayPolicy,
+    pub provenance: WorkspaceModuleOperationProvenance,
     pub readiness: WorkspaceModuleOperationReadiness,
 }
 

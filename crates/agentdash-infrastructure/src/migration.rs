@@ -9,13 +9,23 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "backend_execution_leases",
     "backend_workspace_inventory",
     "backends",
-    "agent_run_canvas_state",
-    "canvas_files",
-    "canvases",
     "extension_package_artifacts",
     "group_memberships",
     "groups",
     "inline_fs_files",
+    "interaction_command_receipts",
+    "interaction_definition_lineage",
+    "interaction_definition_revisions",
+    "interaction_definitions",
+    "interaction_operation_effect_intents",
+    "interaction_events",
+    "interaction_instances",
+    "interaction_presentation_states",
+    "interaction_renderer_leases",
+    "interaction_runtime_bindings",
+    "interaction_source_bundles",
+    "interaction_source_files",
+    "interaction_state_revisions",
     "lifecycle_agents",
     "lifecycle_gates",
     "lifecycle_runs",
@@ -51,8 +61,11 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
 ];
 
 const RETIRED_POSTGRES_TABLES: &[&str] = &[
+    "agent_run_canvas_state",
     "agent_run_canvas_runtime_observations",
     "agent_run_canvas_interaction_snapshots",
+    "canvas_files",
+    "canvases",
     "views",
     "agent_run_control_effects",
     "agent_run_terminal_projection_outbox",
@@ -172,12 +185,6 @@ pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
 
 pub async fn assert_postgres_schema_ready(pool: &PgPool) -> Result<(), DomainError> {
     assert_postgres_tables_ready(pool, REQUIRED_POSTGRES_TABLES).await?;
-    assert_postgres_columns_ready(
-        pool,
-        "agent_run_canvas_state",
-        &["runtime_observation", "interaction_snapshot"],
-    )
-    .await?;
     assert_postgres_columns_ready(pool, "lifecycle_gates", &["delivery", "updated_at"]).await?;
     assert_postgres_columns_ready(pool, "lifecycle_agents", &["frames", "runtime_binding"]).await?;
     assert_postgres_tables_absent(pool, RETIRED_POSTGRES_TABLES).await

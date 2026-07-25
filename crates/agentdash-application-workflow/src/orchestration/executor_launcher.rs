@@ -148,6 +148,16 @@ impl OrchestrationExecutorLauncher {
         self
     }
 
+    pub fn with_operation_script_caller(
+        mut self,
+        caller: crate::SharedWorkflowOperationScriptCaller,
+    ) -> Self {
+        self.function_node_runner = self
+            .function_node_runner
+            .with_operation_script_caller(caller);
+        self
+    }
+
     pub fn with_agent_call_dispatch(
         mut self,
         dispatch: Arc<dyn WorkflowAgentCallDispatchPort>,

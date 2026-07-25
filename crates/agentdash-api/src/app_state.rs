@@ -33,7 +33,6 @@ use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfi
 use agentdash_application::product_runtime_surface::{
     ProductAgentRunAppliedResourceSurfaceCompiler, ProductAgentRunFactsResolver,
 };
-use agentdash_application::product_runtime_surface_update::ProductAgentRunRuntimeSurfaceUpdateService;
 use agentdash_application::project_agent_run_start::{
     ProjectAgentRunStartDeps, ProjectAgentRunStartService,
 };
@@ -58,9 +57,7 @@ use agentdash_application_agentrun::agent_run::{
     ProductAgentRunRuntimeSnapshotAdapter, ProductCompanionFreshRuntimeAdapter,
     build_workflow_agent_call_dispatch,
 };
-use agentdash_application_extension_gateway::{
-    ExtensionGateway, ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeChannelInvoker,
-};
+use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeProtocolInvoker};
 use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
 use agentdash_application_lifecycle::run_view_builder::{
     LifecycleRunViewQueryDeps, LifecycleRunViewQueryPort, LifecycleRunViewQueryService,
@@ -71,9 +68,7 @@ use agentdash_application_lifecycle::{
     LifecycleWorkflowAgentNodeMaterializationAdapter,
     LifecycleWorkflowAgentNodeMaterializationDeps,
 };
-use agentdash_application_ports::agent_frame_materialization::{
-    AgentRunFrameConstructionPort, AgentRunRuntimeSurfaceUpdatePort,
-};
+use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolService,
 };
@@ -215,7 +210,10 @@ pub struct ServiceSet {
     pub mount_provider_registry: Arc<MountProviderRegistry>,
     pub auth_session_service: Arc<AuthSessionService>,
     pub extension_gateway: Arc<ExtensionGateway>,
-    pub extension_runtime_channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
+    pub operation_gateway: Arc<agentdash_application_operation_gateway::OperationGateway>,
+    pub operation_script_engine:
+        Arc<dyn agentdash_application_ports::operation_script::OperationScriptEngine>,
+    pub extension_runtime_protocol_invoker: Arc<ExtensionRuntimeProtocolInvoker>,
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
     pub orchestration_executor_launcher: OrchestrationExecutorLauncher,
     pub workflow_recovery: Arc<PostgresWorkflowRecoveryRepository>,
@@ -347,13 +345,6 @@ impl AppState {
                 ProductRuntimeToolKind::WorkspaceModuleInvoke,
                 workspace_module_runtime_tool_schema(ProductRuntimeToolKind::WorkspaceModuleInvoke),
             ));
-        let workspace_module_operate_runtime_tool =
-            Arc::new(DeferredProductRuntimeToolService::new(
-                ProductRuntimeToolKind::WorkspaceModuleOperate,
-                workspace_module_runtime_tool_schema(
-                    ProductRuntimeToolKind::WorkspaceModuleOperate,
-                ),
-            ));
         let applied_vfs_tools = Arc::new(
             AppliedVfsRuntimeToolService::new(vfs_service.clone(), shell_terminal_registry.clone())
                 .with_materialization(Some(vfs_materialization_service))
@@ -375,7 +366,6 @@ impl AppState {
             companion_respond_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_list_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_describe_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
-            workspace_module_operate_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_invoke_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
         ]));
         let runtime_tool_authorizer = Arc::new(ProductRuntimeToolAuthorizer::new(
@@ -466,7 +456,7 @@ impl AppState {
             complete_agent.host.clone(),
             complete_agent_selector,
             runtime_tool_broker.clone(),
-            dynamic_runtime_tools,
+            dynamic_runtime_tools.clone(),
             repos.agent_frame_repo.clone(),
         ));
         let runtime_wire_complete_agents = RuntimeWireCompleteAgentAdmission::new(
@@ -476,13 +466,6 @@ impl AppState {
             complete_agent_selections.clone(),
             Arc::new(configured_runtime_wire_trust_catalog()?),
         );
-        let product_runtime_surface_updates: Arc<dyn AgentRunRuntimeSurfaceUpdatePort> =
-            Arc::new(ProductAgentRunRuntimeSurfaceUpdateService::new(
-                repos.clone(),
-                runtime_product_bindings.clone(),
-                product_runtime_provisioner.clone(),
-            ));
-
         let product = Arc::new(
             AgentRunProductProjectionComposition::build(
                 pool.clone(),
@@ -606,34 +589,67 @@ impl AppState {
         );
 
         let extension_gateway = crate::bootstrap::extension_gateway::build_extension_gateway(
-            mcp_probe_relay,
+            mcp_probe_relay.clone(),
             repos.clone(),
             backend_registry.clone(),
-            setup_action_transport,
+            setup_action_transport.clone(),
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
         );
-        let extension_runtime_channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
+        let operation_gateway_handle =
+            crate::bootstrap::runtime_gateway::SharedOperationGatewayHandle::default();
+        let operation_mcp_access = Arc::new(
+            crate::bootstrap::product_operation_mcp_access::ProductRuntimeMcpOperationAccess::new(
+                runtime_product_bindings.clone(),
+                repos.agent_frame_repo.clone(),
+                dynamic_runtime_tools,
+            ),
+        );
+        let operation_gateway = crate::bootstrap::runtime_gateway::build_operation_gateway(
+            mcp_probe_relay,
+            operation_mcp_access,
+            runtime_product_bindings.clone(),
+            repos.clone(),
+            backend_registry.clone(),
+            setup_action_transport,
+            operation_gateway_handle.clone(),
+        )?;
+        operation_gateway_handle
+            .set(operation_gateway.clone())
+            .await;
+        let mut operation_script_secret = [0_u8; 32];
+        operation_script_secret[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        operation_script_secret[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        let operation_script_engine: Arc<
+            dyn agentdash_application_ports::operation_script::OperationScriptEngine,
+        > = Arc::new(
+            agentdash_infrastructure::RhaiOperationScriptEngine::new(
+                &operation_script_secret,
+                agentdash_infrastructure::RhaiOperationScriptConfig::default(),
+            )
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+        );
+        let workflow_operation_script_caller =
+            agentdash_application_workflow::SharedWorkflowOperationScriptCaller::default();
+        workflow_operation_script_caller
+            .set(Arc::new(
+                agentdash_application_workflow::WorkflowOperationScriptCaller::new(
+                    operation_script_engine.clone(),
+                    operation_gateway.clone(),
+                ),
+            ))
+            .await;
+        let extension_runtime_protocol_invoker = Arc::new(ExtensionRuntimeProtocolInvoker::new(
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
         ));
-        let extension_runtime_backend_service_invoker =
-            Arc::new(ExtensionRuntimeBackendServiceInvoker::new(
-                repos.project_extension_installation_repo.clone(),
-                backend_registry.clone(),
-            ));
         let workspace_module_runtime_tool_deps = WorkspaceModuleRuntimeToolDeps {
-            repos: repos.clone(),
             runtime_bindings: runtime_product_bindings.clone(),
             applied_surfaces: product_resource_surfaces.clone(),
             frames: repos.agent_frame_repo.clone(),
             installations: repos.project_extension_installation_repo.clone(),
-            canvases: repos.canvas_repo.clone(),
-            canvas_runtime_state: repos.canvas_runtime_state_repo.clone(),
-            extension_gateway: extension_gateway.clone(),
-            channel_invoker: extension_runtime_channel_invoker.clone(),
-            backend_service_invoker: extension_runtime_backend_service_invoker,
-            runtime_surface_updates: product_runtime_surface_updates,
+            definitions: repos.interaction_definition_repo.clone(),
+            operation_gateway: operation_gateway.clone(),
         };
         workspace_module_list_runtime_tool
             .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
@@ -651,12 +667,6 @@ impl AppState {
             .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
                 ProductRuntimeToolKind::WorkspaceModuleInvoke,
                 workspace_module_runtime_tool_deps.clone(),
-            )))
-            .map_err(anyhow::Error::msg)?;
-        workspace_module_operate_runtime_tool
-            .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
-                ProductRuntimeToolKind::WorkspaceModuleOperate,
-                workspace_module_runtime_tool_deps,
             )))
             .map_err(anyhow::Error::msg)?;
         let workflow_effects =
@@ -726,7 +736,8 @@ impl AppState {
             workflow_effects,
             function_runner,
         )
-        .with_agent_call_dispatch(workflow_agent_call_dispatch);
+        .with_agent_call_dispatch(workflow_agent_call_dispatch)
+        .with_operation_script_caller(workflow_operation_script_caller);
         let lifecycle_orchestrator =
             Arc::new(LifecycleOrchestrator::new(LifecycleOrchestratorDeps {
                 run_repo: repos.lifecycle_run_repo.clone(),
@@ -791,7 +802,9 @@ impl AppState {
                 mount_provider_registry,
                 auth_session_service,
                 extension_gateway,
-                extension_runtime_channel_invoker,
+                operation_gateway,
+                operation_script_engine,
+                extension_runtime_protocol_invoker,
                 extension_package_artifact_storage,
                 orchestration_executor_launcher,
                 workflow_recovery,

@@ -8,8 +8,8 @@ import type {
   AgentDashCapabilityDispatch,
   AgentDashCapabilityKind,
   AgentDashCapabilityRecipe,
-  AgentDashCustomChannelMethodOptions,
-  AgentDashCustomChannelOptions,
+  AgentDashCustomProtocolMethodOptions,
+  AgentDashCustomProtocolOptions,
   AgentDashDispatchProjection,
   AgentDashExposureListInput,
   AgentDashHttpProxyOptions,
@@ -23,6 +23,8 @@ import type {
   AgentDashPermissionSummary,
   AgentDashPermissionSummaryItem,
   AgentDashRuntimePermissionKey,
+  AgentDashUiComponentDefinition,
+  AgentDashUiComponentInput,
   AgentDashWorkspaceFilesOptions,
   JsonSchema,
 } from "./types.js";
@@ -54,6 +56,7 @@ export function normalizeAppDefinition(input: AgentDashAppInput): AgentDashAppDe
     type_id: normalizeOptionalQualifiedKey(input.panel.type_id, `${id}.panel`, "panel.type_id"),
     uri_scheme: normalizeUriScheme(input.panel.uri_scheme, id),
   };
+  const uiComponents = normalizeUiComponents(input.ui_components ?? []);
 
   const capabilities: AgentDashNormalizedCapability[] = [];
   const dispatches: AgentDashDispatchProjection[] = [];
@@ -100,6 +103,7 @@ export function normalizeAppDefinition(input: AgentDashAppInput): AgentDashAppDe
     version,
     description: input.description?.trim() ?? "",
     panel,
+    ui_components: uiComponents,
     capabilities,
     agent_exposures: exposures,
     dispatches,
@@ -107,6 +111,60 @@ export function normalizeAppDefinition(input: AgentDashAppInput): AgentDashAppDe
     operation_catalog: operationCatalog,
     permission_summary: permissionSummary,
   };
+}
+
+function normalizeUiComponents(
+  components: readonly AgentDashUiComponentInput[],
+): AgentDashUiComponentDefinition[] {
+  const keys = new Set<string>();
+  return components.map((component, index) => {
+    const field = `ui_components[${index}]`;
+    const componentKey = requireTrimmed(component.component_key, `${field}.component_key`);
+    if (!QUALIFIED_KEY_PATTERN.test(componentKey)) {
+      throw new Error(`${field}.component_key must use lowercase qualified key segments`);
+    }
+    if (keys.has(componentKey)) {
+      throw new Error(`${field}.component_key '${componentKey}' is duplicated`);
+    }
+    keys.add(componentKey);
+    const entry = requireTrimmed(component.entry, `${field}.entry`);
+    const events = Object.fromEntries(Object.entries(component.events_schema ?? {}).map(([eventType, schema]) => {
+      const key = requireTrimmed(eventType, `${field}.events_schema key`);
+      if (!QUALIFIED_KEY_PATTERN.test(key)) {
+        throw new Error(`${field}.events_schema key '${key}' is invalid`);
+      }
+      return [key, schema];
+    }));
+    const slots = [...new Set((component.slots ?? []).map((slot) => {
+      const key = requireTrimmed(slot, `${field}.slots[]`);
+      if (!QUALIFIED_KEY_PATTERN.test(key)) {
+        throw new Error(`${field}.slots[] '${key}' is invalid`);
+      }
+      return key;
+    }))].sort();
+    const sizing = {
+      min_width: component.sizing?.min_width ?? 160,
+      min_height: component.sizing?.min_height ?? 120,
+      max_width: component.sizing?.max_width,
+      max_height: component.sizing?.max_height,
+    };
+    if (sizing.min_width <= 0 || sizing.min_height <= 0
+      || (sizing.max_width !== undefined && sizing.max_width < sizing.min_width)
+      || (sizing.max_height !== undefined && sizing.max_height < sizing.min_height)) {
+      throw new Error(`${field}.sizing bounds are invalid`);
+    }
+    return {
+      component_key: componentKey,
+      contract_version: 1,
+      renderer: { kind: "iframe", entry },
+      props_schema: component.props_schema ?? true,
+      events_schema: events,
+      state_projection_schema: component.state_projection_schema ?? true,
+      slots,
+      sizing,
+      sandbox_profile: "isolated_v1",
+    };
+  });
 }
 
 export function isAgentDashRuntimePermissionKey(
@@ -123,7 +181,7 @@ export function isAgentDashRuntimePermissionKey(
     || permission === "process.shell"
     || hasPermissionScope(permission, "process.env.set")
     || hasPermissionScope(permission, "runtime.invoke")
-    || hasPermissionScope(permission, "extension.channel.invoke");
+    || hasPermissionScope(permission, "extension.protocol.invoke");
 }
 
 interface NormalizedCapabilityBundle {
@@ -148,8 +206,8 @@ function normalizeCapability(
       return normalizeLocalCommand(appId, capabilityKey, wireKey, recipe.options);
     case "workspace_files":
       return normalizeWorkspaceFiles(appId, capabilityKey, wireKey, recipe.options);
-    case "custom_channel":
-      return normalizeCustomChannel(appId, capabilityKey, wireKey, recipe.options);
+    case "custom_protocol":
+      return normalizeCustomProtocol(appId, capabilityKey, wireKey, recipe.options);
     case "backend_service":
       return normalizeBackendService(appId, capabilityKey, wireKey, recipe.options);
   }
@@ -290,27 +348,27 @@ function normalizeWorkspaceFiles(
   };
 }
 
-function normalizeCustomChannel(
+function normalizeCustomProtocol(
   appId: string,
   capabilityKey: string,
   wireKey: string,
-  options: AgentDashCustomChannelOptions,
+  options: AgentDashCustomProtocolOptions,
 ): NormalizedCapabilityBundle {
-  const channelKey = normalizeOptionalQualifiedKey(options.channel_key, `${appId}.${wireKey}`, `${capabilityKey}.channel_key`);
+  const protocolKey = normalizeOptionalQualifiedKey(options.protocol_key, `${appId}.${wireKey}`, `${capabilityKey}.protocol_key`);
   const methods = Object.entries(options.methods);
   if (methods.length === 0) {
     throw new Error(`${capabilityKey}.methods must contain at least one method`);
   }
 
   const methodNames: string[] = [];
-  const runtimePermissions: AgentDashRuntimePermissionKey[] = [`extension.channel.invoke:${channelKey}`];
+  const runtimePermissions: AgentDashRuntimePermissionKey[] = [`extension.protocol.invoke:${protocolKey}`];
   const methodExposures: AgentDashNormalizedAgentExposure[] = [];
   const permissionItems: AgentDashPermissionSummaryItem[] = [
     {
       capability_key: capabilityKey,
-      capability_kind: "custom_channel",
-      label: `extension.channel.invoke:${channelKey}`,
-      runtime_permission: `extension.channel.invoke:${channelKey}`,
+      capability_kind: "custom_protocol",
+      label: `extension.protocol.invoke:${protocolKey}`,
+      runtime_permission: `extension.protocol.invoke:${protocolKey}`,
     },
   ];
 
@@ -325,7 +383,7 @@ function normalizeCustomChannel(
     for (const permission of methodPermissions) {
       permissionItems.push({
         capability_key: capabilityKey,
-        capability_kind: "custom_channel",
+        capability_kind: "custom_protocol",
         label: permission,
         runtime_permission: permission,
       });
@@ -334,19 +392,19 @@ function normalizeCustomChannel(
       capability_key: capabilityKey,
       method_name: methodName,
       method,
-      channel_key: channelKey,
+      protocol_key: protocolKey,
       permission_summary: permissionItems.map((item) => item.label),
     }));
   }
 
   const declaration: AgentDashPermissionDeclaration = {
-    kind: "extension_channel",
-    channel_key: channelKey,
+    kind: "extension_protocol",
+    protocol_key: protocolKey,
     methods: methodNames,
   };
   const dispatch: AgentDashCapabilityDispatch = {
-    kind: "protocol_channel",
-    channel_key: channelKey,
+    kind: "protocol_method",
+    protocol_key: protocolKey,
     version: options.version?.trim() || "1.0.0",
     description: options.description?.trim() || titleFromKey(capabilityKey),
     methods: methods.map(([methodName, method]) => ({
@@ -361,8 +419,8 @@ function normalizeCustomChannel(
     })),
   };
   return {
-    capability: capabilitySummary(capabilityKey, wireKey, "custom_channel", options, permissionItems),
-    dispatch: dispatchProjection(capabilityKey, "custom_channel", dispatch, uniqueRuntimePermissions(runtimePermissions)),
+    capability: capabilitySummary(capabilityKey, wireKey, "custom_protocol", options, permissionItems),
+    dispatch: dispatchProjection(capabilityKey, "custom_protocol", dispatch, uniqueRuntimePermissions(runtimePermissions)),
     artifacts: [],
     exposures: methodExposures,
     declarations: [declaration],
@@ -493,14 +551,14 @@ function normalizeExposures(input: {
 function normalizeChannelMethodExposures(input: {
   capability_key: string;
   method_name: string;
-  method: AgentDashCustomChannelMethodOptions;
-  channel_key: string;
+  method: AgentDashCustomProtocolMethodOptions;
+  protocol_key: string;
   permission_summary: readonly string[];
 }): AgentDashNormalizedAgentExposure[] {
   if (!input.method.expose) return [];
   return exposureList(input.method.expose).map((exposure) => {
     const exposureKey = normalizeExposureKey(exposure.key, input.method_name);
-    const operationKey = `${input.channel_key}.${exposure.key ? exposureKey : input.method_name}`;
+    const operationKey = `${input.protocol_key}.${exposure.key ? exposureKey : input.method_name}`;
     validateOperationVisibility(exposure.visibility ?? "agent_and_panel", `${input.capability_key}.methods.${input.method_name}.expose.visibility`);
     return {
       capability_key: input.capability_key,
@@ -512,16 +570,16 @@ function normalizeChannelMethodExposures(input: {
       output_schema: exposure.output_schema ?? input.method.output_schema ?? DEFAULT_SCHEMA,
       permission_summary: input.permission_summary,
       dispatch: {
-        kind: "protocol_channel",
-        channel_key: input.channel_key,
+        kind: "protocol_method",
+        protocol_key: input.protocol_key,
         method_name: input.method_name,
       },
       provenance: {
         source: "capability_exposure",
         capability_key: input.capability_key,
         exposure_key: exposureKey,
-        capability_kind: "custom_channel",
-        recipe: "custom_channel",
+        capability_kind: "custom_protocol",
+        recipe: "custom_protocol",
       },
     };
   });

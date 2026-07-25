@@ -156,7 +156,7 @@ mod tests {
 
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
-        ExtensionProtocolChannelDefinition, ExtensionProtocolChannelMethodDefinition,
+        ExtensionProtocolDefinition, ExtensionProtocolMethodDefinition,
         ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -195,7 +195,7 @@ mod tests {
         let channel_env = resolve_host_api(
             Some(&active),
             "env.get",
-            &channel_params(json!({ "name": "PATH" })),
+            &protocol_params(json!({ "name": "PATH" })),
         )
         .await
         .expect("channel env");
@@ -568,10 +568,10 @@ mod tests {
         params
     }
 
-    fn channel_params(mut params: Value) -> Value {
+    fn protocol_params(mut params: Value) -> Value {
         let object = params.as_object_mut().expect("params object");
-        object.insert("channel_key".to_string(), json!("local-hello.api"));
-        object.insert("channel_method".to_string(), json!("readEnv"));
+        object.insert("protocol_key".to_string(), json!("local-hello.api"));
+        object.insert("protocol_method".to_string(), json!("readEnv"));
         params
     }
 
@@ -638,7 +638,7 @@ mod tests {
                 arch: "x64".to_string(),
                 backend_id: "backend-1".to_string(),
                 project_id: Some("project-1".to_string()),
-                session_id: Some("session-1".to_string()),
+                execution_id: Some("execution-1".to_string()),
                 workspace_roots: profile_workspace_roots,
             },
             default_workspace_root: default_workspace_root.map(Path::to_path_buf),
@@ -674,11 +674,11 @@ mod tests {
                     .map(|item| item.to_string())
                     .collect(),
             }],
-            protocol_channels: vec![ExtensionProtocolChannelDefinition {
-                channel_key: "local-hello.api".to_string(),
+            protocols: vec![ExtensionProtocolDefinition {
+                protocol_key: "local-hello.api".to_string(),
                 version: "1.0.0".to_string(),
                 description: "Local API".to_string(),
-                methods: vec![ExtensionProtocolChannelMethodDefinition {
+                methods: vec![ExtensionProtocolMethodDefinition {
                     name: "readEnv".to_string(),
                     description: "Read env".to_string(),
                     input_schema: json!(true),
@@ -691,6 +691,7 @@ mod tests {
             }],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
+            ui_components: vec![],
             permissions: vec![],
             fetch_routes: vec![],
             operation_catalog: vec![],

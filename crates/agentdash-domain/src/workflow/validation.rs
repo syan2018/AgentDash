@@ -76,12 +76,66 @@ fn validate_activity_executor(
         ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::BashExec(spec)) => {
             validate_non_empty(&format!("{field_path}.command"), &spec.command)?;
         }
+        ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::OperationScript(spec)) => {
+            if spec.language != "rhai_v1" {
+                return Err(format!("{field_path}.language 当前只支持 `rhai_v1`"));
+            }
+            if spec.host_api_version != 1 {
+                return Err(format!("{field_path}.host_api_version 当前只支持 V1"));
+            }
+            validate_non_empty(&format!("{field_path}.source"), &spec.source)?;
+            if u64::try_from(spec.source.len()).unwrap_or(u64::MAX) > spec.limits.max_source_bytes {
+                return Err(format!("{field_path}.source 超过 max_source_bytes"));
+            }
+            let mut operation_refs = std::collections::BTreeSet::new();
+            for operation_ref in &spec.requested_operations {
+                operation_ref
+                    .validate()
+                    .map_err(|error| format!("{field_path}.requested_operations: {error}"))?;
+                let key = (
+                    operation_ref.provider.namespace.as_str(),
+                    operation_ref.provider.provider_key.as_str(),
+                    operation_ref.operation_key.as_str(),
+                    operation_ref.contract_version,
+                );
+                if !operation_refs.insert(key) {
+                    return Err(format!(
+                        "{field_path}.requested_operations 存在重复 exact OperationRef"
+                    ));
+                }
+            }
+            validate_operation_script_limits(&spec.limits, field_path)?;
+        }
         ActivityExecutorSpec::Human(HumanActivityExecutorSpec::Approval(spec)) => {
             validate_identity(
                 &format!("{field_path}.form_schema_key"),
                 &spec.form_schema_key,
             )?;
         }
+    }
+    Ok(())
+}
+
+fn validate_operation_script_limits(
+    limits: &OperationScriptExecutorLimits,
+    field_path: &str,
+) -> Result<(), String> {
+    let valid = limits.timeout_ms > 0
+        && limits.max_source_bytes > 0
+        && limits.max_input_bytes > 0
+        && limits.max_output_bytes > 0
+        && limits.max_rhai_operations > 0
+        && limits.max_call_levels > 0
+        && limits.max_string_size > 0
+        && limits.max_array_size > 0
+        && limits.max_map_size > 0
+        && limits.max_operation_calls > 0
+        && limits.max_parallel_operations > 0
+        && limits.max_parallel_operations <= limits.max_operation_calls;
+    if !valid {
+        return Err(format!(
+            "{field_path}.limits 必须为有界正值且并行上限不能超过调用上限"
+        ));
     }
     Ok(())
 }
@@ -500,4 +554,58 @@ fn validate_non_empty(field: &str, value: &str) -> Result<(), String> {
         return Err(format!("{field} 不能为空"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod operation_script_validation_tests {
+    use crate::operation::OperationRef;
+
+    use super::*;
+
+    fn spec() -> OperationScriptExecutorSpec {
+        OperationScriptExecutorSpec {
+            language: "rhai_v1".to_string(),
+            host_api_version: 1,
+            source: "input".to_string(),
+            input_binding: OperationScriptInputBinding::NodeInput,
+            requested_operations: vec![
+                OperationRef::new("workflow", "fixture", "lookup", 1).expect("operation ref"),
+            ],
+            limits: OperationScriptExecutorLimits::default(),
+        }
+    }
+
+    #[test]
+    fn operation_script_executor_accepts_v1_whole_node_input_contract() {
+        validate_activity_executor(
+            &ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::OperationScript(spec())),
+            "activity.executor",
+        )
+        .expect("valid OperationScript executor");
+    }
+
+    #[test]
+    fn operation_script_executor_rejects_duplicate_exact_refs() {
+        let mut spec = spec();
+        spec.requested_operations
+            .push(spec.requested_operations[0].clone());
+        let error = validate_activity_executor(
+            &ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::OperationScript(spec)),
+            "activity.executor",
+        )
+        .expect_err("duplicate refs");
+        assert!(error.contains("重复 exact OperationRef"));
+    }
+
+    #[test]
+    fn operation_script_executor_rejects_unbounded_limits() {
+        let mut spec = spec();
+        spec.limits.timeout_ms = 0;
+        let error = validate_activity_executor(
+            &ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::OperationScript(spec)),
+            "activity.executor",
+        )
+        .expect_err("zero timeout");
+        assert!(error.contains("有界正值"));
+    }
 }

@@ -108,7 +108,7 @@ impl RhaiScriptRuntime {
         Self::hash_script(script)
     }
 
-    fn apply_limits(engine: &mut Engine, limits: RhaiScriptLimits) {
+    pub(crate) fn apply_limits(engine: &mut Engine, limits: RhaiScriptLimits) {
         engine.set_max_operations(limits.max_operations);
         engine.set_max_call_levels(limits.max_call_levels);
         engine.set_max_string_size(limits.max_string_size);
@@ -142,7 +142,7 @@ impl RhaiScriptRuntime {
     }
 }
 
-fn json_to_dynamic(value: &serde_json::Value) -> Dynamic {
+pub(crate) fn json_to_dynamic(value: &serde_json::Value) -> Dynamic {
     match value {
         serde_json::Value::Null => Dynamic::UNIT,
         serde_json::Value::Bool(flag) => Dynamic::from(*flag),

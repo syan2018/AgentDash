@@ -6770,7 +6770,7 @@
       ]
     },
     "ContextFrame": {
-      "description": "AgentDash-owned context presentation payload.\n\nThis is a presentation/audit projection of the materialized agent surface. It is not the\nmodel context itself and must never be used as the execution adapter's input contract.",
+      "description": "AgentDash-owned model-context delivery payload.\n\nA concrete Agent accepts these frames, consumes `rendered_text` according to the delivery\nmetadata, and publishes the same value for history, live presentation, and audit.",
       "type": "object",
       "properties": {
         "id": {

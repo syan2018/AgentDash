@@ -843,7 +843,7 @@ impl MemoryLifecycleGateRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeDelta;
+    use chrono::{TimeDelta, Utc};
 
     #[tokio::test]
     async fn current_frame_uses_revision_then_created_at() {

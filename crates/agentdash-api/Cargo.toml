@@ -19,6 +19,7 @@ agentdash-contracts = { workspace = true }
 agentdash-platform-spi = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-application-extension-gateway = { workspace = true }
+agentdash-application-operation-gateway = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-application-agentrun = { workspace = true }
 agentdash-application-hooks = { workspace = true }

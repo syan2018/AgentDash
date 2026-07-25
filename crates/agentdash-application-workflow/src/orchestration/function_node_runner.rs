@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::operation_script::{
+    OperationScriptError, OperationScriptLimits, OperationScriptResultValue,
+};
 use agentdash_domain::workflow::{
-    ExecutorSpec, FunctionActivityExecutorSpec, LifecycleRun, NodePortValue, PlanNode,
-    RuntimeNodeError, WorkflowFunctionEffectRequest, WorkflowFunctionTerminalResult,
+    ExecutorSpec, FunctionActivityExecutorSpec, LifecycleRun, NodePortValue,
+    OperationScriptExecutorLimits, OperationScriptExecutorSpec, OperationScriptInputBinding,
+    PlanNode, RuntimeNodeError, WorkflowFunctionEffectRequest, WorkflowFunctionTerminalResult,
 };
 use agentdash_platform_spi::{
     ApiRequestOutcome, BashExecOutcome, FunctionEffectObservation, FunctionEffectRawOutcome,
@@ -10,12 +14,19 @@ use agentdash_platform_spi::{
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
+
+use crate::{
+    SharedWorkflowOperationScriptCaller, WorkflowOperationScriptCallContext,
+    WorkflowOperationScriptCallerError, WorkflowOperationScriptProgram,
+};
 
 use super::ready_node::{ReadyNodeView, RunningNodeView, RuntimeNodeCoordinate};
 
 #[derive(Clone, Default)]
 pub(super) struct FunctionNodeRunner {
     runner: Option<Arc<dyn FunctionRunner>>,
+    operation_script_caller: SharedWorkflowOperationScriptCaller,
 }
 
 pub(super) struct PreparedFunctionEffect {
@@ -31,11 +42,22 @@ pub(super) enum FunctionDispatchOutcome {
 
 impl FunctionNodeRunner {
     pub(super) fn new() -> Self {
-        Self { runner: None }
+        Self {
+            runner: None,
+            operation_script_caller: SharedWorkflowOperationScriptCaller::default(),
+        }
     }
 
     pub(super) fn with_runner(mut self, runner: Arc<dyn FunctionRunner>) -> Self {
         self.runner = Some(runner);
+        self
+    }
+
+    pub(super) fn with_operation_script_caller(
+        mut self,
+        caller: SharedWorkflowOperationScriptCaller,
+    ) -> Self {
+        self.operation_script_caller = caller;
         self
     }
 
@@ -141,6 +163,9 @@ impl FunctionNodeRunner {
         &self,
         prepared: &PreparedFunctionEffect,
     ) -> Result<FunctionDispatchOutcome, RuntimeNodeError> {
+        if let FunctionActivityExecutorSpec::OperationScript(spec) = &prepared.request.spec {
+            return self.dispatch_operation_script(prepared, spec).await;
+        }
         let runner = self.runner.as_ref().ok_or_else(|| RuntimeNodeError {
             code: "function_effect_protocol_not_composed".to_string(),
             message: "orchestration executor 缺少 durable Function effect protocol".to_string(),
@@ -159,6 +184,9 @@ impl FunctionNodeRunner {
                     }
                     FunctionActivityExecutorSpec::BashExec(spec) => {
                         FunctionEffectSpec::BashExec(spec)
+                    }
+                    FunctionActivityExecutorSpec::OperationScript(_) => {
+                        unreachable!("OperationScript 已由专用 caller 分派")
                     }
                 };
                 let request = FunctionEffectRequest {
@@ -198,6 +226,175 @@ impl FunctionNodeRunner {
                 FunctionDispatchOutcome::Lost { reason, evidence }
             }
         })
+    }
+
+    async fn dispatch_operation_script(
+        &self,
+        prepared: &PreparedFunctionEffect,
+        spec: &OperationScriptExecutorSpec,
+    ) -> Result<FunctionDispatchOutcome, RuntimeNodeError> {
+        let caller = self
+            .operation_script_caller
+            .get()
+            .await
+            .ok_or_else(|| RuntimeNodeError {
+                code: "operation_script_caller_unavailable".to_string(),
+                message: "orchestration executor 缺少 Workflow OperationScript caller".to_string(),
+                retryable: true,
+                detail: None,
+            })?;
+        let input = match spec.input_binding {
+            OperationScriptInputBinding::NodeInput => {
+                prepared.request.context["node"]["inputs"].clone()
+            }
+        };
+        let program = WorkflowOperationScriptProgram {
+            language: spec.language.clone(),
+            host_api_version: spec.host_api_version,
+            source: spec.source.clone(),
+            input,
+            requested_operations: spec.requested_operations.clone(),
+            limits: operation_script_limits(spec.limits)?,
+        };
+        let project_id = prepared.request.context["project_id"]
+            .as_str()
+            .and_then(|value| uuid::Uuid::parse_str(value).ok())
+            .ok_or_else(|| RuntimeNodeError {
+                code: "operation_script_project_id_invalid".to_string(),
+                message: "OperationScript durable context 缺少合法 project_id".to_string(),
+                retryable: false,
+                detail: Some(prepared.request.context.clone()),
+            })?;
+        let context = WorkflowOperationScriptCallContext {
+            principal: agentdash_domain::operation::OperationPrincipalRef::WorkflowNode {
+                run_id: prepared.request.identity.lifecycle_run_id,
+                node_key: prepared.request.identity.node_path.clone(),
+            },
+            scope: agentdash_domain::operation::OperationScopeRef::Project { project_id },
+            origin: agentdash_domain::operation::OperationOriginRef::Workflow,
+            trace_id: prepared.request.identity.effect_id.clone(),
+            attachment_ref: None,
+        };
+        let cancel = CancellationToken::new();
+        let preflight = caller
+            .preflight(program.clone(), context.clone(), cancel.clone())
+            .await
+            .map_err(operation_script_node_error)?;
+        let outcome = caller
+            .run(program, context, preflight.token, cancel)
+            .await
+            .map_err(operation_script_node_error)?;
+        let raw = match outcome.value {
+            OperationScriptResultValue::Inline { value } => value,
+            OperationScriptResultValue::Ref { result_ref } => json!({
+                "kind": "ref",
+                "result_ref": result_ref,
+            }),
+        };
+        Ok(FunctionDispatchOutcome::Terminal(
+            WorkflowFunctionTerminalResult::Completed {
+                outputs: map_declared_outputs(&prepared.plan_node, raw),
+            },
+        ))
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn operation_script_limits(
+    limits: OperationScriptExecutorLimits,
+) -> Result<OperationScriptLimits, RuntimeNodeError> {
+    Ok(OperationScriptLimits {
+        timeout_ms: limits.timeout_ms,
+        max_source_bytes: checked_limit("max_source_bytes", limits.max_source_bytes)?,
+        max_input_bytes: checked_limit("max_input_bytes", limits.max_input_bytes)?,
+        max_output_bytes: checked_limit("max_output_bytes", limits.max_output_bytes)?,
+        max_rhai_operations: limits.max_rhai_operations,
+        max_call_levels: checked_limit("max_call_levels", limits.max_call_levels)?,
+        max_string_size: checked_limit("max_string_size", limits.max_string_size)?,
+        max_array_size: checked_limit("max_array_size", limits.max_array_size)?,
+        max_map_size: checked_limit("max_map_size", limits.max_map_size)?,
+        max_operation_calls: checked_limit("max_operation_calls", limits.max_operation_calls)?,
+        max_parallel_operations: checked_limit(
+            "max_parallel_operations",
+            limits.max_parallel_operations,
+        )?,
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn checked_limit(field: &'static str, value: u64) -> Result<usize, RuntimeNodeError> {
+    usize::try_from(value).map_err(|_| RuntimeNodeError {
+        code: "operation_script_limit_out_of_range".to_string(),
+        message: format!("OperationScript limit `{field}` 超出当前 executor 可表示范围"),
+        retryable: false,
+        detail: Some(json!({ "field": field, "value": value })),
+    })
+}
+
+fn operation_script_node_error(error: WorkflowOperationScriptCallerError) -> RuntimeNodeError {
+    let (code, retryable, detail) = match &error {
+        WorkflowOperationScriptCallerError::Surface(surface) => (
+            surface.code().to_string(),
+            matches!(
+                surface.kind(),
+                agentdash_application_operation_gateway::OperationExecutionErrorKind::ProviderFailed
+            ),
+            None,
+        ),
+        WorkflowOperationScriptCallerError::OperationUnavailable { operation_ref } => (
+            "operation_script_operation_unavailable".to_string(),
+            false,
+            Some(json!({ "operation_ref": operation_ref })),
+        ),
+        WorkflowOperationScriptCallerError::DescriptorSerialization(_) => (
+            "operation_script_descriptor_serialize_failed".to_string(),
+            false,
+            None,
+        ),
+        WorkflowOperationScriptCallerError::Script(script) => script_error_detail(script),
+    };
+    RuntimeNodeError {
+        code,
+        message: error.to_string(),
+        retryable,
+        detail,
+    }
+}
+
+fn script_error_detail(error: &OperationScriptError) -> (String, bool, Option<Value>) {
+    match error {
+        OperationScriptError::CapacityExceeded => {
+            ("operation_script_capacity_exceeded".to_string(), true, None)
+        }
+        OperationScriptError::Cancelled => ("operation_script_cancelled".to_string(), false, None),
+        OperationScriptError::DeadlineExceeded => (
+            "operation_script_deadline_exceeded".to_string(),
+            false,
+            None,
+        ),
+        OperationScriptError::ExecutionFailed {
+            calls,
+            partial,
+            outcome_unknown,
+            ..
+        } => (
+            "operation_script_execution_failed".to_string(),
+            false,
+            Some(json!({
+                "calls": calls,
+                "partial": partial,
+                "outcome_unknown": outcome_unknown,
+            })),
+        ),
+        OperationScriptError::NestedOperation {
+            code,
+            outcome_unknown,
+        } => (
+            code.clone(),
+            false,
+            Some(json!({ "outcome_unknown": outcome_unknown })),
+        ),
+        _ => ("operation_script_failed".to_string(), false, None),
     }
 }
 

@@ -148,6 +148,48 @@ impl From<agentdash_application::ApplicationError> for ApiError {
     }
 }
 
+impl From<agentdash_domain::interaction::InteractionError> for ApiError {
+    fn from(err: agentdash_domain::interaction::InteractionError) -> Self {
+        use agentdash_domain::interaction::InteractionError as E;
+        match err {
+            E::NotFound { .. } => Self::NotFound(err.to_string()),
+            E::DefinitionRevisionConflict { .. }
+            | E::StateRevisionConflict { .. }
+            | E::CommandIdempotencyConflict { .. }
+            | E::PersistenceConflict { .. } => Self::Conflict(err.to_string()),
+            E::Persistence { .. } | E::Serialization { .. } => Self::Internal(err.to_string()),
+            _ => Self::BadRequest(err.to_string()),
+        }
+    }
+}
+
+impl From<agentdash_application::interaction::InteractionApplicationError> for ApiError {
+    fn from(err: agentdash_application::interaction::InteractionApplicationError) -> Self {
+        use agentdash_application::interaction::InteractionApplicationError as E;
+        match err {
+            E::Domain(error) => error.into(),
+            E::AccessDenied { reason } => Self::Forbidden(reason),
+            E::InvalidCommand { .. } => Self::BadRequest(err.to_string()),
+            E::ContractUnavailable { reason } => Self::ServiceUnavailable(reason),
+        }
+    }
+}
+
+impl From<agentdash_application_operation_gateway::OperationExecutionError> for ApiError {
+    fn from(err: agentdash_application_operation_gateway::OperationExecutionError) -> Self {
+        use agentdash_application_operation_gateway::OperationExecutionErrorKind as K;
+        match err.kind() {
+            K::InvalidRequest | K::InvalidOutput => Self::BadRequest(err.to_string()),
+            K::AuthorityChanged => Self::Conflict(err.to_string()),
+            K::Denied => Self::Forbidden(err.to_string()),
+            K::Unavailable | K::Cancelled | K::DeadlineExceeded => {
+                Self::ServiceUnavailable(err.to_string())
+            }
+            K::ProviderFailed | K::ResultStoreFailed => Self::Internal(err.to_string()),
+        }
+    }
+}
+
 impl From<agentdash_platform_spi::PlatformRuntimeError> for ApiError {
     fn from(err: agentdash_platform_spi::PlatformRuntimeError) -> Self {
         use agentdash_platform_spi::PlatformRuntimeError as E;

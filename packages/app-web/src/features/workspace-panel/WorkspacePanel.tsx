@@ -21,8 +21,8 @@ import { AddressBar } from "./AddressBar";
 import type { WorkspacePanelHandle, WorkspacePanelProps } from "./workspace-panel-types";
 import type { WorkspaceTabLayoutOptions } from "../../stores/workspaceTabStore";
 import {
-  canvasMountIdFromPresentationUri,
   openUserCanvasModule,
+  parseCanvasSurfaceUri,
   selectCanvasModuleOpenOptions,
   type CanvasModuleOpenOption,
 } from "./model/canvasModuleOpen";
@@ -59,7 +59,7 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         pinned: type.pinned,
         defaultUri: type.defaultUri ?? type.buildUri({}),
         canCreateUri: type.typeId === "canvas"
-          ? (uri) => canvasMountIdFromPresentationUri(uri) !== null
+          ? (uri) => parseCanvasSurfaceUri(uri) !== null
           : type.canCreateUri,
       })),
       resolveTitle: (typeId, uri) => {
@@ -79,7 +79,10 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
           type.typeId === "canvas"
             ? {
               ...type,
-              canCreateUri: (uri: string) => currentCanvasUris.has(uri),
+              canCreateUri: (uri: string) => {
+                const parsed = parseCanvasSurfaceUri(uri);
+                return parsed?.kind === "interaction" || currentCanvasUris.has(uri);
+              },
             }
             : type
         )),
@@ -199,19 +202,7 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       [tabs, activeTabId],
     );
 
-    const workspaceData: WorkspaceData = useMemo(() => {
-      const agentRef = runtimeData.lifecycleAgent?.agent_ref ?? null;
-      return {
-        ...runtimeData,
-        agentRunCanvasBridgeBase: agentRef && runtimeData.projectId
-          ? {
-              run_id: agentRef.run_id,
-              agent_id: agentRef.agent_id,
-              project_id: runtimeData.projectId,
-            }
-          : null,
-      };
-    }, [runtimeData]);
+    const workspaceData: WorkspaceData = runtimeData;
 
     // 渲染当前激活 Tab 的内容
     const activeContent = useMemo(() => {

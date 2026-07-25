@@ -49,33 +49,33 @@
       ]
     },
     {
-      "action_key": "protocol-demo.consume_demo_channel",
+      "action_key": "protocol-demo.consume_demo_protocol",
       "kind": "session_runtime",
-      "description": "Consume the extension's own protocol channel through the self shortcut",
+      "description": "Consume the extension's own protocol through the self shortcut",
       "input_schema": true,
       "output_schema": true,
       "permissions": [
-        "extension.channel.invoke:protocol-demo.api.greet",
-        "extension.channel.invoke:protocol-demo.api.runShell"
+        "extension.protocol.invoke:protocol-demo.api.greet",
+        "extension.protocol.invoke:protocol-demo.api.runShell"
       ]
     }
   ],
-  "protocol_channels": [
+  "protocols": [
     {
-      "channel_key": "protocol-demo.api",
+      "protocol_key": "protocol-demo.api",
       "version": "1.0.0",
       "description": "Protocol Demo API channel",
       "methods": [
         {
           "name": "greet",
-          "description": "Return a greeting from the provider channel",
+          "description": "Return a greeting from the provider protocol",
           "input_schema": true,
           "output_schema": true,
           "permissions": []
         },
         {
           "name": "inspectWorkspace",
-          "description": "Use workspace VFS through the provider channel",
+          "description": "Use workspace VFS through the provider protocol",
           "input_schema": true,
           "output_schema": true,
           "permissions": [
@@ -86,7 +86,7 @@
         },
         {
           "name": "runShell",
-          "description": "Run a trusted local shell command through the provider channel",
+          "description": "Run a trusted local shell command through the provider protocol",
           "input_schema": true,
           "output_schema": true,
           "permissions": [
@@ -102,7 +102,7 @@
       "alias": "demo",
       "extension_id": "protocol-demo",
       "version": "^1.0.0",
-      "channels": [
+      "protocols": [
         "protocol-demo.api"
       ]
     }
@@ -142,8 +142,8 @@
       "access": "execute"
     },
     {
-      "kind": "extension_channel",
-      "channel_key": "protocol-demo.api",
+      "kind": "extension_protocol",
+      "protocol_key": "protocol-demo.api",
       "methods": [
         "greet",
         "inspectWorkspace",

@@ -1,0 +1,78 @@
+{
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "scenario": "input_steer",
+    "capture_method": "fixed_main_contract_golden",
+    "source_contract": "crates/agentdash-agent-protocol/src/backbone/event.rs",
+    "source_producers": [
+      {
+        "path": "crates/agentdash-application-agentrun/src/agent_run/mailbox/scheduler.rs",
+        "sha256": "c6999584e9e5f2326e217e5a6ab18beac4c6c0c096b5dec4609e7b5738c7b9e6"
+      },
+      {
+        "path": "crates/agentdash-application-runtime-session/src/session/hub_support.rs",
+        "sha256": "0e451535a2d02f9185db5e75e9b7cca0dbf87e3a58ba18c9ba0358079adacd76"
+      }
+    ],
+    "clock": "2026-07-10T12:00:00.002Z",
+    "session_id": "session-main-0001",
+    "turn_id": "turn-main-0001",
+    "item_id": "turn-main-0001:mailbox_steering:scheduler:33333333-3333-3333-3333-333333333333:44444444-4444-4444-4444-444444444444"
+  },
+  "input": {
+    "kind": "steer",
+    "content": [
+      {
+        "type": "text",
+        "text": "steer now"
+      }
+    ]
+  },
+  "frames": [
+    {
+      "type": "event",
+      "session_id": "session-main-0001",
+      "event_seq": 3,
+      "occurred_at_ms": 1783684800002,
+      "committed_at_ms": 1783684800002,
+      "session_update_type": "user_input_submitted",
+      "turn_id": "turn-main-0001",
+      "entry_index": 0,
+      "notification": {
+        "sessionId": "session-main-0001",
+        "source": {
+          "connectorId": "agent_run_mailbox",
+          "connectorType": "platform",
+          "executorId": "AGENT_RUN_MAILBOX"
+        },
+        "trace": {
+          "turnId": "turn-main-0001",
+          "entryIndex": 0
+        },
+        "observedAt": "2026-07-10T12:00:00.002Z",
+        "event": {
+          "type": "user_input_submitted",
+          "payload": {
+            "threadId": "session-main-0001",
+            "turnId": "turn-main-0001",
+            "itemId": "turn-main-0001:mailbox_steering:scheduler:33333333-3333-3333-3333-333333333333:44444444-4444-4444-4444-444444444444",
+            "submissionKind": "steer",
+            "source": {
+              "namespace": "core",
+              "kind": "composer",
+              "actor": "user",
+              "displayLabelKey": "mailbox.source.core.composer"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "steer now",
+                "text_elements": []
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

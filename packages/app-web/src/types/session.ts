@@ -85,7 +85,7 @@ export interface HookRuntimeMetadata {
 }
 
 export interface AgentFrameHookSnapshot {
-  runtime_adapter_session_id: string;
+  runtime_adapter_runtime_thread_id: string;
   run_context?: SubjectRunContext | null;
   sources: string[];
   tags: string[];
@@ -95,7 +95,7 @@ export interface AgentFrameHookSnapshot {
 }
 
 export interface AgentFrameHookRuntimeInfo {
-  runtime_adapter_session_id: string;
+  runtime_adapter_runtime_thread_id: string;
   revision: number;
   snapshot: AgentFrameHookSnapshot;
   diagnostics: HookDiagnosticEntry[];

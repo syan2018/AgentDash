@@ -47,7 +47,7 @@ pub async fn respond_companion_gate(
             gate_repo: state.repos.lifecycle_gate_repo.clone(),
             frame_repo: state.repos.agent_frame_repo.clone(),
             agent_repo: state.repos.lifecycle_agent_repo.clone(),
-            runtime_binding_repo: state.repos.agent_run_runtime_binding_repo.clone(),
+            runtime_binding_repo: state.services.agent_run_product_runtime_bindings.clone(),
             lineage_repo: state.repos.agent_lineage_repo.clone(),
         });
     let result = service

@@ -75,7 +75,7 @@ pub trait RuntimeToolProvider {
     async fn build_tools(
         &self,
         context: &ExecutionContext,
-    ) -> Result<Vec<DynAgentTool>, ConnectorError>;
+    ) -> Result<Vec<DynAgentTool>, PlatformRuntimeError>;
 }
 ```
 
@@ -91,7 +91,7 @@ pub trait RuntimeToolProvider {
 
 | Condition | Required behavior |
 | --- | --- |
-| `ExecutionContext.session.vfs` 缺失 | VFS 工具装配返回 `ConnectorError::InvalidConfig` |
+| `ExecutionContext.session.vfs` 缺失 | VFS 工具装配返回 `PlatformRuntimeError::InvalidConfig` |
 | capability 关闭某个 tool | provider 不注入该 tool |
 | context 无法解析 Project id | workspace module provider 不注入 Project-scoped module tools |
 | `RuntimeGateway` 或 channel transport 未注入 | 跳过 `workspace_module_invoke` 并记录 warning |

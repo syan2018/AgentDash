@@ -5,7 +5,6 @@ export {
   isCompleteExecutorConfig,
   isLocalDraftStartAction,
   projectAgentRunChatCommandState,
-  projectAgentRunChatMailboxModel,
   resolveExecutorConfigForConversationCommand,
   type AgentRunConversationCommand,
   type AgentRunConversationCommandState,

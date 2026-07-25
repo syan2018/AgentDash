@@ -11,6 +11,7 @@ mod lifecycle_subject_association;
 mod repository;
 mod validation;
 mod value_objects;
+mod workflow_executor_effect;
 
 pub use agent_frame::{AgentFrame, AgentFrameSurfaceDocument};
 pub use agent_lineage::AgentLineage;
@@ -30,7 +31,8 @@ pub use entity::{
 pub use gate_result_delivery_marker::{
     ClaimGateResultParentContinuationRequest, ClaimGateResultWaiterRequest,
     CompleteGateResultParentContinuationRequest, GateResultDeliveryClaim, GateResultDeliveryMarker,
-    GateResultDeliveryMarkerRepository, GateResultDeliveryStatus, RegisterGateResultWaiterRequest,
+    GateResultDeliveryMarkerRepository, GateResultDeliveryState, GateResultDeliveryStatus,
+    RegisterGateResultWaiterRequest,
 };
 pub use gate_wait_policy::{
     GATE_WAIT_POLICY_SCHEMA_VERSION, GateWaitPolicy, GateWaitPolicyEnvelope,
@@ -43,8 +45,8 @@ pub use lifecycle_gate::{LifecycleGate, LifecycleGateWaitingProjection};
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 pub use repository::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunLineageRepository, LifecycleAgentRepository, LifecycleGateRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository, WorkflowGraphRepository,
+    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
+    LifecycleRunWriteError, LifecycleSubjectAssociationRepository, WorkflowGraphRepository,
     WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };
@@ -65,14 +67,24 @@ pub use value_objects::{
     OrchestrationJournalFact, OrchestrationLimits, OrchestrationPlanSnapshot,
     OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition, PlanActivation, PlanNode,
     PlanNodeKind, RunScriptArtifact, RunScriptArtifactStatus, RuntimeNodeError, RuntimeNodeState,
-    RuntimeNodeStatus, RuntimeSessionPolicy, RuntimeTraceRef, StandaloneFulfillment,
+    RuntimeNodeStatus, RuntimeThreadPolicy, RuntimeTraceRef, StandaloneFulfillment,
     StateArtifactRef, StateExchangeRule, StateExchangeSnapshot, TaskPlanStatus, TaskPriority,
     ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState,
-    TransitionCondition, ValidationIssue, ValidationSeverity, WorkflowContextBinding,
-    WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowScriptApiEndpoint,
+    TransitionCondition, ValidationIssue, ValidationSeverity, WorkflowAgentCallRuntimeState,
+    WorkflowAgentCallSourceBindingRef, WorkflowContextBinding, WorkflowHookRuleSpec,
+    WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowScriptApiEndpoint,
     WorkflowScriptBashCommand, WorkflowScriptCapabilitySummary, WorkflowScriptDefinition,
     WorkflowScriptDefinitionScope, WorkflowScriptDefinitionStatus,
     WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
     WorkflowSessionTerminalState, mcp_capability_key, mcp_tool_capability_path,
     reduce_tool_capability_directives, workflow_script_source_digest,
+};
+pub use workflow_executor_effect::{
+    WORKFLOW_EXECUTOR_EFFECT_COLUMNS, WORKFLOW_EXECUTOR_EFFECT_PRIMARY_KEY,
+    WORKFLOW_EXECUTOR_EFFECT_TABLE, WORKFLOW_EXECUTOR_EFFECT_UNIQUE_KEYS,
+    WorkflowExecutorEffectIdentity, WorkflowExecutorEffectRepository,
+    WorkflowExecutorEffectRepositoryError, WorkflowFunctionEffectRecord,
+    WorkflowFunctionEffectRequest, WorkflowFunctionTerminalResult, WorkflowHumanGateOpenEffect,
+    WorkflowHumanGateOpenReceipt, WorkflowHumanGateResolutionEffect,
+    WorkflowHumanGateResolutionReceipt,
 };

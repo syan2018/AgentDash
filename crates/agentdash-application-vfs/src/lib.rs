@@ -18,6 +18,8 @@ pub(crate) mod provider_inline;
 pub(crate) mod provider_routine;
 pub(crate) mod provider_skill_asset;
 pub mod rewrite;
+pub mod runtime_tool_execution;
+pub mod runtime_tools;
 pub mod search;
 pub mod service;
 pub mod surface;
@@ -32,7 +34,7 @@ pub use access_policy::{
 };
 pub use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
 pub use agentdash_application_ports::vfs_surface_runtime::VfsSurfaceRuntimeProjection;
-pub use agentdash_spi::{
+pub use agentdash_platform_spi::{
     RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation,
     RuntimeVfsPathPattern,
 };
@@ -49,8 +51,8 @@ pub use materialization::{
 };
 pub use mount::{
     PROJECT_VFS_MOUNT_CONTAINER_ID, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS,
-    PROVIDER_RELAY_FS, PROVIDER_ROUTINE_VFS, PROVIDER_SKILL_ASSET_FS, SessionMountTarget,
-    mount_purpose,
+    PROVIDER_RELAY_FS, PROVIDER_ROUTINE_VFS, PROVIDER_SKILL_ASSET_FS,
+    SKILL_ASSET_KEYS_METADATA_KEY, SessionMountTarget, mount_purpose,
 };
 pub use mount_file_discovery::{
     BUILTIN_GUIDELINE_RULES, BUILTIN_SKILL_RULES, DiscoveredDynamicFile, DiscoveredMountFile,
@@ -70,7 +72,8 @@ pub use mount_routine::build_routine_mount;
 pub use mount_skill_asset::{
     append_lifecycle_skill_asset_projection, build_project_skill_asset_management_mount,
     lifecycle_mount_has_skill_asset_projection, list_lifecycle_skill_asset_projection,
-    read_lifecycle_skill_asset_projection, search_lifecycle_skill_asset_projection,
+    projected_skill_asset_keys, read_lifecycle_skill_asset_projection,
+    search_lifecycle_skill_asset_projection,
 };
 pub use mount_workspace::{build_workspace_vfs, selected_workspace_binding, workspace_mount};
 pub use mutation_dispatcher::{
@@ -90,6 +93,11 @@ pub use provider::{
 pub use provider_inline::InlineFsMountProvider;
 pub use provider_routine::RoutineMountProvider;
 pub use provider_skill_asset::SkillAssetFsMountProvider;
+pub use runtime_tools::{
+    AppliedVfsRuntimeToolService, AppliedVfsToolKind, AppliedVfsToolMount, AppliedVfsToolOperation,
+    AppliedVfsToolOutcome, AppliedVfsToolOwner, AppliedVfsToolPathScope, AppliedVfsToolRequest,
+    AppliedVfsToolSurface,
+};
 pub use search::TextSearchParams;
 pub use service::{BasicTextSearchRequest, VfsService};
 pub use surface::{

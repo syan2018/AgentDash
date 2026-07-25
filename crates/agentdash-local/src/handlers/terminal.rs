@@ -38,7 +38,8 @@ impl TerminalCommandHandler {
             RelayMessage::CommandTerminalSpawn { .. }
             | RelayMessage::CommandTerminalInput { .. }
             | RelayMessage::CommandTerminalResize { .. }
-            | RelayMessage::CommandTerminalKill { .. } => Some(CommandDispatchPlan::INLINE),
+            | RelayMessage::CommandTerminalKill { .. }
+            | RelayMessage::CommandTerminalInventory { .. } => Some(CommandDispatchPlan::INLINE),
             _ => None,
         }
     }
@@ -159,6 +160,18 @@ impl TerminalCommandHandler {
                 payload: None,
                 error: Some(RelayError::runtime_error(e)),
             },
+        }
+    }
+
+    pub(super) async fn handle_terminal_inventory(
+        &self,
+        id: String,
+        payload: TerminalInventoryRequest,
+    ) -> RelayMessage {
+        RelayMessage::ResponseTerminalInventory {
+            id,
+            payload: Some(self.shell_sessions.terminal_inventory(&payload).await),
+            error: None,
         }
     }
 }

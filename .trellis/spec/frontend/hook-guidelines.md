@@ -16,13 +16,13 @@
 
 ## 流式 Hook 规范（Fetch NDJSON）
 
-参考 `useSessionStream` + `streamTransport` 实现。
+参考 `useSessionStream` + canonical `runtimeEventStream` 实现。AgentRun session不恢复旧session endpoint或Backbone transport。
 
 ### 必备功能
 
 - 连接状态追踪（`isConnected`）
 - transport 抽象：业务层不直接处理 `ReadableStream`
-- NDJSON transport 支持 `x-stream-since-id` 续传
+- NDJSON transport支持canonical durable cursor与transient generation/sequence续传
 - 消息缓冲与批量刷新
 - 清理函数 + HMR dispose 时统一关闭（防连接累积）
 
@@ -42,7 +42,7 @@ useEffect(() => { connect(); return disconnect; }, [sessionId, endpoint, connect
 
 ### NDJSON Envelope 契约
 
-NDJSON envelope 属于 cross-layer contract，类型应由 Rust contract 生成。Hook 只消费解析后的 envelope，并把业务聚合交给 reducer。
+NDJSON envelope属于cross-layer contract，类型与validator由Rust Runtime contract生成。Hook只消费校验后的canonical envelope，通过`runtimeSessionAdapter`投影为feature-local `SessionPresentationEvent`，不得伪装成generated Backbone envelope或在前端补造timestamp/source/trace。
 
 - `connected`：`last_event_id: number`
 - `event`：`session_id`, `event_seq`, `occurred_at_ms`, `committed_at_ms`, `session_update_type`, `turn_id?`, `entry_index?`, `tool_call_id?`, `notification`（`BackboneEnvelope`）
@@ -54,7 +54,7 @@ NDJSON envelope 属于 cross-layer contract，类型应由 Rust contract 生成�
 
 ## 事件聚合契约（useSessionFeed）
 
-`useSessionFeed` 将 `BackboneEvent` 变体聚合为 UI 可渲染的 feed entries：
+`useSessionFeed` 将feature-local `SessionPresentationEvent`聚合为UI可渲染的feed entries。它保留原presentation行为，但wire事实只来自canonical Runtime：
 
 | BackboneEvent 变体 | 聚合策略 | 主流绘制 |
 |---|---|---|
@@ -63,6 +63,7 @@ NDJSON envelope 属于 cross-layer contract，类型应由 Rust contract 生成�
 | `UserInputSubmitted` | 按 `turn_id + item_id` upsert 为用户输入 entry | 是 |
 | `TurnPlanUpdated` / `PlanDelta` | 直接添加/更新 | 是 |
 | `Platform(HookTrace)` | 直接添加 | 选择性可见（Guard 决定） |
+| `Platform(ContextFrameChanged)` | 提取 typed `frame`，投影为 `context_frame` entry | 是 |
 | `Platform(SessionMetaUpdate)` | 按 key 分发 | 选择性可见 |
 | `TokenUsageUpdated` | 更新 `tokenUsage` state | 否（header 圆环） |
 
@@ -75,12 +76,30 @@ NDJSON envelope 属于 cross-layer contract，类型应由 Rust contract 生成�
 ### Platform 事件可见性
 
 `Platform(HookTrace)` 和 `Platform(SessionMetaUpdate)` 不一律静默，交由 `SessionTaskEventGuard` 和 `SessionSystemEventGuard` 判定。
+`Platform(ContextFrameChanged)` 是ContextFrame的canonical入口。`platformEvent`负责从typed variant
+提取`frame + message`，reducer、feed与renderer共享同一个解析函数；`SessionMetaUpdate`不承载
+ContextFrame编码。
+`Platform(WorkspaceModulePresentationRequested)` 是可渲染的展示请求审计事件。它使用独立
+discriminant，原因是 presentation intent 与 projection invalidation 具有不同的消费时机；
+`ControlPlaneProjectionChanged` 只表达 read model 需要刷新。
 
 ### History Hydrate 与 Live 副作用边界
 
-`useSessionStream` 暴露的历史事件用于重建 feed、turn segment、projection refresh key 等本地展示状态；会改变用户工作台意图的控制面副作用（workspace panel open、task plan refresh、module presentation action）只消费初始 `historyReplayBoundarySeq` 之后的新 durable 事件。这样做的原因是历史分页表达的是既有事实回放，而不是新的用户或 Agent 意图；同一条历史 `workspace_module_presented` 不能在每次打开长 session 时重新触发外部打开动作。
+`useSessionStream` 暴露的历史事件用于重建 feed、turn segment 与审计卡片；
+`historyReplayBoundarySeq` 后到达的事件才进入页面命令式副作用入口。页面只建立一个
+live-event cursor，并把完整 typed `BackboneEvent` 交给 AgentRun planner；turn terminal、
+task mutation、projection invalidation 与 presentation request 由该 planner 按协议
+discriminant 分类，避免多个 effect 独立扫描同一事件数组。
 
-AgentRun journal 的 `turn_terminal` 是 workspace snapshot 的失效信号：它只触发重新读取 AgentRun workspace/list read model，不直接修改 UI 状态。这个刷新可以消费当前 AgentRun journal 中尚未处理过的 terminal 事件，原因是 terminal callback 已经在后端把 AgentRun delivery binding 收敛到终态，而浏览器必须在 backlog、重连或 hydrate 之后重新读取同一份权威 snapshot，避免旧的 running command snapshot 继续暴露。
+`WorkspaceModulePresentationRequested` 携带完整 `presentation_uri`。live executor 必须先刷新 AgentRun workspace，再用
+`module_id + view_key + renderer_kind + presentation_uri` 精确匹配当前 ready
+`workspace_modules`；匹配成功才打开 panel。历史 request 只恢复审计卡片，不强制改变当前
+观察者的布局；菜单与展示消费同一 current projection。事件和用户打开动作共同调用唯一的 Workspace Module
+presentation target mapper；renderer kind 只参与 registry target 选择，不建立 Canvas 专用
+事件链。命令式打开必须把当前 AgentRun workspace key 一并提交给 tab store，使 workspace
+scope 与 tab mutation 原子完成。
+
+AgentRun Runtime feed 的 `turn_started`、`turn_terminal`、`interaction_requested`与`interaction_terminal`是Runtime inspect的失效信号：feed保留可展示的event identity/terminal，但命令可用性仍通过重新读取canonical snapshot获得，不直接修改本地command state。有限durable replay即使在页面打开后才消费到terminal，也必须触发同一刷新，原因是composer的`turn_start/turn_steer`与interaction response只能由最新`command_availability`裁决。
 
 ### Terminal Platform Event Projection
 

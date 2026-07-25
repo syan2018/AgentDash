@@ -14,9 +14,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::mcp_preset::{McpPreset, McpRoutePolicy, McpTransportConfig};
 use agentdash_domain::workflow::ToolCapabilityDirective;
-use agentdash_spi::CapabilityScopeCtx;
-use agentdash_spi::SetDelta;
-use agentdash_spi::ToolCluster;
+use agentdash_platform_spi::CapabilityScopeCtx;
+use agentdash_platform_spi::SetDelta;
+use agentdash_platform_spi::ToolCluster;
 use uuid::Uuid;
 
 use crate::capability::{
@@ -54,7 +54,7 @@ fn state_has_mcp_url(output: &crate::capability::CapabilityResolverOutput, needl
     output.tool.mcp_servers.iter().any(|server| {
         matches!(
             &server.transport,
-            agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains(needle)
+            agentdash_platform_spi::McpTransportConfig::Http { url, .. } if url.contains(needle)
         )
     })
 }

@@ -50,13 +50,10 @@ async function startDesktopCodexOAuth(
     throw new Error("ChatGPT OAuth 需要在 AgentDash 桌面端完成");
   }
   const accessToken = getStoredToken();
-  if (!accessToken) {
-    throw new Error("ChatGPT OAuth 需要当前登录会话");
-  }
   const apiOrigin = await resolveDesktopApiOrigin(desktopApp);
   return desktopApp.startCodexOAuth({
     api_origin: apiOrigin,
-    access_token: accessToken,
+    ...(accessToken ? { access_token: accessToken } : {}),
     provider_id: providerId,
     target,
   });

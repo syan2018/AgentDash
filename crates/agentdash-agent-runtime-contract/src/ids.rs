@@ -71,26 +71,13 @@ runtime_id!(RuntimeTurnId);
 runtime_id!(RuntimeItemId);
 runtime_id!(RuntimeInteractionId);
 runtime_id!(RuntimeOperationId);
-runtime_id!(RuntimeBindingId);
-runtime_id!(RuntimeServiceInstanceId);
-runtime_id!(ContextCheckpointId);
-runtime_id!(ContextCandidateId);
-runtime_id!(ContextCompactionId);
-runtime_id!(ContextActivationId);
-runtime_id!(ContextDigest);
-runtime_id!(DriverContextRevision);
-runtime_id!(DriverThreadId);
-runtime_id!(DriverTurnId);
-runtime_id!(DriverItemId);
-runtime_id!(DriverRequestId);
-runtime_id!(DriverBindingId);
-runtime_id!(IdempotencyKey);
-runtime_id!(ProfileDigest);
-runtime_id!(SurfaceDigest);
-runtime_id!(HookDefinitionId);
-runtime_id!(HookRunId);
-runtime_id!(HookEffectId);
-runtime_id!(HookPlanDigest);
+runtime_id!(RuntimePayloadDigest);
+runtime_id!(RuntimeIdempotencyKey);
+runtime_id!(RuntimeSourceRef);
+runtime_id!(RuntimeContextPackageId);
+runtime_id!(RuntimeContextContributionId);
+runtime_id!(RuntimeContextSourceRef);
+runtime_id!(RuntimeContextSourceRevision);
 
 macro_rules! revision {
     ($name:ident) => {
@@ -111,20 +98,17 @@ macro_rules! revision {
         )]
         #[serde(transparent)]
         #[schemars(transparent)]
-        pub struct $name(pub u64);
+        #[ts(type = "RuntimeU64")]
+        pub struct $name(
+            #[serde(with = "crate::wire_u64")]
+            #[schemars(with = "crate::wire_u64::RuntimeU64")]
+            pub u64,
+        );
     };
 }
 
-revision!(RuntimeRevision);
-revision!(RuntimeDriverGeneration);
-revision!(ContextRevision);
-revision!(ContextRecipeRevision);
-revision!(ThreadSettingsRevision);
-revision!(ToolSetRevision);
 revision!(SurfaceRevision);
-revision!(HookPlanRevision);
-revision!(EventSequence);
-revision!(OperationSequence);
+revision!(RuntimeProjectionRevision);
 
 #[cfg(test)]
 mod tests {
@@ -136,11 +120,11 @@ mod tests {
     }
 
     #[test]
-    fn canonical_and_driver_ids_have_distinct_types() {
-        fn canonical(_: RuntimeThreadId) {}
-        fn source(_: DriverThreadId) {}
+    fn runtime_identity_families_remain_distinct() {
+        fn thread(_: RuntimeThreadId) {}
+        fn operation(_: RuntimeOperationId) {}
 
-        canonical(RuntimeThreadId::new("thread-1").expect("valid id"));
-        source(DriverThreadId::new("source-thread-1").expect("valid id"));
+        thread(RuntimeThreadId::new("thread-1").expect("valid id"));
+        operation(RuntimeOperationId::new("operation-1").expect("valid id"));
     }
 }

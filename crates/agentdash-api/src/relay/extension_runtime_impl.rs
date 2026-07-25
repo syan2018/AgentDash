@@ -67,7 +67,7 @@ impl ExtensionRuntimeProtocolTransport for BackendRegistry {
     ) -> Result<ExtensionProtocolInvokeResponse, ExtensionRuntimeActionTransportError> {
         let command = RelayMessage::CommandExtensionProtocolInvoke {
             id: RelayMessage::new_id("ext-channel"),
-            payload: channel_request_to_relay(request),
+            payload: protocol_request_to_relay(request),
         };
         let response = self
             .send_command_with_timeout(backend_id, command, Duration::from_secs(30))
@@ -160,7 +160,7 @@ fn action_response_from_relay(
     }
 }
 
-fn channel_request_to_relay(
+fn protocol_request_to_relay(
     request: ExtensionProtocolInvokeRequest,
 ) -> CommandExtensionProtocolInvokePayload {
     CommandExtensionProtocolInvokePayload {

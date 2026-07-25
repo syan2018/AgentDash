@@ -304,8 +304,6 @@ pub struct AgentTemplateConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capability_directives: Vec<ToolCapabilityDirective>,
@@ -405,9 +403,6 @@ pub struct ProjectAgentConfigOverride {
     pub override_thinking_level: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
-    pub override_permission_policy: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
     pub override_system_prompt: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
@@ -1576,7 +1571,7 @@ impl ExtensionAssetRef {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionRuntimeActionKind {
-    Runtime,
+    RuntimeThread,
     Setup,
 }
 
@@ -2644,7 +2639,7 @@ mod tests {
             }],
             "runtime_actions": [{
                 "action_key": "gitlab-review.prepare",
-                "kind": "runtime",
+                "kind": "runtime_thread",
                 "description": "准备 review runtime action",
                 "input_schema": {},
                 "output_schema": {},
@@ -2732,7 +2727,7 @@ mod tests {
         let runtime_action = extension_template_from_json(json!({
             "runtime_actions": [{
                 "action_key": "demo.run",
-                "kind": "runtime",
+                "kind": "runtime_thread",
                 "description": "Run demo",
                 "input_schema": {},
                 "output_schema": {}
@@ -2819,7 +2814,7 @@ mod tests {
         let template = extension_template_from_json(json!({
             "runtime_actions": [{
                 "action_key": "demo.run",
-                "kind": "runtime",
+                "kind": "runtime_thread",
                 "description": "Run demo",
                 "input_schema": {},
                 "output_schema": {},
@@ -2865,7 +2860,7 @@ mod tests {
                 "asset_version": "0.1.0",
                 "runtime_actions": [{
                     "action_key": "Bad.Action",
-                    "kind": "runtime",
+                    "kind": "runtime_thread",
                     "description": "bad",
                     "input_schema": {},
                     "output_schema": {}
@@ -2951,7 +2946,7 @@ mod tests {
                 "asset_version": "0.1.0",
                 "runtime_actions": [{
                     "action_key": "bad.run",
-                    "kind": "runtime",
+                    "kind": "runtime_thread",
                     "description": "bad",
                     "output_schema": {}
                 }]
@@ -3102,7 +3097,7 @@ mod tests {
             asset_refs: vec![],
             runtime_actions: vec![ExtensionRuntimeActionDefinition {
                 action_key: "gitlab-review.prepare".to_string(),
-                kind: ExtensionRuntimeActionKind::Runtime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Prepare review".to_string(),
                 input_schema: json!({}),
                 output_schema: json!({}),

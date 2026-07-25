@@ -373,15 +373,15 @@
 - None - task complete
 
 
-## Session 65: 完成 Agent Runtime 与 Workspace 统一架构搬运
+## Session 65: 收敛内嵌 Skill 资产与 Workspace Module 展示闭环
 
-**Date**: 2026-07-11
-**Task**: 完成 Agent Runtime 与 Workspace 统一架构搬运
-**Branch**: `codex/agent-runtime-workspace-integration`
+**Date**: 2026-07-17
+**Task**: 收敛内嵌 Skill 资产与 Workspace Module 展示闭环
+**Branch**: `codex/agent-runtime-architecture-convergence`
 
 ### Summary
 
-以 PR #93 为 Runtime 基线完成 WorkspaceModule、Channel、Interaction、OperationScript 与 Extension 搬运，收敛窄桥接接口，关闭 95 个重叠路径审计并通过全量门禁。
+将 embedded Skill catalog 收敛为 Project provision 资产与只读 lifecycle projection；修复持久化 Workspace Module presentation 在 hydration、面板初始化与 workspace tab store 之间丢失的问题；创建仓库同级 Main reference 并恢复 parity oracle。
 
 ### Main Changes
 
@@ -391,13 +391,170 @@
 
 | Hash | Message |
 |------|---------|
-| `f867e42e` | (see git log) |
-| `de95d3fc` | (see git log) |
-| `9fba6fa0` | (see git log) |
+| `a3a064035` | (see git log) |
+| `8e22afb81` | (see git log) |
+| `4d56eb3a2` | (see git log) |
 
 ### Testing
 
 - [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 66: 统一 Managed Agent 会话名称事件与 AgentRun 标题投影
+
+**Date**: 2026-07-17
+**Task**: 统一 Managed Agent 会话名称事件与 AgentRun 标题投影
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+将会话自动总结标题收敛到 Codex App Server 标准 ThreadNameUpdated 事件：Native 与 Codex 统一产出，Agent Runtime journal 和 durable projection 统一持久化，AgentRun list/workspace/lineage 统一解析并由前端实时失效刷新；补齐 0082 migration、跨层测试与 Trellis 可执行规格。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4dabce3fb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 67: 收敛 Agent Runtime 持久化权威
+
+**Date**: 2026-07-21
+**Task**: 收敛 Agent Runtime 持久化权威
+**Branch**: `codex/agent-runtime-final-convergence-plan`
+
+### Summary
+
+以Product owner document与concrete Agent authority替代Runtime/Host重复持久化；删除投影、变更、输入队列与恢复账本，接通Agent authoritative read/live，完成schema 105现有库与空库迁移验证并归档07-20任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4e0d90e7e` | (see git log) |
+| `8931a3dc5` | (see git log) |
+| `8b3234b9f` | (see git log) |
+| `9d0e7d7cc` | (see git log) |
+| `ff923b9ec` | (see git log) |
+| `64983279e` | (see git log) |
+| `5abb0e34e` | (see git log) |
+| `cef35ce46` | (see git log) |
+| `279a16fe7` | (see git log) |
+| `24bf539be` | (see git log) |
+| `56e0ec6de` | (see git log) |
+| `9952756ae` | (see git log) |
+| `21ab42055` | (see git log) |
+| `ea04a568e` | (see git log) |
+| `30397c2be` | (see git log) |
+| `6e4f54a2e` | (see git log) |
+| `43dcb31f1` | (see git log) |
+| `d1c34c834` | (see git log) |
+| `4fc73e14d` | (see git log) |
+| `28fa2f0d6` | (see git log) |
+| `ec104c6bd` | (see git log) |
+| `171811bf9` | (see git log) |
+| `328e0f315` | (see git log) |
+| `7078fb072` | (see git log) |
+| `0affa2ce8` | (see git log) |
+| `bd397e441` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 68: 收复ContextFrame模型输入单一权威
+
+**Date**: 2026-07-23
+**Task**: 收复ContextFrame模型输入单一权威
+**Branch**: `codex/agent-runtime-final-convergence-plan`
+
+### Summary
+
+统一Dash accepted ContextFrame可读投递，贯通完整ToolSchema与typed provenance，按provider round刷新上下文和工具，收束initial context、compaction、canonical、frontend与四类provider wire守卫。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `aae0ba165` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 69: 数据库表收束与迁移基线压缩
+
+**Date**: 2026-07-24
+**Task**: 数据库表收束与迁移基线压缩
+**Branch**: `codex/agent-runtime-final-convergence-plan`
+
+### Summary
+
+清理冗余持久化结构，将 Gate 与 Canvas 状态收回 owner 文档，把 116 份 migration 压缩为包含 46 张业务表的单一首发基线，并手工重建验证项目内嵌数据库。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `108ae5633` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
 
 ### Status
 

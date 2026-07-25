@@ -12,7 +12,7 @@ use agentdash_domain::interaction::{
 };
 use agentdash_domain::operation::{OperationOriginRef, OperationRef, OperationScopeRef};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
-use agentdash_spi::{
+use agentdash_platform_spi::{
     AgentTool, AgentToolError, AgentToolResult, ConnectorError, ContentPart, DynAgentTool,
     ToolUpdateCallback,
 };

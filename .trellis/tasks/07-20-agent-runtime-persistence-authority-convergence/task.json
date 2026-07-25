@@ -1,0 +1,31 @@
+{
+  "id": "agent-runtime-persistence-authority-convergence",
+  "name": "agent-runtime-persistence-authority-convergence",
+  "title": "Agent Runtime 持久化职责与事实边界清理",
+  "description": "删除 Product、Runtime、Host 对 Agent 执行事实的重复维护，使 Runtime/Host 回归纯内存协调层；Product 不提供离线输入队列，只保存业务定义与 Agent source 关联，concrete Complete Agent 独占执行历史与 effect authority。",
+  "status": "in_progress",
+  "dev_type": "refactor",
+  "scope": "cross-layer",
+  "package": null,
+  "priority": "P1",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-07-20",
+  "completedAt": null,
+  "branch": "codex/agent-runtime-final-convergence-plan",
+  "base_branch": "codex/agent-runtime-final-convergence-plan",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/",
+    ".trellis/tasks/archive/2026-07/07-12-canonical-runtime-session-presentation-convergence/",
+    ".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/",
+    ".trellis/tasks/07-20-database-persistence-boundary-cleanup/"
+  ],
+  "notes": "任务保持进行中，待用户确认后再归档。能力信息由AgentFrame CapabilityState单向编译为accepted structured manifest，工具projector随ToolCall进入native history；typed工具结果同时派生transcript、AgentDash专属Card与平台事件。开发库已执行到schema 111并删除Workspace Module presentation五张投影表；浏览器验证展示事件经canonical live record在turn完成前打开Canvas，刷新后历史只恢复审计而不重放命令。",
+  "meta": {}
+}

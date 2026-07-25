@@ -1,212 +1,328 @@
-use agentdash_diagnostics::{Subsystem, diag};
-use std::convert::Infallible;
 use std::sync::Arc;
 
-use crate::routes::runtime_traces;
-use agentdash_agent_protocol::codex_app_server_protocol as codex;
-use agentdash_agent_runtime_contract::{
-    EventSequence, InteractionResponse, OperationReceipt, RuntimeActor, RuntimeContextView,
-    RuntimeEventEnvelope, RuntimeInput, RuntimeInteractionId, RuntimeSnapshot,
+use agentdash_agent_service_api::AgentServiceErrorCode;
+use agentdash_application::agent_run_list::{
+    AgentRunListChildModel, ProjectAgentRunListInput, ProjectAgentRunListQuery,
+    ProjectAgentRunListQueryDeps,
 };
-use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunCommandGuard, AgentRunRuntimeError, AgentRunRuntimeView, EnqueueRuntimeMailboxMessage,
-    GuardedAgentRunCommand, ReadAgentRunEvents, ResolveAgentRunInteraction, RuntimeAgentRunMailbox,
-    RuntimeMailboxError, RuntimeMailboxSubmitOutcome, SteerAgentRunTurn,
+    AgentRunProductCommand, AgentRunProductCommandError, AgentRunProductCommandRequest,
+    AgentRunProductDeleteError, AgentRunProductDeleteRequest, AgentRunProductDeleteService,
+    AgentRunProductForkError, AgentRunProductForkMessageRef, AgentRunProductForkRequest,
+    AgentRunProductForkResult, AgentRunProductForkService, AgentRunProductInputDeliveryError,
+    AgentRunProductProjectionError, AgentRunTerminalChangeSequence, DeliverAgentRunProductInput,
+    project_managed_runtime_context,
 };
-use agentdash_application_ports::agent_run_runtime::{
-    AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeTarget,
+use agentdash_contracts::agent_run_interaction::{
+    AgentRunCommandOnlyRequest, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
+    AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkResponse,
+    AgentRunForkSubmitRequest, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
+    AgentRunMessageCommandResponse,
 };
-use agentdash_application_ports::agent_run_surface::AgentRunTerminalLaunchTarget;
-use agentdash_contracts::agent_run_mailbox::AgentRunComposerSubmitRequest;
-use agentdash_contracts::workflow::AgentRunCommandOnlyRequest;
-use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
+use agentdash_contracts::agent_run_product_projection as product_projection_contract;
+use agentdash_contracts::session::SessionMessageRefDto;
+use agentdash_contracts::workflow::{AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto};
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use axum::{
     Json,
-    body::Body,
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{Path, Query, State},
-    response::{IntoResponse, Response},
+    http::header,
+    response::IntoResponse,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::dto::{ContextAuditQuery, RejectToolApprovalRequest, SpawnTerminalBody};
 use crate::{
-    agent_run_runtime_surface::resolve_terminal_launch_target_for_runtime_session,
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
-    routes::terminals,
     rpc::ApiError,
 };
 
-struct AgentRunContext {
-    run: LifecycleRun,
-    agent: LifecycleAgent,
-    runtime_thread_id: Option<String>,
-}
+const DEFAULT_PRODUCT_CHANGE_PAGE_LIMIT: usize = 256;
+const MAX_PRODUCT_CHANGE_PAGE_LIMIT: usize = 256;
 
-struct AgentRunDeliveryRuntimeContext {
-    runtime_session_id: String,
+#[derive(Debug, Deserialize)]
+pub struct ProductProjectionChangesQuery {
+    pub after: Option<u64>,
+    pub limit: Option<usize>,
 }
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/snapshot",
+            axum::routing::get(get_managed_runtime_snapshot),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection",
+            axum::routing::get(get_managed_runtime_context_projection),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/live",
+            axum::routing::get(get_agent_run_live_events),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/commands",
+            axum::routing::post(execute_managed_runtime_command),
+        )
+        .route(
+            "/projects/{project_id}/agent-runs/{run_id}",
+            axum::routing::delete(delete_project_agent_run),
+        )
+        .route(
+            "/projects/{project_id}/agent-runs",
+            axum::routing::get(get_project_agent_runs),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/workspace",
+            axum::routing::get(get_agent_run_workspace),
+        )
+        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
             axum::routing::post(submit_agent_run_composer_input),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/fork",
+            axum::routing::post(fork_agent_run),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/fork-submit",
+            axum::routing::post(fork_submit_agent_run),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/cancel",
             axum::routing::post(cancel_agent_run),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime",
-            axum::routing::get(inspect_agent_run_runtime),
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/snapshot",
+            axum::routing::get(get_agent_run_terminal_snapshot),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context",
-            axum::routing::get(read_agent_run_runtime_context),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/events/stream/ndjson",
-            axum::routing::get(stream_agent_run_runtime_events),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals",
-            axum::routing::get(list_agent_run_runtime_terminals)
-                .post(spawn_agent_run_runtime_terminal),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/compact",
-            axum::routing::post(compact_agent_run_context),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/audit",
-            axum::routing::get(get_agent_run_runtime_context_audit),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/approve",
-            axum::routing::post(approve_agent_run_tool_call),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/reject",
-            axum::routing::post(reject_agent_run_tool_call),
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/changes",
+            axum::routing::get(get_agent_run_terminal_changes),
         )
 }
 
-/// AgentRun 列表分页查询参数。
-#[derive(serde::Deserialize)]
-pub struct AgentRunListQuery {
-    pub limit: Option<u32>,
-    pub cursor: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum RuntimeComposerSubmitResponse {
-    Queued { mailbox_message_id: Uuid },
-    Dispatched { receipt: OperationReceipt },
-}
-
-pub async fn submit_agent_run_composer_input(
+async fn fork_agent_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-    Json(req): Json<AgentRunComposerSubmitRequest>,
-) -> Result<Json<RuntimeComposerSubmitResponse>, ApiError> {
-    diag!(Debug, Subsystem::Api,
-
-        run_id = %run_id,
-        agent_id = %agent_id,
-        input_blocks = req.input.len(),
-        "AgentRun composer submit entered"
-    );
-    if req.client_command_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
-        ));
-    }
-    if req.input.is_empty() {
-        return Err(ApiError::BadRequest("input 不能为空".to_string()));
-    }
-
-    let context = resolve_agent_run_context(
-        &state,
+    Json(body): Json<agentdash_contracts::agent_run_interaction::AgentRunForkRequest>,
+) -> Result<Json<AgentRunForkResponse>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
         &current_user,
         &run_id,
         &agent_id,
         ProjectPermission::Use,
     )
     .await?;
-    diag!(Debug, Subsystem::Api,
+    let result = execute_product_fork(
+        state.as_ref(),
+        target,
+        current_user.user_id,
+        body.client_command_id.clone(),
+        body.title,
+        body.fork_point_ref,
+        body.metadata_json,
+    )
+    .await?;
+    Ok(Json(fork_response(&result, body.client_command_id)))
+}
 
-        run_id = %context.run.id,
-        agent_id = %context.agent.id,
-        "AgentRun composer submit context resolved"
-    );
-    if context.run.created_by_user_id != current_user.user_id {
-        return Err(ApiError::Forbidden(
-            "只有 AgentRun 所有者可以提交输入".to_string(),
+async fn fork_submit_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<AgentRunForkSubmitRequest>,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    validate_fork_submit_preconditions(&body)?;
+    if body.executor_config.is_some() || body.backend_selection.is_some() {
+        return Err(ApiError::BadRequest(
+            "fork-submit 的 child 继承已提交 Product frame；当前请求不能覆盖 executor 或 backend"
+                .to_owned(),
         ));
     }
-    let target = agent_run_runtime_target(&context);
-    let runtime_input = runtime_input_from_codex(req.input)?;
-    let view = state
-        .services
-        .agent_run_runtime
-        .inspect(target.clone())
-        .await
-        .map_err(agent_run_runtime_error)?;
-    let response = if req.delivery_intent.as_deref() == Some("steer") {
-        let guard = agent_run_command_guard(&view)?;
-        let receipt = state
-            .services
-            .agent_run_runtime
-            .steer_active_turn(SteerAgentRunTurn {
-                command: GuardedAgentRunCommand {
-                    target,
-                    client_command_id: req.client_command_id,
-                    guard,
-                    actor: runtime_actor(&current_user),
-                },
-                input: runtime_input,
-            })
-            .await
-            .map_err(agent_run_runtime_error)?;
-        RuntimeComposerSubmitResponse::Dispatched { receipt }
-    } else {
-        let outcome = runtime_agent_run_mailbox(state.as_ref())
-            .submit(EnqueueRuntimeMailboxMessage {
-                target: target.clone(),
-                client_command_id: req.client_command_id,
-                input: runtime_input,
-                actor: runtime_actor(&current_user),
-                identity: Some(current_user.clone()),
-                source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::composer(),
-            })
-            .await
-            .map_err(runtime_mailbox_error)?;
-        match outcome {
-            RuntimeMailboxSubmitOutcome::Queued { message } => {
-                spawn_runtime_mailbox_watcher(state.clone(), target);
-                RuntimeComposerSubmitResponse::Queued {
-                    mailbox_message_id: message.id,
-                }
-            }
-            RuntimeMailboxSubmitOutcome::Dispatched { receipt, .. } => {
-                RuntimeComposerSubmitResponse::Dispatched { receipt }
-            }
-        }
+    let parent = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let fork = execute_product_fork(
+        state.as_ref(),
+        parent,
+        current_user.user_id,
+        format!("{}:fork", body.client_command_id),
+        body.title,
+        body.fork_point_ref,
+        body.metadata_json,
+    )
+    .await?;
+    let child = AgentRunTarget {
+        run_id: fork.saga.child().run_id,
+        agent_id: fork.saga.child().agent_id,
     };
-    diag!(Debug, Subsystem::Api,
+    let delivery = state
+        .services
+        .agent_run_product_input_delivery
+        .deliver(DeliverAgentRunProductInput {
+            target: child.clone(),
+            content: body.input,
+            source: agentdash_domain::agent_input::AgentInputSourceIdentity::composer(),
+            origin: agentdash_domain::agent_input::AgentInputOrigin::User,
+            client_command_id: body.client_command_id.clone(),
+        })
+        .await
+        .map_err(product_input_delivery_error)?;
+    let duplicate = fork.replayed || delivery.operation_receipt.duplicate;
+    Ok(Json(AgentRunMessageCommandResponse {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id: body.client_command_id,
+            status: delivery.operation_receipt.status.as_str().to_owned(),
+            duplicate,
+            message: None,
+        },
+        outcome: AgentRunMessageCommandOutcome::Launched,
+        accepted_refs: Some(agent_run_child_message_refs(&fork)),
+        fork: Some(fork_outcome_view(&fork)),
+    }))
+}
 
-        run_id = %context.run.id,
-        agent_id = %context.agent.id,
-        outcome = ?response,
-        "AgentRun composer submit accepted by managed runtime"
-    );
-    Ok(Json(response))
+fn validate_fork_submit_preconditions(body: &AgentRunForkSubmitRequest) -> Result<(), ApiError> {
+    let client_command_id = body.client_command_id.trim();
+    if client_command_id.is_empty() || client_command_id.len() > 256 {
+        return Err(ApiError::BadRequest(
+            "fork-submit client_command_id 必须为 1..=256 字节".to_owned(),
+        ));
+    }
+    let has_content = body.input.iter().any(|content| {
+        let value = match content {
+            agentdash_agent_service_api::AgentInputContent::Text { text } => text,
+            agentdash_agent_service_api::AgentInputContent::Image { source, .. } => source,
+            agentdash_agent_service_api::AgentInputContent::Resource { uri, .. } => uri,
+            agentdash_agent_service_api::AgentInputContent::Structured { schema, .. } => schema,
+        };
+        !value.trim().is_empty()
+    });
+    if !has_content {
+        return Err(ApiError::BadRequest(
+            "fork-submit input 必须包含可投递内容".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+async fn execute_product_fork(
+    state: &AppState,
+    target: AgentRunTarget,
+    requested_by_user_id: String,
+    client_command_id: String,
+    title: Option<String>,
+    fork_point_ref: Option<SessionMessageRefDto>,
+    metadata_json: Option<serde_json::Value>,
+) -> Result<AgentRunProductForkResult, ApiError> {
+    AgentRunProductForkService::new(
+        state.services.agent_run_product_projection.clone(),
+        state.services.agent_run_product_protocol.clone(),
+    )
+    .fork(AgentRunProductForkRequest {
+        target,
+        client_command_id,
+        requested_by_user_id,
+        title,
+        fork_point_ref: fork_point_ref.map(|point| AgentRunProductForkMessageRef {
+            turn_id: point.turn_id,
+            entry_index: point.entry_index,
+        }),
+        metadata_json,
+    })
+    .await
+    .map_err(product_fork_error)
+}
+
+fn fork_response(
+    result: &AgentRunProductForkResult,
+    client_command_id: String,
+) -> AgentRunForkResponse {
+    let outcome = fork_outcome_view(result);
+    AgentRunForkResponse {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id,
+            status: "completed".to_owned(),
+            duplicate: result.replayed,
+            message: None,
+        },
+        outcome: outcome.outcome,
+        parent_refs: outcome.parent_refs,
+        child_refs: outcome.child_refs,
+        lineage: outcome.lineage,
+        redirect: outcome.redirect,
+    }
+}
+
+fn fork_outcome_view(result: &AgentRunProductForkResult) -> AgentRunForkOutcomeView {
+    let saga = &result.saga;
+    let intent = saga
+        .product_intent()
+        .expect("successful Product fork must retain immutable Product intent");
+    let parent = AgentRunTarget {
+        run_id: saga.parent().run_id,
+        agent_id: saga.parent().agent_id,
+    };
+    let child = AgentRunTarget {
+        run_id: saga.child().run_id,
+        agent_id: saga.child().agent_id,
+    };
+    let parent_refs = agent_run_message_refs(&parent);
+    let child_refs = agent_run_child_message_refs(result);
+    AgentRunForkOutcomeView {
+        outcome: "forked".to_owned(),
+        parent_refs: parent_refs.clone(),
+        child_refs: child_refs.clone(),
+        lineage: AgentRunForkLineageView {
+            id: saga.request_id().0.to_string(),
+            parent: parent_refs,
+            child: child_refs,
+            relation_kind: "fork".to_owned(),
+            fork_point_event_seq: None,
+            fork_point_ref: intent
+                .source_entry_index
+                .map(|entry_index| SessionMessageRefDto {
+                    turn_id: intent.source_turn_id.clone(),
+                    entry_index,
+                }),
+            forked_by_user_id: intent.requested_by_user_id.clone(),
+            created_at: intent.requested_at.to_rfc3339(),
+        },
+        redirect: AgentRunRefDto {
+            run_id: child.run_id.to_string(),
+            agent_id: child.agent_id.to_string(),
+        },
+    }
+}
+
+fn agent_run_child_message_refs(result: &AgentRunProductForkResult) -> AgentRunMessageAcceptedRefs {
+    let child = result.saga.child();
+    AgentRunMessageAcceptedRefs {
+        run_ref: LifecycleRunRefDto {
+            run_id: child.run_id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: child.run_id.to_string(),
+            agent_id: child.agent_id.to_string(),
+        },
+        frame_ref: Some(AgentFrameRefDto {
+            agent_id: child.agent_id.to_string(),
+            frame_id: child.frame_id.to_string(),
+            revision: None,
+        }),
+        agent_run_turn_id: None,
+        protocol_turn_id: None,
+    }
 }
 
 async fn cancel_agent_run(
@@ -214,135 +330,293 @@ async fn cancel_agent_run(
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
     Json(body): Json<AgentRunCommandOnlyRequest>,
-) -> Result<Json<OperationReceipt>, ApiError> {
-    if body.client_command_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
-        ));
-    }
-    let context = resolve_agent_run_context(
-        &state,
+) -> Result<Json<AgentRunCommandReceipt>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
         &current_user,
         &run_id,
         &agent_id,
         ProjectPermission::Use,
-    )
-    .await?;
-    let command = guarded_agent_run_command(
-        state.as_ref(),
-        &context,
-        &current_user,
-        body.client_command_id,
     )
     .await?;
     let receipt = state
         .services
-        .agent_run_runtime
-        .interrupt_active_turn(command)
+        .agent_run_product_projection_composition
+        .commands
+        .execute(AgentRunProductCommandRequest {
+            target,
+            client_command_id: body.client_command_id.clone(),
+            command: AgentRunProductCommand::Interrupt,
+        })
         .await
-        .map_err(agent_run_runtime_error)?;
-    Ok(Json(receipt))
-}
-
-async fn compact_agent_run_context(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Json(body): Json<AgentRunCommandOnlyRequest>,
-) -> Result<Json<OperationReceipt>, ApiError> {
-    if body.client_command_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "client_command_id 不能为空".to_string(),
-        ));
-    }
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let command = guarded_agent_run_command(
-        state.as_ref(),
-        &context,
-        &current_user,
-        body.client_command_id,
-    )
-    .await?;
-    let receipt = state
-        .services
-        .agent_run_runtime
-        .compact_context(command)
-        .await
-        .map_err(agent_run_runtime_error)?;
-    Ok(Json(receipt))
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-struct AgentRunRuntimeInspectResponse {
-    target: AgentRunRuntimeTarget,
-    binding: Option<AgentRunRuntimeBinding>,
-    snapshot: Option<RuntimeSnapshot>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-struct AgentRunRuntimeEventsQuery {
-    after: Option<EventSequence>,
-    #[serde(default)]
-    include_transient: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum AgentRunRuntimeEventStreamItem {
-    Event {
-        durable_cursor: Option<EventSequence>,
-        envelope: Box<RuntimeEventEnvelope>,
-    },
-    Error {
-        error: agentdash_agent_runtime_contract::RuntimeSubscribeError,
-    },
-}
-
-async fn inspect_agent_run_runtime(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<AgentRunRuntimeInspectResponse>, ApiError> {
-    let context = resolve_agent_run_context(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let AgentRunRuntimeView {
-        target,
-        binding,
-        snapshot,
-    } = state
-        .services
-        .agent_run_runtime
-        .inspect(agent_run_runtime_target(&context))
-        .await
-        .map_err(agent_run_runtime_error)?;
-    Ok(Json(AgentRunRuntimeInspectResponse {
-        target,
-        binding,
-        snapshot,
+        .map_err(agent_run_product_command_error)?;
+    Ok(Json(AgentRunCommandReceipt {
+        client_command_id: body.client_command_id,
+        status: receipt.status.as_str().to_owned(),
+        duplicate: receipt.duplicate,
+        message: None,
     }))
 }
 
-async fn read_agent_run_runtime_context(
+async fn submit_agent_run_composer_input(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<RuntimeContextView>, ApiError> {
-    let context = resolve_agent_run_context(
+    Json(body): Json<AgentRunComposerSubmitRequest>,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let delivery = state
+        .services
+        .agent_run_product_input_delivery
+        .deliver(DeliverAgentRunProductInput {
+            target: target.clone(),
+            content: body.input,
+            source: agentdash_domain::agent_input::AgentInputSourceIdentity::composer(),
+            origin: agentdash_domain::agent_input::AgentInputOrigin::User,
+            client_command_id: body.client_command_id.clone(),
+        })
+        .await
+        .map_err(product_input_delivery_error)?;
+    let duplicate = delivery.operation_receipt.duplicate;
+    Ok(Json(AgentRunMessageCommandResponse {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id: body.client_command_id,
+            status: delivery.operation_receipt.status.as_str().to_owned(),
+            duplicate,
+            message: None,
+        },
+        outcome: AgentRunMessageCommandOutcome::Launched,
+        accepted_refs: Some(agent_run_message_refs(&target)),
+        fork: None,
+    }))
+}
+
+fn agent_run_message_refs(target: &AgentRunTarget) -> AgentRunMessageAcceptedRefs {
+    AgentRunMessageAcceptedRefs {
+        run_ref: LifecycleRunRefDto {
+            run_id: target.run_id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: target.run_id.to_string(),
+            agent_id: target.agent_id.to_string(),
+        },
+        frame_ref: None,
+        agent_run_turn_id: None,
+        protocol_turn_id: None,
+    }
+}
+
+fn product_input_delivery_error(error: AgentRunProductInputDeliveryError) -> ApiError {
+    match error {
+        AgentRunProductInputDeliveryError::EmptyInput
+        | AgentRunProductInputDeliveryError::InvalidClientCommandId => {
+            ApiError::BadRequest(error.to_string())
+        }
+        AgentRunProductInputDeliveryError::Command(_)
+        | AgentRunProductInputDeliveryError::TitleInitialization(_) => {
+            ApiError::ServiceUnavailable(error.to_string())
+        }
+    }
+}
+
+fn product_fork_error(error: AgentRunProductForkError) -> ApiError {
+    match error {
+        AgentRunProductForkError::InvalidRequest => ApiError::BadRequest(error.to_string()),
+        AgentRunProductForkError::TargetNotBound
+        | AgentRunProductForkError::ForkUnavailable
+        | AgentRunProductForkError::CompletedTurnMissing
+        | AgentRunProductForkError::ForkPointNotFound
+        | AgentRunProductForkError::RequestConflict
+        | AgentRunProductForkError::Failed(_) => ApiError::Conflict(error.to_string()),
+        AgentRunProductForkError::RecoveryPending { .. } | AgentRunProductForkError::Lost(_) => {
+            ApiError::ServiceUnavailable(error.to_string())
+        }
+        AgentRunProductForkError::Projection(_)
+        | AgentRunProductForkError::Persistence(_)
+        | AgentRunProductForkError::Protocol(_) => ApiError::Internal(error.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentRunListQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+async fn get_project_agent_runs(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(project_id): Path<String>,
+    Query(query): Query<AgentRunListQuery>,
+) -> Result<Json<agentdash_contracts::workflow::ProjectAgentRunListView>, ApiError> {
+    let project_id = parse_uuid(&project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let page = ProjectAgentRunListQuery::new(ProjectAgentRunListQueryDeps {
+        run_repo: state.repos.lifecycle_run_repo.clone(),
+        agent_repo: state.repos.lifecycle_agent_repo.clone(),
+        lineage_repo: state.repos.agent_lineage_repo.clone(),
+        subject_repo: state.repos.lifecycle_subject_association_repo.clone(),
+        project_agent_repo: state.repos.project_agent_repo.clone(),
+    })
+    .list(ProjectAgentRunListInput {
+        project_id,
+        limit: query.limit,
+        cursor: query.cursor.as_deref(),
+    })
+    .await
+    .map_err(|error| ApiError::Internal(error.to_string()))?;
+    Ok(Json(
+        agentdash_contracts::workflow::ProjectAgentRunListView {
+            project_id: page.project_id.to_string(),
+            agent_runs: page
+                .entries
+                .into_iter()
+                .map(
+                    |entry| agentdash_contracts::workflow::AgentRunListEntryView {
+                        run_ref: agentdash_contracts::workflow::LifecycleRunRefDto {
+                            run_id: entry.run_id.to_string(),
+                        },
+                        agent_ref: agentdash_contracts::workflow::AgentRunRefDto {
+                            run_id: entry.run_id.to_string(),
+                            agent_id: entry.agent_id.to_string(),
+                        },
+                        title: entry.title,
+                        lifecycle_status: entry.lifecycle_status,
+                        last_activity_at: entry.last_activity_at,
+                        project_agent_label: entry.project_agent_label,
+                        source: entry.source,
+                        subagent_count: entry.subagent_count,
+                        children: entry
+                            .children
+                            .into_iter()
+                            .map(agent_run_child_view)
+                            .collect(),
+                        subject_ref: entry.subject.as_ref().map(|subject| {
+                            agentdash_contracts::workflow::SubjectRefDto {
+                                kind: subject.kind.clone(),
+                                id: subject.id.to_string(),
+                            }
+                        }),
+                        subject_label: entry.subject.and_then(|subject| subject.label),
+                    },
+                )
+                .collect(),
+            next_cursor: page.next_cursor,
+        },
+    ))
+}
+
+fn agent_run_child_view(
+    child: AgentRunListChildModel,
+) -> agentdash_contracts::workflow::AgentRunListChildView {
+    agentdash_contracts::workflow::AgentRunListChildView {
+        run_ref: agentdash_contracts::workflow::LifecycleRunRefDto {
+            run_id: child.run_id.to_string(),
+        },
+        agent_ref: agentdash_contracts::workflow::AgentRunRefDto {
+            run_id: child.run_id.to_string(),
+            agent_id: child.agent_id.to_string(),
+        },
+        title: child.title,
+        lifecycle_status: child.lifecycle_status,
+        last_activity_at: child.last_activity_at,
+        project_agent_label: child.project_agent_label,
+        source: child.source,
+        children: child
+            .children
+            .into_iter()
+            .map(agent_run_child_view)
+            .collect(),
+    }
+}
+
+async fn delete_project_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((project_id, run_id)): Path<(String, String)>,
+) -> Result<Json<agentdash_contracts::workflow::DeleteAgentRunResponse>, ApiError> {
+    let project_id = parse_uuid(&project_id, "project_id")?;
+    let run_id = parse_uuid(&run_id, "run_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Configure,
+    )
+    .await?;
+    let outcome = AgentRunProductDeleteService::new(state.repos.lifecycle_run_repo.clone())
+        .delete(AgentRunProductDeleteRequest { project_id, run_id })
+        .await
+        .map_err(agent_run_product_delete_error)?;
+    Ok(Json(
+        agentdash_contracts::workflow::DeleteAgentRunResponse {
+            deleted: outcome.deleted,
+            project_id: outcome.project_id.to_string(),
+            run_id: outcome.run_id.to_string(),
+        },
+    ))
+}
+
+fn agent_run_product_delete_error(error: AgentRunProductDeleteError) -> ApiError {
+    match error {
+        AgentRunProductDeleteError::ProjectMismatch => ApiError::NotFound(error.to_string()),
+        AgentRunProductDeleteError::Repository(_) => ApiError::Internal(error.to_string()),
+    }
+}
+
+async fn get_agent_run_workspace(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<agentdash_contracts::workflow::AgentRunWorkspaceView>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let run = state
+        .repos
+        .lifecycle_run_repo
+        .get_by_id(target.run_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("AgentRun 不存在".into()))?;
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(target.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("AgentRun Agent 不存在".into()))?;
+    let (parent, children) =
+        super::agent_run_workspace::resolve_lineage(state.as_ref(), &run, &agent).await?;
+    let mut workspace =
+        super::agent_run_workspace::load(state.as_ref(), run, agent, &current_user).await?;
+    workspace.parent = parent;
+    workspace.children = children;
+    Ok(Json(workspace))
+}
+
+async fn get_managed_runtime_snapshot(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<agentdash_agent_runtime_contract::ManagedRuntimeSnapshot>, ApiError> {
+    let target = authorize_agent_run_target(
         state.as_ref(),
         &current_user,
         &run_id,
@@ -352,20 +626,19 @@ async fn read_agent_run_runtime_context(
     .await?;
     state
         .services
-        .agent_run_runtime
-        .read_context(agent_run_runtime_target(&context))
+        .agent_run_product_projection
+        .runtime_snapshot(&target)
         .await
         .map(Json)
-        .map_err(agent_run_runtime_error)
+        .map_err(agent_run_product_projection_error)
 }
 
-async fn stream_agent_run_runtime_events(
+async fn get_managed_runtime_context_projection(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-    Query(query): Query<AgentRunRuntimeEventsQuery>,
-) -> Result<Response, ApiError> {
-    let context = resolve_agent_run_context(
+) -> Result<Json<agentdash_contracts::session::SessionProjectionViewResponse>, ApiError> {
+    let target = authorize_agent_run_target(
         state.as_ref(),
         &current_user,
         &run_id,
@@ -373,135 +646,69 @@ async fn stream_agent_run_runtime_events(
         ProjectPermission::Use,
     )
     .await?;
-    let mut events = state
+    let snapshot = state
         .services
-        .agent_run_runtime
-        .read_events(ReadAgentRunEvents {
-            target: agent_run_runtime_target(&context),
-            after: query.after,
-            include_transient: query.include_transient,
-        })
+        .agent_run_product_projection
+        .runtime_snapshot(&target)
         .await
-        .map_err(agent_run_runtime_error)?;
+        .map_err(agent_run_product_projection_error)?;
+    Ok(Json(project_managed_runtime_context(&snapshot)))
+}
+
+async fn get_agent_run_live_events(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let mut live = state
+        .services
+        .agent_run_product_projection
+        .runtime_live_events(&target)
+        .await
+        .map_err(agent_run_product_projection_error)?;
     let stream = async_stream::stream! {
-        while let Some(next) = events.next().await {
-            let terminal = next.is_err();
-            let item = match next {
-                Ok(envelope) => AgentRunRuntimeEventStreamItem::Event {
-                    durable_cursor: envelope.sequence,
-                    envelope: Box::new(envelope),
+        // Flush the transport immediately so browser/dev proxies expose the connected state
+        // before the first Agent event. Empty NDJSON lines carry no domain fact.
+        yield Ok::<Bytes, std::convert::Infallible>(Bytes::from_static(b"\n"));
+        loop {
+            match live.next().await {
+                Ok(Some(event)) => match serde_json::to_vec(&event) {
+                    Ok(mut raw) => {
+                        raw.push(b'\n');
+                        yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(raw));
+                    }
+                    Err(_) => break,
                 },
-                Err(error) => AgentRunRuntimeEventStreamItem::Error { error },
-            };
-            if let Ok(mut bytes) = serde_json::to_vec(&item) {
-                bytes.push(b'\n');
-                yield Ok::<Bytes, Infallible>(Bytes::from(bytes));
-            }
-            if terminal {
-                break;
+                Ok(None) | Err(_) => break,
             }
         }
     };
     Ok((
         [
-            (
-                axum::http::header::CONTENT_TYPE,
-                "application/x-ndjson; charset=utf-8",
-            ),
-            (axum::http::header::CACHE_CONTROL, "no-cache, no-transform"),
-            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::CONTENT_TYPE, "application/x-ndjson; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache, no-transform"),
+            (header::CONNECTION, "keep-alive"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
         Body::from_stream(stream),
-    )
-        .into_response())
-}
-
-async fn list_agent_run_runtime_terminals(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<Vec<TerminalState>>, ApiError> {
-    let _ =
-        resolve_agent_run_terminal_launch_target(&state, &current_user, &run_id, &agent_id).await?;
-    Ok(Json(
-        state
-            .services
-            .terminal_registry
-            .list_terminals(&run_id, &agent_id),
     ))
 }
 
-async fn spawn_agent_run_runtime_terminal(
+async fn execute_managed_runtime_command(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-    Json(body): Json<SpawnTerminalBody>,
-) -> Result<impl IntoResponse, ApiError> {
-    let (runtime_session_id, launch_target) =
-        resolve_agent_run_terminal_launch_target(&state, &current_user, &run_id, &agent_id).await?;
-    terminals::spawn_terminal_for_runtime_session(
-        &state,
-        &runtime_session_id,
-        &run_id,
-        &agent_id,
-        launch_target,
-        body,
-    )
-    .await
-}
-
-async fn resolve_agent_run_terminal_launch_target(
-    state: &Arc<AppState>,
-    current_user: &agentdash_integration_api::AuthIdentity,
-    run_id: &str,
-    agent_id: &str,
-) -> Result<(String, AgentRunTerminalLaunchTarget), ApiError> {
-    let context = resolve_agent_run_context(
-        state.as_ref(),
-        current_user,
-        run_id,
-        agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let runtime_session_id = delivery_runtime_session_from_agent_run_context(&context)?;
-    // Ensure terminal registry knows this session -> AgentRun binding
-    state
-        .services
-        .terminal_registry
-        .bind_session(&runtime_session_id, run_id, agent_id);
-    let launch_target =
-        resolve_terminal_launch_target_for_runtime_session(state, &runtime_session_id).await?;
-    if launch_target.project_id != context.run.project_id {
-        return Err(ApiError::Conflict(format!(
-            "AgentRun {} / {} 与 terminal runtime surface Project 不一致",
-            context.run.id, context.agent.id
-        )));
-    }
-    Ok((runtime_session_id, launch_target.target))
-}
-
-async fn get_agent_run_runtime_context_audit(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Query(query): Query<ContextAuditQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    // Validate the AgentRun exists and user has access
-    let _runtime_session_id =
-        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    Ok(Json(
-        runtime_traces::load_runtime_trace_context_audit(state.as_ref(), &run_id, &agent_id, query)
-            .await?,
-    ))
-}
-
-async fn approve_agent_run_tool_call(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
-) -> Result<impl IntoResponse, ApiError> {
-    let context = resolve_agent_run_context(
+    Json(body): Json<product_projection_contract::AgentRunProductRuntimeCommandRequest>,
+) -> Result<Json<agentdash_agent_runtime_contract::ManagedRuntimeOperationReceipt>, ApiError> {
+    let target = authorize_agent_run_target(
         state.as_ref(),
         &current_user,
         &run_id,
@@ -509,326 +716,115 @@ async fn approve_agent_run_tool_call(
         ProjectPermission::Use,
     )
     .await?;
-    resolve_agent_run_interaction(
-        state.as_ref(),
-        &context,
-        &current_user,
-        tool_call_id,
-        InteractionResponse::Approved,
-    )
-    .await
-    .map(Json)
-}
-
-async fn reject_agent_run_tool_call(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
-    Json(req): Json<RejectToolApprovalRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let context = resolve_agent_run_context(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    resolve_agent_run_interaction(
-        state.as_ref(),
-        &context,
-        &current_user,
-        tool_call_id,
-        InteractionResponse::Denied { reason: req.reason },
-    )
-    .await
-    .map(Json)
-}
-
-async fn resolve_agent_run_interaction(
-    state: &AppState,
-    context: &AgentRunContext,
-    current_user: &agentdash_integration_api::AuthIdentity,
-    interaction_id: String,
-    response: InteractionResponse,
-) -> Result<OperationReceipt, ApiError> {
-    let interaction_id = RuntimeInteractionId::new(interaction_id)
-        .map_err(|error| ApiError::BadRequest(format!("无效的 interaction_id: {error}")))?;
-    let command = guarded_agent_run_command(
-        state,
-        context,
-        current_user,
-        format!("interaction-{}-{interaction_id}", current_user.user_id),
-    )
-    .await?;
-    state
-        .services
-        .agent_run_runtime
-        .resolve_interaction(ResolveAgentRunInteraction {
-            command,
+    let command = match body.command {
+        product_projection_contract::AgentRunProductRuntimeCommand::Resume => {
+            AgentRunProductCommand::Resume
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::SubmitInput { content } => {
+            AgentRunProductCommand::SubmitInput { content }
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::Interrupt => {
+            AgentRunProductCommand::Interrupt
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::RequestCompaction => {
+            AgentRunProductCommand::RequestCompaction
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::Rebind => {
+            AgentRunProductCommand::Rebind
+        }
+        product_projection_contract::AgentRunProductRuntimeCommand::ResolveInteraction {
             interaction_id,
             response,
+        } => AgentRunProductCommand::ResolveInteraction {
+            interaction_id,
+            response,
+        },
+        product_projection_contract::AgentRunProductRuntimeCommand::Close => {
+            AgentRunProductCommand::Close
+        }
+    };
+    state
+        .services
+        .agent_run_product_projection_composition
+        .commands
+        .execute(AgentRunProductCommandRequest {
+            target,
+            client_command_id: body.client_command_id,
+            command,
         })
         .await
-        .map_err(agent_run_runtime_error)
+        .map(Json)
+        .map_err(agent_run_product_command_error)
 }
 
-async fn resolve_agent_run_delivery_runtime(
-    state: &Arc<AppState>,
-    current_user: &agentdash_integration_api::AuthIdentity,
-    run_id: &str,
-    agent_id: &str,
-) -> Result<String, ApiError> {
-    let context = resolve_agent_run_context(
-        state,
-        current_user,
-        run_id,
-        agent_id,
+async fn get_agent_run_terminal_snapshot(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<product_projection_contract::AgentRunTerminalSnapshot>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
         ProjectPermission::Use,
     )
     .await?;
-    delivery_runtime_session_from_agent_run_context(&context)
-}
-
-fn agent_run_runtime_target(context: &AgentRunContext) -> AgentRunRuntimeTarget {
-    AgentRunRuntimeTarget {
-        run_id: context.run.id,
-        agent_id: context.agent.id,
-    }
-}
-
-fn runtime_agent_run_mailbox(state: &AppState) -> RuntimeAgentRunMailbox {
-    RuntimeAgentRunMailbox::new(
-        state.repos.agent_run_mailbox_repo.clone(),
-        state.services.agent_run_runtime.clone(),
-    )
-}
-
-fn spawn_runtime_mailbox_watcher(state: Arc<AppState>, target: AgentRunRuntimeTarget) {
-    tokio::spawn(async move {
-        let Ok(mut events) = state
-            .services
-            .agent_run_runtime
-            .read_events(ReadAgentRunEvents {
-                target: target.clone(),
-                after: None,
-                include_transient: false,
-            })
-            .await
-        else {
-            return;
-        };
-        while let Some(event) = events.next().await {
-            let Ok(event) = event else {
-                return;
-            };
-            if !matches!(
-                event.event,
-                agentdash_agent_runtime_contract::RuntimeEvent::TurnTerminal { .. }
-                    | agentdash_agent_runtime_contract::RuntimeEvent::InteractionTerminal { .. }
-                    | agentdash_agent_runtime_contract::RuntimeEvent::ThreadStatusChanged { .. }
-            ) {
-                continue;
-            }
-            match runtime_agent_run_mailbox(state.as_ref())
-                .recover_and_drain_once(&target)
-                .await
-            {
-                Ok(Some(_)) | Err(_) => return,
-                Ok(None) => {}
-            }
-        }
-    });
-}
-
-fn runtime_actor(current_user: &agentdash_integration_api::AuthIdentity) -> RuntimeActor {
-    RuntimeActor::User {
-        subject: current_user.user_id.clone(),
-    }
-}
-
-fn agent_run_command_guard(view: &AgentRunRuntimeView) -> Result<AgentRunCommandGuard, ApiError> {
-    let binding = view.binding.as_ref().ok_or_else(|| {
-        ApiError::Conflict(format!(
-            "AgentRun {} / {} 尚未建立 runtime binding",
-            view.target.run_id, view.target.agent_id
-        ))
-    })?;
-    let snapshot = view.snapshot.as_ref().ok_or_else(|| {
-        ApiError::Conflict(format!(
-            "AgentRun {} / {} 尚无 canonical runtime snapshot",
-            view.target.run_id, view.target.agent_id
-        ))
-    })?;
-    if binding.thread_id != snapshot.thread_id {
-        return Err(ApiError::Internal(
-            "AgentRun runtime binding 与 snapshot thread 不一致".to_string(),
-        ));
-    }
-    Ok(AgentRunCommandGuard {
-        thread_id: snapshot.thread_id.clone(),
-        expected_revision: snapshot.revision,
-        expected_active_turn_id: snapshot.active_turn_id.clone(),
-    })
-}
-
-async fn guarded_agent_run_command(
-    state: &AppState,
-    context: &AgentRunContext,
-    current_user: &agentdash_integration_api::AuthIdentity,
-    client_command_id: String,
-) -> Result<GuardedAgentRunCommand, ApiError> {
-    let target = agent_run_runtime_target(context);
-    let view = state
+    state
         .services
-        .agent_run_runtime
-        .inspect(target.clone())
+        .agent_run_product_projection
+        .terminal_snapshot(&target)
         .await
-        .map_err(agent_run_runtime_error)?;
-    Ok(GuardedAgentRunCommand {
-        target,
-        client_command_id,
-        guard: agent_run_command_guard(&view)?,
-        actor: runtime_actor(current_user),
-    })
+        .map(product_projection_contract::AgentRunTerminalSnapshot::from)
+        .map(Json)
+        .map_err(agent_run_product_projection_error)
 }
 
-pub(crate) fn runtime_input_from_codex(
-    input: Vec<codex::UserInput>,
-) -> Result<Vec<RuntimeInput>, ApiError> {
-    let input = input
-        .into_iter()
-        .filter_map(|item| match item {
-            codex::UserInput::Text { text, .. } => {
-                let text = text.trim().to_string();
-                (!text.is_empty()).then_some(RuntimeInput::Text { text })
-            }
-            codex::UserInput::Image { url, .. } => Some(RuntimeInput::Image {
-                mime_type: runtime_image_mime_type(&url),
-                data_url: url,
-            }),
-            codex::UserInput::LocalImage { path, .. } => Some(RuntimeInput::FileReference {
-                uri: path.to_string_lossy().into_owned(),
-                media_type: Some("image".to_string()),
-            }),
-            codex::UserInput::Skill { name, path } => Some(RuntimeInput::FileReference {
-                uri: path.to_string_lossy().into_owned(),
-                media_type: Some(format!("application/x-agent-skill; name={name}")),
-            }),
-            codex::UserInput::Mention { name, path } => Some(RuntimeInput::FileReference {
-                uri: path,
-                media_type: Some(format!("application/x-agent-mention; name={name}")),
-            }),
-        })
-        .collect::<Vec<_>>();
-    if input.is_empty() {
+async fn get_agent_run_terminal_changes(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<ProductProjectionChangesQuery>,
+) -> Result<Json<product_projection_contract::AgentRunTerminalChangePage>, ApiError> {
+    let target = authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    state
+        .services
+        .agent_run_product_projection
+        .terminal_changes(
+            &target,
+            query.after.map(AgentRunTerminalChangeSequence),
+            product_projection_limit(query.limit)?,
+        )
+        .await
+        .map(product_projection_contract::AgentRunTerminalChangePage::from)
+        .map(Json)
+        .map_err(agent_run_product_projection_error)
+}
+
+fn product_projection_limit(limit: Option<usize>) -> Result<usize, ApiError> {
+    let limit = limit.unwrap_or(DEFAULT_PRODUCT_CHANGE_PAGE_LIMIT);
+    if !(1..=MAX_PRODUCT_CHANGE_PAGE_LIMIT).contains(&limit) {
         return Err(ApiError::BadRequest(
-            "input 中没有可投递到 Agent Runtime 的内容".to_string(),
+            "Product projection change page limit 必须位于 1..=256".to_string(),
         ));
     }
-    Ok(input)
+    Ok(limit)
 }
 
-fn runtime_image_mime_type(url: &str) -> String {
-    url.strip_prefix("data:")
-        .and_then(|value| value.split_once([',', ';']))
-        .map(|(mime_type, _)| mime_type.trim())
-        .filter(|mime_type| !mime_type.is_empty())
-        .unwrap_or("application/octet-stream")
-        .to_string()
-}
-
-fn agent_run_runtime_error(error: AgentRunRuntimeError) -> ApiError {
-    use agentdash_agent_runtime_contract::{
-        RuntimeExecuteError as Execute, RuntimeSnapshotError as Snapshot,
-        RuntimeSubscribeError as Events,
-    };
-    match error {
-        AgentRunRuntimeError::BindingNotFound => {
-            ApiError::Conflict("AgentRun 尚未建立 runtime binding".to_string())
-        }
-        AgentRunRuntimeError::Binding(error) => match error {
-            AgentRunRuntimeBindingError::NotFound => {
-                ApiError::NotFound("AgentRun runtime binding 不存在".to_string())
-            }
-            AgentRunRuntimeBindingError::Conflict => {
-                ApiError::Conflict("AgentRun runtime binding 坐标冲突".to_string())
-            }
-            AgentRunRuntimeBindingError::Unavailable { reason, .. } => {
-                ApiError::ServiceUnavailable(reason)
-            }
-            AgentRunRuntimeBindingError::Persistence { .. } => {
-                ApiError::Internal("AgentRun runtime binding 持久化失败".to_string())
-            }
-        },
-        AgentRunRuntimeError::Execute(error) => match error {
-            Execute::Unsupported { .. }
-            | Execute::InvalidCommand { .. }
-            | Execute::Incompatible { .. } => ApiError::UnprocessableEntity(error.to_string()),
-            Execute::Unavailable { reason, .. } => ApiError::ServiceUnavailable(reason),
-            Execute::RevisionConflict { .. }
-            | Execute::OperationConflict { .. }
-            | Execute::ContextCompactionInProgress { .. } => ApiError::Conflict(error.to_string()),
-            Execute::Persistence { .. } => ApiError::Internal(
-                "Agent Runtime command acceptance persistence failed".to_string(),
-            ),
-        },
-        AgentRunRuntimeError::Snapshot(error) => match error {
-            Snapshot::NotFound => ApiError::NotFound("Agent Runtime thread 不存在".to_string()),
-            Snapshot::RevisionUnavailable { .. } | Snapshot::ContextRevisionUnavailable { .. } => {
-                ApiError::Conflict(error.to_string())
-            }
-            Snapshot::InconsistentContext { .. } => {
-                ApiError::Internal("Agent Runtime context snapshot 不一致".to_string())
-            }
-            Snapshot::Unavailable { reason } => ApiError::ServiceUnavailable(reason),
-        },
-        AgentRunRuntimeError::Events(error) => match error {
-            Events::NotFound => ApiError::NotFound("Agent Runtime event stream 不存在".to_string()),
-            Events::InvalidCursor => {
-                ApiError::BadRequest("无效的 runtime event cursor".to_string())
-            }
-            Events::CursorGap { .. } => ApiError::Conflict(error.to_string()),
-            Events::Unavailable { reason, .. } => ApiError::ServiceUnavailable(reason),
-        },
-        AgentRunRuntimeError::StaleThread
-        | AgentRunRuntimeError::StaleActiveTurn
-        | AgentRunRuntimeError::ClientCommandConflict => ApiError::Conflict(error.to_string()),
-        AgentRunRuntimeError::UnexpectedSnapshot => {
-            ApiError::Internal("Agent Runtime 返回了非预期 snapshot 类型".to_string())
-        }
-        AgentRunRuntimeError::EmptyClientCommandId => {
-            ApiError::BadRequest("client_command_id 不能为空".to_string())
-        }
-    }
-}
-
-fn runtime_mailbox_error(error: RuntimeMailboxError) -> ApiError {
-    match error {
-        RuntimeMailboxError::Runtime(error) => agent_run_runtime_error(error),
-        RuntimeMailboxError::InvalidPayload(message) => ApiError::Internal(message),
-        RuntimeMailboxError::Persistence(error) => ApiError::from(error),
-    }
-}
-
-fn delivery_runtime_session_from_agent_run_context(
-    context: &AgentRunContext,
-) -> Result<String, ApiError> {
-    context.runtime_thread_id.clone().ok_or_else(|| {
-        ApiError::Conflict(format!(
-            "AgentRun {} / {} 缺少 delivery runtime",
-            context.run.id, context.agent.id
-        ))
-    })
-}
-
-async fn resolve_agent_run_context(
+async fn authorize_agent_run_target(
     state: &AppState,
     current_user: &agentdash_integration_api::AuthIdentity,
     run_id: &str,
     agent_id: &str,
     permission: ProjectPermission,
-) -> Result<AgentRunContext, ApiError> {
+) -> Result<AgentRunTarget, ApiError> {
     let run_id = parse_uuid(run_id, "run_id")?;
     let agent_id = parse_uuid(agent_id, "agent_id")?;
     let run = state
@@ -851,32 +847,123 @@ async fn resolve_agent_run_context(
             "LifecycleAgent {agent_id} 不属于 LifecycleRun {run_id}"
         )));
     }
-    let delivery_runtime = delivery_runtime_session_for_agent_run(state, run.id, agent.id).await?;
-    Ok(AgentRunContext {
-        run,
-        agent,
-        runtime_thread_id: delivery_runtime
-            .as_ref()
-            .map(|delivery| delivery.runtime_session_id.clone()),
-    })
+    Ok(AgentRunTarget { run_id, agent_id })
 }
 
-async fn delivery_runtime_session_for_agent_run(
-    state: &AppState,
-    run_id: Uuid,
-    agent_id: Uuid,
-) -> Result<Option<AgentRunDeliveryRuntimeContext>, ApiError> {
-    let binding = state
-        .repos
-        .agent_run_runtime_binding_repo
-        .load(&AgentRunRuntimeTarget { run_id, agent_id })
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    Ok(binding.map(|binding| AgentRunDeliveryRuntimeContext {
-        runtime_session_id: binding.thread_id.to_string(),
-    }))
+fn agent_run_product_projection_error(error: AgentRunProductProjectionError) -> ApiError {
+    match error {
+        AgentRunProductProjectionError::TargetNotBound => {
+            ApiError::Conflict("AgentRun 尚未建立 committed Runtime binding".to_string())
+        }
+        AgentRunProductProjectionError::Binding(message)
+        | AgentRunProductProjectionError::Runtime(message)
+        | AgentRunProductProjectionError::Terminal(message) => ApiError::Internal(message),
+        AgentRunProductProjectionError::Agent(source) => match source.code {
+            AgentServiceErrorCode::InvalidArgument | AgentServiceErrorCode::Unsupported => {
+                ApiError::BadRequest(source.to_string())
+            }
+            AgentServiceErrorCode::NotFound => ApiError::NotFound(source.to_string()),
+            AgentServiceErrorCode::Conflict | AgentServiceErrorCode::StaleBindingGeneration => {
+                ApiError::Conflict(source.to_string())
+            }
+            AgentServiceErrorCode::Unavailable | AgentServiceErrorCode::DeadlineExceeded => {
+                ApiError::ServiceUnavailable(source.to_string())
+            }
+            AgentServiceErrorCode::ProtocolViolation | AgentServiceErrorCode::Internal => {
+                ApiError::Internal(source.to_string())
+            }
+        },
+        AgentRunProductProjectionError::TargetMismatch => ApiError::Internal(error.to_string()),
+    }
+}
+
+fn agent_run_product_command_error(error: AgentRunProductCommandError) -> ApiError {
+    match error {
+        AgentRunProductCommandError::TargetNotBound
+        | AgentRunProductCommandError::TargetMismatch
+        | AgentRunProductCommandError::ActiveTurnMissing => ApiError::Conflict(error.to_string()),
+        AgentRunProductCommandError::InvalidClientCommandId
+        | AgentRunProductCommandError::InvalidCommand(_) => ApiError::BadRequest(error.to_string()),
+        AgentRunProductCommandError::Unavailable(_)
+        | AgentRunProductCommandError::InspectionPending => {
+            ApiError::ServiceUnavailable(error.to_string())
+        }
+        AgentRunProductCommandError::Agent(ref source) => match source.code {
+            AgentServiceErrorCode::InvalidArgument | AgentServiceErrorCode::Unsupported => {
+                ApiError::BadRequest(error.to_string())
+            }
+            AgentServiceErrorCode::Conflict | AgentServiceErrorCode::StaleBindingGeneration => {
+                ApiError::Conflict(error.to_string())
+            }
+            AgentServiceErrorCode::Unavailable | AgentServiceErrorCode::DeadlineExceeded => {
+                ApiError::ServiceUnavailable(error.to_string())
+            }
+            AgentServiceErrorCode::NotFound
+            | AgentServiceErrorCode::ProtocolViolation
+            | AgentServiceErrorCode::Internal => ApiError::Internal(error.to_string()),
+        },
+        AgentRunProductCommandError::Binding(_) => ApiError::Internal(error.to_string()),
+    }
 }
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_agent_service_api::{AgentInputContent, AgentServiceError};
+
+    use super::*;
+
+    #[test]
+    fn missing_bound_agent_source_is_not_reported_as_http_500() {
+        let mapped = agent_run_product_projection_error(AgentRunProductProjectionError::Agent(
+            AgentServiceError::new(
+                AgentServiceErrorCode::NotFound,
+                "Dash source fixture-source was not found",
+                false,
+            ),
+        ));
+
+        assert!(matches!(mapped, ApiError::NotFound(_)));
+    }
+
+    fn fork_submit(
+        client_command_id: &str,
+        input: Vec<AgentInputContent>,
+    ) -> AgentRunForkSubmitRequest {
+        AgentRunForkSubmitRequest {
+            input,
+            client_command_id: client_command_id.to_owned(),
+            executor_config: None,
+            title: None,
+            fork_point_ref: None,
+            metadata_json: None,
+            backend_selection: None,
+        }
+    }
+
+    #[test]
+    fn fork_submit_rejects_invalid_input_before_product_fork_can_start() {
+        assert!(validate_fork_submit_preconditions(&fork_submit("", Vec::new())).is_err());
+        assert!(
+            validate_fork_submit_preconditions(&fork_submit(
+                "fork-submit-1",
+                vec![AgentInputContent::Text {
+                    text: "   ".to_owned(),
+                }],
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_fork_submit_preconditions(&fork_submit(
+                "fork-submit-1",
+                vec![AgentInputContent::Text {
+                    text: "continue".to_owned(),
+                }],
+            ))
+            .is_ok()
+        );
+    }
 }

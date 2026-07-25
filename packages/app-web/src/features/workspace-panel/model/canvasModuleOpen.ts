@@ -18,13 +18,19 @@ export interface OpenUserCanvasModuleParams {
   openOrActivate: (typeId: string, uri: string, refreshContent?: boolean) => void;
 }
 
-export function canvasDefinitionIdFromPresentationUri(uri: string): string | null {
+export type ParsedCanvasSurfaceUri =
+  | { kind: "definition"; id: string }
+  | { kind: "interaction"; id: string };
+
+export function parseCanvasSurfaceUri(uri: string): ParsedCanvasSurfaceUri | null {
   const trimmed = uri.trim();
   if (isConcreteCanvasPresentationUri(trimmed)) {
-    return trimmed.slice("canvas://".length).trim() || null;
+    const id = trimmed.slice("canvas://".length).trim();
+    return id ? { kind: "definition", id } : null;
   }
   if (trimmed.startsWith("interaction://")) {
-    return trimmed.slice("interaction://".length).trim() || null;
+    const id = trimmed.slice("interaction://".length).trim();
+    return id ? { kind: "interaction", id } : null;
   }
   return null;
 }
@@ -66,5 +72,5 @@ export async function openUserCanvasModule({
   if (target?.typeId !== "canvas" || !target.uri) {
     throw new Error("当前 Canvas 没有可打开的 presentation。");
   }
-  openOrActivate(target.typeId, target.uri, target.refreshRuntime);
+  openOrActivate(target.typeId, target.uri, true);
 }

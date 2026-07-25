@@ -5,7 +5,9 @@ import { useRoutineExecutionsQuery } from "./model/routineQueries";
 const EXEC_STATUS_STYLE: Record<RoutineExecutionStatus, string> = {
   pending: "border-border bg-secondary/50 text-muted-foreground",
   dispatched: "border-info/30 bg-info/10 text-info",
+  completed: "border-success/30 bg-success/10 text-success",
   failed: "border-destructive/30 bg-destructive/10 text-destructive",
+  interrupted: "border-warning/30 bg-warning/10 text-warning",
   skipped: "border-warning/30 bg-warning/10 text-warning",
 };
 

@@ -1,0 +1,102 @@
+{
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "capture_method": "executable pinned Main LifecycleMountProvider observable capture",
+    "source_files": [
+      {
+        "path": "crates/agentdash-application-lifecycle/src/lifecycle/vfs_provider.rs",
+        "sha256": "c637071ceb8a2d68546aa950ecb18a40ea949043cdbc59b8f57fa764d49d6c3d"
+      }
+    ]
+  },
+  "protected_observables": {
+    "messages": {
+    "list_paths": [
+      "session/messages/0001__turn-1_message__agent__canonical_assistant_body.md"
+    ],
+    "reads": [
+      {
+        "path": "session/messages/0001__turn-1_message__agent__canonical_assistant_body.md",
+        "body": "# agent message\n\ncanonical assistant body"
+      }
+    ]
+    },
+    "tool_results": {
+    "list_paths": [
+      "session/tool-results/turn-1",
+      "session/tool-results/turn-1/command",
+      "session/tool-results/turn-1/mcp",
+      "session/tool-results/turn-1/command/metadata.json",
+      "session/tool-results/turn-1/command/result.txt",
+      "session/tool-results/turn-1/mcp/metadata.json",
+      "session/tool-results/turn-1/mcp/result.txt"
+    ],
+    "reads": [
+      {
+        "metadata": {
+          "session_id": "agentrun:10000000-0000-0000-0000-000000000001:20000000-0000-0000-0000-000000000002",
+          "item_id": "turn-1:command",
+          "turn_alias": "turn-1",
+          "body_alias": "command",
+          "item_kind": "tool",
+          "tool_name": "shell_exec",
+          "item_status": "completed",
+          "first_event_seq": 2,
+          "last_event_seq": 2,
+          "preview": "command complete body\n",
+          "lifecycle_path": "lifecycle://session/tool-results/turn-1/command/result.txt",
+          "metadata_path": "session/tool-results/turn-1/command/metadata.json",
+          "result_path": "session/tool-results/turn-1/command/result.txt",
+          "body_status": {
+            "status": "available",
+            "message": "result body is available from the current session cache (22 bytes stored, 22 original bytes)."
+          }
+        },
+        "body": "command complete body\n"
+      },
+      {
+        "metadata": {
+          "session_id": "agentrun:10000000-0000-0000-0000-000000000001:20000000-0000-0000-0000-000000000002",
+          "item_id": "turn-1:mcp",
+          "turn_alias": "turn-1",
+          "body_alias": "mcp",
+          "item_kind": "tool",
+          "tool_name": "fixture-server_read",
+          "item_status": "completed",
+          "first_event_seq": 3,
+          "last_event_seq": 3,
+          "preview": "mcp retained body",
+          "lifecycle_path": "lifecycle://session/tool-results/turn-1/mcp/result.txt",
+          "metadata_path": "session/tool-results/turn-1/mcp/metadata.json",
+          "result_path": "session/tool-results/turn-1/mcp/result.txt",
+          "body_status": {
+            "status": "available",
+            "message": "result body is available from the current session cache (220 bytes stored, 4096 original bytes)."
+          },
+          "truncation": {
+            "policy": "head_tail",
+            "originalBytes": 4096
+          }
+        },
+        "body": "{\n  \"content\": [\n    {\n      \"type\": \"text\",\n      \"text\": \"mcp retained body\"\n    }\n  ],\n  \"structuredContent\": null,\n  \"_meta\": {\n    \"truncation\": {\n      \"policy\": \"head_tail\",\n      \"originalBytes\": 4096\n    }\n  }\n}"
+      }
+    ]
+  },
+    "summaries": {
+    "list_paths": [
+      "session/summaries/0001__compact-1__until_3.md"
+    ],
+    "reads": [
+      {
+        "path": "session/summaries/0001__compact-1__until_3.md",
+        "summary": "canonical compacted summary",
+        "trigger": null,
+        "strategy": null,
+        "contains_summary": true,
+        "contains_null_trigger": true,
+        "contains_null_strategy": true
+      }
+    ]
+    }
+  }
+}

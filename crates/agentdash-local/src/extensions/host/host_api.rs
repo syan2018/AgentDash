@@ -105,14 +105,14 @@ fn default_workspace_root(active: &ActiveExtension) -> Result<String, LocalExten
         .as_ref()
         .map(|root| root.to_string_lossy().to_string())
         .ok_or_else(|| {
-            LocalExtensionHostError::Host("extension host 未绑定 execution workspace root".into())
+            LocalExtensionHostError::Host("extension host 未绑定 session workspace root".into())
         })
 }
 
 fn reject_workspace_root_override(params: &Value) -> Result<(), LocalExtensionHostError> {
     if params.get("workspace_root").is_some() {
         return Err(LocalExtensionHostError::Host(
-            "host api 不接受 workspace_root 覆盖；workspace 由当前 execution context 决定"
+            "host api 不接受 workspace_root 覆盖；workspace 由当前 session context 决定"
                 .to_string(),
         ));
     }
@@ -464,7 +464,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_host_apis_use_execution_root_without_registered_roots() {
+    async fn workspace_host_apis_use_session_root_without_registered_roots() {
         let temp = tempfile::tempdir().expect("tempdir");
         let active = active_extension_with_roots(
             Some(temp.path()),
@@ -482,7 +482,7 @@ mod tests {
             })),
         )
         .await
-        .expect("write through execution root");
+        .expect("write through session root");
 
         let text = resolve_host_api(
             Some(&active),
@@ -490,7 +490,7 @@ mod tests {
             &action_params(json!({ "path": "notes/session-root.txt" })),
         )
         .await
-        .expect("read through execution root");
+        .expect("read through session root");
 
         assert_eq!(text, "session-root");
     }
@@ -511,9 +511,9 @@ mod tests {
             &action_params(json!({ "path": "." })),
         )
         .await
-        .expect_err("missing execution root");
+        .expect_err("missing session root");
 
-        assert_contains(&error, "extension host 未绑定 execution workspace root");
+        assert_contains(&error, "extension host 未绑定 session workspace root");
     }
 
     #[tokio::test]
@@ -595,13 +595,13 @@ mod tests {
     fn active_extension(
         workspace_root: &Path,
         action_permissions: &[&str],
-        protocol_permissions: &[&str],
+        channel_permissions: &[&str],
     ) -> ActiveExtension {
         active_extension_with_roots(
             Some(workspace_root),
             vec![workspace_root.to_path_buf()],
             action_permissions,
-            protocol_permissions,
+            channel_permissions,
         )
     }
 
@@ -609,7 +609,7 @@ mod tests {
         default_workspace_root: Option<&Path>,
         workspace_roots: Vec<PathBuf>,
         action_permissions: &[&str],
-        protocol_permissions: &[&str],
+        channel_permissions: &[&str],
     ) -> ActiveExtension {
         let profile_workspace_roots = workspace_roots
             .iter()
@@ -631,14 +631,14 @@ mod tests {
         }
         ActiveExtension {
             extension_key: "local-hello".to_string(),
-            manifest: manifest(action_permissions, protocol_permissions),
+            manifest: manifest(action_permissions, channel_permissions),
             profile: LocalExtensionHostProfile {
                 username: "user".to_string(),
                 platform: "windows".to_string(),
                 arch: "x64".to_string(),
                 backend_id: "backend-1".to_string(),
                 project_id: Some("project-1".to_string()),
-                execution_id: Some("session-1".to_string()),
+                execution_id: Some("execution-1".to_string()),
                 workspace_roots: profile_workspace_roots,
             },
             default_workspace_root: default_workspace_root.map(Path::to_path_buf),
@@ -648,7 +648,7 @@ mod tests {
 
     fn manifest(
         action_permissions: &[&str],
-        protocol_permissions: &[&str],
+        channel_permissions: &[&str],
     ) -> ExtensionTemplatePayload {
         ExtensionTemplatePayload {
             manifest_version: "2".to_string(),
@@ -665,7 +665,7 @@ mod tests {
             asset_refs: vec![],
             runtime_actions: vec![ExtensionRuntimeActionDefinition {
                 action_key: "local-hello.profile".to_string(),
-                kind: ExtensionRuntimeActionKind::Runtime,
+                kind: ExtensionRuntimeActionKind::RuntimeThread,
                 description: "Profile".to_string(),
                 input_schema: json!(true),
                 output_schema: json!(true),
@@ -683,7 +683,7 @@ mod tests {
                     description: "Read env".to_string(),
                     input_schema: json!(true),
                     output_schema: json!(true),
-                    permissions: protocol_permissions
+                    permissions: channel_permissions
                         .iter()
                         .map(|item| item.to_string())
                         .collect(),

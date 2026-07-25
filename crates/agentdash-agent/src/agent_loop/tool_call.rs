@@ -1,6 +1,6 @@
-use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
+use agentdash_diagnostics::{Subsystem, diag};
 use jsonschema::validator_for;
 use tokio_util::sync::CancellationToken;
 

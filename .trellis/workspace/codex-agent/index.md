@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 65
-- **Last Active**: 2026-07-11
+- **Total Sessions**: 69
+- **Last Active**: 2026-07-24
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~408 | Active |
+| `journal-2.md` | ~565 | Active |
 | `journal-1.md` | ~1971 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,7 +30,11 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
-| 65 | 2026-07-11 | 完成 Agent Runtime 与 Workspace 统一架构搬运 | `f867e42e`, `de95d3fc`, `9fba6fa0` | `codex/agent-runtime-workspace-integration` |
+| 69 | 2026-07-24 | 数据库表收束与迁移基线压缩 | `108ae5633` | `codex/agent-runtime-final-convergence-plan` |
+| 68 | 2026-07-23 | 收复ContextFrame模型输入单一权威 | `aae0ba165` | `codex/agent-runtime-final-convergence-plan` |
+| 67 | 2026-07-21 | 收敛 Agent Runtime 持久化权威 | `4e0d90e7e`, `8931a3dc5`, `8b3234b9f`, `9d0e7d7cc`, `ff923b9ec`, `64983279e`, `5abb0e34e`, `cef35ce46`, `279a16fe7`, `24bf539be`, `56e0ec6de`, `9952756ae`, `21ab42055`, `ea04a568e`, `30397c2be`, `6e4f54a2e`, `43dcb31f1`, `d1c34c834`, `4fc73e14d`, `28fa2f0d6`, `ec104c6bd`, `171811bf9`, `328e0f315`, `7078fb072`, `0affa2ce8`, `bd397e441` | `codex/agent-runtime-final-convergence-plan` |
+| 66 | 2026-07-17 | 统一 Managed Agent 会话名称事件与 AgentRun 标题投影 | `4dabce3fb` | `codex/agent-runtime-architecture-convergence` |
+| 65 | 2026-07-17 | 收敛内嵌 Skill 资产与 Workspace Module 展示闭环 | `a3a064035`, `8e22afb81`, `4d56eb3a2` | `codex/agent-runtime-architecture-convergence` |
 | 64 | 2026-07-11 | Agent Runtime 架构收敛与生产切换 | `1330a8560`, `b43d2be53`, `63dbd623b`, `0806457db`, `ef4bdec6f`, `b47164bc5`, `e934c287e`, `af21f9d7c` | `codex/agent-runtime-architecture-convergence` |
 | 63 | 2026-07-09 | 手动上下文压缩生命周期收敛 | `fafe213bf` | `main` |
 | 62 | 2026-07-08 | 存量 JSON 文本列 JSONB 收敛 | `1dd7b043` | `codex/database-jsonb-storage-cleanup` |

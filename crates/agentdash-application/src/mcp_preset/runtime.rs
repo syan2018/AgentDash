@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use agentdash_domain::backend::RuntimeBackendAnchor;
-use agentdash_spi::{McpEnvVar, McpHttpHeader, RuntimeMcpServer, Vfs};
+use agentdash_platform_spi::{McpEnvVar, McpHttpHeader, RuntimeMcpServer, Vfs};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -160,7 +160,7 @@ fn apply_runtime_binding(
 
 fn read_source_value(
     context: &McpRuntimeBindingContext<'_>,
-    mount: &agentdash_spi::Mount,
+    mount: &agentdash_platform_spi::Mount,
     source: &McpRuntimeBindingSource,
 ) -> Result<Option<String>, SourceReadError> {
     match source {
@@ -439,7 +439,7 @@ mod tests {
 
     fn test_vfs() -> Vfs {
         Vfs {
-            mounts: vec![agentdash_spi::Mount {
+            mounts: vec![agentdash_platform_spi::Mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-1".to_string(),

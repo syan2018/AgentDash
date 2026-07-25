@@ -1,6 +1,8 @@
 # 数据库规范
 
-PostgreSQL + SQLx 覆盖云端业务库与本机 embedded PostgreSQL。
+PostgreSQL + SQLx 承载 Product 业务 owner、concrete Agent source/effect 与其他具有独立跨重启
+生命周期的事实。Agent Runtime 和 Complete Agent Host 按 process incarnation 重建；它们不以
+Dashboard schema 保存 operation、projection、route、generation 或 callback 状态。
 
 ## 基础规则
 
@@ -151,6 +153,7 @@ pnpm run migration:guard
 ### 3. Contracts
 
 - `crates/agentdash-infrastructure/migrations/` 是 PostgreSQL schema 事实源。
+- 当前首发基线只有 `0001_init.sql`；其结果必须与 `REQUIRED_POSTGRES_TABLES` 的 46 张业务表完全一致。
 - 普通 schema 变更新增 migration 文件。
 - 已提交 migration 是历史事实；baseline squash / reset / merge 任务必须在任务文档写明授权范围、重建要求和验证命令。
 - Repository 只观察已迁移 schema。API bootstrap 执行 readiness check，不创建表、补列、建索引或迁移数据。
@@ -189,6 +192,81 @@ feature task -> add NNNN_<change>.sql
 
 ```text
 baseline task -> documented authorization -> edit existing migrations -> rebuild DB -> ALLOW_MIGRATION_BASELINE_REWRITE=1 pnpm run migration:guard
+```
+
+---
+
+## Scenario: Current Product Schema Shape
+
+### 1. Scope / Trigger
+
+修改 Product owner、Gate delivery、Canvas runtime state、Terminal projection、group membership 或
+`assert_postgres_schema_ready`。
+
+### 2. Signatures
+
+```sql
+lifecycle_gates.delivery jsonb NOT NULL DEFAULT '{}'::jsonb
+
+agent_run_canvas_state (
+    run_id text,
+    agent_id text,
+    canvas_mount_id text,
+    runtime_observation jsonb,
+    interaction_snapshot jsonb,
+    PRIMARY KEY (run_id, agent_id, canvas_mount_id)
+)
+```
+
+```rust
+const REQUIRED_POSTGRES_TABLES: &[&str]; // 46 张业务表
+const RETIRED_POSTGRES_TABLES: &[&str];
+```
+
+### 3. Contracts
+
+- `groups` 与 `group_memberships` 表达独立的权限主体和成员关系，保留为规范化关系。
+- Gate delivery 随 `LifecycleGate` 生灭，由 `lifecycle_gates.delivery` typed owner document 承载。
+- 同一 run/agent/mount 的 Canvas 状态由一行 `agent_run_canvas_state` 承载；两类文档独立更新。
+- Terminal 当前态、change log 与 projection head 是持久化合同；控制关联作为 typed change delta 写入 change log。
+- `agent_run_lineages` 由 fork graph store 使用，不额外暴露同表的通用 Repository。
+- readiness 同时验证必需表、必需列与 retired 表缺席，使 migration 结果与 repository 合同一致。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 必需表或 owner document 列缺失 | readiness 失败 |
+| retired 表仍存在 | readiness 失败 |
+| Gate delivery JSON shape 无法解码 | 返回带 `lifecycle_gates.delivery` 上下文的领域错误 |
+| Canvas 只写 observation | snapshot 原值保持不变 |
+| Canvas 只写 snapshot | observation 原值保持不变 |
+| owner mutation 并发 | 事务内锁 owner row，再 typed decode / mutate / update |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Gate waiter claim 更新单个 `delivery` 文档并刷新 `updated_at`。
+- Base: 新 Gate 的 `delivery` 从 `{}` 解码为默认 typed state。
+- Bad: 为同一 Gate 或 Canvas owner 的 latest-state 字段另建一对一镜像表。
+
+### 6. Tests Required
+
+- 空库通过 SQLx migration runner，只产生 version 1 且 readiness 通过。
+- Gate delivery 覆盖 register、claim、lease retry、completion 与 replay。
+- Canvas 覆盖 observation/snapshot 独立 roundtrip 和互不覆盖。
+- Terminal projection protocol、fork graph store 与 PostgreSQL repository 定向测试通过。
+- `ALLOW_MIGRATION_BASELINE_REWRITE=1 pnpm run migration:guard` 通过。
+
+### 7. Wrong vs Correct
+
+```text
+owner-local latest state -> 独立一对一镜像表
+owner-local latest state -> owner row 的 typed jsonb document
+```
+
+```text
+同表同时维护通用 lineage repository 与 fork graph store
+agent_run_lineages -> fork graph store 单一持久化入口
 ```
 
 ---
@@ -371,6 +449,9 @@ AgentFrame capability/context/VFS/MCP/execution/profile surface 或 `agent_frame
 ```sql
 ALTER TABLE agent_frames
     ADD COLUMN IF NOT EXISTS surface text;
+
+ALTER TABLE agent_frames
+    ADD COLUMN hook_plan jsonb;
 ```
 
 ```rust
@@ -381,11 +462,13 @@ pub struct AgentFrame {
     pub vfs_surface_json: Option<Value>,
     pub mcp_surface_json: Option<Value>,
     pub execution_profile_json: Option<Value>,
+    pub hook_plan: Option<Value>,
 }
 
 impl AgentFrame {
     pub fn surface_document(&self) -> AgentFrameSurfaceDocument;
     pub fn apply_surface_projection(&mut self);
+    pub fn attach_immutable_hook_plan(&mut self, hook_plan: Value);
 }
 ```
 
@@ -394,7 +477,11 @@ impl AgentFrame {
 - `agent_frames.surface` 是 frame revision surface 的 canonical document。
 - `agent_frames.surface` 当前是既有 `TEXT` JSON schema 事实；新增 adjacent document 按 JSONB 文档列规则设计。
 - Split columns 是 repository projection columns；写入从 `surface_document()` 派生，读取时用于迁移物化和 projection 校验。
+- `agent_frames.hook_plan`是新revision的immutable HookPlan projection，使用业务语义列名与`jsonb`。它保持nullable以明确表示历史Frame尚未物化；生产writer必须写入typed plan，Runtime读取缺失值时精确失败。
+- 最终`hook_plan`列可由后续rename migration建立；已在任一Dashboard或本机Runtime数据库应用的migration内容保持immutable，使所有持久实例通过checksum后顺序收敛到同一schema。
+- rename migration只接受单一旧列或单一最终列，并验证最终类型为`jsonb`；双列并存、来源列缺失或类型错误都表示schema事实不一致，应显式失败。
 - 新 AgentFrame 写入先填 `surface`，再 `apply_surface_projection()`。
+- construction 结束后补挂 HookPlan 时必须调用 `attach_immutable_hook_plan()`：该入口先更新 canonical `surface.hook_plan`，再刷新 split projection；直接写 `frame.hook_plan` 会在下一次 `apply_surface_projection()` 时被 canonical surface 覆盖。
 - Backfill migration 从 split columns 物化 `surface`。
 - 无 live repository query 的索引用新 migration 删除。
 
@@ -406,26 +493,33 @@ impl AgentFrame {
 | row 无 `surface` 但有 split columns | mapper 从 split columns 物化 `surface` |
 | `surface` JSON invalid | mapped `DomainError` 带 `agent_frames.surface` context |
 | split projection serialization fails | insert 前返回 mapped `DomainError` |
+| 新Frame writer没有提供HookPlan | writer/adoption测试失败；该Frame不得进入Runtime materialization |
+| construction 只更新 split `hook_plan` | canonical surface 仍为空，后续 projection 会清除该值；domain/construction port 测试失败 |
+| `hook_plan` digest与requirements不匹配 | typed validation error；Host side effect前停止 |
 | index 无 live query path | 新 migration 删除，并记录理由 |
 
 ### 5. Cases
 
 - Canonical: build `FrameSurfaceDraft` -> write `AgentFrame.surface` -> project split columns。
+- Late attachment: `frame.attach_immutable_hook_plan(plan)` -> update canonical surface -> refresh split columns。
 - Backfill: split columns -> complete `AgentFrameSurfaceDocument`。
 - Boundary mismatch: 只写 `vfs_surface_json`，让 frame surface facts 分裂。
 
 ### 6. Tests Required
 
 - Domain: `surface_document()` 与 `apply_surface_projection()`。
+- Domain: `attach_immutable_hook_plan()` 后 canonical `surface.hook_plan` 与 split `hook_plan` 完全相等。
 - Mapper: surface-overrides-split、split-to-surface materialization。
 - Migration guard for `agent_frames` schema change。
 - Repository roundtrip preserves canonical surface and projected fields。
+- `hook_plan` roundtrip覆盖空requirements与显式ToolBroker requirement；migration guard断言最终列名为`hook_plan jsonb`并覆盖顺序rename migration。
 
 ### 7. Boundary / Canonical
 
 ```rust
 frame.surface = Some(surface_document);
 frame.apply_surface_projection();
+frame.attach_immutable_hook_plan(validated_hook_plan);
 repo.insert_frame(&frame).await?;
 ```
 
@@ -436,4 +530,5 @@ repo.insert_frame(&frame).await?;
 - `RAISE` 占位符是单个 `%`，参数数量匹配。
 - `SELECT ... INTO` 后检查 `FOUND`。
 - JSONB 数组遍历使用 `jsonb_array_elements()`。
-- 迁移脚本保持幂等：`ADD COLUMN IF NOT EXISTS`、`ON CONFLICT DO NOTHING`。
+- 迁移脚本按已知前序 schema 做单向变换并由 `_sqlx_migrations` 保证只执行一次；DDL 直接
+  描述目标结构，使意外 schema drift 在迁移阶段显式失败。

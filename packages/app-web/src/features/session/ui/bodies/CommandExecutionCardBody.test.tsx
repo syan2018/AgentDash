@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { ThreadItem } from "../../../../generated/backbone-protocol";
+import type { AgentDashThreadItem, ThreadItem } from "../../../../generated/backbone-protocol";
 import { SessionWorkspacePanelActionProvider } from "../SessionWorkspacePanelActionProvider";
 import { CommandExecutionCardBody } from "./CommandExecutionCardBody";
 
@@ -56,6 +56,27 @@ describe("CommandExecutionCardBody", () => {
     expect(html).toContain("查看输出");
     expect(html).toContain("disabled");
   });
+
+  it("renders durable shell output after the metadata separator", () => {
+    const html = renderToStaticMarkup(
+      <CommandExecutionCardBody
+        item={shellItem([
+          "operation: start",
+          "command: echo hello",
+          "cwd: main://",
+          "state: completed",
+          "exit_code: 0",
+          "terminal_id: term-1",
+          "next_seq: 1",
+          "",
+          "hello",
+        ].join("\n"))}
+      />,
+    );
+
+    expect(html).toContain("hello");
+    expect(html).not.toContain("terminal_id: term-1");
+  });
 });
 
 function commandItem(aggregatedOutput: string): Extract<ThreadItem, { type: "commandExecution" }> {
@@ -71,5 +92,22 @@ function commandItem(aggregatedOutput: string): Extract<ThreadItem, { type: "com
     aggregatedOutput,
     exitCode: 0,
     durationMs: 10,
+  };
+}
+
+function shellItem(
+  aggregatedOutput: string,
+): Extract<AgentDashThreadItem, { type: "shellExec" }> {
+  return {
+    type: "shellExec",
+    id: "shell-1",
+    command: "echo hello",
+    cwd: "main://",
+    executionMode: "mountExec",
+    arguments: { command: "echo hello" },
+    status: "completed",
+    aggregatedOutput,
+    exitCode: 0,
+    success: true,
   };
 }

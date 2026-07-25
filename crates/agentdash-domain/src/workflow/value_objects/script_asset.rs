@@ -74,7 +74,7 @@ pub struct WorkflowScriptProvenance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -90,7 +90,7 @@ impl WorkflowScriptProvenance {
             generated_by_agent_run_id: None,
             edited_by: None,
             approved_by: None,
-            runtime_session_id: None,
+            runtime_thread_id: None,
             created_at: now,
             updated_at: now,
             approved_at: None,
@@ -166,7 +166,7 @@ pub struct RunScriptArtifact {
     pub artifact_id: Uuid,
     pub lifecycle_run_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     pub status: RunScriptArtifactStatus,
     pub revision: i32,
     pub source_text: String,
@@ -205,7 +205,7 @@ impl RunScriptArtifact {
         Self {
             artifact_id: Uuid::new_v4(),
             lifecycle_run_id,
-            runtime_session_id: provenance.runtime_session_id.clone(),
+            runtime_thread_id: provenance.runtime_thread_id.clone(),
             status: RunScriptArtifactStatus::Draft,
             revision: 1,
             source_digest: workflow_script_source_digest(&source_text),

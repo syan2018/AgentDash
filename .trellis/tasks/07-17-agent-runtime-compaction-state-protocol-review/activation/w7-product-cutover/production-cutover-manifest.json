@@ -1,0 +1,2325 @@
+{
+  "component": "W7 Product / Protocol production cutover",
+  "base_revision": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
+  "product_code_commit": "7f79e21fa59adb40cf94067b684ae79d3685892b",
+  "production_entry": "agentdash_application_agentrun::agent_run::product_protocol",
+  "product_owned_code": [
+    {
+      "path": "crates/agentdash-application-agentrun/src/agent_run/product_protocol/fork_saga.rs",
+      "symbols": [
+        "AgentRunForkFacade::new",
+        "AgentRunForkSagaRepository",
+        "AgentRunForkSagaRepository::commit_product_graph",
+        "AgentRunForkSagaWorker::advance",
+        "AGENT_RUN_FORK_SAGA_SCHEMA_CONTRACT"
+      ],
+      "invariant": "预分配 child identity、durable dispatch、同 identity inspect、Runtime/Agent fork、Host binding、Product graph transaction、activation、Lost 按唯一顺序推进"
+    },
+    {
+      "path": "crates/agentdash-application-agentrun/src/agent_run/product_protocol/companion.rs",
+      "symbols": [
+        "compile_companion_dispatch_target",
+        "CompanionDispatchCoordinator::new",
+        "CompanionFreshSagaRepository",
+        "CompanionFreshSagaWorker::advance",
+        "COMPANION_FRESH_SAGA_SCHEMA_CONTRACT"
+      ],
+      "invariant": "Full 只走 exact ForkParentHistory；Fresh 只走 typed initial context evidence、activation、first SubmitInput exactly-once"
+    },
+    {
+      "path": "crates/agentdash-application-agentrun/src/agent_run/product_protocol/feed.rs",
+      "symbols": [
+        "AgentRunRuntimeFeedReconnect::reconnect",
+        "consume_managed_runtime_snapshot",
+        "consume_managed_runtime_change_page"
+      ],
+      "invariant": "UI/API 只消费 ManagedRuntimeSnapshot、ManagedRuntimeChangePage、command_availability；gap 必须 reload snapshot"
+    }
+  ],
+  "w7_consumer_cut": [
+    {
+      "crate": "agentdash-api",
+      "owner": "Product / Protocol",
+      "records": [
+        {
+          "path": "crates/agentdash-api/src/agent_run_terminal_control.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal",
+            "AgentRunJournalService",
+            "RuntimeJournalFact",
+            "RuntimeJournalRecord"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-api/src/agent_run_terminal_control.rs 将 AgentRunJournal, AgentRunJournalService, RuntimeJournalFact, RuntimeJournalRecord caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/app_state.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal",
+            "AgentRunJournalService",
+            "RuntimeJournalRecord",
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentRunForkSagaRepository",
+            "AgentRunForkRuntimePort",
+            "AgentRunForkProductGraphPort",
+            "CompanionFreshSagaRepository",
+            "CompanionFreshRuntimePort",
+            "AgentRunRuntimeProjectionPort"
+          ],
+          "replacement": "crates/agentdash-api/src/app_state.rs 将 AgentRunJournal, AgentRunJournalService, RuntimeJournalRecord, RuntimeToolProvider caller 切到 AgentRunForkSagaRepository, AgentRunForkRuntimePort, AgentRunForkProductGraphPort, CompanionFreshSagaRepository, CompanionFreshRuntimePort, AgentRunRuntimeProjectionPort。",
+          "prerequisites": [
+            "W8 PostgreSQL fork and Companion repositories",
+            "Platform Runtime production ports"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunForkSagaRepository, AgentRunForkRuntimePort, AgentRunForkProductGraphPort, CompanionFreshSagaRepository, CompanionFreshRuntimePort, AgentRunRuntimeProjectionPort 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/bootstrap/agent_runtime_surface.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult",
+            "DynAgentTool"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-api/src/bootstrap/agent_runtime_surface.rs 将 AgentTool, AgentToolError, AgentToolResult, DynAgentTool caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/bootstrap/enterprise_remote_e2e.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal",
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult",
+            "DynAgentTool"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-api/src/bootstrap/enterprise_remote_e2e.rs 将 AgentRunJournal, AgentTool, AgentToolError, AgentToolResult, DynAgentTool caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/bootstrap/production_tools_e2e.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeJournalFact",
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-api/src/bootstrap/production_tools_e2e.rs 将 RuntimeJournalFact, RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/bootstrap/runtime_gateway.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSessionMcpAccess"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-api/src/bootstrap/runtime_gateway.rs 将 RuntimeSessionMcpAccess caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/bootstrap/vfs.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-api/src/bootstrap/vfs.rs 将 AgentRunJournal caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/dto/session.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-api/src/dto/session.rs 将 AgentRunJournal caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/relay/registry.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSessionStateChanged"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-api/src/relay/registry.rs 将 RuntimeSessionStateChanged caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/routes/agent_run_workspace.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSessionRefDto"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-api/src/routes/agent_run_workspace.rs 将 RuntimeSessionRefDto caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/routes/lifecycle_agents.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal",
+            "RuntimeJournalFact",
+            "RuntimeJournalRecord"
+          ],
+          "symbols_add": [
+            "AgentRunForkFacade",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-api/src/routes/lifecycle_agents.rs 将 AgentRunJournal, RuntimeJournalFact, RuntimeJournalRecord caller 切到 AgentRunForkFacade, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunForkFacade, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/routes/lifecycle_contracts.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession",
+            "RuntimeSessionRefDto",
+            "RuntimeSessionRefView"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-api/src/routes/lifecycle_contracts.rs 将 RuntimeSession, RuntimeSessionRefDto, RuntimeSessionRefView caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/routes/runtime_traces.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-api/src/routes/runtime_traces.rs 将 AgentRunJournal caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-api/src/vfs_access/mod.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-api/src/vfs_access/mod.rs 将 AgentTool caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "AppState final Product protocol bindings",
+            "canonical Managed Runtime generated DTO"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        }
+      ]
+    },
+    {
+      "crate": "agentdash-application",
+      "owner": "Product / Protocol",
+      "records": [
+        {
+          "path": "crates/agentdash-application/src/companion/dispatch.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentToolError"
+          ],
+          "symbols_add": [
+            "CompanionDispatchCoordinator",
+            "CompanionDispatchTargetPlan"
+          ],
+          "replacement": "crates/agentdash-application/src/companion/dispatch.rs 将 AgentToolError caller 切到 CompanionDispatchCoordinator, CompanionDispatchTargetPlan。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 CompanionDispatchCoordinator, CompanionDispatchTargetPlan 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/companion/mod.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "CompanionDispatchCoordinator",
+            "CompanionDispatchTargetPlan"
+          ],
+          "replacement": "crates/agentdash-application/src/companion/mod.rs 将 RuntimeToolProvider caller 切到 CompanionDispatchCoordinator, CompanionDispatchTargetPlan。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 CompanionDispatchCoordinator, CompanionDispatchTargetPlan 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/companion/runtime_tool_provider.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "DynAgentTool",
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/companion/runtime_tool_provider.rs 将 DynAgentTool, RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/companion/tool_context.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentToolError"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/companion/tool_context.rs 将 AgentToolError caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/companion/tools.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/companion/tools.rs 将 AgentTool, AgentToolError, AgentToolResult caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/frame_construction/classify.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/frame_construction/classify.rs 将 RuntimeSession caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/frame_construction/composer_companion.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/frame_construction/composer_companion.rs 将 RuntimeSession caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/frame_construction/composer_project_agent.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/frame_construction/composer_project_agent.rs 将 RuntimeSession caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/frame_construction/composer_workflow_node.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/frame_construction/composer_workflow_node.rs 将 RuntimeSession caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/frame_construction/mod.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/frame_construction/mod.rs 将 RuntimeSession caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/frame_construction/request_assembler.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/frame_construction/request_assembler.rs 将 RuntimeSession caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/runtime_tools/mod.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/runtime_tools/mod.rs 将 RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/runtime_tools/provider.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult",
+            "DynAgentTool",
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/runtime_tools/provider.rs 将 AgentTool, AgentToolError, AgentToolResult, DynAgentTool, RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/runtime_tools/vfs_provider.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "DynAgentTool",
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/runtime_tools/vfs_provider.rs 将 DynAgentTool, RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/task/mod.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/task/mod.rs 将 RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/task/runtime_tool_provider.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "DynAgentTool",
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/task/runtime_tool_provider.rs 将 DynAgentTool, RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/task/tools.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/task/tools.rs 将 AgentTool, AgentToolError, AgentToolResult caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/vfs_owner_providers.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal",
+            "AgentRunJournalService"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/vfs_owner_providers.rs 将 AgentRunJournal, AgentRunJournalService caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/wait_activity/mod.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/wait_activity/mod.rs 将 RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/wait_activity/provider.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "DynAgentTool",
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/wait_activity/provider.rs 将 DynAgentTool, RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/wait_activity/service.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentToolError"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/wait_activity/service.rs 将 AgentToolError caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/wait_activity/tests.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/wait_activity/tests.rs 将 RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application/src/wait_activity/tool.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application/src/wait_activity/tool.rs 将 AgentTool, AgentToolError, AgentToolResult caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        }
+      ]
+    },
+    {
+      "crate": "agentdash-application-agentrun",
+      "owner": "Product / Protocol",
+      "records": [
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/business_frame_surface_query.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/business_frame_surface_query.rs 将 RuntimeSession caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/context_projection.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal",
+            "AgentRunJournalService",
+            "RuntimeJournalFact",
+            "RuntimeJournalRecord"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/context_projection.rs 将 AgentRunJournal, AgentRunJournalService, RuntimeJournalFact, RuntimeJournalRecord caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/context_sources.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "DynAgentTool",
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/context_sources.rs 将 AgentTool, DynAgentTool, RuntimeToolProvider caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/delivery_runtime_selection.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/delivery_runtime_selection.rs 将 RuntimeSession caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/frame/hook_runtime.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSessionHookTargetPort",
+            "RuntimeSessionHookTargetRuntimeRequest",
+            "RuntimeSessionLivePortError"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/frame/hook_runtime.rs 将 RuntimeSessionHookTargetPort, RuntimeSessionHookTargetRuntimeRequest, RuntimeSessionLivePortError caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/frame/runtime_launch.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/frame/runtime_launch.rs 将 RuntimeSession caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/frame/surface_service.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/frame/surface_service.rs 将 RuntimeSession caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/journal.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal",
+            "AgentRunJournalService",
+            "RuntimeJournalFact",
+            "RuntimeJournalRecord"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/journal.rs 将 AgentRunJournal, AgentRunJournalService, RuntimeJournalFact, RuntimeJournalRecord caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/lifecycle_read_model_facade.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSessionRefView"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/lifecycle_read_model_facade.rs 将 RuntimeSessionRefView caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/mod.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal",
+            "AgentRunJournalService",
+            "RuntimeSessionControlPort",
+            "RuntimeSessionCorePort",
+            "RuntimeSessionEventSubscription",
+            "RuntimeSessionEventingPort",
+            "RuntimeSessionLaunchPort",
+            "RuntimeSessionRefReadModel",
+            "RuntimeSessionRefView",
+            "RuntimeSessionTraceReadModel"
+          ],
+          "symbols_add": [
+            "AgentRunForkFacade",
+            "AgentRunForkSagaRepository",
+            "AgentRunRuntimeProjectionPort"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/mod.rs 将 AgentRunJournal, AgentRunJournalService, RuntimeSessionControlPort, RuntimeSessionCorePort, RuntimeSessionEventSubscription, RuntimeSessionEventingPort, RuntimeSessionLaunchPort, RuntimeSessionRefReadModel, RuntimeSessionRefView, RuntimeSessionTraceReadModel caller 切到 AgentRunForkFacade, AgentRunForkSagaRepository, AgentRunRuntimeProjectionPort。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunForkFacade, AgentRunForkSagaRepository, AgentRunRuntimeProjectionPort 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/presentation_read_model.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSessionRefReadModel",
+            "RuntimeSessionTraceReadModel"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/presentation_read_model.rs 将 RuntimeSessionRefReadModel, RuntimeSessionTraceReadModel caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/runtime_application_presentation.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeJournalFact"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/runtime_application_presentation.rs 将 RuntimeJournalFact caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/runtime_session_boundary.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSessionControlPort",
+            "RuntimeSessionCorePort",
+            "RuntimeSessionEventSubscription",
+            "RuntimeSessionEventingPort",
+            "RuntimeSessionLaunchPort"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/runtime_session_boundary.rs 将 RuntimeSessionControlPort, RuntimeSessionCorePort, RuntimeSessionEventSubscription, RuntimeSessionEventingPort, RuntimeSessionLaunchPort caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/product_protocol/thread_name_projection.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeJournalFact",
+            "RuntimeJournalRecord"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/product_protocol/thread_name_projection.rs 从 ManagedRuntimePlatformChange 与 canonical ManagedRuntimeSnapshot 校验 source evidence，并只发布 Product title invalidation。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/workspace/query.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSessionRefView"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/workspace/query.rs 将 RuntimeSessionRefView caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-agentrun/src/agent_run/workspace/types.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSessionRefView"
+          ],
+          "symbols_add": [
+            "AgentRunRuntimeProjectionPort",
+            "AgentRunRuntimeFeedReconnect",
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-agentrun/src/agent_run/workspace/types.rs 将 RuntimeSessionRefView caller 切到 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "W8 saga repositories",
+            "AgentRunRuntimeProjectionPort production binding"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        }
+      ]
+    },
+    {
+      "crate": "agentdash-application-lifecycle",
+      "owner": "Product / Protocol",
+      "records": [
+        {
+          "path": "crates/agentdash-application-lifecycle/src/lifecycle/orchestrator.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-lifecycle/src/lifecycle/orchestrator.rs 将 RuntimeSession caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-lifecycle/src/lifecycle/projection.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession",
+            "RuntimeSessionPolicy"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-lifecycle/src/lifecycle/projection.rs 将 RuntimeSession, RuntimeSessionPolicy caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-lifecycle/src/lifecycle/run_view_builder.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession",
+            "RuntimeSessionRefView"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-lifecycle/src/lifecycle/run_view_builder.rs 将 RuntimeSession, RuntimeSessionRefView caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-lifecycle/src/lifecycle/session_association.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession",
+            "RuntimeSessionCurrentFrame"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-lifecycle/src/lifecycle/session_association.rs 将 RuntimeSession, RuntimeSessionCurrentFrame caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-lifecycle/src/lifecycle/surface/journey/mod.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal",
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-lifecycle/src/lifecycle/surface/journey/mod.rs 将 AgentRunJournal, RuntimeSession caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-lifecycle/src/lifecycle/surface/journey/session_items.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentToolCall"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-lifecycle/src/lifecycle/surface/journey/session_items.rs 将 AgentToolCall caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-lifecycle/src/lifecycle/surface/surface_projector.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage"
+          ],
+          "replacement": "crates/agentdash-application-lifecycle/src/lifecycle/surface/surface_projector.rs 将 RuntimeSession caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-lifecycle/src/lifecycle/tools/advance_node.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application-lifecycle/src/lifecycle/tools/advance_node.rs 将 AgentTool, AgentToolError, AgentToolResult caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-lifecycle/src/lifecycle/tools/mod.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application-lifecycle/src/lifecycle/tools/mod.rs 将 RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-lifecycle/src/lifecycle/tools/runtime_provider.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "DynAgentTool",
+            "RuntimeToolProvider"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application-lifecycle/src/lifecycle/tools/runtime_provider.rs 将 DynAgentTool, RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-lifecycle/src/lifecycle/vfs_provider.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentRunJournal",
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "BoundAgentSurfaceContribution",
+            "PlatformToolBroker"
+          ],
+          "replacement": "crates/agentdash-application-lifecycle/src/lifecycle/vfs_provider.rs 将 AgentRunJournal, RuntimeSession caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+        }
+      ]
+    },
+    {
+      "crate": "agentdash-application-ports",
+      "owner": "Product / Protocol",
+      "records": [
+        {
+          "path": "crates/agentdash-application-ports/src/agent_run_surface.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage",
+            "AgentHostCallbacks"
+          ],
+          "replacement": "crates/agentdash-application-ports/src/agent_run_surface.rs 将 RuntimeSession caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage, AgentHostCallbacks。",
+          "prerequisites": [
+            "Complete Agent Host callback contract",
+            "Managed Runtime projection contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage, AgentHostCallbacks 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-ports/src/lifecycle_read_model.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession",
+            "RuntimeSessionRefView"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage",
+            "AgentHostCallbacks"
+          ],
+          "replacement": "crates/agentdash-application-ports/src/lifecycle_read_model.rs 将 RuntimeSession, RuntimeSessionRefView caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage, AgentHostCallbacks。",
+          "prerequisites": [
+            "Complete Agent Host callback contract",
+            "Managed Runtime projection contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage, AgentHostCallbacks 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-ports/src/lifecycle_surface_projection.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSession",
+            "RuntimeSessionPolicy"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage",
+            "AgentHostCallbacks"
+          ],
+          "replacement": "crates/agentdash-application-ports/src/lifecycle_surface_projection.rs 将 RuntimeSession, RuntimeSessionPolicy caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage, AgentHostCallbacks。",
+          "prerequisites": [
+            "Complete Agent Host callback contract",
+            "Managed Runtime projection contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage, AgentHostCallbacks 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-ports/src/mcp_discovery.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "DynAgentTool"
+          ],
+          "symbols_add": [
+            "AgentSurfaceSnapshot",
+            "AgentToolInvocation",
+            "AgentToolResult"
+          ],
+          "replacement": "crates/agentdash-application-ports/src/mcp_discovery.rs 将 DynAgentTool caller 切到 AgentSurfaceSnapshot, AgentToolInvocation, AgentToolResult。",
+          "prerequisites": [
+            "Complete Agent Host callback contract",
+            "Managed Runtime projection contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, AgentToolInvocation, AgentToolResult 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-ports/src/runtime_session_delivery.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSessionDeliveryError",
+            "RuntimeSessionDeliveryRef",
+            "RuntimeSessionTurnDeliveryCommand",
+            "RuntimeSessionTurnDeliveryPort",
+            "RuntimeSessionTurnDeliveryResult"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage",
+            "AgentHostCallbacks"
+          ],
+          "replacement": "crates/agentdash-application-ports/src/runtime_session_delivery.rs 将 RuntimeSessionDeliveryError, RuntimeSessionDeliveryRef, RuntimeSessionTurnDeliveryCommand, RuntimeSessionTurnDeliveryPort, RuntimeSessionTurnDeliveryResult caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage, AgentHostCallbacks。",
+          "prerequisites": [
+            "Complete Agent Host callback contract",
+            "Managed Runtime projection contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage, AgentHostCallbacks 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-ports/src/runtime_session_live.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "RuntimeSessionEffectiveCapabilityPort",
+            "RuntimeSessionHookTargetPort",
+            "RuntimeSessionHookTargetRuntimeRequest",
+            "RuntimeSessionLivePortError",
+            "RuntimeSessionMailboxAutoResumeRequest",
+            "RuntimeSessionMailboxRuntimePort"
+          ],
+          "symbols_add": [
+            "ManagedRuntimeSnapshot",
+            "ManagedRuntimeChangePage",
+            "AgentHostCallbacks"
+          ],
+          "replacement": "crates/agentdash-application-ports/src/runtime_session_live.rs 将 RuntimeSessionEffectiveCapabilityPort, RuntimeSessionHookTargetPort, RuntimeSessionHookTargetRuntimeRequest, RuntimeSessionLivePortError, RuntimeSessionMailboxAutoResumeRequest, RuntimeSessionMailboxRuntimePort caller 切到 ManagedRuntimeSnapshot, ManagedRuntimeChangePage, AgentHostCallbacks。",
+          "prerequisites": [
+            "Complete Agent Host callback contract",
+            "Managed Runtime projection contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 ManagedRuntimeSnapshot, ManagedRuntimeChangePage, AgentHostCallbacks 的 owning crate check 覆盖。"
+        }
+      ]
+    },
+    {
+      "crate": "agentdash-application-vfs",
+      "owner": "Product / Protocol",
+      "records": [
+        {
+          "path": "crates/agentdash-application-vfs/src/tools/factory.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "DynAgentTool"
+          ],
+          "symbols_add": [
+            "AgentSurfaceContributionPayload::Tool",
+            "BoundAgentSurfaceContribution",
+            "AgentToolInvocation",
+            "AgentToolResult"
+          ],
+          "replacement": "crates/agentdash-application-vfs/src/tools/factory.rs 将 DynAgentTool caller 切到 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-vfs/src/tools/common.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentToolResult"
+          ],
+          "symbols_add": [
+            "AgentSurfaceContributionPayload::Tool",
+            "BoundAgentSurfaceContribution",
+            "AgentToolInvocation",
+            "AgentToolResult"
+          ],
+          "replacement": "crates/agentdash-application-vfs/src/tools/common.rs 将 AgentToolResult caller 切到 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-vfs/src/tools/fs/apply_patch.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult"
+          ],
+          "symbols_add": [
+            "AgentSurfaceContributionPayload::Tool",
+            "BoundAgentSurfaceContribution",
+            "AgentToolInvocation",
+            "AgentToolResult"
+          ],
+          "replacement": "crates/agentdash-application-vfs/src/tools/fs/apply_patch.rs 将 AgentTool, AgentToolError, AgentToolResult caller 切到 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-vfs/src/tools/fs/glob.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult"
+          ],
+          "symbols_add": [
+            "AgentSurfaceContributionPayload::Tool",
+            "BoundAgentSurfaceContribution",
+            "AgentToolInvocation",
+            "AgentToolResult"
+          ],
+          "replacement": "crates/agentdash-application-vfs/src/tools/fs/glob.rs 将 AgentTool, AgentToolError, AgentToolResult caller 切到 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-vfs/src/tools/fs/grep.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult"
+          ],
+          "symbols_add": [
+            "AgentSurfaceContributionPayload::Tool",
+            "BoundAgentSurfaceContribution",
+            "AgentToolInvocation",
+            "AgentToolResult"
+          ],
+          "replacement": "crates/agentdash-application-vfs/src/tools/fs/grep.rs 将 AgentTool, AgentToolError, AgentToolResult caller 切到 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-vfs/src/tools/fs/read.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult"
+          ],
+          "symbols_add": [
+            "AgentSurfaceContributionPayload::Tool",
+            "BoundAgentSurfaceContribution",
+            "AgentToolInvocation",
+            "AgentToolResult"
+          ],
+          "replacement": "crates/agentdash-application-vfs/src/tools/fs/read.rs 将 AgentTool, AgentToolError, AgentToolResult caller 切到 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-vfs/src/tools/fs/shell.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult"
+          ],
+          "symbols_add": [
+            "AgentSurfaceContributionPayload::Tool",
+            "BoundAgentSurfaceContribution",
+            "AgentToolInvocation",
+            "AgentToolResult"
+          ],
+          "replacement": "crates/agentdash-application-vfs/src/tools/fs/shell.rs 将 AgentTool, AgentToolError, AgentToolResult caller 切到 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult 的 owning crate check 覆盖。"
+        },
+        {
+          "path": "crates/agentdash-application-vfs/src/tools/mounts.rs",
+          "owner": "Product / Protocol",
+          "symbols_remove": [
+            "AgentTool",
+            "AgentToolError",
+            "AgentToolResult"
+          ],
+          "symbols_add": [
+            "AgentSurfaceContributionPayload::Tool",
+            "BoundAgentSurfaceContribution",
+            "AgentToolInvocation",
+            "AgentToolResult"
+          ],
+          "replacement": "crates/agentdash-application-vfs/src/tools/mounts.rs 将 AgentTool, AgentToolError, AgentToolResult caller 切到 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult。",
+          "prerequisites": [
+            "PlatformToolBroker production binding",
+            "Complete Agent Business Surface contract"
+          ],
+          "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceContributionPayload::Tool, BoundAgentSurfaceContribution, AgentToolInvocation, AgentToolResult 的 owning crate check 覆盖。"
+        }
+      ]
+    }
+  ],
+  "shared_owner_dependencies": [
+    {
+      "owner": "Platform Runtime",
+      "symbols": [
+        "agentdash_agent_runtime_host::CompleteAgentHost",
+        "agentdash_agent_runtime::CompleteAgentStateRepository",
+        "agentdash_agent_runtime::CompleteAgentStateReconciler",
+        "agentdash_agent_runtime::PlatformToolBroker",
+        "agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeProjectionSchema"
+      ],
+      "required_change": "提供 durable host/state repository seam、Product fork/fresh adapter、Business Surface/Tool Broker production binding"
+    },
+    {
+      "owner": "Dash / Native",
+      "symbols": [
+        "agentdash_agent_service_api::CompleteAgentService::fork",
+        "agentdash_agent_service_api::CompleteAgentService::create",
+        "agentdash_agent_service_api::CreateAgentCommand::initial_context",
+        "agentdash_agent_service_api::CompleteAgentService::inspect",
+        "agentdash_agent_service_api::AppliedInitialContextEvidence"
+      ],
+      "required_change": "exact history fork 返回 child coordinate/digest；Fresh 返回可核验 context evidence"
+    },
+    {
+      "owner": "W8 Hard Cut",
+      "symbols": [
+        "crates/agentdash-api/src/app_state.rs::AppState",
+        "crates/agentdash-api/src/routes.rs",
+        "crates/agentdash-infrastructure/src/agent_runtime_composition.rs",
+        "crates/agentdash-contracts/src/lib.rs",
+        "packages/app-web/src/generated",
+        "Cargo.toml",
+        "Cargo.lock"
+      ],
+      "required_change": "实现唯一 migration/repository adapter、切 composition/canonical generator、删除 journal/RuntimeSession/legacy crate"
+    }
+  ],
+  "api_frontend_generator_cut": {
+    "task_local_input": {
+      "schema": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w7-product-protocol/managed-runtime-projection.schema.json",
+      "manifest": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w7-product-protocol/manifest.json",
+      "fixture": "packages/app-web/src/features/session/model/fixtures/managedRuntimeProjection.json"
+    },
+    "canonical_generator_owner": "W8 Hard Cut",
+    "parity": [
+      "snapshot revision、change cursor、thread/turn/item/interaction projection 原样对齐",
+      "command availability 只从同 revision canonical snapshot 读取",
+      "Compaction phase/receipt/change 与 Runtime Contract 原样对齐",
+      "cursor gap 返回 typed gap 并 reload snapshot，再从 snapshot revision 读取 tail"
+    ],
+    "forbidden_projection": [
+      "frontend 根据 product status、journal arrival 或 worker timing 推断 availability/activity",
+      "API 把 Runtime events 转成 SessionEventResponse/Backbone journal 作为恢复事实",
+      "generator 为 W7 schema 建立第二套 canonical root"
+    ],
+    "records": [
+      {
+        "path": "crates/agentdash-api/src/agent_run_terminal_control.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "AgentRunJournal",
+          "AgentRunJournalService",
+          "RuntimeJournalFact",
+          "RuntimeJournalRecord"
+        ],
+        "symbols_add": [
+          "AgentRunRuntimeProjectionPort",
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeChangePage"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/agent_run_terminal_control.rs 将 AgentRunJournal, AgentRunJournalService, RuntimeJournalFact, RuntimeJournalRecord caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/app_state.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "AgentRunJournal",
+          "AgentRunJournalService",
+          "RuntimeJournalRecord",
+          "RuntimeToolProvider"
+        ],
+        "symbols_add": [
+          "AgentRunForkSagaRepository",
+          "AgentRunForkRuntimePort",
+          "AgentRunForkProductGraphPort",
+          "CompanionFreshSagaRepository",
+          "CompanionFreshRuntimePort",
+          "AgentRunRuntimeProjectionPort"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/app_state.rs 将 AgentRunJournal, AgentRunJournalService, RuntimeJournalRecord, RuntimeToolProvider caller 切到 AgentRunForkSagaRepository, AgentRunForkRuntimePort, AgentRunForkProductGraphPort, CompanionFreshSagaRepository, CompanionFreshRuntimePort, AgentRunRuntimeProjectionPort。",
+        "prerequisites": [
+          "W8 PostgreSQL fork and Companion repositories",
+          "Platform Runtime production ports"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunForkSagaRepository, AgentRunForkRuntimePort, AgentRunForkProductGraphPort, CompanionFreshSagaRepository, CompanionFreshRuntimePort, AgentRunRuntimeProjectionPort 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/bootstrap/agent_runtime_surface.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "AgentTool",
+          "AgentToolError",
+          "AgentToolResult",
+          "DynAgentTool"
+        ],
+        "symbols_add": [
+          "AgentSurfaceSnapshot",
+          "BoundAgentSurfaceContribution",
+          "PlatformToolBroker"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/bootstrap/agent_runtime_surface.rs 将 AgentTool, AgentToolError, AgentToolResult, DynAgentTool caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/bootstrap/enterprise_remote_e2e.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "AgentRunJournal",
+          "AgentTool",
+          "AgentToolError",
+          "AgentToolResult",
+          "DynAgentTool"
+        ],
+        "symbols_add": [
+          "AgentSurfaceSnapshot",
+          "BoundAgentSurfaceContribution",
+          "PlatformToolBroker"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/bootstrap/enterprise_remote_e2e.rs 将 AgentRunJournal, AgentTool, AgentToolError, AgentToolResult, DynAgentTool caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/bootstrap/production_tools_e2e.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "RuntimeJournalFact",
+          "RuntimeToolProvider"
+        ],
+        "symbols_add": [
+          "AgentSurfaceSnapshot",
+          "BoundAgentSurfaceContribution",
+          "PlatformToolBroker"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/bootstrap/production_tools_e2e.rs 将 RuntimeJournalFact, RuntimeToolProvider caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/bootstrap/runtime_gateway.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "RuntimeSessionMcpAccess"
+        ],
+        "symbols_add": [
+          "AgentSurfaceSnapshot",
+          "BoundAgentSurfaceContribution",
+          "PlatformToolBroker"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/bootstrap/runtime_gateway.rs 将 RuntimeSessionMcpAccess caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/bootstrap/vfs.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "AgentRunJournal"
+        ],
+        "symbols_add": [
+          "AgentSurfaceSnapshot",
+          "BoundAgentSurfaceContribution",
+          "PlatformToolBroker"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/bootstrap/vfs.rs 将 AgentRunJournal caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/dto/session.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "AgentRunJournal"
+        ],
+        "symbols_add": [
+          "AgentRunRuntimeProjectionPort",
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeChangePage"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/dto/session.rs 将 AgentRunJournal caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/relay/registry.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "RuntimeSessionStateChanged"
+        ],
+        "symbols_add": [
+          "AgentRunRuntimeProjectionPort",
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeChangePage"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/relay/registry.rs 将 RuntimeSessionStateChanged caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/routes/agent_run_workspace.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "RuntimeSessionRefDto"
+        ],
+        "symbols_add": [
+          "AgentRunRuntimeProjectionPort",
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeChangePage"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/routes/agent_run_workspace.rs 将 RuntimeSessionRefDto caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/routes/lifecycle_agents.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "AgentRunJournal",
+          "RuntimeJournalFact",
+          "RuntimeJournalRecord"
+        ],
+        "symbols_add": [
+          "AgentRunForkFacade",
+          "AgentRunRuntimeFeedReconnect",
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeChangePage"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/routes/lifecycle_agents.rs 将 AgentRunJournal, RuntimeJournalFact, RuntimeJournalRecord caller 切到 AgentRunForkFacade, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunForkFacade, AgentRunRuntimeFeedReconnect, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/routes/lifecycle_contracts.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "RuntimeSession",
+          "RuntimeSessionRefDto",
+          "RuntimeSessionRefView"
+        ],
+        "symbols_add": [
+          "AgentRunRuntimeProjectionPort",
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeChangePage"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/routes/lifecycle_contracts.rs 将 RuntimeSession, RuntimeSessionRefDto, RuntimeSessionRefView caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/routes/runtime_traces.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "AgentRunJournal"
+        ],
+        "symbols_add": [
+          "AgentRunRuntimeProjectionPort",
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeChangePage"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/routes/runtime_traces.rs 将 AgentRunJournal caller 切到 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentRunRuntimeProjectionPort, ManagedRuntimeSnapshot, ManagedRuntimeChangePage 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "crates/agentdash-api/src/vfs_access/mod.rs",
+        "owner": "Product / Protocol API projection",
+        "symbols_remove": [
+          "AgentTool"
+        ],
+        "symbols_add": [
+          "AgentSurfaceSnapshot",
+          "BoundAgentSurfaceContribution",
+          "PlatformToolBroker"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection",
+        "output": "canonical API snapshot/change/gap route",
+        "replacement": "crates/agentdash-api/src/vfs_access/mod.rs 将 AgentTool caller 切到 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker。",
+        "prerequisites": [
+          "AppState final Product protocol bindings",
+          "canonical Managed Runtime generated DTO"
+        ],
+        "activation_gate": "该文件 legacy symbols 归零，并由 AgentSurfaceSnapshot, BoundAgentSurfaceContribution, PlatformToolBroker 的 owning crate check 覆盖。"
+      },
+      {
+        "path": "packages/app-web/src/services/agentRunRuntime.ts",
+        "owner": "Product / Protocol frontend feed",
+        "symbols_remove": [
+          "fetchAgentRunJournalEvents",
+          "SessionEventsPageResponse"
+        ],
+        "symbols_add": [
+          "fetchManagedRuntimeSnapshot",
+          "fetchManagedRuntimeChangePage"
+        ],
+        "root": "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "output": "packages/app-web/src/services/agentRunRuntime.ts consumes canonical Managed Runtime snapshot/change",
+        "replacement": "packages/app-web/src/services/agentRunRuntime.ts 从 journal/session feed 切到 canonical Managed Runtime snapshot/change。",
+        "prerequisites": [
+          "generated ManagedRuntimeSnapshot",
+          "generated ManagedRuntimeChangePage"
+        ],
+        "activation_gate": "packages/app-web/src/services/agentRunRuntime.ts typecheck 且不从 UI timing 推断 availability。"
+      },
+      {
+        "path": "packages/app-web/src/services/agentRunMailbox.ts",
+        "owner": "Product / Protocol frontend feed",
+        "symbols_remove": [
+          "forkAgentRun",
+          "AgentRunForkResponse"
+        ],
+        "symbols_add": [
+          "OperationReceipt"
+        ],
+        "root": "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "output": "packages/app-web/src/services/agentRunMailbox.ts consumes canonical Managed Runtime snapshot/change",
+        "replacement": "packages/app-web/src/services/agentRunMailbox.ts 从 journal/session feed 切到 canonical Managed Runtime snapshot/change。",
+        "prerequisites": [
+          "generated ManagedRuntimeSnapshot",
+          "generated ManagedRuntimeChangePage"
+        ],
+        "activation_gate": "packages/app-web/src/services/agentRunMailbox.ts typecheck 且不从 UI timing 推断 availability。"
+      },
+      {
+        "path": "packages/app-web/src/features/session/model/agentRunJournalIdentity.ts",
+        "owner": "Product / Protocol frontend feed",
+        "symbols_remove": [
+          "AgentRunJournalIdentityTarget",
+          "agentRunJournalSessionId"
+        ],
+        "symbols_add": [
+          "ManagedRuntimeSnapshot.thread_id"
+        ],
+        "root": "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "output": "packages/app-web/src/features/session/model/agentRunJournalIdentity.ts consumes canonical Managed Runtime snapshot/change",
+        "replacement": "packages/app-web/src/features/session/model/agentRunJournalIdentity.ts 从 journal/session feed 切到 canonical Managed Runtime snapshot/change。",
+        "prerequisites": [
+          "generated ManagedRuntimeSnapshot",
+          "generated ManagedRuntimeChangePage"
+        ],
+        "activation_gate": "packages/app-web/src/features/session/model/agentRunJournalIdentity.ts typecheck 且不从 UI timing 推断 availability。"
+      },
+      {
+        "path": "packages/app-web/src/features/session/model/useSessionStream.ts",
+        "owner": "Product / Protocol frontend feed",
+        "symbols_remove": [
+          "fetchAgentRunJournalEvents",
+          "SessionEventEnvelope",
+          "createSessionStreamTransport"
+        ],
+        "symbols_add": [
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeChangePage"
+        ],
+        "root": "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "output": "packages/app-web/src/features/session/model/useSessionStream.ts consumes canonical Managed Runtime snapshot/change",
+        "replacement": "packages/app-web/src/features/session/model/useSessionStream.ts 从 journal/session feed 切到 canonical Managed Runtime snapshot/change。",
+        "prerequisites": [
+          "generated ManagedRuntimeSnapshot",
+          "generated ManagedRuntimeChangePage"
+        ],
+        "activation_gate": "packages/app-web/src/features/session/model/useSessionStream.ts typecheck 且不从 UI timing 推断 availability。"
+      },
+      {
+        "path": "packages/app-web/src/features/session/model/streamTransport.ts",
+        "owner": "Product / Protocol frontend feed",
+        "symbols_remove": [
+          "parseSessionNdjsonEnvelope",
+          "SessionStreamTransport",
+          "buildStreamEndpoint"
+        ],
+        "symbols_add": [
+          "fetchManagedRuntimeChangePage",
+          "ManagedRuntimeChangePage"
+        ],
+        "root": "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "output": "packages/app-web/src/features/session/model/streamTransport.ts consumes canonical Managed Runtime snapshot/change",
+        "replacement": "packages/app-web/src/features/session/model/streamTransport.ts 从 journal/session feed 切到 canonical Managed Runtime snapshot/change。",
+        "prerequisites": [
+          "generated ManagedRuntimeSnapshot",
+          "generated ManagedRuntimeChangePage"
+        ],
+        "activation_gate": "packages/app-web/src/features/session/model/streamTransport.ts typecheck 且不从 UI timing 推断 availability。"
+      },
+      {
+        "path": "packages/app-web/src/features/session/model/targetRuntimeFeed.ts",
+        "owner": "Product / Protocol frontend feed",
+        "symbols_remove": [],
+        "symbols_add": [
+          "consumeManagedRuntimeChangePage",
+          "managedRuntimeCommandAvailability"
+        ],
+        "root": "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "output": "packages/app-web/src/features/session/model/targetRuntimeFeed.ts consumes canonical Managed Runtime snapshot/change",
+        "replacement": "packages/app-web/src/features/session/model/targetRuntimeFeed.ts 从 journal/session feed 切到 canonical Managed Runtime snapshot/change。",
+        "prerequisites": [
+          "generated ManagedRuntimeSnapshot",
+          "generated ManagedRuntimeChangePage"
+        ],
+        "activation_gate": "packages/app-web/src/features/session/model/targetRuntimeFeed.ts typecheck 且不从 UI timing 推断 availability。"
+      },
+      {
+        "path": "packages/app-web/src/features/session/model/types.ts",
+        "owner": "Product / Protocol frontend feed",
+        "symbols_remove": [
+          "SessionEventResponse",
+          "SessionEventEnvelope"
+        ],
+        "symbols_add": [
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimePlatformChange"
+        ],
+        "root": "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "output": "packages/app-web/src/features/session/model/types.ts consumes canonical Managed Runtime snapshot/change",
+        "replacement": "packages/app-web/src/features/session/model/types.ts 从 journal/session feed 切到 canonical Managed Runtime snapshot/change。",
+        "prerequisites": [
+          "generated ManagedRuntimeSnapshot",
+          "generated ManagedRuntimeChangePage"
+        ],
+        "activation_gate": "packages/app-web/src/features/session/model/types.ts typecheck 且不从 UI timing 推断 availability。"
+      },
+      {
+        "path": "packages/app-web/src/features/session/model/useSessionFeed.ts",
+        "owner": "Product / Protocol frontend feed",
+        "symbols_remove": [
+          "useSessionStream",
+          "SessionEventEnvelope"
+        ],
+        "symbols_add": [
+          "useManagedRuntimeFeed",
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeChangePage"
+        ],
+        "root": "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "output": "packages/app-web/src/features/session/model/useSessionFeed.ts consumes canonical Managed Runtime snapshot/change",
+        "replacement": "packages/app-web/src/features/session/model/useSessionFeed.ts 从 journal/session feed 切到 canonical Managed Runtime snapshot/change。",
+        "prerequisites": [
+          "generated ManagedRuntimeSnapshot",
+          "generated ManagedRuntimeChangePage"
+        ],
+        "activation_gate": "packages/app-web/src/features/session/model/useSessionFeed.ts typecheck 且不从 UI timing 推断 availability。"
+      },
+      {
+        "path": "packages/app-web/src/features/session/ui/SessionChatViewModel.ts",
+        "owner": "Product / Protocol frontend feed",
+        "symbols_remove": [
+          "AgentRunJournalIdentityTarget",
+          "SessionEventEnvelope",
+          "rawEventsBelongToRuntimeStreamTarget"
+        ],
+        "symbols_add": [
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeCommandAvailability"
+        ],
+        "root": "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "output": "packages/app-web/src/features/session/ui/SessionChatViewModel.ts consumes canonical Managed Runtime snapshot/change",
+        "replacement": "packages/app-web/src/features/session/ui/SessionChatViewModel.ts 从 journal/session feed 切到 canonical Managed Runtime snapshot/change。",
+        "prerequisites": [
+          "generated ManagedRuntimeSnapshot",
+          "generated ManagedRuntimeChangePage"
+        ],
+        "activation_gate": "packages/app-web/src/features/session/ui/SessionChatViewModel.ts typecheck 且不从 UI timing 推断 availability。"
+      },
+      {
+        "path": "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "owner": "W8 Hard Cut canonical generator",
+        "symbols_remove": [
+          "RuntimeJournalFact",
+          "RuntimeJournalRecord",
+          "RuntimeContractSchema"
+        ],
+        "symbols_add": [
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeChangePage",
+          "ManagedRuntimeProjectionSchema"
+        ],
+        "root": "agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeProjectionSchema",
+        "output": "packages/app-web/src/generated/agent-runtime-contracts.ts",
+        "replacement": "packages/app-web/src/generated/agent-runtime-contracts.ts 仅由 canonical Rust generator 产生最终 TypeScript contract。",
+        "prerequisites": [
+          "production Rust routes use final canonical types",
+          "W8 generator root registration"
+        ],
+        "activation_gate": "pnpm run contracts:check 覆盖 packages/app-web/src/generated/agent-runtime-contracts.ts 且 generated diff 为空。"
+      },
+      {
+        "path": "packages/app-web/src/generated/agent-runtime-wire.ts",
+        "owner": "W8 Hard Cut canonical generator",
+        "symbols_remove": [
+          "RuntimeWireNotification",
+          "RuntimeJournalRecord"
+        ],
+        "symbols_add": [
+          "RuntimeWireCompleteAgentSchema",
+          "RuntimeWireAgentServiceRequest",
+          "RuntimeWireAgentServiceResponse"
+        ],
+        "root": "agentdash_agent_runtime_wire::RuntimeWireCompleteAgentSchema",
+        "output": "packages/app-web/src/generated/agent-runtime-wire.ts",
+        "replacement": "packages/app-web/src/generated/agent-runtime-wire.ts 仅由 canonical Rust generator 产生最终 TypeScript contract。",
+        "prerequisites": [
+          "production Rust routes use final canonical types",
+          "W8 generator root registration"
+        ],
+        "activation_gate": "pnpm run contracts:check 覆盖 packages/app-web/src/generated/agent-runtime-wire.ts 且 generated diff 为空。"
+      },
+      {
+        "path": "packages/app-web/src/generated/session-contracts.ts",
+        "owner": "W8 Hard Cut canonical generator",
+        "symbols_remove": [
+          "SessionEventsPageResponse"
+        ],
+        "symbols_add": [
+          "ManagedRuntimeSnapshot",
+          "ManagedRuntimeChangePage"
+        ],
+        "root": "agentdash_contracts::runtime::session::SessionEventsPageResponse deletion + agentdash_agent_runtime_contract::managed_projection",
+        "output": "packages/app-web/src/generated/session-contracts.ts",
+        "replacement": "packages/app-web/src/generated/session-contracts.ts 仅由 canonical Rust generator 产生最终 TypeScript contract。",
+        "prerequisites": [
+          "production Rust routes use final canonical types",
+          "W8 generator root registration"
+        ],
+        "activation_gate": "pnpm run contracts:check 覆盖 packages/app-web/src/generated/session-contracts.ts 且 generated diff 为空。"
+      },
+      {
+        "path": "packages/app-web/src/generated/workflow-contracts.ts",
+        "owner": "W8 Hard Cut canonical generator",
+        "symbols_remove": [
+          "RuntimeSessionPolicy",
+          "RuntimeSessionRefDto",
+          "RuntimeSessionTraceView"
+        ],
+        "symbols_add": [
+          "RuntimeThreadId",
+          "AgentRunListRuntimeSummaryView"
+        ],
+        "root": "agentdash_contracts::runtime::workflow + agentdash_agent_runtime_contract::RuntimeThreadId",
+        "output": "packages/app-web/src/generated/workflow-contracts.ts",
+        "replacement": "packages/app-web/src/generated/workflow-contracts.ts 仅由 canonical Rust generator 产生最终 TypeScript contract。",
+        "prerequisites": [
+          "production Rust routes use final canonical types",
+          "W8 generator root registration"
+        ],
+        "activation_gate": "pnpm run contracts:check 覆盖 packages/app-web/src/generated/workflow-contracts.ts 且 generated diff 为空。"
+      }
+    ]
+  },
+  "w8_live_prerequisite_contracts": [
+    {
+      "owner": "W8 Hard Cut shared foundation",
+      "rust_output": "crates/agentdash-api/src/app_state.rs::AppState",
+      "required_signatures": [
+        "Arc<dyn AgentRunForkSagaRepository>",
+        "Arc<dyn AgentRunForkRuntimePort>",
+        "Arc<dyn AgentRunForkProductGraphPort>",
+        "Arc<dyn CompanionFreshSagaRepository>",
+        "Arc<dyn CompanionFreshRuntimePort>",
+        "Arc<dyn AgentRunRuntimeProjectionPort>"
+      ],
+      "consumer_construction": [
+        "AgentRunForkFacade::new(repository, runtime, product_graph)",
+        "CompanionDispatchCoordinator::new(fork_repository, fresh_repository)",
+        "AgentRunRuntimeFeedReconnect::new(projection)"
+      ],
+      "gate": "AppState production constructor receives PostgreSQL saga repositories and Platform Runtime adapters; API caller tests construct these exact traits without recording repositories."
+    },
+    {
+      "owner": "W8 Hard Cut canonical generator",
+      "rust_root": "agentdash_agent_runtime_contract::managed_projection::ManagedRuntimeProjectionSchema",
+      "typescript_outputs": [
+        "packages/app-web/src/generated/agent-runtime-contracts.ts::ManagedRuntimeSnapshot",
+        "packages/app-web/src/generated/agent-runtime-contracts.ts::ManagedRuntimeChangePage",
+        "packages/app-web/src/generated/agent-runtime-validators.ts::ManagedRuntimeProjectionSchema"
+      ],
+      "gate": "pnpm run contracts:check emits the Managed Runtime roots and leaves generated/schema diff empty."
+    }
+  ],
+  "pending_product_caller_activation": [
+    {
+      "order": 1,
+      "caller": "agentdash-application-agentrun",
+      "patch": "切 AgentRun fork/context/workspace/presentation 到 durable saga 与 canonical projection，移除 journal/RuntimeSession public exports。",
+      "gate": "product_protocol restart matrix + agentrun crate check"
+    },
+    {
+      "order": 2,
+      "caller": "agentdash-application",
+      "patch": "切 Companion Full/Fresh、task、wait 与 VFS owner 到 Companion coordinator 和 Business Surface contribution。",
+      "gate": "Companion crash-window matrix + application crate check"
+    },
+    {
+      "order": 3,
+      "caller": "agentdash-application-lifecycle",
+      "patch": "切 workflow projection 与 lifecycle tool/VFS surface contribution。",
+      "gate": "lifecycle projection/surface tests"
+    },
+    {
+      "order": 4,
+      "caller": "agentdash-application-ports",
+      "patch": "移除 RuntimeSession delivery/live 与 DynAgentTool ports，使用 Runtime Contract / Complete Agent callback vocabulary。",
+      "gate": "ports crate check + no re-export/shim"
+    },
+    {
+      "order": 5,
+      "caller": "agentdash-application-vfs",
+      "patch": "切 VFS descriptors 与 execution 到 Business Surface + Host callback Tool Broker。",
+      "gate": "VFS descriptor/callback tests"
+    },
+    {
+      "order": 6,
+      "caller": "agentdash-api + app-web",
+      "patch": "切 fork、snapshot/change/gap routes 与 frontend feed；availability 只读同 revision canonical snapshot。",
+      "gate": "API projection 3 tests + frontend feed 5 tests + app-web typecheck"
+    }
+  ],
+  "combined_activation_gates": [
+    "powershell -File .trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w7-product-cutover/verify-caller-inventory.ps1 -Mode Activated",
+    "rg -n \"AgentRunJournalService|AgentRunJournal|RuntimeJournalFact|RuntimeJournalRecord|RuntimeSession|RuntimeToolProvider|DynAgentTool|AgentTool\" crates/agentdash-api/src crates/agentdash-application/src crates/agentdash-application-agentrun/src crates/agentdash-application-lifecycle/src crates/agentdash-application-ports/src crates/agentdash-application-vfs/src",
+    "cargo test -p agentdash-application-agentrun product_protocol",
+    "cargo test -p agentdash-api --test agent_runtime_target_projection",
+    "pnpm --filter app-web test -- src/features/session/model/targetRuntimeFeed.test.ts",
+    "pnpm --filter app-web typecheck",
+    "pnpm run contracts:check",
+    "node scripts/check-migration-history.js",
+    "cargo metadata --locked --format-version 1",
+    "git diff -- Cargo.lock",
+    "cargo test --locked -p agentdash-application-agentrun product_protocol"
+  ],
+  "activation_order": [
+    "固定 Platform Runtime Contract、Complete Agent Host persistence 与 Tool Broker symbols",
+    "固定 Dash/Native exact fork 与 fresh context evidence receipts",
+    "应用 Product-owned product_protocol component",
+    "实现 W8 agent_run_fork_saga 与 companion_fresh_saga PostgreSQL adapters/migration",
+    "切 API/application/application-agentrun/lifecycle/ports/vfs 六 caller",
+    "切 canonical Rust/TypeScript generator roots、API routes 与 frontend feed",
+    "删除 journal、RuntimeSession delivery/live、Core AgentTool assembly 与 legacy crates",
+    "运行 architecture negative gates、restart matrix 与 direct/fork/Companion/reconnect tracer bullets"
+  ],
+  "breakpoints": [
+    "CompleteAgentHost 当前仍以内存 state 构造，未注入 durable repository；此处不允许 Product 自建旁路持久化",
+    "production Companion dispatch 仍由 RepositorySet 直接构造 Lifecycle graph；在 exact/fresh adapter 就绪前不能局部替换",
+    "canonical generated roots 与正式 migration 只能由 W8 在同一 hard cut 修改",
+    "任何一个六 caller 仍引用 AgentTool、RuntimeToolProvider、RuntimeSession 或 AgentRunJournalService 时不得激活"
+  ],
+  "negative_gates": [
+    "rg -n \"pub mod target_product_protocol|^pub struct RecordingAgentRunForkSagaRepository|^pub struct RecordingCompanionFreshSagaRepository\" crates/agentdash-application-agentrun/src",
+    "rg -n \"AgentRunForkCommandService|AgentRunJournalService|RuntimeSession|RuntimeToolProvider|DynAgentTool|AgentTool\" crates/agentdash-api/src crates/agentdash-application/src crates/agentdash-application-agentrun/src crates/agentdash-application-lifecycle/src crates/agentdash-application-ports/src crates/agentdash-application-vfs/src",
+    "rg -n \"RuntimeJournalFact|RuntimeJournalRecord|journal_records_after|append_presentation\" crates packages",
+    "pnpm run contracts:check",
+    "powershell -File .trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w7-product-cutover/verify-caller-inventory.ps1",
+    "cargo tree -p agentdash-application-agentrun -e normal --depth 1",
+    "pnpm --filter app-web typecheck"
+  ],
+  "artifact_tip_revision": "a08e871bbdfe662ddeefccab7f166fe8c2ab222e",
+  "w8_expected_lock_delta": {
+    "owner": "W8 Hard Cut",
+    "package": "agentdash-application-agentrun",
+    "dependency_list_add": "agentdash-agent-service-api",
+    "dependency_kind": "existing workspace dev-dependency",
+    "expected_diff_hunk": "@@ agentdash-application-agentrun dependency list @@\n+ \"agentdash-agent-service-api\",",
+    "registry_packages_added": 0,
+    "registry_checksums_added": 0,
+    "regenerate": "W8 combined graph is the sole Cargo.lock generator",
+    "metadata_gate": "cargo metadata --locked --format-version 1",
+    "diff_gate": "git diff -- Cargo.lock",
+    "registry_gate": "git diff -- Cargo.lock | rg \"^\\+name =|^\\+checksum =\" (expected no matches)",
+    "test_gate": "cargo test --locked -p agentdash-application-agentrun product_protocol"
+  }
+}

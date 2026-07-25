@@ -1,0 +1,42 @@
+{
+  "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+  "source": "crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs",
+  "source_sha256": "d2e1cea154e40e8f66aa8e5ec36ef0cd57ebee78332f157a22c639a4db4bbb05",
+  "oracle_test_source": "crates/agentdash-executor/src/connectors/pi_agent/connector_tests.rs",
+  "oracle_test_source_sha256": "43eb493aaf08cf749ba857ce97f6fc4c55367203eb7f9c0e9792613032f5e94d",
+  "capture_method": "Main convert_event_to_envelopes ToolExecutionStart/Update/End branches for non-shell Native tools; Direct and Relay MCP adapters enter that path as DynamicToolCall",
+  "scenarios": [
+    {
+      "id": "direct",
+      "runtime_name": "mcp_code_analyzer_scan_repo",
+      "server_key": "code-analyzer",
+      "fixture_id": "main_tool_mcp_direct_mcp_code_analyzer_scan_repo_lifecycle",
+      "arguments": { "query": "rust", "nullable": null },
+      "progress_message": "direct progress",
+      "completed_output": { "content_items": [{ "type": "inputText", "text": "direct complete" }] },
+      "failed_output": { "content_items": [{ "type": "inputText", "text": "direct failed" }] },
+      "protected_events": [
+        { "type": "item_started", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "query": "rust", "nullable": null }, "id": "turn-fixture:direct-item", "status": "inProgress", "tool": "mcp_code_analyzer_scan_repo" }, "threadId": "session-fixture", "turnId": "turn-fixture", "startedAtMs": 1720000000000 } },
+        { "type": "item_updated", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "query": "rust", "nullable": null }, "contentItems": [{ "type": "inputText", "text": "direct progress" }], "id": "turn-fixture:direct-item", "status": "inProgress", "tool": "mcp_code_analyzer_scan_repo" }, "threadId": "session-fixture", "turnId": "turn-fixture", "updatedAtMs": 1720000000001 } },
+        { "type": "item_completed", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "query": "rust", "nullable": null }, "contentItems": [{ "type": "inputText", "text": "direct complete" }], "id": "turn-fixture:direct-item", "status": "completed", "success": true, "tool": "mcp_code_analyzer_scan_repo" }, "threadId": "session-fixture", "turnId": "turn-fixture", "completedAtMs": 1720000000002 } },
+        { "type": "item_completed", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "query": "rust", "nullable": null }, "contentItems": [{ "type": "inputText", "text": "direct failed" }], "id": "turn-fixture:direct-item-failed", "status": "failed", "success": false, "tool": "mcp_code_analyzer_scan_repo" }, "threadId": "session-fixture", "turnId": "turn-fixture", "completedAtMs": 1720000000003 } }
+      ]
+    },
+    {
+      "id": "relay",
+      "runtime_name": "mcp_agentdash_workflow_tools_upsert_workflow_tool",
+      "server_key": "agentdash-workflow-tools-123",
+      "fixture_id": "main_tool_mcp_relay_mcp_agentdash_workflow_tools_upsert_workflow_tool_lifecycle",
+      "arguments": { "query": "rust", "nullable": null },
+      "progress_message": "relay progress",
+      "completed_output": { "content_items": [{ "type": "inputText", "text": "relay complete" }] },
+      "failed_output": { "content_items": [{ "type": "inputText", "text": "relay failed" }] },
+      "protected_events": [
+        { "type": "item_started", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "query": "rust", "nullable": null }, "id": "turn-fixture:relay-item", "status": "inProgress", "tool": "mcp_agentdash_workflow_tools_upsert_workflow_tool" }, "threadId": "session-fixture", "turnId": "turn-fixture", "startedAtMs": 1720000000000 } },
+        { "type": "item_updated", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "query": "rust", "nullable": null }, "contentItems": [{ "type": "inputText", "text": "relay progress" }], "id": "turn-fixture:relay-item", "status": "inProgress", "tool": "mcp_agentdash_workflow_tools_upsert_workflow_tool" }, "threadId": "session-fixture", "turnId": "turn-fixture", "updatedAtMs": 1720000000001 } },
+        { "type": "item_completed", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "query": "rust", "nullable": null }, "contentItems": [{ "type": "inputText", "text": "relay complete" }], "id": "turn-fixture:relay-item", "status": "completed", "success": true, "tool": "mcp_agentdash_workflow_tools_upsert_workflow_tool" }, "threadId": "session-fixture", "turnId": "turn-fixture", "completedAtMs": 1720000000002 } },
+        { "type": "item_completed", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "query": "rust", "nullable": null }, "contentItems": [{ "type": "inputText", "text": "relay failed" }], "id": "turn-fixture:relay-item-failed", "status": "failed", "success": false, "tool": "mcp_agentdash_workflow_tools_upsert_workflow_tool" }, "threadId": "session-fixture", "turnId": "turn-fixture", "completedAtMs": 1720000000003 } }
+      ]
+    }
+  ]
+}

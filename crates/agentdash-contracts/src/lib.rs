@@ -1,5 +1,7 @@
-#[path = "agent/run_mailbox.rs"]
-pub mod agent_run_mailbox;
+#[path = "agent/run_interaction.rs"]
+pub mod agent_run_interaction;
+#[path = "agent/product_projection.rs"]
+pub mod agent_run_product_projection;
 #[path = "system/auth.rs"]
 pub mod auth;
 pub mod backend;
@@ -23,8 +25,6 @@ pub mod interaction;
 pub mod llm_provider;
 #[path = "integration/mcp_preset.rs"]
 pub mod mcp_preset;
-#[path = "system/permission.rs"]
-pub mod permission;
 pub mod project;
 #[path = "agent/project_agent.rs"]
 pub mod project_agent;

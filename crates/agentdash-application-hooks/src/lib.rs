@@ -5,6 +5,7 @@ use agentdash_application_ports::lifecycle_surface_projection::ActiveWorkflowPro
 mod active_workflow_contribution;
 mod error;
 mod helpers;
+mod plan;
 pub mod presets;
 mod provider;
 mod rules;
@@ -14,10 +15,6 @@ mod snapshot_helpers;
 pub use error::HookApplicationError;
 pub use presets::{HookRulePreset, PresetSource, hook_rule_preset_registry};
 pub use provider::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
-
-// Re-exports consumed by child modules (rules.rs, snapshot_helpers.rs, etc.)
-// so that `super::xxx` references from those children remain valid.
-use helpers::shell_exec_rewritten_args;
 
 fn workflow_scope_key(workflow: &ActiveWorkflowProjection) -> String {
     workflow

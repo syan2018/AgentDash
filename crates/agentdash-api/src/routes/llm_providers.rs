@@ -1313,6 +1313,38 @@ mod tests {
 
     static CODEX_OAUTH_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
+    fn auth_identity(
+        auth_mode: AuthMode,
+        is_admin: bool,
+    ) -> agentdash_integration_api::AuthIdentity {
+        agentdash_integration_api::AuthIdentity {
+            auth_mode,
+            user_id: "oauth-owner".to_string(),
+            subject: "oauth-owner".to_string(),
+            display_name: None,
+            email: None,
+            avatar_url: None,
+            groups: Vec::new(),
+            is_admin,
+            provider: None,
+            extra: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn global_provider_management_allows_personal_identity_without_login_session() {
+        assert!(require_system_access(&auth_identity(AuthMode::Personal, false)).is_ok());
+    }
+
+    #[test]
+    fn global_provider_management_requires_enterprise_admin() {
+        assert!(matches!(
+            require_system_access(&auth_identity(AuthMode::Enterprise, false)),
+            Err(ApiError::Forbidden(_))
+        ));
+        assert!(require_system_access(&auth_identity(AuthMode::Enterprise, true)).is_ok());
+    }
+
     fn jwt_with_account(account_id: &str) -> String {
         let payload = serde_json::json!({
             CODEX_JWT_CLAIM_PATH: {

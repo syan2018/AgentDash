@@ -3,7 +3,7 @@ use std::path::{Component, Path};
 
 use agentdash_domain::context_source::{ContextSourceKind, ContextSourceRef};
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
+use agentdash_platform_spi::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
 
 use crate::ApplicationError;
 use crate::vfs::RuntimeFileEntry;

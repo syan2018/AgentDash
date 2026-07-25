@@ -11,11 +11,11 @@ use agentdash_application_vfs::{
 };
 use agentdash_domain::common::Mount;
 use agentdash_relay::{
-    DEFAULT_TOOL_SHELL_EXEC_YIELD_TIME_MS, DEFAULT_TOOL_SHELL_READ_WAIT_MS, RelayMessage,
-    ShellOutputStream, TerminalResizePayload, ToolApplyPatchPayload, ToolFileDeletePayload,
-    ToolFileListPayload, ToolFileReadPayload, ToolFileRenamePayload, ToolFileWritePayload,
-    ToolSearchPayload, ToolShellExecPayload, ToolShellInputPayload, ToolShellReadPayload,
-    ToolShellReadResponse, ToolShellSessionState, ToolShellTerminatePayload,
+    DEFAULT_TOOL_SHELL_EXEC_YIELD_TIME_MS, DEFAULT_TOOL_SHELL_READ_WAIT_MS, RelayError,
+    RelayErrorCode, RelayMessage, ShellOutputStream, TerminalResizePayload, ToolApplyPatchPayload,
+    ToolFileDeletePayload, ToolFileListPayload, ToolFileReadPayload, ToolFileRenamePayload,
+    ToolFileWritePayload, ToolSearchPayload, ToolShellExecPayload, ToolShellInputPayload,
+    ToolShellReadPayload, ToolShellReadResponse, ToolShellSessionState, ToolShellTerminatePayload,
     ToolShellTerminateStatus,
 };
 use async_trait::async_trait;
@@ -28,6 +28,13 @@ const SHELL_EXEC_RPC_TIMEOUT_MS: u64 = 10_000;
 
 fn map_relay_err(e: BackendCommandError) -> MountError {
     MountError::OperationFailed(e.to_string())
+}
+
+fn map_relay_response_error(error: RelayError) -> MountError {
+    match error.code {
+        RelayErrorCode::NotFound => MountError::NotFound(error.message),
+        _ => MountError::OperationFailed(error.message),
+    }
 }
 
 fn shell_exec_relay_timeout(yield_time_ms: Option<u64>) -> std::time::Duration {
@@ -166,7 +173,7 @@ impl MountProvider for RelayFsMountProvider {
             }),
             RelayMessage::ResponseToolFileRead {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "file_read 返回意外响应: {}",
                 other.id()
@@ -236,7 +243,7 @@ impl MountProvider for RelayFsMountProvider {
             }
             RelayMessage::ResponseToolFileRead {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "file_read 返回意外响应: {}",
                 other.id()
@@ -274,7 +281,7 @@ impl MountProvider for RelayFsMountProvider {
             RelayMessage::ResponseToolFileWrite { error: None, .. } => Ok(()),
             RelayMessage::ResponseToolFileWrite {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "file_write 返回意外响应: {}",
                 other.id()
@@ -325,7 +332,7 @@ impl MountProvider for RelayFsMountProvider {
             }
             RelayMessage::ResponseToolFileReadBinary {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "file_read_binary 返回意外响应: {}",
                 other.id()
@@ -361,7 +368,7 @@ impl MountProvider for RelayFsMountProvider {
             RelayMessage::ResponseToolFileDelete { error: None, .. } => Ok(()),
             RelayMessage::ResponseToolFileDelete {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "file_delete 返回意外响应: {}",
                 other.id()
@@ -401,7 +408,7 @@ impl MountProvider for RelayFsMountProvider {
             RelayMessage::ResponseToolFileRename { error: None, .. } => Ok(()),
             RelayMessage::ResponseToolFileRename {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "file_rename 返回意外响应: {}",
                 other.id()
@@ -443,7 +450,7 @@ impl MountProvider for RelayFsMountProvider {
             }),
             RelayMessage::ResponseToolApplyPatch {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "apply_patch 返回意外响应: {}",
                 other.id()
@@ -487,7 +494,7 @@ impl MountProvider for RelayFsMountProvider {
             }),
             RelayMessage::ResponseToolFileList {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "file_list 返回意外响应: {}",
                 other.id()
@@ -559,7 +566,7 @@ impl MountProvider for RelayFsMountProvider {
             }
             RelayMessage::ResponseToolSearch {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "search 返回意外响应: {}",
                 other.id()
@@ -632,7 +639,7 @@ impl MountProvider for RelayFsMountProvider {
             }
             RelayMessage::ResponseToolSearch {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "grep 返回意外响应: {}",
                 other.id()
@@ -707,7 +714,7 @@ impl MountProvider for RelayFsMountProvider {
             }),
             RelayMessage::ResponseToolShellExec {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "shell_exec 返回意外响应: {}",
                 other.id()
@@ -747,7 +754,7 @@ impl MountProvider for RelayFsMountProvider {
             } => Ok(shell_snapshot_from_read(payload)),
             RelayMessage::ResponseToolShellRead {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "shell_read 返回意外响应: {}",
                 other.id()
@@ -792,7 +799,7 @@ impl MountProvider for RelayFsMountProvider {
             }),
             RelayMessage::ResponseToolShellInput {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "shell_input 返回意外响应: {}",
                 other.id()
@@ -826,7 +833,7 @@ impl MountProvider for RelayFsMountProvider {
             RelayMessage::ResponseTerminalResize { error: None, .. } => Ok(()),
             RelayMessage::ResponseTerminalResize {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "terminal_resize 返回意外响应: {}",
                 other.id()
@@ -866,7 +873,7 @@ impl MountProvider for RelayFsMountProvider {
             }),
             RelayMessage::ResponseToolShellTerminate {
                 error: Some(error), ..
-            } => Err(MountError::OperationFailed(error.message)),
+            } => Err(map_relay_response_error(error)),
             other => Err(MountError::OperationFailed(format!(
                 "shell_terminate 返回意外响应: {}",
                 other.id()
@@ -901,5 +908,11 @@ mod tests {
             shell_control_relay_timeout(None),
             std::time::Duration::from_millis(20_000)
         );
+    }
+
+    #[test]
+    fn relay_not_found_retains_mount_not_found_semantics() {
+        let error = map_relay_response_error(RelayError::not_found("missing"));
+        assert!(matches!(error, MountError::NotFound(message) if message == "missing"));
     }
 }

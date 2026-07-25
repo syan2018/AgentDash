@@ -3,6 +3,7 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 
 import { SessionProjectionView } from "./SessionProjectionView";
 
+import type { SessionMessageRefDto } from "../../../generated/agent-run-interaction-contracts";
 import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
@@ -30,6 +31,8 @@ import type { ImageAttachment } from "./composer/useImageAttachments";
 import { ImageAttachmentPreview } from "./composer/ImageAttachmentPreview";
 import { ComposerSendButton } from "./composer/ComposerSendButton";
 import { ComposerPlusMenu } from "./composer/ComposerPlusMenu";
+import { DisclosureRow } from "../../../components/ui/disclosure";
+import { getTurnSectionKey } from "./turnSectionIdentity";
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
 type ExecutorConfigState = ReturnType<typeof useExecutorConfig>;
@@ -240,6 +243,7 @@ export function SessionChatStream({
   isLoading,
   streamingEntryId,
   streamPrefixContent,
+  onForkFromMessageRef,
   onScroll,
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -251,6 +255,7 @@ export function SessionChatStream({
   isLoading: boolean;
   streamingEntryId: string | null;
   streamPrefixContent?: ReactNode;
+  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   onScroll: () => void;
 }) {
   return (
@@ -266,13 +271,14 @@ export function SessionChatStream({
         <div className="mx-auto w-full max-w-4xl space-y-1.5 px-5 py-6">
           {streamPrefixContent}
           {turnSegments && turnSegments.length > 0 ? (
-            turnSegments.map((segment, idx) => (
+            turnSegments.map((segment) => (
               <TurnSection
-                key={segment.turnId ?? `gap-${idx}`}
+                key={getTurnSectionKey(segment)}
                 segment={segment}
                 agentRunTarget={agentRunTarget}
                 companionSubagents={companionSubagents}
                 streamingEntryId={streamingEntryId}
+                onForkFromMessageRef={onForkFromMessageRef}
               />
             ))
           ) : (
@@ -392,31 +398,47 @@ function useActiveTurnElapsedMs(startedAtMs: number | undefined, active: boolean
   return Math.max(clock - startedAtMs, 0);
 }
 
+function TurnSectionDisclosureHeader({
+  expanded,
+  label,
+  durationMs,
+  onToggle,
+}: {
+  expanded: boolean;
+  label: string;
+  durationMs: number | undefined;
+  onToggle: () => void;
+}) {
+  return (
+    <DisclosureRow
+      expanded={expanded}
+      onClick={onToggle}
+      className="rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/50 transition-colors hover:bg-secondary/30 hover:text-muted-foreground/70"
+    >
+      <span>{label}{formatTurnDurationSuffix(durationMs)}</span>
+      <span className="h-px flex-1 bg-border/40" />
+    </DisclosureRow>
+  );
+}
+
 function TurnSection({
   segment,
   agentRunTarget,
   companionSubagents,
   streamingEntryId,
+  onForkFromMessageRef,
 }: {
   segment: TurnSegment;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   streamingEntryId: string | null;
+  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
 }) {
-  const isTerminal = segment.status !== "active";
-  const terminalLabel = terminalTurnLabel(segment.status);
+  const terminalLabel = segment.turnId ? terminalTurnLabel(segment.status) : null;
   const headerLabel = terminalLabel ?? (segment.turnId ? "执行中" : null);
   const activeElapsedMs = useActiveTurnElapsedMs(segment.startedAtMs, segment.status === "active");
   const displayDurationMs = segment.durationMs ?? activeElapsedMs;
   const [collapsed, setCollapsed] = useState(false);
-  const [prevStatus, setPrevStatus] = useState(segment.status);
-
-  if (segment.status !== prevStatus) {
-    setPrevStatus(segment.status);
-    if (isTerminal && prevStatus === "active") {
-      setCollapsed(true);
-    }
-  }
 
   if (!collapsed) {
     return (
@@ -424,16 +446,18 @@ function TurnSection({
         {segment.activity && (
           <TurnActivityStrip activity={segment.activity} />
         )}
+        {segment.errorMessage && (
+          <div className="rounded-[8px] border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {segment.errorMessage}
+          </div>
+        )}
         {headerLabel && (
-          <button
-            type="button"
-            onClick={() => setCollapsed(true)}
-            className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/40 transition-colors hover:text-muted-foreground/60 hover:bg-secondary/30"
-          >
-            <span className="h-px flex-1 max-w-6 bg-border/40" />
-            <span>{headerLabel}{formatTurnDurationSuffix(displayDurationMs)}</span>
-            <span className="h-px flex-1 bg-border/40" />
-          </button>
+          <TurnSectionDisclosureHeader
+            expanded
+            label={headerLabel}
+            durationMs={displayDurationMs}
+            onToggle={() => setCollapsed(true)}
+          />
         )}
         {segment.items.map((item, idx) => {
           const key = getItemKey(item);
@@ -450,7 +474,10 @@ function TurnSection({
             </div>
           );
         })}
-        <RoundActionToolbar actionModel={buildRoundActionModel(segment)} />
+        <RoundActionToolbar
+          actionModel={buildRoundActionModel(segment)}
+          onForkFromMessageRef={onForkFromMessageRef}
+        />
       </div>
     );
   }
@@ -458,15 +485,12 @@ function TurnSection({
   // 折叠态：只显示 summary bar + 最终输出
   return (
     <div className="space-y-1.5">
-      <button
-        type="button"
-        onClick={() => setCollapsed(false)}
-        className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/50 transition-colors hover:text-muted-foreground/70 hover:bg-secondary/30"
-      >
-        <span className="text-muted-foreground/40">▶</span>
-        <span>{headerLabel ?? "会话段落"}{formatTurnDurationSuffix(displayDurationMs)}</span>
-        <span className="h-px flex-1 bg-border/40" />
-      </button>
+      <TurnSectionDisclosureHeader
+        expanded={false}
+        label={headerLabel ?? "会话段落"}
+        durationMs={displayDurationMs}
+        onToggle={() => setCollapsed(false)}
+      />
       {segment.finalOutput && (
         <SessionEntry
           item={segment.finalOutput}
@@ -475,7 +499,15 @@ function TurnSection({
           isStreaming={getItemKey(segment.finalOutput) === streamingEntryId}
         />
       )}
-      <RoundActionToolbar actionModel={buildRoundActionModel(segment)} />
+      {segment.errorMessage && (
+        <div className="rounded-[8px] border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {segment.errorMessage}
+        </div>
+      )}
+      <RoundActionToolbar
+        actionModel={buildRoundActionModel(segment)}
+        onForkFromMessageRef={onForkFromMessageRef}
+      />
     </div>
   );
 }
@@ -489,8 +521,33 @@ function CopyIcon() {
   );
 }
 
-function RoundActionToolbar({ actionModel }: { actionModel: RoundActionModel }) {
+function ForkIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="18" cy="6" r="2" />
+      <circle cx="12" cy="18" r="2" />
+      <path d="M6 8v2a4 4 0 0 0 4 4h2" />
+      <path d="M18 8v2a4 4 0 0 1-4 4h-2" />
+      <path d="M12 14v2" />
+    </svg>
+  );
+}
+
+function RoundActionToolbar({
+  actionModel,
+  onForkFromMessageRef,
+}: {
+  actionModel: RoundActionModel;
+  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
+}) {
   const [copied, setCopied] = useState(false);
+  const [forking, setForking] = useState(false);
+  const forkPointRef = actionModel.forkFromHere.forkPointRef;
+  const canFork = Boolean(actionModel.forkFromHere.enabled && forkPointRef && onForkFromMessageRef);
+  const forkDisabledReason = onForkFromMessageRef
+    ? actionModel.forkFromHere.disabledReason
+    : "当前视图没有 AgentRun fork 入口。";
 
   const handleCopy = async () => {
     if (!actionModel.copyLastAgentReply.enabled) return;
@@ -499,7 +556,17 @@ function RoundActionToolbar({ actionModel }: { actionModel: RoundActionModel }) 
     window.setTimeout(() => setCopied(false), 1200);
   };
 
-  if (!actionModel.copyLastAgentReply.enabled) {
+  const handleFork = async () => {
+    if (!canFork || !forkPointRef || !onForkFromMessageRef || forking) return;
+    setForking(true);
+    try {
+      await onForkFromMessageRef(forkPointRef);
+    } finally {
+      setForking(false);
+    }
+  };
+
+  if (!actionModel.copyLastAgentReply.enabled && !actionModel.forkFromHere.forkPointRef) {
     return null;
   }
 
@@ -515,6 +582,16 @@ function RoundActionToolbar({ actionModel }: { actionModel: RoundActionModel }) 
           onClick={() => { void handleCopy(); }}
         >
           {copied ? <span className="text-[10px] font-medium">OK</span> : <CopyIcon />}
+        </button>
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!canFork || forking}
+          title={canFork ? "从当前稳定轮次 fork AgentRun" : forkDisabledReason ?? "当前轮次不可 fork"}
+          aria-label="从当前稳定轮次 fork AgentRun"
+          onClick={() => { void handleFork(); }}
+        >
+          {forking ? <span className="h-3 w-3 animate-spin rounded-[8px] border border-current border-t-transparent" /> : <ForkIcon />}
         </button>
       </div>
     </div>
@@ -586,7 +663,6 @@ export function SessionChatComposer({
     providerId: string;
     modelId: string;
     thinkingLevel: string;
-    permissionPolicy: string;
   }) => void;
   onPlusMenuFiles: (files: FileList) => void;
   onRemoveImage: (id: string) => void;

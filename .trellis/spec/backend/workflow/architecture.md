@@ -2,16 +2,20 @@
 
 ## Role
 
-Workflow owns plan/orchestration/node/attempt/product evidence. Agent Runtime owns Thread/Turn/Item/Interaction、operation journal、context 与 terminal lifecycle。二者通过 Lifecycle run/agent/frame 与 canonical Runtime thread/operation coordinates关联。
+Workflow owns plan/orchestration/node/attempt/product evidence. concrete Agent owns
+conversation/context/effect 与 terminal history；Runtime 只在当前进程协调两端。二者通过
+Lifecycle run/agent/frame、source association 与 concrete operation coordinate关联。
 
 ## Invariants
 
-- Workflow dispatch 先创建或复用 LifecycleRun、LifecycleAgent、AgentFrame，再调用 `AgentRunProductDelivery`；不创建执行 session 或 Driver client。
-- Runtime node 保存 `runtime_thread_id` / `runtime_operation_id` evidence；不能复制 Runtime status machine。
+- Workflow dispatch 先创建或复用 LifecycleRun、LifecycleAgent、AgentFrame，再调用
+  `AgentRunProductInputDeliveryPort`；不创建执行 session 或具体 Agent client。
+- Runtime node可以保存 `runtime_thread_id` / `runtime_operation_id` 作为下游 evidence；执行
+  状态从 concrete Agent observation得到。
 - AgentFrame 是 immutable Business Surface input；`AgentRunRuntimeBinding` 是产品到 Runtime 的唯一执行锚点。
-- node completion 由 canonical Runtime terminal event/snapshot 驱动并幂等写入 orchestration journal。
-- Gate/companion follow-up 进入 durable AgentRun mailbox；accepted result 只引用 canonical Runtime operation。
-- Workflow repository 不读取 Runtime 内部表；跨边界查询使用 facade/typed binding ports。
+- node completion由 concrete Agent terminal snapshot/event驱动并幂等写入orchestration journal。
+- Gate/companion follow-up通过同步 Agent input handoff；Gate owner保存等待事实和下游receipt。
+- Workflow repository不读取Agent/Runtime内部表；跨边界查询使用facade/typed association ports。
 
 ## Validation
 
@@ -24,6 +28,6 @@ Workflow owns plan/orchestration/node/attempt/product evidence. Agent Runtime ow
 
 ## Tests Required
 
-- dispatch -> ProductDelivery -> operation evidence integration test。
-- duplicate/late Runtime terminal does not advance node twice。
+- dispatch → Product input handoff → concrete operation evidence integration test。
+- duplicate/late Agent terminal does not advance node twice。
 - workflow crates contain no Driver/vendor/legacy session repository dependency。

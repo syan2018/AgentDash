@@ -1,0 +1,20 @@
+{
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "capture_method": "executable pinned Main route-registration absence and protected-surface subset probe",
+    "source_files": [
+      {
+        "path": "crates/agentdash-api/src/routes/lifecycle_agents.rs",
+        "sha256": "f43b0620bc50bdf72212162c962fec03f49c31a45b11beeedcca709a215d40fa"
+      }
+    ]
+  },
+  "main_absence": {
+    "path": "/agent-runs/{run_id}/agents/{agent_id}/runtime/interactions/{interaction_id}/respond",
+    "handler": "respond_agent_run_interaction"
+  },
+  "protected_main_surface": {
+    "route_registration_count": 22,
+    "comparison": "every pinned Main path, HTTP method, and handler registration is present unchanged in current"
+  }
+}

@@ -6,7 +6,7 @@ use agentdash_domain::backend::{
     ProjectBackendAccessRepository,
 };
 use agentdash_domain::project::ProjectRepository;
-use agentdash_spi::AuthIdentity;
+use agentdash_platform_spi::AuthIdentity;
 
 use super::{
     BackendAuthorizationError, BackendAuthorizationService, BackendPermission,
@@ -160,10 +160,9 @@ mod tests {
 
     use agentdash_domain::backend::{
         BackendRepository, LocalBackendClaim, ProjectBackendAccess, ProjectBackendAccessStatus,
-        ViewConfig,
     };
     use agentdash_domain::project::{Project, ProjectSubjectGrant, ProjectSubjectType};
-    use agentdash_spi::{AuthMode, platform::auth::AuthGroup};
+    use agentdash_platform_spi::{AuthMode, platform::auth::AuthGroup};
     use chrono::{Duration, Utc};
     use serde_json::json;
     use uuid::Uuid;
@@ -226,14 +225,6 @@ mod tests {
 
         async fn remove_backend(&self, id: &str) -> Result<(), DomainError> {
             self.backends.lock().expect("lock").remove(id);
-            Ok(())
-        }
-
-        async fn list_views(&self) -> Result<Vec<ViewConfig>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn save_view(&self, _view: &ViewConfig) -> Result<(), DomainError> {
             Ok(())
         }
     }

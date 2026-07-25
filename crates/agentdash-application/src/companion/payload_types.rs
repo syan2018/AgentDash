@@ -326,11 +326,11 @@ fn validate_workflow_script_preflight(payload: &serde_json::Value) -> Option<Str
         );
     }
 
-    if let Some(value) = payload.get("runtime_session_id")
+    if let Some(value) = payload.get("runtime_thread_id")
         && !value.is_string()
     {
         return Some(
-            "payload.type=`workflow_script_preflight` 的 runtime_session_id 必须是字符串"
+            "payload.type=`workflow_script_preflight` 的 runtime_thread_id 必须是字符串"
                 .to_string(),
         );
     }
@@ -503,15 +503,15 @@ mod tests {
     }
 
     #[test]
-    fn validate_request_rejects_non_string_workflow_script_runtime_session_id() {
+    fn validate_request_rejects_non_string_workflow_script_runtime_thread_id() {
         let registry = PayloadTypeRegistry::with_builtins();
         let payload = serde_json::json!({
             "type": "workflow_script_preflight",
             "source_text": "workflow(#{ body: [] })",
-            "runtime_session_id": 123
+            "runtime_thread_id": 123
         });
         let error = registry.validate_request(&payload).unwrap();
-        assert!(error.contains("runtime_session_id"));
+        assert!(error.contains("runtime_thread_id"));
     }
 
     #[test]

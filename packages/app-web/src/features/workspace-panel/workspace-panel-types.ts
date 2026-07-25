@@ -13,5 +13,4 @@ export type { WorkspaceBackendTarget, WorkspaceRuntimeData };
 
 export interface WorkspacePanelProps {
   runtimeData: WorkspaceRuntimeData;
-  onWorkspaceModuleOpened?: () => void;
 }

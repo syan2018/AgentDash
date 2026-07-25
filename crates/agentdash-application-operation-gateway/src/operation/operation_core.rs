@@ -461,7 +461,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use agentdash_domain::operation::OperationRef;
-    use agentdash_spi::{AuthIdentity, AuthMode};
+    use agentdash_platform_spi::{AuthIdentity, AuthMode};
     use async_trait::async_trait;
     use chrono::{Duration, Utc};
     use serde_json::{Value, json};

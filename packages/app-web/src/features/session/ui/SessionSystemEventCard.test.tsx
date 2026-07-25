@@ -1,13 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import type { JsonValue } from "../../../generated/common-contracts";
-import { parseContextFrame, type ContextFrame } from "../model/contextFrame";
+import type { BackboneEvent, ContextFrame as WireContextFrame } from "../../../generated/backbone-protocol";
+import { parseContextFrame, type ContextFrame as UiContextFrame } from "../model/contextFrame";
 import { SessionSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
-
-type JsonObject = { [key: string]: JsonValue | undefined };
 
 describe("SessionSystemEventCard", () => {
   it("放行并渲染 session_branch_forked 事件", () => {
@@ -38,10 +35,9 @@ describe("SessionSystemEventCard", () => {
     const event: BackboneEvent = {
       type: "platform",
       payload: {
-        kind: "session_meta_update",
+        kind: "context_frame_changed",
         data: {
-          key: "context_frame",
-          value: frameData,
+          frame: frameData,
         },
       },
     };
@@ -60,10 +56,9 @@ describe("SessionSystemEventCard", () => {
     const event: BackboneEvent = {
       type: "platform",
       payload: {
-        kind: "session_meta_update",
+        kind: "context_frame_changed",
         data: {
-          key: "context_frame",
-          value: sampleContextFrameData(),
+          frame: sampleContextFrameData(),
         },
       },
     };
@@ -211,20 +206,65 @@ describe("SessionSystemEventCard", () => {
     expect(renderToStaticMarkup(<SessionSystemEventCard event={event} />)).toBe("");
   });
 
+  it("session_rewound 长 provider message 默认不展开完整 HTML", () => {
+    const htmlBody = `<html><head><style>${"body{}".repeat(80)}</style></head><body>UNIQUE_REWOUND_HTML_TAIL</body></html>`;
+    const event: BackboneEvent = {
+      type: "platform",
+      payload: {
+        kind: "session_rewound",
+        data: {
+          discarded_turn_id: "turn-failed",
+          discarded_entry_index: 1,
+          stable_event_seq: 42n,
+          stable_turn_id: "turn-stable",
+          reason: "runtime_failure",
+          replacement_turn_id: null,
+          message: `执行器运行错误: Pi Agent loop 错误: LLM 桥接错误: Codex API 返回 403 Forbidden: ${htmlBody}`,
+        },
+      },
+    };
+
+    expect(isRenderableSystemEventUpdate(event)).toBe(true);
+    const markup = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
+
+    expect(markup).toContain("SESSION_REWOUND");
+    expect(markup).toContain("Codex API 返回 403 Forbidden");
+    expect(markup).toContain("丢弃轮次：turn-failed");
+    expect(markup).toContain("稳定轮次：turn-stable");
+    expect(markup).not.toContain("UNIQUE_REWOUND_HTML_TAIL");
+  });
 });
 
-function sampleContextFrameData(): JsonObject {
+function sampleContextFrameData(): WireContextFrame {
   return {
     id: "runtime-context-1",
     kind: "capability_state_delta",
     source: "runtime_context_update",
     phase_node: "apply",
-    apply_mode: "live",
-    delivery_status: "queued_for_transform_context",
-    delivery_channel: "turn_start",
-    message_role: "user",
-    rendered_text: "## Tool Schema Delta — Step Transition: apply",
-    created_at_ms: 1,
+    apply_mode: "accepted_surface_append",
+    delivery_status: "applied_before_prompt",
+    delivery_channel: "connector_context",
+    message_role: "context",
+    rendered_text: "## Capability State Delta\n\n### Added Tool Schemas",
+    delivery_metadata: {
+      delivery_phase: "discovered_inventory",
+      delivery_order: 50,
+      cache_policy: "discovery_digest",
+      cache_key: null,
+      cache_revision: "surface-1",
+      model_channel: "context",
+      agent_consumption: {
+        target: "dash-agent",
+        mode: "system_append",
+        reason: "accepted_capability_state_append",
+      },
+      frontend_label: "Capability State Delta",
+      connector_profile: {
+        profile_id: "dash-agent",
+        declared_consumption_modes: ["system_append"],
+      },
+    },
+    created_at_ms: 1n,
     sections: [
       {
         kind: "tool_schema_delta",
@@ -241,12 +281,14 @@ function sampleContextFrameData(): JsonObject {
             tool_path: "workflow_management::upsert_workflow_tool",
           },
         ],
+        removed_tools: [],
+        changed_tools: [],
       },
     ],
   };
 }
 
-function readFrame(value: Record<string, unknown>): ContextFrame {
+function readFrame(value: unknown): UiContextFrame {
   const frame = parseContextFrame(value);
   if (!frame) {
     throw new Error("invalid context frame test fixture");

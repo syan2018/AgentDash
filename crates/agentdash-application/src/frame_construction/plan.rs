@@ -1,11 +1,11 @@
 use agentdash_domain::session_composition::{SessionComposition, SessionRequiredContextBlock};
 use agentdash_domain::story::Story;
-use agentdash_spi::{
+use agentdash_platform_spi::{
     CapabilityScope, ContextFragment, FragmentScope, FragmentScopeSet, MergeStrategy,
 };
 use serde::Serialize;
 
-use agentdash_spi::{Mount, MountCapability, Vfs};
+use agentdash_platform_spi::{Mount, MountCapability, Vfs};
 
 use crate::runtime::McpServerSummary;
 
@@ -29,7 +29,7 @@ pub struct SessionToolVisibilitySummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct SessionRuntimePolicySummary {
+pub struct RuntimeThreadPolicySummary {
     pub markdown: String,
     pub workspace_attached: bool,
     pub vfs_attached: bool,
@@ -271,7 +271,6 @@ fn conditional_flow_tools(scope: Option<CapabilityScope>) -> Vec<String> {
 fn push_workspace_module_tools(tools: &mut Vec<String>) {
     tools.push("workspace_module_list".to_string());
     tools.push("workspace_module_describe".to_string());
-    tools.push("workspace_module_operate".to_string());
     tools.push("workspace_module_invoke".to_string());
     tools.push("workspace_module_present".to_string());
 }
@@ -362,7 +361,7 @@ pub fn summarize_runtime_policy(
     vfs: Option<&Vfs>,
     mcp_servers: &[McpServerSummary],
     tool_names: &[String],
-) -> SessionRuntimePolicySummary {
+) -> RuntimeThreadPolicySummary {
     let mount_ids = vfs
         .map(|item| {
             item.mounts
@@ -409,7 +408,7 @@ pub fn summarize_runtime_policy(
         path_policy
     );
 
-    SessionRuntimePolicySummary {
+    RuntimeThreadPolicySummary {
         markdown,
         workspace_attached,
         vfs_attached: vfs.is_some(),

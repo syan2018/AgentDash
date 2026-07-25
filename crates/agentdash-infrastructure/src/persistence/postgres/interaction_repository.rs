@@ -1183,22 +1183,23 @@ mod tests {
 
     #[test]
     fn migration_and_repository_required_columns_stay_in_sync() {
-        let migration = include_str!("../../../migrations/0067_interaction_canvas_replacement.sql");
+        let migration = include_str!("../../../migrations/0001_init.sql");
         for required in [
-            "CREATE TABLE interaction_definitions",
+            "CREATE TABLE public.interaction_definitions",
             "project_id text NOT NULL",
-            "CREATE TABLE interaction_source_bundles",
-            "CREATE TABLE interaction_source_files",
-            "CREATE TABLE interaction_definition_lineage",
-            "CREATE TABLE interaction_state_revisions",
-            "CREATE TABLE interaction_presentation_states",
-            "CREATE TABLE interaction_renderer_leases",
+            "CREATE TABLE public.interaction_source_bundles",
+            "CREATE TABLE public.interaction_source_files",
+            "CREATE TABLE public.interaction_definition_lineage",
+            "CREATE TABLE public.interaction_state_revisions",
+            "CREATE TABLE public.interaction_presentation_states",
+            "CREATE TABLE public.interaction_renderer_leases",
             "revision bigint NOT NULL",
             "renewed_at timestamptz NOT NULL",
-            "DROP TABLE IF EXISTS canvases",
-            "DROP COLUMN IF EXISTS visible_canvas_mount_ids_json",
         ] {
-            assert!(migration.contains(required), "0062 missing {required}");
+            assert!(
+                migration.contains(required),
+                "baseline migration missing {required}"
+            );
         }
         let repository = include_str!("interaction_repository.rs");
         for required in [

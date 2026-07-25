@@ -1,4 +1,8 @@
-import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
+import type {
+  AgentDashThreadItem,
+  BackboneEvent,
+  FileUpdateChange,
+} from "../../../generated/backbone-protocol";
 import type {
   SessionDisplayEntry,
   SessionEventEnvelope,
@@ -7,7 +11,7 @@ import type {
   TokenUsageInfo,
 } from "./types";
 import { extractTextFromUserInputs, extractTokenUsageFromEvent } from "./types";
-import { isRecord } from "./platformEvent";
+import { extractContextFrameValue, isRecord } from "./platformEvent";
 import { parseContextFrame } from "./contextFrame";
 
 export interface SessionStreamState {
@@ -51,6 +55,7 @@ function getItemIdFromEvent(event: BackboneEvent): string | undefined {
     case "command_output_delta":
     case "file_change_delta":
     case "mcp_tool_call_progress":
+    case "file_change_patch_updated":
     case "agent_message_delta":
     case "reasoning_text_delta":
     case "reasoning_summary_delta":
@@ -96,6 +101,7 @@ function freshnessForEvent(event: BackboneEvent): SessionItemFreshness | undefin
     case "command_output_delta":
     case "file_change_delta":
     case "mcp_tool_call_progress":
+    case "file_change_patch_updated":
     case "agent_message_delta":
     case "reasoning_text_delta":
     case "reasoning_summary_delta":
@@ -145,24 +151,42 @@ function mergeEntryMetadata(
   };
 }
 
-function withEntryMetadata(
-  entry: SessionDisplayEntry,
-  event: SessionEventEnvelope,
-  bbEvent: BackboneEvent,
-): SessionDisplayEntry {
-  return {
-    ...entry,
-    timelineOrder: makeTimelineOrder(event, bbEvent),
-    progressSeq: event.ephemeral ? event.event_seq : undefined,
-    itemFreshness: freshnessForEvent(bbEvent),
-  };
-}
-
 function getCommandAggregatedOutput(item: AgentDashThreadItem): string | null {
   if (item.type !== "commandExecution" && item.type !== "shellExec") {
     return null;
   }
-  return item.aggregatedOutput;
+  return item.aggregatedOutput ?? null;
+}
+
+function applyFileChangePatch(
+  event: BackboneEvent,
+  changes: FileUpdateChange[],
+): BackboneEvent | null {
+  if (
+    event.type === "item_started" &&
+    event.payload.item.type === "fileChange"
+  ) {
+    return {
+      type: "item_started",
+      payload: {
+        ...event.payload,
+        item: { ...event.payload.item, changes },
+      },
+    };
+  }
+  if (
+    event.type === "item_updated" &&
+    event.payload.item.type === "fileChange"
+  ) {
+    return {
+      type: "item_updated",
+      payload: {
+        ...event.payload,
+        item: { ...event.payload.item, changes },
+      },
+    };
+  }
+  return null;
 }
 
 function isWillRetryErrorEvent(event: BackboneEvent): boolean {
@@ -178,8 +202,35 @@ function eventTurnId(event: SessionEventEnvelope): string | undefined {
   return event.turn_id ?? event.notification.trace.turnId ?? undefined;
 }
 
+function extractProviderAttemptStatus(event: SessionEventEnvelope): { turnId?: string; phase: string } | null {
+  const bbEvent = event.notification.event;
+  if (bbEvent.type !== "platform" || !isRecord(bbEvent.payload)) {
+    return null;
+  }
+
+  const platform: Record<string, unknown> = bbEvent.payload;
+  const kind = readStringField(platform, "kind");
+  if (kind !== "provider_attempt_status" || !isRecord(platform.data)) {
+    return null;
+  }
+
+  const phase = readStringField(platform.data, "phase");
+  if (!phase) {
+    return null;
+  }
+
+  return {
+    turnId: readStringField(platform.data, "turn_id") ?? eventTurnId(event),
+    phase,
+  };
+}
+
 export function extractTerminalTurnId(event: SessionEventEnvelope): string | null {
   const bbEvent = event.notification.event;
+  if (bbEvent.type === "turn_completed") {
+    return bbEvent.payload.turn.id;
+  }
+
   if (
     bbEvent.type !== "platform" ||
     bbEvent.payload.kind !== "session_meta_update" ||
@@ -190,6 +241,32 @@ export function extractTerminalTurnId(event: SessionEventEnvelope): string | nul
   }
 
   return readStringField(bbEvent.payload.data.value, "turn_id") ?? eventTurnId(event) ?? null;
+}
+
+function updateProviderWaitingSeqs(
+  current: ReadonlyMap<string, number>,
+  event: SessionEventEnvelope,
+): ReadonlyMap<string, number> {
+  const terminalTurnId = extractTerminalTurnId(event);
+  if (terminalTurnId) {
+    if (!current.has(terminalTurnId)) return current;
+    const next = new Map(current);
+    next.delete(terminalTurnId);
+    return next;
+  }
+
+  const status = extractProviderAttemptStatus(event);
+  if (!status?.turnId) {
+    return current;
+  }
+
+  const next = new Map(current);
+  if (status.phase === "connected_waiting_first_delta") {
+    next.set(status.turnId, event.event_seq);
+  } else {
+    next.delete(status.turnId);
+  }
+  return next;
 }
 
 function buildEntryId(event: SessionEventEnvelope, bbEvent: BackboneEvent): string {
@@ -233,137 +310,15 @@ export function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: BackboneE
     entryIndex: event.entry_index ?? undefined,
   };
 
-  if (
-    bbEvent.type === "platform" &&
-    bbEvent.payload.kind === "session_meta_update" &&
-    bbEvent.payload.data.key === "context_frame" &&
-    isRecord(bbEvent.payload.data.value)
-  ) {
-    const contextFrame = parseContextFrame(bbEvent.payload.data.value);
+  const contextFrameValue = extractContextFrameValue(bbEvent);
+  if (contextFrameValue) {
+    const contextFrame = parseContextFrame(contextFrameValue);
     if (contextFrame) {
       return { ...entry, contextFrame };
     }
   }
 
   return entry;
-}
-
-type AssistantDeltaKind =
-  | "agent_message_delta"
-  | "reasoning_text_delta"
-  | "reasoning_summary_delta";
-
-/** 为 hydrate 场景合成一个 delta 事件，使终态助手正文 / reasoning 仍渲染为助手/思考卡。 */
-function synthesizeAssistantDeltaEvent(
-  kind: AssistantDeltaKind,
-  event: SessionEventEnvelope,
-  itemId: string,
-  text: string,
-): BackboneEvent {
-  const base = {
-    threadId: event.notification.sessionId,
-    turnId: event.turn_id ?? "",
-    itemId,
-    delta: text,
-  };
-  if (kind === "reasoning_text_delta") {
-    return { type: kind, payload: { ...base, contentIndex: 0 } };
-  }
-  if (kind === "reasoning_summary_delta") {
-    return { type: kind, payload: { ...base, summaryIndex: 0 } };
-  }
-  return { type: kind, payload: base };
-}
-
-function isThreadItemEntry(entry: SessionDisplayEntry): boolean {
-  return (
-    entry.event.type === "item_started" ||
-    entry.event.type === "item_updated" ||
-    entry.event.type === "item_completed"
-  );
-}
-
-function sameTimelineSlot(entry: SessionDisplayEntry, event: SessionEventEnvelope): boolean {
-  const turnId = event.turn_id ?? event.notification.trace.turnId ?? undefined;
-  const entryIndex = event.entry_index ?? event.notification.trace.entryIndex ?? undefined;
-  return (
-    turnId != null &&
-    entryIndex != null &&
-    entry.turnId === turnId &&
-    entry.entryIndex === entryIndex
-  );
-}
-
-function insertHydratedAssistantEntry(
-  entries: SessionDisplayEntry[],
-  entry: SessionDisplayEntry,
-  event: SessionEventEnvelope,
-  kind: AssistantDeltaKind,
-): SessionDisplayEntry[] {
-  const insertIndex = entries.findIndex((existing) => {
-    if (!sameTimelineSlot(existing, event)) {
-      return false;
-    }
-    if (kind === "reasoning_text_delta" || kind === "reasoning_summary_delta") {
-      return existing.event.type === "agent_message_delta" || isThreadItemEntry(existing);
-    }
-    return isThreadItemEntry(existing);
-  });
-  if (insertIndex < 0) {
-    return [...entries, entry];
-  }
-  return [
-    ...entries.slice(0, insertIndex),
-    entry,
-    ...entries.slice(insertIndex),
-  ];
-}
-
-/**
- * 终态助手正文 / reasoning（来自 turn 收尾 ItemCompleted(AgentMessage|Reasoning)）并入对应 delta 气泡。
- * - live：命中已存在的 delta 条目，用终态文本 finalize（权威覆盖累积），isStreaming=false。
- * - hydrate（Step 1 后只有终态、无 delta）：合成同 id 的 delta 条目渲染气泡。
- * 不新建 `item:` 卡片，避免与流式气泡双渲染。
- */
-function finalizeAssistantDelta(
-  entries: SessionDisplayEntry[],
-  event: SessionEventEnvelope,
-  kind: AssistantDeltaKind,
-  itemId: string,
-  text: string,
-): SessionDisplayEntry[] {
-  if (!text) {
-    return entries;
-  }
-  // delta 气泡的 entry id 与该 delta 的 itemId 同源（buildEntryId 优先用 getItemIdFromEvent）。
-  // 终态 item 的 id 与 delta 的 itemId 同为 synth_item_id(turn,entry,"msg"|"reason")，故 target 一致。
-  const targetId = `item:${itemId}`;
-
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const existing = entries[i];
-    if (existing && existing.id === targetId) {
-      const next = [...entries];
-      const merged = mergeEntryMetadata(existing, event, event.notification.event, "completed");
-      // 保留既有 delta event（渲染分发依赖 event.type），仅 finalize 文本与流式标记。
-      next[i] = { ...merged, accumulatedText: text, isStreaming: false };
-      return next;
-    }
-  }
-
-  // hydrate：无 delta 气泡，合成同 id 的 delta 条目以渲染助手 / 思考卡。
-  const syntheticEvent = synthesizeAssistantDeltaEvent(kind, event, itemId, text);
-  const syntheticEntry = withEntryMetadata({
-    id: targetId,
-    sessionId: event.notification.sessionId,
-    timestamp: event.committed_at_ms ?? event.occurred_at_ms ?? Date.now(),
-    eventSeq: event.event_seq,
-    event: syntheticEvent,
-    turnId: event.turn_id ?? undefined,
-    entryIndex: event.entry_index ?? undefined,
-    accumulatedText: text,
-    isStreaming: false,
-  }, event, event.notification.event);
-  return insertHydratedAssistantEntry(entries, syntheticEntry, event, kind);
 }
 
 function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnvelope): SessionDisplayEntry[] {
@@ -435,56 +390,29 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: bbEvent.payload.delta }];
   }
 
-  if (bbEvent.type === "item_started" || bbEvent.type === "item_updated") {
+  if (
+    bbEvent.type === "item_started" ||
+    bbEvent.type === "item_updated" ||
+    bbEvent.type === "item_completed"
+  ) {
     const entryId = buildEntryId(event, bbEvent);
     const incomingFreshness = freshnessForEvent(bbEvent);
+    const finalCommandOutput = getCommandAggregatedOutput(bbEvent.payload.item);
     for (let i = prev.length - 1; i >= 0; i -= 1) {
       const existing = prev[i];
       if (existing && existing.id === entryId) {
         const next = [...prev];
         const merged = mergeEntryMetadata(existing, event, bbEvent, incomingFreshness);
         next[i] = incomingFreshness && isFreshEnough(existing, incomingFreshness)
-          ? { ...merged, event: bbEvent }
+          ? {
+              ...merged,
+              event: bbEvent,
+              accumulatedText: finalCommandOutput ?? existing.accumulatedText,
+              isStreaming: bbEvent.type !== "item_completed",
+              isPendingApproval:
+                bbEvent.type === "item_completed" ? false : existing.isPendingApproval,
+            }
           : merged;
-        return next;
-      }
-    }
-    return [...prev, makeDisplayEntry(event, bbEvent)];
-  }
-
-  if (bbEvent.type === "item_completed") {
-    const finalItem = bbEvent.payload.item;
-    // 终态助手正文 / reasoning 并入 delta 气泡，不走工具卡路径。
-    if (finalItem.type === "agentMessage") {
-      return finalizeAssistantDelta(prev, event, "agent_message_delta", finalItem.id, finalItem.text);
-    }
-    if (finalItem.type === "reasoning") {
-      let next = prev;
-      const contentText = finalItem.content.join("");
-      if (contentText) {
-        next = finalizeAssistantDelta(next, event, "reasoning_text_delta", finalItem.id, contentText);
-      }
-      const summaryText = finalItem.summary.join("");
-      if (summaryText) {
-        next = finalizeAssistantDelta(next, event, "reasoning_summary_delta", finalItem.id, summaryText);
-      }
-      return next;
-    }
-
-    const entryId = buildEntryId(event, bbEvent);
-    const finalCommandOutput = getCommandAggregatedOutput(bbEvent.payload.item);
-    for (let i = prev.length - 1; i >= 0; i -= 1) {
-      const existing = prev[i];
-      if (existing && existing.id === entryId) {
-        const next = [...prev];
-        const merged = mergeEntryMetadata(existing, event, bbEvent, "completed");
-        next[i] = {
-          ...merged,
-          event: bbEvent,
-          accumulatedText: finalCommandOutput ?? existing.accumulatedText,
-          isStreaming: false,
-          isPendingApproval: false,
-        };
         return next;
       }
     }
@@ -493,7 +421,7 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
       {
         ...makeDisplayEntry(event, bbEvent),
         accumulatedText: finalCommandOutput ?? undefined,
-        isStreaming: false,
+        isStreaming: bbEvent.type !== "item_completed",
       },
     ];
   }
@@ -520,6 +448,39 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
         return next;
       }
     }
+    return prev;
+  }
+
+  if (bbEvent.type === "file_change_patch_updated") {
+    const targetId = `item:${bbEvent.payload.itemId}`;
+    for (let i = prev.length - 1; i >= 0; i -= 1) {
+      const existing = prev[i];
+      if (!existing || existing.id !== targetId) {
+        continue;
+      }
+      if (
+        existing.itemFreshness === "completed" ||
+        existing.event.type === "item_completed"
+      ) {
+        return prev;
+      }
+      const patchedEvent = applyFileChangePatch(
+        existing.event,
+        bbEvent.payload.changes,
+      );
+      if (!patchedEvent) return prev;
+      const next = [...prev];
+      next[i] = {
+        ...mergeEntryMetadata(existing, event, bbEvent, "progress"),
+        event: patchedEvent,
+        isStreaming: true,
+      };
+      return next;
+    }
+    return prev;
+  }
+
+  if (bbEvent.type === "turn_started" || bbEvent.type === "turn_completed") {
     return prev;
   }
 
@@ -567,7 +528,7 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
   if (bbEvent.type === "platform") {
     const platform = bbEvent.payload;
 
-    if (platform.kind === "terminal_output" || platform.kind === "pty_terminal_state_changed") {
+    if (platform.kind === "provider_attempt_status") {
       return prev;
     }
 
@@ -582,7 +543,8 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return [...prev, makeDisplayEntry(event, bbEvent)];
   }
 
-  if (bbEvent.type === "turn_diff_updated") {
+  if (bbEvent.type === "thread_status_changed" || bbEvent.type === "executor_context_compacted" ||
+      bbEvent.type === "turn_diff_updated") {
     return prev;
   }
 
@@ -622,7 +584,7 @@ export function reduceStreamState(
   let entries = prev.entries;
   let rawEvents = prev.rawEvents;
   let tokenUsage = prev.tokenUsage;
-  const providerWaitingSeqs = prev.providerWaitingSeqs;
+  let providerWaitingSeqs = prev.providerWaitingSeqs;
   let lastAppliedSeq = prev.lastAppliedSeq;
   let lastEphemeralSeq = prev.lastEphemeralSeq;
 
@@ -633,6 +595,7 @@ export function reduceStreamState(
       if (event.event_seq <= lastEphemeralSeq) {
         continue;
       }
+      providerWaitingSeqs = updateProviderWaitingSeqs(providerWaitingSeqs, event);
       entries = applyEventToEntries(entries, event);
       lastEphemeralSeq = event.event_seq;
       continue;
@@ -643,6 +606,7 @@ export function reduceStreamState(
     }
 
     rawEvents = [...rawEvents, event];
+    providerWaitingSeqs = updateProviderWaitingSeqs(providerWaitingSeqs, event);
     entries = applyEventToEntries(entries, event);
     const usage = extractTokenUsageFromEvent(event.notification.event);
     if (usage) {

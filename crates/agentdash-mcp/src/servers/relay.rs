@@ -17,7 +17,7 @@ use crate::authz::{McpProjectPermission, list_accessible_projects, require_proje
 use crate::error::McpError;
 use crate::services::McpServices;
 use agentdash_domain::context_container::validate_context_containers;
-use agentdash_spi::platform::auth::AuthIdentity;
+use agentdash_platform_spi::platform::auth::AuthIdentity;
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
 

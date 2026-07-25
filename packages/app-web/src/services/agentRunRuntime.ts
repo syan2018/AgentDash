@@ -1,117 +1,89 @@
-import { api, type ApiHttpError } from "../api/client";
+import { api } from "../api/client";
+import type { SessionProjectionViewResponse } from "../generated/session-contracts";
 import type {
-  SessionEventsPageResponse,
-  SessionProjectionViewResponse,
-} from "../generated/session-contracts";
-import type { AgentRunCommandOnlyRequest } from "../generated/workflow-contracts";
+  AgentRunProductRuntimeCommand,
+  AgentRunProductRuntimeCommandRequest as AgentRunProductRuntimeCommandRequestWire,
+} from "../generated/agent-run-product-projection-contracts";
 import type {
-  BoundRuntimeHookPlan,
-  DriverThreadId,
-  ProfileDigest,
-  ProfileProvenance,
-  RuntimeBindingId,
-  RuntimeDriverGeneration,
-  RuntimeEventEnvelope,
-  OperationReceipt,
-  RuntimeProfile,
-  RuntimeSnapshot,
-  RuntimeSubscribeError,
-  RuntimeThreadId,
-  SurfaceDigest,
+  ManagedRuntimeInteractionResponse,
 } from "../generated/agent-runtime-contracts";
+import {
+  decodeManagedRuntimeOperationReceipt,
+  decodeManagedRuntimeSnapshot,
+  type ManagedRuntimeOperationReceipt,
+  type ManagedRuntimeSnapshot,
+} from "../generated/agent-runtime-validators";
 
 export interface AgentRunRuntimeTarget {
   runId: string;
   agentId: string;
 }
 
-export interface AgentRunRuntimeBindingView {
-  target: { run_id: string; agent_id: string };
-  thread_id: RuntimeThreadId;
-  binding_id: RuntimeBindingId;
-  driver_generation: RuntimeDriverGeneration;
-  source_thread_id: DriverThreadId;
-  profile_digest: ProfileDigest;
-  profile_provenance: ProfileProvenance;
-  bound_profile: RuntimeProfile;
-  surface_digest: SurfaceDigest;
-  hook_plan: BoundRuntimeHookPlan;
-}
-
-export interface AgentRunRuntimeInspectResponse {
-  target: { run_id: string; agent_id: string };
-  binding: AgentRunRuntimeBindingView | null;
-  snapshot: RuntimeSnapshot | null;
-}
-
-export type AgentRunRuntimeEventStreamItem =
-  | { kind: "event"; durable_cursor: number | null; envelope: RuntimeEventEnvelope }
-  | { kind: "error"; error: RuntimeSubscribeError };
-
 export function agentRunScopedPath(target: AgentRunRuntimeTarget, route: string): string {
   return `/agent-runs/${encodeURIComponent(target.runId)}/agents/${encodeURIComponent(target.agentId)}${route}`;
 }
 
-export async function fetchAgentRunRuntimeInspect(
+export async function fetchManagedRuntimeSnapshot(
   target: AgentRunRuntimeTarget,
-): Promise<AgentRunRuntimeInspectResponse> {
-  return api.get<AgentRunRuntimeInspectResponse>(agentRunScopedPath(target, "/runtime"));
-}
-
-export async function fetchAgentRunJournalEvents(
-  target: AgentRunRuntimeTarget,
-  afterSeq = 0,
-  limit = 500,
-): Promise<SessionEventsPageResponse> {
-  const params = new URLSearchParams();
-  params.set("after_seq", String(afterSeq));
-  params.set("limit", String(limit));
-  return api.get<SessionEventsPageResponse>(
-    agentRunScopedPath(target, `/journal/events?${params.toString()}`),
-  );
+): Promise<ManagedRuntimeSnapshot> {
+  const payload = await api.get<unknown>(agentRunScopedPath(target, "/runtime/snapshot"));
+  return decodeManagedRuntimeSnapshot(payload);
 }
 
 export async function fetchAgentRunRuntimeContextProjection(
   target: AgentRunRuntimeTarget,
-): Promise<SessionProjectionViewResponse | null> {
-  try {
-    return await api.get<SessionProjectionViewResponse>(
-      agentRunScopedPath(target, "/runtime/context/projection"),
-    );
-  } catch (err) {
-    if ((err as ApiHttpError).status === 404) return null;
-    throw err;
-  }
+): Promise<SessionProjectionViewResponse> {
+  return api.get<SessionProjectionViewResponse>(
+    agentRunScopedPath(target, "/runtime/context/projection"),
+  );
+}
+
+export interface AgentRunProductRuntimeCommandRequest {
+  client_command_id: string;
+  command: AgentRunProductRuntimeCommand;
+}
+
+export async function executeAgentRunRuntimeCommand(
+  target: AgentRunRuntimeTarget,
+  request: AgentRunProductRuntimeCommandRequest,
+): Promise<ManagedRuntimeOperationReceipt> {
+  const wireRequest: AgentRunProductRuntimeCommandRequestWire = {
+    client_command_id: request.client_command_id,
+    command: request.command,
+  };
+  const payload = await api.post<unknown>(
+    agentRunScopedPath(target, "/runtime/commands"),
+    wireRequest,
+  );
+  return decodeManagedRuntimeOperationReceipt(payload);
 }
 
 export async function compactAgentRunContext(
-  runId: string,
-  agentId: string,
-  request: AgentRunCommandOnlyRequest,
-): Promise<OperationReceipt> {
-  return api.post<OperationReceipt>(
-    agentRunScopedPath({ runId, agentId }, "/runtime/context/compact"),
-    request,
-  );
+  target: AgentRunRuntimeTarget,
+  clientCommandId: string,
+): Promise<ManagedRuntimeOperationReceipt> {
+  const snapshot = await fetchManagedRuntimeSnapshot(target);
+  if (snapshot.command_availability.request_compaction?.status !== "available") {
+    throw new Error("Managed Runtime 当前不接受 context compaction");
+  }
+  return executeAgentRunRuntimeCommand(target, {
+    client_command_id: clientCommandId,
+    command: { kind: "request_compaction" },
+  });
 }
 
-export async function approveAgentRunToolCall(
+export async function respondAgentRunInteraction(
   target: AgentRunRuntimeTarget,
-  toolCallId: string,
-): Promise<OperationReceipt> {
-  return api.post<OperationReceipt>(
-    agentRunScopedPath(target, `/runtime/tool-approvals/${encodeURIComponent(toolCallId)}/approve`),
-    {},
-  );
-}
-
-export async function rejectAgentRunToolCall(
-  target: AgentRunRuntimeTarget,
-  toolCallId: string,
-  reason?: string,
-): Promise<OperationReceipt> {
-  return api.post<OperationReceipt>(
-    agentRunScopedPath(target, `/runtime/tool-approvals/${encodeURIComponent(toolCallId)}/reject`),
-    { reason },
-  );
+  interactionId: string,
+  response: ManagedRuntimeInteractionResponse,
+  clientCommandId: string,
+): Promise<ManagedRuntimeOperationReceipt> {
+  return executeAgentRunRuntimeCommand(target, {
+    client_command_id: clientCommandId,
+    command: {
+      kind: "resolve_interaction",
+      interaction_id: interactionId,
+      response,
+    },
+  });
 }

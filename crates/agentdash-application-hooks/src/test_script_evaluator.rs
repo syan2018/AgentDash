@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use agentdash_spi::HookScriptEvaluator;
+use agentdash_platform_spi::HookScriptEvaluator;
 
 pub struct TestHookScriptEvaluator {
     scripts: BTreeMap<String, String>,
@@ -126,6 +126,20 @@ fn decision_from_script(script: &str, ctx: &serde_json::Value) -> serde_json::Va
     if script.contains("log(\"debug info\")") {
         return serde_json::json!({
             "diagnostics": [{ "code": "script_log", "message": "debug info" }]
+        });
+    }
+    if script.contains("typed_context_presentation") {
+        return serde_json::json!({
+            "effects": [{
+                "kind": "runtime:context_presentation",
+                "payload": {"audit": "hook-provider"},
+                "presentation": {
+                    "kind": "system_notice",
+                    "title": "Hook Notice",
+                    "summary": "Hook provider produced typed presentation facts.",
+                    "body": "继续完成 Hook 请求"
+                }
+            }]
         });
     }
     serde_json::json!({})

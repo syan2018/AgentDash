@@ -1,4 +1,4 @@
-use agentdash_spi::{McpTransportConfig, RuntimeMcpServer};
+use agentdash_platform_spi::{McpTransportConfig, RuntimeMcpServer};
 
 use crate::runtime::McpServerSummary;
 

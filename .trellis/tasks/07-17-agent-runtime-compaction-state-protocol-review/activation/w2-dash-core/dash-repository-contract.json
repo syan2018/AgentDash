@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "owner": "Dash Agent",
+  "port": {
+    "trait": "DashAgentRepository",
+    "initialize": "initialize(initial) -> ()",
+    "read": "load() -> DashAgentRepositoryState",
+    "write": "compare_and_swap(expected, replacement)",
+    "conflict": "DashServiceError::Conflict",
+    "cas_authority": "history head plus repository revision"
+  },
+  "per_source_store": {
+    "trait": "DashAgentRepositoryStore",
+    "create": "create(source, initial) -> Arc<dyn DashAgentRepository>",
+    "open": "open(source) -> Option<Arc<dyn DashAgentRepository>>",
+    "service_seams": [
+      "DashAgentService::create_with_repository",
+      "DashAgentService::open_with_repository",
+      "DashAgentService::create_with_store",
+      "DashAgentService::open_with_store",
+      "DashAgentService::fork_repository_state"
+    ]
+  },
+  "complete_agent_store": {
+    "trait": "DashCompleteAgentStore",
+    "durable_truth": [
+      "source metadata",
+      "per-source Dash repository",
+      "create/resume/fork/execute effect receipts",
+      "surface apply/revoke effect receipts"
+    ],
+    "runtime_only_cache": "active-turn DashAgentService handles; never source/effect truth",
+    "atomic_operation": "commit(DashCompleteAtomicCommit)",
+    "effect_compare_and_swap": [
+      "effect_id",
+      "expected_effect",
+      "replacement_effect"
+    ],
+    "source_mutations": [
+      "Create(source, repository, metadata)",
+      "CompareAndSwap(source, expected/replacement repository, expected/replacement metadata)"
+    ],
+    "restart_visibility": "effect receipt/inspection、source metadata 与 Dash repository state 要么全部可见，要么全部不可见",
+    "request_identity": "每条 effect record 持久化完整 typed request 的 SHA-256 fingerprint，同 command/effect 但不同 payload 必须 conflict"
+  },
+  "complete_agent_recovery": {
+    "create_fork_surface": "source mutation 与 terminal receipt 在同一 atomic commit；提交成功但响应丢失时通过 load_effect 原样重放",
+    "execute_prepare": "调用 provider 或修改 Dash history 前，以 expected_effect=None 持久提交 Accepted receipt 占用 effect identity",
+    "execute_reconcile": "Dash execute 后以 expected Accepted record CAS 为 terminal record；若进程在两者之间退出，重开后由同 request fingerprint 调用 Dash effect/history authority 幂等恢复",
+    "inspect": "只读取 Complete Agent durable effect ledger；Accepted reservation 必须可跨实例观察，未占用 identity 才能返回 NotApplied",
+    "live_surface_reconcile": "open、exact effect replay、atomic commit 成功与 uncertain error 都从 durable source metadata 运行同一 materializer；完整 applied/callback surface/binding 三元组重建 callbacks，全部为空则恢复 base callbacks，部分或不一致 metadata 拒绝为 invalid durable state",
+    "surface_staging": [
+      "DashAgentService::stage_surface_apply",
+      "DashAgentService::stage_surface_revoke"
+    ]
+  },
+  "atomic_commit_input": {
+    "type": "DashAgentCommit",
+    "fields": [
+      "expected_head",
+      "command_settlement",
+      "effect_settlements",
+      "history",
+      "enqueue_commands"
+    ],
+    "invariant": "command/effect settlement、history contribution、change cursor与continuation enqueue 同一事务提交"
+  },
+  "postgresql_adapter_input_for_w8": {
+    "tables": [
+      "dash_agent_session",
+      "dash_agent_branch",
+      "dash_agent_history",
+      "dash_agent_command",
+      "dash_agent_effect",
+      "dash_agent_change",
+      "dash_complete_source",
+      "dash_complete_effect"
+    ],
+    "scalar_constraints": [
+      "session_id + branch_id 唯一",
+      "branch head revision 单调",
+      "command_id 与 effect_id 各自唯一",
+      "Complete effect_id 全局唯一并持久化 request fingerprint、typed receipt 与 inspection evidence",
+      "Complete source coordinate 唯一并与 Dash repository aggregate revision 一起 CAS",
+      "change revision + ordinal 连续且唯一",
+      "fork parent/cutoff/digest 精确",
+      "compaction source head/digest CAS"
+    ],
+    "transaction_order": [
+      "锁定 effect identity 与所有 source aggregate，并校验 expected effect/repository/metadata",
+      "为 Create 建立 source metadata 与初始 Dash repository，或为 CAS 写 replacement aggregate",
+      "写 Complete effect receipt、request fingerprint 与 inspection evidence",
+      "提交后同时暴露 source/history/surface 与 effect evidence",
+      "Dash 内部执行继续按 DashAgentCommit 原子写 command/effect settlement、history、changes 与 continuation"
+    ]
+  },
+  "migration_owner": "W8",
+  "cargo_lock_owner": "W8",
+  "migration_in_this_component": false,
+  "compatibility_reader": false
+}

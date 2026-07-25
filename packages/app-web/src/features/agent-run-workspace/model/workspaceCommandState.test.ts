@@ -13,14 +13,12 @@ describe("AgentRun workspace command state", () => {
       model_id: "gpt-test",
       agent_id: "agent-profile",
       thinking_level: "high",
-      permission_policy: "workspace-write",
     })).toEqual({
       executor: "CODEX",
       provider_id: "openai",
       model_id: "gpt-test",
       agent_id: "agent-profile",
       thinking_level: "high",
-      permission_policy: "workspace-write",
     });
   });
 
@@ -36,7 +34,6 @@ describe("AgentRun workspace command state", () => {
       model_id: "",
       agent_id: undefined,
       thinking_level: undefined,
-      permission_policy: undefined,
     });
   });
 

@@ -4,7 +4,7 @@
  * 两种形态共用同一套视觉骨架：
  *
  *   ┌─────────────────────────────────────────┐
- *   │ [badge]  主文字 / 副标题        hint ▲▼ │  ← header 行，px-3 py-2.5
+ *   │ [badge]  主文字 / 副标题        hint  › │  ← header 行，px-3 py-2.5
  *   ├─────────────────────────────────────────┤
  *   │  展开区 / body 内容                     │  ← px-3 py-2.5，border-t
  *   └─────────────────────────────────────────┘
@@ -23,6 +23,7 @@
 
 import { useState } from "react";
 import { CB } from "./bodies/cardBodyTokens";
+import { DisclosureChevron } from "../../../components/ui/disclosure";
 
 // ─── 共用 badge class 常量（导出供调用方使用）────────────────────────────────
 
@@ -97,9 +98,10 @@ export function EventStripCard({
           </span>
         )}
         {hasExpand && (
-          <span className="shrink-0 text-[10px] text-muted-foreground/30">
-            {expanded ? "▲" : "▼"}
-          </span>
+          <DisclosureChevron
+            expanded={expanded}
+            className="text-muted-foreground/30"
+          />
         )}
       </button>
 
@@ -193,9 +195,10 @@ export function EventFullCard({
             {badgeToken}
           </span>
           {headerContent}
-          <span className="shrink-0 self-center text-[10px] text-muted-foreground/30">
-            {showDebug ? "▲" : "▼"}
-          </span>
+          <DisclosureChevron
+            expanded={showDebug}
+            className="self-center text-muted-foreground/30"
+          />
         </button>
       ) : (
         <div className={`flex gap-2 px-2 py-1 ${hasSubRow ? "items-start" : "items-center"}`}>

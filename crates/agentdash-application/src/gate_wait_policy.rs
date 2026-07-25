@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
+use agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository;
 use agentdash_application_workflow::gate::{
-    GateDeliveryIntent, GateMailboxWakeIntent, GateProducerTerminalConvergenceResult,
+    GateDeliveryIntent, GateInputHandoffWakeIntent, GateProducerTerminalConvergenceResult,
     GateProducerTerminalConvergenceService, GateProducerTerminalEvent,
+    GateWakeTargetRuntimeThreadQuery,
 };
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::workflow::LifecycleGateRepository;
@@ -11,7 +12,7 @@ use async_trait::async_trait;
 
 use crate::ApplicationError;
 use crate::companion::gate_control::{
-    CompanionParentMailboxDelivery, CompanionParentMailboxDeliveryCommand,
+    CompanionParentInputHandoffDelivery, CompanionParentInputHandoffDeliveryCommand,
     build_parent_result_delivery_projection_text,
 };
 
@@ -26,8 +27,8 @@ pub trait GateProducerTerminalConvergencePort: Send + Sync {
 #[derive(Clone)]
 pub struct GateProducerTerminalConvergenceDeps {
     pub gate_repo: Arc<dyn LifecycleGateRepository>,
-    pub runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
-    pub mailbox_wake_delivery: Arc<dyn GateMailboxWakeDelivery>,
+    pub runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+    pub input_handoff_wake_delivery: Arc<dyn GateInputHandoffWakeDelivery>,
 }
 
 #[derive(Clone)]
@@ -40,27 +41,27 @@ impl GateProducerTerminalConvergenceServiceAdapter {
         Self { deps }
     }
 
-    pub fn with_mailbox_wake_delivery(
+    pub fn with_input_handoff_wake_delivery(
         gate_repo: Arc<dyn LifecycleGateRepository>,
-        runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
-        mailbox_wake_delivery: Arc<dyn GateMailboxWakeDelivery>,
+        runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+        input_handoff_wake_delivery: Arc<dyn GateInputHandoffWakeDelivery>,
     ) -> Self {
         Self::new(GateProducerTerminalConvergenceDeps {
             gate_repo,
             runtime_binding_repo,
-            mailbox_wake_delivery,
+            input_handoff_wake_delivery,
         })
     }
 
     #[cfg(test)]
     pub fn noop(
         gate_repo: Arc<dyn LifecycleGateRepository>,
-        runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+        runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     ) -> Self {
-        Self::with_mailbox_wake_delivery(
+        Self::with_input_handoff_wake_delivery(
             gate_repo,
             runtime_binding_repo,
-            Arc::new(NoopGateMailboxWakeDelivery),
+            Arc::new(NoopGateInputHandoffWakeDelivery),
         )
     }
 
@@ -70,7 +71,9 @@ impl GateProducerTerminalConvergenceServiceAdapter {
     ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
         let result = GateProducerTerminalConvergenceService::new(
             self.deps.gate_repo.clone(),
-            self.deps.runtime_binding_repo.clone(),
+            Arc::new(ProductGateWakeTargetRuntimeThreadQuery {
+                bindings: self.deps.runtime_binding_repo.clone(),
+            }),
         )
         .observe_producer_terminal(event.clone())
         .await
@@ -89,10 +92,10 @@ impl GateProducerTerminalConvergenceServiceAdapter {
 
         for outcome in &result.outcomes {
             for intent in &outcome.delivery_intents {
-                if let GateDeliveryIntent::MailboxWake(intent) = intent {
+                if let GateDeliveryIntent::InputHandoffWake(intent) = intent {
                     self.deps
-                        .mailbox_wake_delivery
-                        .deliver_mailbox_wake(intent)
+                        .input_handoff_wake_delivery
+                        .deliver_input_handoff_wake(intent)
                         .await?;
                 }
             }
@@ -120,7 +123,28 @@ impl GateProducerTerminalConvergencePort for GateProducerTerminalConvergenceServ
     }
 }
 
-fn companion_label_from_wake(intent: &GateMailboxWakeIntent) -> String {
+struct ProductGateWakeTargetRuntimeThreadQuery {
+    bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
+}
+
+#[async_trait]
+impl GateWakeTargetRuntimeThreadQuery for ProductGateWakeTargetRuntimeThreadQuery {
+    async fn resolve_runtime_thread(
+        &self,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+    ) -> Result<Option<String>, String> {
+        self.bindings
+            .load_product_binding(&agentdash_domain::agent_run_target::AgentRunTarget {
+                run_id,
+                agent_id,
+            })
+            .await
+            .map(|binding| binding.map(|binding| binding.runtime_thread_id.to_string()))
+    }
+}
+
+fn companion_label_from_wake(intent: &GateInputHandoffWakeIntent) -> String {
     intent
         .payload
         .get("display")
@@ -138,40 +162,42 @@ fn companion_label_from_wake(intent: &GateMailboxWakeIntent) -> String {
 }
 
 #[async_trait]
-pub trait GateMailboxWakeDelivery: Send + Sync {
-    async fn deliver_mailbox_wake(
+pub trait GateInputHandoffWakeDelivery: Send + Sync {
+    async fn deliver_input_handoff_wake(
         &self,
-        intent: &GateMailboxWakeIntent,
+        intent: &GateInputHandoffWakeIntent,
     ) -> Result<(), ApplicationError>;
 }
 
 #[derive(Clone)]
-pub struct CompanionGateMailboxWakeDelivery {
-    companion_parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>,
+pub struct CompanionGateInputHandoffWakeDelivery {
+    companion_parent_input_handoff_delivery: Arc<dyn CompanionParentInputHandoffDelivery>,
 }
 
-impl CompanionGateMailboxWakeDelivery {
-    pub fn new(companion_parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>) -> Self {
+impl CompanionGateInputHandoffWakeDelivery {
+    pub fn new(
+        companion_parent_input_handoff_delivery: Arc<dyn CompanionParentInputHandoffDelivery>,
+    ) -> Self {
         Self {
-            companion_parent_mailbox_delivery,
+            companion_parent_input_handoff_delivery,
         }
     }
 }
 
 #[async_trait]
-impl GateMailboxWakeDelivery for CompanionGateMailboxWakeDelivery {
-    async fn deliver_mailbox_wake(
+impl GateInputHandoffWakeDelivery for CompanionGateInputHandoffWakeDelivery {
+    async fn deliver_input_handoff_wake(
         &self,
-        intent: &GateMailboxWakeIntent,
+        intent: &GateInputHandoffWakeIntent,
     ) -> Result<(), ApplicationError> {
         if intent.namespace != "companion" {
             return Err(ApplicationError::Conflict(format!(
-                "unsupported gate mailbox wake namespace `{}` for gate {}",
+                "unsupported gate input_handoff wake namespace `{}` for gate {}",
                 intent.namespace, intent.gate_id
             )));
         }
         deliver_companion_child_result_to_parent(
-            self.companion_parent_mailbox_delivery.as_ref(),
+            self.companion_parent_input_handoff_delivery.as_ref(),
             intent,
         )
         .await
@@ -180,22 +206,22 @@ impl GateMailboxWakeDelivery for CompanionGateMailboxWakeDelivery {
 
 #[cfg(test)]
 #[derive(Clone, Default)]
-struct NoopGateMailboxWakeDelivery;
+struct NoopGateInputHandoffWakeDelivery;
 
 #[cfg(test)]
 #[async_trait]
-impl GateMailboxWakeDelivery for NoopGateMailboxWakeDelivery {
-    async fn deliver_mailbox_wake(
+impl GateInputHandoffWakeDelivery for NoopGateInputHandoffWakeDelivery {
+    async fn deliver_input_handoff_wake(
         &self,
-        _intent: &GateMailboxWakeIntent,
+        _intent: &GateInputHandoffWakeIntent,
     ) -> Result<(), ApplicationError> {
         Ok(())
     }
 }
 
 async fn deliver_companion_child_result_to_parent(
-    delivery: &dyn CompanionParentMailboxDelivery,
-    intent: &GateMailboxWakeIntent,
+    delivery: &dyn CompanionParentInputHandoffDelivery,
+    intent: &GateInputHandoffWakeIntent,
 ) -> Result<(), ApplicationError> {
     let companion_label = companion_label_from_wake(intent);
     let summary = intent
@@ -218,7 +244,7 @@ async fn deliver_companion_child_result_to_parent(
         &intent.payload,
     );
     delivery
-        .deliver_child_result_to_parent(CompanionParentMailboxDeliveryCommand {
+        .deliver_child_result_to_parent(CompanionParentInputHandoffDeliveryCommand {
             gate_id: intent.gate_id,
             request_id: intent.request_id.clone(),
             run_id: intent.target_run_id,

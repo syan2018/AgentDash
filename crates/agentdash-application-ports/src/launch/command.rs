@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
-use agentdash_agent_protocol::{UserInputBlock, text_user_input_blocks};
 use agentdash_domain::common::AgentBackendRequirement;
-use agentdash_spi::{AgentConfig, AuthIdentity};
+use agentdash_platform_spi::{AgentConfig, AuthIdentity};
 use serde::{Deserialize, Serialize};
 
 use super::modifier::{CompanionLaunchSource, LaunchModifier, RoutineLaunchSource};
@@ -22,7 +21,7 @@ pub enum LaunchSource {
 
 #[derive(Debug, Clone, Default)]
 pub struct LaunchPromptInput {
-    pub input: Option<Vec<UserInputBlock>>,
+    pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: Option<AgentConfig>,
 }
@@ -30,7 +29,9 @@ pub struct LaunchPromptInput {
 impl LaunchPromptInput {
     pub fn from_text(text: impl AsRef<str>) -> Self {
         Self {
-            input: Some(text_user_input_blocks(text.as_ref().trim())),
+            input: Some(agentdash_agent_protocol::text_user_input_blocks(
+                text.as_ref().trim().to_owned(),
+            )),
             environment_variables: HashMap::new(),
             executor_config: None,
         }
@@ -62,7 +63,7 @@ impl LaunchInputSource {
         let namespace = namespace.into();
         let kind = kind.into();
         Self {
-            display_label_key: format!("mailbox.source.{namespace}.{kind}"),
+            display_label_key: format!("agent_input.source.{namespace}.{kind}"),
             namespace,
             kind,
             source_ref: None,
@@ -288,7 +289,7 @@ impl LaunchCommand {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_spi::{AgentConfig, CompanionSliceMode};
+    use agentdash_platform_spi::{AgentConfig, CompanionSliceMode};
     use uuid::Uuid;
 
     use super::{LaunchCommand, LaunchPromptInput, LaunchSource};

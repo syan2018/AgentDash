@@ -3,10 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { SessionProjectionViewResponse } from "../../../generated/session-contracts";
 import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import { SessionProjectionViewPanel } from "./SessionProjectionView";
-import {
-  commandPrecondition,
-  contextCompactionOutcomeMessage,
-} from "./sessionProjectionCompactionAction";
+import { contextCompactionOutcomeMessage } from "./sessionProjectionCompactionAction";
 
 const mocks = vi.hoisted(() => ({
   compactAgentRunContext: vi.fn(),
@@ -101,14 +98,15 @@ describe("SessionProjectionViewPanel", () => {
     expect(markup).toContain("disabled");
   });
 
-  it("点击手动压缩只提交 command-only request", async () => {
+  it("点击手动压缩提交 canonical Product Runtime command", async () => {
     vi.stubGlobal("crypto", { randomUUID: () => "command-compact-1" });
     mocks.compactAgentRunContext.mockResolvedValue({
-      operation_id: "operation-compact-1",
-      operation_sequence: 1n,
-      thread_id: "thread-1",
-      accepted_revision: 4n,
-      duplicate: false,
+      command_receipt: {
+        client_command_id: "command-compact-1",
+        status: "accepted",
+        duplicate: false,
+      },
+      outcome: "launched_compaction_turn",
     });
     const { SessionProjectionViewPanel: Panel } = await importProjectionViewWithImmediateEffects();
     const element = Panel({
@@ -130,32 +128,47 @@ describe("SessionProjectionViewPanel", () => {
     await flushPromises();
 
     expect(mocks.compactAgentRunContext).toHaveBeenCalledWith(
-      "run/1",
-      "agent/1",
-      {
-        client_command_id: "command-compact-1",
-        command: commandPrecondition(sampleCompactCommand()),
-      },
+      { runId: "run/1", agentId: "agent/1" },
+      "command-compact-1",
     );
   });
 });
 
 describe("context compaction helpers", () => {
-  it("renders canonical Runtime operation acceptance and duplicate replay", () => {
+  it("maps compact command outcomes to short UI status text", () => {
     expect(contextCompactionOutcomeMessage({
-      operation_id: "operation-1",
-      operation_sequence: 1n,
-      thread_id: "thread-1",
-      accepted_revision: 4n,
-      duplicate: false,
-    })).toBe("压缩操作已接受 · operation-1");
+      command_receipt: {
+        client_command_id: "cmd-1",
+        status: "accepted",
+        duplicate: false,
+      },
+      outcome: "scheduled_next_turn",
+    })).toBe("已排队");
     expect(contextCompactionOutcomeMessage({
-      operation_id: "operation-1",
-      operation_sequence: 1n,
-      thread_id: "thread-1",
-      accepted_revision: 4n,
-      duplicate: true,
-    })).toBe("压缩操作已存在 · operation-1");
+      command_receipt: {
+        client_command_id: "cmd-2",
+        status: "accepted",
+        duplicate: false,
+      },
+      outcome: "launched_compaction_turn",
+    })).toBe("已启动");
+    expect(contextCompactionOutcomeMessage({
+      command_receipt: {
+        client_command_id: "cmd-3",
+        status: "accepted",
+        duplicate: false,
+      },
+      outcome: "no_eligible_messages",
+    })).toBe("暂无可压缩内容");
+    expect(contextCompactionOutcomeMessage({
+      command_receipt: {
+        client_command_id: "cmd-4",
+        status: "accepted",
+        duplicate: false,
+      },
+      outcome: "failed",
+      message: "summary provider failed",
+    })).toBe("summary provider failed");
   });
 });
 

@@ -1,80 +1,96 @@
-# Agent Runtime Conversation Architecture
+# Agent Conversation Architecture
 
 ## 1. Scope / Trigger
 
-本规范定义 AgentRun 产品坐标如何映射到 Managed Agent Runtime conversation。新增消息、steer、interrupt、interaction、context read/compact、fork/resume 或 runtime trace 功能时复核。产品 Lifecycle/AgentFrame 仍拥有业务归属与期望 surface；Runtime 独占执行会话事实。
+本规范定义 AgentRun Product 坐标如何读取和控制 concrete Agent conversation。新增 input、
+steer、interrupt、interaction、context、compaction、fork、snapshot 或 live stream 时复核。
+
+Product 拥有 Lifecycle/AgentFrame/association；concrete Agent 拥有 conversation history、
+context、fork、compaction 与 execution effect。Runtime 只做进程内协议协调。
 
 ## 2. Signatures
 
-```rust
-#[async_trait]
-pub trait AgentRunRuntime: Send + Sync {
-    async fn inspect(&self, target: AgentRunRuntimeTarget) -> Result<AgentRunRuntimeView, Error>;
-    async fn send_message(&self, command: SendAgentRunMessage) -> Result<RuntimeCommandReceipt, Error>;
-    async fn compact_context(&self, command: GuardedAgentRunCommand) -> Result<RuntimeCommandReceipt, Error>;
-    async fn steer_turn(&self, command: SteerAgentRunTurn) -> Result<RuntimeCommandReceipt, Error>;
-    async fn interrupt(&self, command: GuardedAgentRunCommand) -> Result<RuntimeCommandReceipt, Error>;
-    async fn resolve_interaction(&self, command: ResolveAgentRunInteraction) -> Result<RuntimeCommandReceipt, Error>;
-}
-```
-
 ```text
-AgentRun product command
-  -> durable AgentRun mailbox/client command id
-  -> AgentRunRuntime facade
-  -> Runtime binding/provisioning
-  -> canonical Runtime operation + outbox
-  -> Integration Driver Host
-  -> Driver event
-  -> canonical snapshot/event cursor
+Product target + client identity
+  -> LifecycleAgent association
+  -> current Complete Agent service/source
+  -> execute / inspect
+  -> Agent-owned receipt and history
+
+conversation read
+  -> Complete Agent read(source)
+  -> in-memory normalize
+  -> Product waiting facts composition
+  -> frontend snapshot baseline
+
+live
+  -> committed Agent history suffix + Core ephemeral callback
+  -> process-local broadcast
+  -> frontend canonical lane
 ```
 
 ## 3. Contracts
 
-- `AgentRunRuntime` facade 只做 product coordinate、authorization/admission input 与 canonical Runtime command 的映射，不保存 Thread/Turn/Item/Interaction 状态。
-- `agent_run_runtime_binding` 是 `run_id + agent_id` 到 Runtime thread/Host binding 的唯一产品锚点。Host binding 与 Managed Runtime binding 由 Host activation 原子创建；产品锚点不复制 driver/source coordinate authority。
-- mailbox 保存 canonical accepted Runtime operation ID。client command 重试返回同一 receipt，不产生第二 outbox side effect。
-- Managed Runtime journal、snapshot、context head、HookRun/effect、tool call 与 durable cursor 是执行会话唯一事实源。
-- AgentFrame 与 Business Surface 提供产品期望；`RuntimeOffer` 提供 service 实际保证；admission 持久化 `BoundAgentSurface`。required contribution 未应用时 dispatch 不可用。
-- command availability 来自 canonical Runtime snapshot/profile。Lifecycle status、AgentFrame status、Backbone 或 transcript 只用于产品展示，不能制造执行权限。
-- compaction 使用 candidate preparation、driver activation、active-head CAS 与 recovery saga；opaque context 不得进入平台 active head。
-- disconnect 对 active binding exactly-once 收敛为 `BindingLost`，并 terminalize active Thread/Turn/Operation 为 `Lost`；旧 generation 晚到事件被 fence。
+- Product input通过 `AgentRunProductInputDeliveryPort` 同步交接。成功必须包含 concrete Agent
+  operation receipt；Agent不可用时当前请求失败。
+- 相同 target/client identity/payload 派生同一 handoff/effect；不同 payload复用 identity是
+  typed conflict。
+- conversation snapshot来自 `CompleteAgentService::read(source)`，并在内存中投影为平台
+  conversation contract。
+- LifecycleGate waiting items等Product事实可以与snapshot组合展示，但不写入Agent history，
+  也不形成第二份conversation。
+- live event承载刚提交的 durable Agent history record 与当前连接的 ephemeral delta。durable record
+  由 snapshot 使用的同一个 canonical projector产生；断线、gap或lag后丢弃partial lane并重新read
+  snapshot。
+- 输入接纳的可观察顺序固定为 durable `UserInputSubmitted` → durable `TurnStarted` → ephemeral
+  provider/Core output → durable terminal history。前端不等待execute返回才补入用户消息。
+- Product 提交 context/surface intent，concrete Agent 保存实际接纳结果；adapter只从Agent native
+  history反解ContextFrame，因此展示与真实执行输入一致。
+- context、compaction、fork与interaction最终由concrete Agent receipt/inspection证明。
+  Product只保存自己的lineage、association和workflow evidence。
+- 命令并发使用Agent turn/interaction/fork cutoff/effect identity等typed coordinate，不使用
+  generic projection revision。
+- Agent unavailable不影响Product list/workspace/delete；conversation enrichment明确报告
+  unavailable。
 
 ## 4. Validation & Error Matrix
 
 | Condition | Required behavior |
 | --- | --- |
-| AgentRun 无 durable Runtime binding | provision through Integration offer or return typed unavailable |
-| duplicate client command | replay original operation receipt; no duplicate dispatch |
-| expected revision/active turn 不匹配 | typed stale rejection before side effect |
-| command 不在 availability 中 | typed unsupported/unavailable before outbox |
-| required surface revision 未应用 | dispatch unavailable |
-| Driver event 生命周期非法 | quarantine + critical Lost convergence |
-| stale generation event | fence without cursor advance |
-| context activation crash | recovery resumes same compaction operation |
+| Product association缺失 | typed not bound/unavailable |
+| duplicate input | 返回原 Agent receipt |
+| duplicate identity + different payload | typed conflict |
+| active turn/interaction已变化 | typed stale coordinate；refresh snapshot |
+| live gap/lag | 清除partial lane并重新read |
+| Agent read失败 | Product shell保持可用；conversation unavailable |
+| compaction/fork回包未知 | 同 effect identity inspect |
 
 ## 5. Good / Base / Bad Cases
 
-- Good：用户消息进入 mailbox，facade provision/复用 binding，Managed Runtime 原子接受 operation/outbox，Driver 完成后 UI 从 snapshot/events 观察同一事实。
-- Base：重复提交同一 `client_command_id` 返回原 operation receipt；worker claim 到期后由新 lease token 接管。
-- Bad：Application 自己维护 active turn，或从 product status 判断可 interrupt，再直接调用具体 Codex/Native client。
+- Good：输入同步进入Agent；UI先收到已提交的用户输入与turn开始，再观察live delta，终态后
+  snapshot保存同一完整history。
+- Base：连接中断时partial文本丢失，重连snapshot仍恢复Agent已提交内容。
+- Bad：平台保存journal/projection再与Agent history比较；两份conversation没有独立业务意义。
 
 ## 6. Tests Required
 
-- Facade 与 mailbox tests：coordinate mapping、idempotency、stale guard、availability、operation receipt。
-- PostgreSQL tests：binding、operation/event sequence、outbox/worker lease、context/hook/tool exactly-once。
-- Native/Codex production composition tests 与 enterprise remote RuntimeWire E2E。
-- API/frontend tests：runtime snapshot/events/context endpoints 与 snapshot-only command availability。
-- Migration test：旧 session/delivery tables、columns 与 production readers 全部不存在。
+- input identity/replay/conflict/unavailable测试。
+- snapshot mapper覆盖所有message/item/terminal/interaction/compaction类型。
+- waiting items组合测试证明Product gate与Agent history分层。
+- durable input/turn顺序、live delta、gap、disconnect、snapshot recovery测试。
+- surface/initial context写入Agent native history并投影ContextFrame的测试。
+- create/fork/compaction response-lost inspection测试。
+- list/workspace在Agent unavailable时仍返回Product shell。
 
 ## 7. Wrong vs Correct
 
 ```rust
-// Wrong
-if lifecycle_agent.status.is_running() { connector.cancel(session_id).await?; }
+// Wrong: 从平台journal恢复Agent conversation。
+let history = runtime_journal.load(thread_id).await?;
 
-// Correct
-let view = agent_run_runtime.inspect(target.clone()).await?;
-view.require_available(RuntimeCommandKind::Interrupt)?;
-agent_run_runtime.interrupt(command.guarded_by(&view)).await?;
+// Correct: 从concrete Agent owner读取。
+let history = complete_agent.read(AgentReadQuery {
+    source: binding.agent.source,
+    at_revision: None,
+}).await?;
 ```

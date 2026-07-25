@@ -23,7 +23,7 @@ pub struct OperationMcpTool {
     pub tool_name: String,
     pub description: String,
     pub input_schema: Value,
-    pub backend_id: String,
+    pub placement: OperationPlacement,
 }
 
 #[async_trait]
@@ -108,9 +108,7 @@ impl DynamicOperationProvider for McpOperationProvider {
         let tool = self
             .resolve_tool(descriptor, principal, scope, cancel)
             .await?;
-        Ok(OperationPlacement::LocalBackend {
-            backend_id: tool.backend_id,
-        })
+        Ok(tool.placement)
     }
 
     async fn invoke(
@@ -170,7 +168,7 @@ fn descriptor_from_tool(
 #[cfg(test)]
 mod tests {
     use agentdash_domain::operation::OperationScopeRef;
-    use agentdash_spi::{AuthIdentity, AuthMode};
+    use agentdash_platform_spi::{AuthIdentity, AuthMode};
     use uuid::Uuid;
 
     use super::*;
@@ -190,7 +188,9 @@ mod tests {
                 tool_name: "find_symbols".to_string(),
                 description: "Find symbols".to_string(),
                 input_schema: json!({ "type": "object" }),
-                backend_id: "backend-1".to_string(),
+                placement: OperationPlacement::LocalBackend {
+                    backend_id: "backend-1".to_string(),
+                },
             }])
         }
 
@@ -284,7 +284,9 @@ mod tests {
             tool_name: "find_symbols".to_string(),
             description: String::new(),
             input_schema: json!(true),
-            backend_id: "backend-1".to_string(),
+            placement: OperationPlacement::LocalBackend {
+                backend_id: "backend-1".to_string(),
+            },
         })
         .expect_err("invalid identity");
         assert_eq!(

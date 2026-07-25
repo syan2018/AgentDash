@@ -2,6 +2,7 @@ use agentdash_domain::workflow::{
     AgentProcedureContract, AgentRuntimeRefs, ExecutionDispatchResult, ExecutionIntent,
     OrchestrationBindingRefs, RuntimePolicy,
 };
+use agentdash_platform_spi::AgentConfig;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -18,15 +19,20 @@ pub struct LifecycleDispatchPortResult {
 #[derive(Debug, Clone)]
 pub struct WorkflowAgentNodeMaterializationRequest {
     pub run_id: Uuid,
+    pub target_agent_id: Option<Uuid>,
+    pub project_agent_id: Option<Uuid>,
+    pub delivery_runtime_ref: Option<Uuid>,
     pub orchestration_binding: OrchestrationBindingRefs,
     pub runtime_policy: RuntimePolicy,
     pub frame_created_by_id: Option<String>,
     pub workflow_contract: Option<AgentProcedureContract>,
+    pub inherited_executor_config: Option<AgentConfig>,
 }
 
 #[derive(Debug, Clone)]
 pub struct WorkflowAgentNodeMaterializationResult {
     pub runtime_refs: AgentRuntimeRefs,
+    pub delivery_runtime_ref: Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

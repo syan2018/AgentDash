@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "status": "activation_inputs_frozen",
+  "frozen_base_sha": "fc26d3ffb951461d8e9214b6b4639b88c18d533d",
+  "stable_branch": "codex/agent-runtime-final-convergence-plan",
+  "staging_branch": "codex/agent-runtime-s5-hard-cut",
+  "staging_worktree": "F:\\Projects\\AgentDash-s5-hard-cut",
+  "components": [
+    {
+      "component": "platform_runtime",
+      "worktree": "F:\\Projects\\AgentDash-s5-platform-activation",
+      "first_commit_sha": "c9453111d71607539d66cb1f58884a9678c10893",
+      "tip_sha": "30d9a55597e36fc5af0591c420346c3217c1dbae",
+      "tree_sha": "427d2e274750ab76bd4c09e9b7a2f9de2e78157a",
+      "changed_file_count": 76,
+      "checker_result": "component_ready_pass",
+      "production_route_changed": false,
+      "artifact": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w3-platform-runtime/manifest.json"
+    },
+    {
+      "component": "dash_native",
+      "worktree": "F:\\Projects\\AgentDash-s5-dash-activation",
+      "first_commit_sha": "61b68b6a1d4c8c1101d2ba8729d57e50bc898bb4",
+      "tip_sha": "6c38dd3de7527859f21e21b28a6b7cb37c7e0f5c",
+      "tree_sha": "fea401356beb8b6ad21b6b851306d9ee32147fb8",
+      "changed_file_count": 66,
+      "checker_result": "component_ready_pass",
+      "production_route_changed": false,
+      "artifact": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w2-dash-core/consumer-manifest.json"
+    },
+    {
+      "component": "external_agents",
+      "worktree": "F:\\Projects\\AgentDash-s5-external-activation",
+      "first_commit_sha": "7524755176a0d574323fbfcf8008d2d4c2196d18",
+      "tip_sha": "ffaf54a749659923e28599fe075616d34c292b43",
+      "tree_sha": "f43403eff7d8db344c3508ced83022745e4215cc",
+      "changed_file_count": 18,
+      "checker_result": "component_ready_pass",
+      "production_route_changed": false,
+      "artifact": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w6-external-agents/manifest.json"
+    },
+    {
+      "component": "product_protocol",
+      "worktree": "F:\\Projects\\AgentDash-s5-product-activation",
+      "first_commit_sha": "c153fb533883c89a08f208654482043603dbc6b3",
+      "tip_sha": "67d9eef5f078dcb10077bbdb2eab1a05d2a33674",
+      "tree_sha": "177bcaba3134eb78f03453cefb8a2f74a502eb82",
+      "changed_file_count": 15,
+      "checker_result": "shared_foundation_input_pass",
+      "production_route_changed": false,
+      "remaining_sequence_dependency": "production_caller_activation_pending_w8_prerequisites",
+      "artifact": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/w7-product-cutover/production-cutover-manifest.json"
+    }
+  ],
+  "apply_order": [
+    "platform_runtime",
+    "dash_native",
+    "external_agents",
+    "product_protocol"
+  ],
+  "same_file_overlaps": [
+    {
+      "path": "crates/agentdash-application-agentrun/Cargo.toml",
+      "components": [
+        "dash_native",
+        "product_protocol"
+      ],
+      "canonical_owner": "product_protocol",
+      "resolution": "retain Dash normal-dependency removal and Product dev-only service-api parity dependency",
+      "lock_owner": "hard_cut_w8"
+    }
+  ],
+  "shared_hotspots": [
+    {
+      "id": "workspace_and_lock",
+      "owner": "hard_cut_w8",
+      "paths": [
+        "Cargo.toml",
+        "Cargo.lock"
+      ]
+    },
+    {
+      "id": "formal_migration_and_postgres_adapters",
+      "owner": "hard_cut_w8",
+      "migration_head": "0083_remove_agent_frame_workspace_module_projections.sql"
+    },
+    {
+      "id": "production_composition",
+      "owner": "hard_cut_w8",
+      "scope": "API, Infrastructure, Local and Relay composition roots"
+    },
+    {
+      "id": "canonical_generation",
+      "owner": "hard_cut_w8",
+      "scope": "Managed Runtime, Complete Agent Service and Runtime Wire Rust/TypeScript/schema outputs"
+    },
+    {
+      "id": "product_caller_switch",
+      "foundation_owner": "hard_cut_w8",
+      "caller_owner": "product_protocol",
+      "prerequisite": "final repositories, AppState bindings and canonical generated outputs",
+      "records_source": "product_protocol artifact"
+    }
+  ],
+  "staging_phases": [
+    {
+      "phase": "component_integration",
+      "owner": "hard_cut_w8",
+      "stable_checkpoint": false
+    },
+    {
+      "phase": "w8_shared_foundation",
+      "owner": "hard_cut_w8",
+      "outputs": [
+        "single forward migration",
+        "PostgreSQL repositories",
+        "AppState bindings",
+        "canonical generated contracts"
+      ],
+      "stable_checkpoint": false
+    },
+    {
+      "phase": "product_caller_activation",
+      "owner": "product_protocol",
+      "ownership_transfer": "exact files and symbols from the Product activation artifact",
+      "stable_checkpoint": false
+    },
+    {
+      "phase": "composition_deletion_and_lock",
+      "owner": "hard_cut_w8",
+      "stable_checkpoint": false
+    },
+    {
+      "phase": "architecture_and_behavior_review",
+      "owners": [
+        "cutover_architecture_check",
+        "cutover_behavior_check"
+      ],
+      "stable_checkpoint": true,
+      "checkpoint": "S5"
+    }
+  ],
+  "known_findings": [],
+  "dispatch_gate": {
+    "verification_script": ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/activation/s5-combined/verify-inputs.ps1",
+    "required_result": "pass"
+  }
+}

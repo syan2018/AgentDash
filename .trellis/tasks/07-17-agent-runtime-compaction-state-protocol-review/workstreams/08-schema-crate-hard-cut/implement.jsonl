@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md","reason":"目标 schema、crate topology、actions 与 negative gates。"}
+{"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/target-crate-shape.md","reason":"继承 07-10 尚未完成的物理清理目标。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"forward migration、constraints 与 PostgreSQL 验证。"}
+{"file":".trellis/spec/backend/architecture.md","reason":"最终 Cargo dependency direction。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"hard cut 后生成合同一致性。"}

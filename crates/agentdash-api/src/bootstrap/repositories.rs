@@ -1,29 +1,24 @@
-use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use anyhow::Result;
 use sqlx::PgPool;
 
 use agentdash_application::auth::session_service::AuthSessionService;
-use agentdash_application::repository_set::{
-    LifecycleProjectAgentLaunchAdapter, LifecycleProjectAgentLaunchDeps, RepositorySet,
-};
-use agentdash_application_agentrun::agent_run::frame::{
-    AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
-};
-use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
-use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
+use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::skill_asset::SkillAssetService;
 use agentdash_application_shared_library::{
     BuiltinLibrarySeedProviderInput, IntegrationEmbeddedLibraryAssetSeed,
     SeedBuiltinLibraryAssetsInput, SharedLibraryService,
 };
+use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_domain::project::ProjectRepository;
+use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
-    PostgresAgentLineageRepository, PostgresAgentRunLineageRepository,
-    PostgresAgentRunMailboxRepository, PostgresAgentRuntimeCompositionRepository,
-    PostgresAuthSessionRepository, PostgresBackendExecutionLeaseRepository,
-    PostgresBackendRepository, PostgresExtensionPackageArtifactRepository,
-    PostgresInlineFileRepository, PostgresInteractionRepository, PostgresLifecycleAgentRepository,
+    PostgresAgentLineageRepository, PostgresAuthSessionRepository,
+    PostgresBackendExecutionLeaseRepository, PostgresBackendRepository,
+    PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
+    PostgresInteractionRepository, PostgresLifecycleAgentRepository,
     PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
     PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
     PostgresMcpPresetRepository, PostgresProjectAgentRepository,
@@ -35,7 +30,7 @@ use agentdash_infrastructure::{
     PostgresStateChangeRepository, PostgresStoryRepository, PostgresUserDirectoryRepository,
     PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
-use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
+use agentdash_platform_spi::extension_package::ExtensionPackageArtifactStorage;
 
 pub(crate) struct RepositoryBootstrapOutput {
     pub repos: RepositorySet,
@@ -43,25 +38,52 @@ pub(crate) struct RepositoryBootstrapOutput {
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProjectBuiltinSkillProvisioningSummary {
+    projects: usize,
+    assets: usize,
+}
+
+async fn reconcile_project_builtin_skill_assets(
+    project_repo: &dyn ProjectRepository,
+    skill_asset_repo: &dyn SkillAssetRepository,
+) -> Result<ProjectBuiltinSkillProvisioningSummary> {
+    let projects = project_repo.list_all().await.map_err(|error| {
+        anyhow::anyhow!("读取 Project builtin Skill provisioning 范围失败: {error}")
+    })?;
+    let service = SkillAssetService::new(skill_asset_repo);
+    let mut provisioned = 0usize;
+    for project in &projects {
+        let assets = service
+            .provision_project_builtins(project.id, None)
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "Project {} builtin Skill provisioning 失败: {error}",
+                    project.id
+                )
+            })?;
+        provisioned += assets.len();
+    }
+    Ok(ProjectBuiltinSkillProvisioningSummary {
+        projects: projects.len(),
+        assets: provisioned,
+    })
+}
+
 pub(crate) async fn build_repositories(
     pool: PgPool,
     integration_library_asset_seeds: Vec<IntegrationEmbeddedLibraryAssetSeed>,
-    project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
-    runtime_provisioner_handle: agentdash_application_ports::agent_run_runtime::SharedAgentRunRuntimeProvisionerHandle,
 ) -> Result<RepositoryBootstrapOutput> {
     agentdash_infrastructure::migration::assert_postgres_schema_ready(&pool)
         .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
 
     let project_repo = Arc::new(PostgresProjectRepository::new(pool.clone()));
-
     let interaction_repo = Arc::new(PostgresInteractionRepository::new(pool.clone()));
-
     let workspace_repo = Arc::new(PostgresWorkspaceRepository::new(pool.clone()));
-
     let story_repo = Arc::new(PostgresStoryRepository::new(pool.clone()));
     let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
-
     let backend_repo = Arc::new(PostgresBackendRepository::new(pool.clone()));
     let runtime_health_repo = Arc::new(PostgresRuntimeHealthRepository::new(pool.clone()));
     let backend_execution_lease_repo =
@@ -70,12 +92,36 @@ pub(crate) async fn build_repositories(
         Arc::new(PostgresProjectBackendAccessRepository::new(pool.clone()));
     let runner_registration_token_repo =
         Arc::new(PostgresRunnerRegistrationTokenRepository::new(pool.clone()));
-
+    let auth_session_repo = Arc::new(PostgresAuthSessionRepository::new(pool.clone()));
+    let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));
     let user_directory_repo = Arc::new(PostgresUserDirectoryRepository::new(pool.clone()));
-
     let settings_repo = Arc::new(PostgresSettingsRepository::new(pool.clone()));
-
     let shared_library_repo = Arc::new(PostgresSharedLibraryRepository::new(pool.clone()));
+    let extension_package_artifact_repo = Arc::new(
+        PostgresExtensionPackageArtifactRepository::new(pool.clone()),
+    );
+    let project_extension_installation_repo = Arc::new(
+        PostgresProjectExtensionInstallationRepository::new(pool.clone()),
+    );
+    let llm_provider_repo = Arc::new(PostgresLlmProviderRepository::new(pool.clone()));
+    let llm_provider_credential_repo =
+        Arc::new(PostgresLlmProviderCredentialRepository::new(pool.clone()));
+    let mcp_preset_repo = Arc::new(PostgresMcpPresetRepository::new(pool.clone()));
+    let skill_asset_repo = Arc::new(PostgresSkillAssetRepository::new(pool.clone()));
+    let project_agent_repo = Arc::new(PostgresProjectAgentRepository::new(pool.clone()));
+    let project_vfs_mount_repo = Arc::new(PostgresProjectVfsMountRepository::new(pool.clone()));
+    let workflow_repo = Arc::new(PostgresWorkflowRepository::new(pool.clone()));
+    let lifecycle_agent_repo = Arc::new(PostgresLifecycleAgentRepository::new(pool.clone()));
+    let agent_frame_repo = Arc::new(PostgresAgentFrameRepository::new(pool.clone()));
+    let lifecycle_subject_association_repo = Arc::new(
+        PostgresLifecycleSubjectAssociationRepository::new(pool.clone()),
+    );
+    let lifecycle_gate_repo = Arc::new(PostgresLifecycleGateRepository::new(pool.clone()));
+    let agent_lineage_repo = Arc::new(PostgresAgentLineageRepository::new(pool.clone()));
+    let routine_repo = Arc::new(PostgresRoutineRepository::new(pool.clone()));
+    let routine_execution_repo = Arc::new(PostgresRoutineExecutionRepository::new(pool.clone()));
+    let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool));
+
     {
         let service = SharedLibraryService::new(shared_library_repo.as_ref());
         let seeded = service
@@ -85,150 +131,88 @@ pub(crate) async fn build_repositories(
                 seed_provider: builtin_seed_provider_input()?,
             })
             .await
-            .map_err(|e| anyhow::anyhow!("builtin Shared Library assets 初始化失败: {e}"))?;
+            .map_err(|error| {
+                anyhow::anyhow!("builtin Shared Library assets 初始化失败: {error}")
+            })?;
         diag!(
             Info,
             Subsystem::Api,
             seeded = seeded.len(),
             "已同步 builtin Shared Library assets"
         );
+        if !integration_library_asset_seeds.is_empty() {
+            let declared = integration_library_asset_seeds.len();
+            let seeded = service
+                .seed_integration_embedded_assets(integration_library_asset_seeds)
+                .await
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "integration embedded Shared Library assets 初始化失败: {error}"
+                    )
+                })?;
+            diag!(
+                Info,
+                Subsystem::Api,
+                declared,
+                seeded = seeded.len(),
+                "已同步 integration embedded Shared Library assets"
+            );
+        }
     }
 
-    let project_extension_installation_repo = Arc::new(
-        PostgresProjectExtensionInstallationRepository::new(pool.clone()),
+    let skill_summary =
+        reconcile_project_builtin_skill_assets(project_repo.as_ref(), skill_asset_repo.as_ref())
+            .await?;
+    diag!(
+        Info,
+        Subsystem::Api,
+        projects = skill_summary.projects,
+        assets = skill_summary.assets,
+        "已同步 Project builtin Skill assets"
     );
-    let extension_package_artifact_repo = Arc::new(
-        PostgresExtensionPackageArtifactRepository::new(pool.clone()),
-    );
-
-    let project_agent_repo = Arc::new(PostgresProjectAgentRepository::new(pool.clone()));
-
-    let project_vfs_mount_repo = Arc::new(PostgresProjectVfsMountRepository::new(pool.clone()));
-
-    let routine_repo = Arc::new(PostgresRoutineRepository::new(pool.clone()));
-    let routine_execution_repo = Arc::new(PostgresRoutineExecutionRepository::new(pool.clone()));
-
-    let llm_provider_repo = Arc::new(PostgresLlmProviderRepository::new(pool.clone()));
-    let llm_provider_credential_repo =
-        Arc::new(PostgresLlmProviderCredentialRepository::new(pool.clone()));
-
-    let auth_session_repo = Arc::new(PostgresAuthSessionRepository::new(pool.clone()));
-    let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));
-
-    let workflow_repo = Arc::new(PostgresWorkflowRepository::new(pool.clone()));
-
-    let mcp_preset_repo = Arc::new(PostgresMcpPresetRepository::new(pool.clone()));
-
-    let skill_asset_repo = Arc::new(PostgresSkillAssetRepository::new(pool.clone()));
-
-    let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool.clone()));
-    let lifecycle_agent_repo = Arc::new(PostgresLifecycleAgentRepository::new(pool.clone()));
-    let agent_frame_repo = Arc::new(PostgresAgentFrameRepository::new(pool.clone()));
-    let lifecycle_subject_association_repo = Arc::new(
-        PostgresLifecycleSubjectAssociationRepository::new(pool.clone()),
-    );
-    let lifecycle_gate_repo = Arc::new(PostgresLifecycleGateRepository::new(pool.clone()));
-    let agent_lineage_repo = Arc::new(PostgresAgentLineageRepository::new(pool.clone()));
-    let agent_run_lineage_repo = Arc::new(PostgresAgentRunLineageRepository::new(pool.clone()));
-    let agent_run_runtime_binding_repo =
-        Arc::new(PostgresAgentRuntimeCompositionRepository::new(pool.clone()));
-    let agent_run_mailbox_repo = Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone()));
-    let agent_frame_construction = Arc::new(AgentRunLaunchAnchorFrameConstructionAdapter::new(
-        agent_frame_repo.clone(),
-    ));
-    let lifecycle_surface_projection = Arc::new(
-        AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(skill_asset_repo.clone()),
-    );
-    let workflow_agent_frame_materialization =
-        Arc::new(AgentRunWorkflowNodeFrameMaterializationAdapter::new(
-            agent_frame_repo.clone(),
-            lifecycle_surface_projection,
-        ));
-    let project_agent_lifecycle_launch = Arc::new(LifecycleProjectAgentLaunchAdapter::new(
-        LifecycleProjectAgentLaunchDeps {
-            run_repo: workflow_repo.clone(),
-            workflow_graph_repo: workflow_repo.clone(),
-            agent_repo: lifecycle_agent_repo.clone(),
-            frame_repo: agent_frame_repo.clone(),
-            association_repo: lifecycle_subject_association_repo.clone(),
-            gate_repo: lifecycle_gate_repo.clone(),
-            lineage_repo: agent_lineage_repo.clone(),
-            frame_construction: agent_frame_construction.clone(),
-        },
-    ));
-
-    let permission_grant_repo =
-        Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
 
     let repos = RepositorySet {
-        project_repo: project_repo.clone(),
+        project_repo,
         interaction_definition_repo: interaction_repo.clone(),
         interaction_instance_repo: interaction_repo.clone(),
         interaction_command_transaction: interaction_repo.clone(),
         interaction_event_repo: interaction_repo.clone(),
         interaction_presentation_repo: interaction_repo,
-        workspace_repo: workspace_repo.clone(),
-        story_repo: story_repo.clone(),
-        state_change_repo: state_change_repo.clone(),
-        backend_repo: backend_repo.clone(),
-        runtime_health_repo: runtime_health_repo.clone(),
-        backend_execution_lease_repo: backend_execution_lease_repo.clone(),
+        workspace_repo,
+        story_repo,
+        state_change_repo,
+        backend_repo,
+        runtime_health_repo,
+        backend_execution_lease_repo,
         project_backend_access_repo: project_backend_access_repo.clone(),
-        backend_workspace_inventory_repo: project_backend_access_repo.clone(),
-        runner_registration_token_repo: runner_registration_token_repo.clone(),
-        auth_session_repo: auth_session_repo.clone(),
-        user_directory_repo: user_directory_repo.clone(),
-        settings_repo: settings_repo.clone(),
-        shared_library_repo: shared_library_repo.clone(),
-        extension_package_artifact_repo: extension_package_artifact_repo.clone(),
-        project_extension_installation_repo: project_extension_installation_repo.clone(),
-        llm_provider_repo: llm_provider_repo.clone(),
-        llm_provider_credential_repo: llm_provider_credential_repo.clone(),
-        mcp_preset_repo: mcp_preset_repo.clone(),
-        skill_asset_repo: skill_asset_repo.clone(),
-        project_agent_repo: project_agent_repo.clone(),
-        project_vfs_mount_repo: project_vfs_mount_repo.clone(),
+        backend_workspace_inventory_repo: project_backend_access_repo,
+        runner_registration_token_repo,
+        auth_session_repo,
+        user_directory_repo,
+        settings_repo,
+        shared_library_repo,
+        extension_package_artifact_repo,
+        project_extension_installation_repo,
+        llm_provider_repo,
+        llm_provider_credential_repo,
+        mcp_preset_repo,
+        skill_asset_repo,
+        project_agent_repo,
+        project_vfs_mount_repo,
         agent_procedure_repo: workflow_repo.clone(),
         workflow_template_install_repo: workflow_repo.clone(),
         workflow_graph_repo: workflow_repo.clone(),
-        lifecycle_run_repo: workflow_repo.clone(),
-        lifecycle_agent_repo: lifecycle_agent_repo.clone(),
-        agent_frame_repo: agent_frame_repo.clone(),
-        lifecycle_subject_association_repo: lifecycle_subject_association_repo.clone(),
+        lifecycle_run_repo: workflow_repo,
+        lifecycle_agent_repo,
+        agent_frame_repo,
+        lifecycle_subject_association_repo,
         lifecycle_gate_repo: lifecycle_gate_repo.clone(),
-        gate_result_delivery_marker_repo: lifecycle_gate_repo.clone(),
-        agent_lineage_repo: agent_lineage_repo.clone(),
-        agent_run_lineage_repo: agent_run_lineage_repo.clone(),
-        agent_run_runtime_binding_repo: agent_run_runtime_binding_repo.clone(),
-        agent_run_runtime_provisioner: Arc::new(runtime_provisioner_handle),
-        agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
-        agent_frame_construction,
-        workflow_agent_frame_materialization,
-        project_agent_lifecycle_launch,
-        routine_repo: routine_repo.clone(),
-        routine_execution_repo: routine_execution_repo.clone(),
-        inline_file_repo: inline_file_repo.clone(),
-        permission_grant_repo: permission_grant_repo.clone(),
-        project_projection_notifications: project_projection_notifications.clone(),
-        workflow_operation_script_caller:
-            agentdash_application_workflow::SharedWorkflowOperationScriptCaller::default(),
+        gate_result_delivery_marker_repo: lifecycle_gate_repo,
+        agent_lineage_repo,
+        routine_repo,
+        routine_execution_repo,
+        inline_file_repo,
     };
-
-    let integration_asset_count = integration_library_asset_seeds.len();
-    if integration_asset_count > 0 {
-        let service = SharedLibraryService::new(shared_library_repo.as_ref());
-        let seeded = service
-            .seed_integration_embedded_assets(integration_library_asset_seeds)
-            .await
-            .map_err(|e| anyhow::anyhow!("integration embedded library assets 初始化失败: {e}"))?;
-        diag!(
-            Info,
-            Subsystem::Api,
-            declared = integration_asset_count,
-            seeded = seeded.len(),
-            "已同步 integration embedded Shared Library assets"
-        );
-    }
 
     Ok(RepositoryBootstrapOutput {
         repos,

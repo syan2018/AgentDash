@@ -7,7 +7,7 @@ use ts_rs::TS;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionRuntimeActionKindResponse {
-    Runtime,
+    RuntimeThread,
     Setup,
 }
 
@@ -111,7 +111,7 @@ pub struct ExtensionFetchRouteProjectionResponse {
     pub extension_id: String,
     pub route_key: String,
     pub pattern: String,
-    /// Fetch routes are panel bridge compatibility routes. Agent exposure is represented only by operation_catalog.
+    /// Fetch routes serve the panel bridge; Agent exposure is represented only by operation_catalog.
     pub panel_only: bool,
     pub target: ExtensionFetchRouteTargetResponse,
 }

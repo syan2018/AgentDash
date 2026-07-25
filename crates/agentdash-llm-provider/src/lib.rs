@@ -11,6 +11,8 @@ mod openai_completions_bridge;
 mod openai_content;
 mod openai_responses_bridge;
 mod openai_responses_common;
+#[cfg(test)]
+mod provider_bridge_test_support;
 mod provider_registry;
 mod sse;
 
@@ -19,11 +21,11 @@ pub use provider_registry::{
     EffectiveLlmProviderProfile, ModelCatalogSnapshot, ModelDiscoveryStatus, ModelMeta,
     ModelProfileSource, ProbeModelResult, ProviderBridgeResolveError, ProviderCallProfile,
     ProviderCredentialScope, ProviderEntry, ProviderModelResolveError, ProviderUnavailableReason,
-    UnavailableProviderEntry, build_effective_profile_catalog_from_db,
+    ResolvedProviderBridge, UnavailableProviderEntry, build_effective_profile_catalog_from_db,
     build_effective_provider_profile, build_provider_entries_from_db,
     describe_provider_unavailable_reason, preflight_effective_model_selection,
     probe_models_for_protocol, resolve_effective_bridge_for_scope,
-    resolve_effective_bridge_from_db,
+    resolve_effective_bridge_from_db, resolve_effective_bridge_with_model_for_scope,
 };
 
 pub type ProviderCatalogEntry = ProviderEntry;

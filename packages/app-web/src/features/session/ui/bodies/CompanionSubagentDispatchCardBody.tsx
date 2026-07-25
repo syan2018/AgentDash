@@ -115,6 +115,7 @@ function statusFromDeliveryStatus(status: string): CompanionSubagentDispatchStat
     case "idle":
       return "pending";
     case "running":
+    case "suspended":
     case "cancelling":
       return "running";
     case "completed":

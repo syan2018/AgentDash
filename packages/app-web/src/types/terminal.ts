@@ -29,6 +29,8 @@ export interface TerminalInfo {
   shell?: string;
   processId?: number;
   state: TerminalProcessState;
+  /** 与 process state 正交；断线只改变 availability，不推断进程已 Lost。 */
+  availability?: "online" | "offline" | "reconciling";
   exitCode?: number;
   /** Associated tool call item ID (set on serial command promote) */
   linkedItemId?: string;

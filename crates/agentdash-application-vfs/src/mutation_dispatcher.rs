@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
-use agentdash_spi::platform::auth::AuthIdentity;
+use agentdash_platform_spi::platform::auth::AuthIdentity;
 use thiserror::Error;
 use uuid::Uuid;
 

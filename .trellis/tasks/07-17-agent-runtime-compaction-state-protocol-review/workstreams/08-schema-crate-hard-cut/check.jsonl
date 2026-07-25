@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"检查 R1/R9-R11 与 AC12/AC14/AC17-AC19。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查无 compatibility/dual write/backfill。"}
+{"file":".trellis/spec/backend/architecture.md","reason":"检查每个 crate 的独立理由和无反向依赖。"}
+{"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/target-crate-shape.md","reason":"核对 07-10 物理收敛未遗漏。"}

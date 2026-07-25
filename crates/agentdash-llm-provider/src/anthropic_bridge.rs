@@ -188,13 +188,28 @@ fn build_request_body(model_id: &str, request: &BridgeRequest) -> serde_json::Va
         body["tools"] = serde_json::Value::Array(tools);
     }
 
-    // 启用 extended thinking (adaptive)
-    body["thinking"] = serde_json::json!({
-        "type": "enabled",
-        "effort": "high",
-    });
+    if let Some(effort) = anthropic_thinking_effort(request.thinking_level) {
+        body["thinking"] = serde_json::json!({
+            "type": "enabled",
+            "effort": effort,
+        });
+    }
 
     body
+}
+
+fn anthropic_thinking_effort(
+    level: Option<agentdash_agent::ThinkingLevel>,
+) -> Option<&'static str> {
+    match level {
+        None | Some(agentdash_agent::ThinkingLevel::Off) => None,
+        Some(agentdash_agent::ThinkingLevel::Minimal | agentdash_agent::ThinkingLevel::Low) => {
+            Some("low")
+        }
+        Some(agentdash_agent::ThinkingLevel::Medium) => Some("medium"),
+        Some(agentdash_agent::ThinkingLevel::High) => Some("high"),
+        Some(agentdash_agent::ThinkingLevel::Xhigh) => Some("max"),
+    }
 }
 
 fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
@@ -584,6 +599,57 @@ async fn process_anthropic_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider_bridge_test_support::{
+        SCHEMA_PROPERTY, SYSTEM_PROMPT, TOOL_DESCRIPTION, TOOL_NAME, USER_PROMPT,
+        assert_prompt_lanes_exclude_tool_metadata, bridge_request, serialized_body,
+        tool_parameters,
+    };
+
+    #[test]
+    fn anthropic_wire_body_keeps_tool_contract_structured_and_prompt_lanes_clean() {
+        let body = serialized_body(build_request_body("claude-sonnet", &bridge_request()));
+
+        assert_eq!(body["system"], SYSTEM_PROMPT);
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"][0]["text"], USER_PROMPT);
+
+        let tool = &body["tools"][0];
+        assert_eq!(tool["name"], TOOL_NAME);
+        assert_eq!(tool["description"], TOOL_DESCRIPTION);
+        assert_eq!(tool["input_schema"], tool_parameters());
+        assert_eq!(
+            tool["input_schema"]["required"][0],
+            serde_json::Value::String(SCHEMA_PROPERTY.to_string())
+        );
+
+        assert_prompt_lanes_exclude_tool_metadata(&[&body["system"], &body["messages"]]);
+    }
+
+    #[test]
+    fn anthropic_body_maps_profile_thinking_level() {
+        let body = build_request_body(
+            "claude-sonnet",
+            &BridgeRequest {
+                system_prompt: None,
+                messages: vec![AgentMessage::user("hello")],
+                tools: Vec::new(),
+                thinking_level: Some(agentdash_agent::ThinkingLevel::Xhigh),
+            },
+        );
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["effort"], "max");
+
+        let off = build_request_body(
+            "claude-sonnet",
+            &BridgeRequest {
+                system_prompt: None,
+                messages: vec![AgentMessage::user("hello")],
+                tools: Vec::new(),
+                thinking_level: Some(agentdash_agent::ThinkingLevel::Off),
+            },
+        );
+        assert!(off.get("thinking").is_none());
+    }
 
     #[test]
     fn tool_result_content_keeps_image_blocks_as_base64_sources() {

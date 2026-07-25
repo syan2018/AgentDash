@@ -8,14 +8,17 @@ use crate::repository_set::RepositorySet;
 pub(super) async fn resolve_active_workflow_projection_from_message_stream_trace(
     session_id: &str,
     repos: &RepositorySet,
+    product_runtime_bindings:
+        &dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
 ) -> Result<Option<ports_lifecycle_surface::ActiveWorkflowProjection>, String> {
-    let Some(association) = agentdash_application_lifecycle::resolve_activity_runtime_association_from_message_stream_trace(
-        session_id,
-        repos.agent_frame_repo.as_ref(),
-        repos.lifecycle_agent_repo.as_ref(),
-        repos.lifecycle_run_repo.as_ref(),
-        Some(repos.agent_run_runtime_binding_repo.as_ref()),
-    )
+    let Some(association) =
+        agentdash_application_lifecycle::resolve_activity_runtime_association_from_runtime_thread(
+            session_id,
+            repos.agent_frame_repo.as_ref(),
+            repos.lifecycle_agent_repo.as_ref(),
+            repos.lifecycle_run_repo.as_ref(),
+            Some(product_runtime_bindings),
+        )
         .await
         .map_err(|error| error.to_string())?
     else {

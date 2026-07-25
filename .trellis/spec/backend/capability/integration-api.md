@@ -6,7 +6,7 @@
 
 ## 双仓结构
 
-- **开源仓**：核心宿主 + `agentdash-integration-api`（contract）+ `agentdash-spi` + `agentdash-first-party-integrations`
+- **开源仓**：核心宿主 + `agentdash-integration-api`（contract）+ `agentdash-platform-spi` + `agentdash-first-party-integrations`
 - **企业仓**：企业集成（SSO、KM、内部服务）+ 企业 binary
 - 企业版只能"追加集成"，不能维护独立的宿主装配逻辑
 

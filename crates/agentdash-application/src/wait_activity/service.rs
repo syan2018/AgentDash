@@ -2,10 +2,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agentdash_agent_types::AgentToolError;
-use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
-use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
+use agentdash_agent::AgentToolError;
+use agentdash_application_agentrun::agent_run::{
+    AgentRunProductRuntimeBindingRepository, AgentRunTerminalRegistry,
+};
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleGateRepository,
 };
@@ -14,8 +14,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::sources::{
-    exec_item_from_terminal, gate_belongs_to_scope, gate_item_from_gate, mailbox_belongs_to_scope,
-    mailbox_item_from_message, mailbox_message_is_wait_relevant, terminal_belongs_to_scope,
+    exec_item_from_terminal, gate_belongs_to_scope, gate_item_from_gate, terminal_belongs_to_scope,
 };
 use super::types::{
     ResolvedWaitScope, WAIT_POLL_INTERVAL_MS, WAIT_TOOL_TIMEOUT_MS_DEFAULT,
@@ -28,9 +27,8 @@ use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 pub struct WaitActivityRepositories {
     pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    pub agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    pub agent_run_runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
-    pub mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
 }
 
 #[derive(Clone)]
@@ -43,9 +41,8 @@ pub struct WaitActivityDeps {
 pub struct WaitActivityService {
     lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    agent_run_runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
-    mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     terminal_registry: Arc<AgentRunTerminalRegistry>,
 }
 
@@ -58,9 +55,8 @@ impl WaitActivityService {
     pub fn from_repositories(
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         agent_frame_repo: Arc<dyn AgentFrameRepository>,
-        agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+        agent_run_runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
         lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
-        mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
         terminal_registry: Arc<AgentRunTerminalRegistry>,
     ) -> Self {
         Self {
@@ -68,7 +64,6 @@ impl WaitActivityService {
             agent_frame_repo,
             agent_run_runtime_binding_repo,
             lifecycle_gate_repo,
-            mailbox_repo,
             terminal_registry,
         }
     }
@@ -82,7 +77,6 @@ impl WaitActivityService {
             agent_frame_repo: repositories.agent_frame_repo,
             agent_run_runtime_binding_repo: repositories.agent_run_runtime_binding_repo,
             lifecycle_gate_repo: repositories.lifecycle_gate_repo,
-            mailbox_repo: repositories.mailbox_repo,
             terminal_registry,
         }
     }
@@ -132,16 +126,19 @@ impl WaitActivityService {
         }
     }
 
-    async fn resolve_scope(
+    pub(crate) async fn resolve_scope(
         &self,
         context: &WaitToolContext,
     ) -> Result<ResolvedWaitScope, AgentToolError> {
         let mut scope = ResolvedWaitScope {
             runtime_thread_id: context.runtime_thread_id.clone(),
-            run_id: None,
-            agent_id: None,
-            frame_id: None,
+            run_id: context.owner.map(|owner| owner.run_id),
+            agent_id: context.owner.map(|owner| owner.agent_id),
+            frame_id: context.owner.map(|owner| owner.frame_id),
         };
+        if context.owner.is_some() {
+            return Ok(scope);
+        }
         let Some(runtime_thread_id) = context.runtime_thread_id.as_ref() else {
             return Ok(scope);
         };
@@ -177,8 +174,6 @@ impl WaitActivityService {
         if explicit_refs.is_empty() {
             self.collect_scope_exec_items(scope, &filters, &mut items);
             self.collect_scope_gate_items(scope, &filters, &mut items)
-                .await?;
-            self.collect_scope_mailbox_items(scope, &filters, &mut items)
                 .await?;
         } else {
             for activity_ref in &explicit_refs {
@@ -236,18 +231,6 @@ impl WaitActivityService {
                     return Ok(());
                 }
             }
-            if accepts_kind(filters, "mailbox")
-                && let Some(message) = self
-                    .mailbox_repo
-                    .get_message(uuid)
-                    .await
-                    .map_err(domain_error("wait 查询 mailbox message 失败"))?
-            {
-                if !mailbox_belongs_to_scope(&message, scope) {
-                    return Ok(());
-                }
-                items.push(mailbox_item_from_message(&message));
-            }
         }
         Ok(())
     }
@@ -294,32 +277,6 @@ impl WaitActivityService {
                 .into_iter()
                 .map(|gate| gate_item_from_gate(&gate))
                 .filter(|item| accepts_kind(filters, &item.kind)),
-        );
-        Ok(())
-    }
-
-    async fn collect_scope_mailbox_items(
-        &self,
-        scope: &ResolvedWaitScope,
-        filters: &BTreeSet<String>,
-        items: &mut Vec<WaitActivityItem>,
-    ) -> Result<(), AgentToolError> {
-        if !accepts_kind(filters, "mailbox") {
-            return Ok(());
-        }
-        let (Some(run_id), Some(agent_id)) = (scope.run_id, scope.agent_id) else {
-            return Ok(());
-        };
-        let messages = self
-            .mailbox_repo
-            .list_messages(run_id, agent_id)
-            .await
-            .map_err(domain_error("wait 查询 mailbox message 失败"))?;
-        items.extend(
-            messages
-                .into_iter()
-                .filter(mailbox_message_is_wait_relevant)
-                .map(|message| mailbox_item_from_message(&message)),
         );
         Ok(())
     }

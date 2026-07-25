@@ -4,7 +4,7 @@ use std::sync::Arc;
 use agentdash_domain::channel::{
     ChannelBinding, ChannelBindingStatus, ChannelOwner, ChannelRegistryDocument,
 };
-use agentdash_spi::channel_binding::{ChannelBindingError, ChannelBindingProvider};
+use agentdash_platform_spi::channel_binding::{ChannelBindingError, ChannelBindingProvider};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 use uuid::Uuid;

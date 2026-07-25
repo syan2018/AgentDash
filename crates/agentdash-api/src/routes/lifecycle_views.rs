@@ -6,9 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application_lifecycle::run_view_builder::{
-    self, SubjectExecutionView as SubjectExecutionReadModel,
-};
+use agentdash_application_lifecycle::run_view_builder::SubjectExecutionView as SubjectExecutionReadModel;
 use agentdash_contracts::workflow::{
     LifecycleRunView, ProjectActiveAgentsView, SubjectExecutionView,
 };
@@ -24,8 +22,8 @@ use crate::{
 };
 
 use super::lifecycle_contracts::{
-    lifecycle_run_view_to_contract, project_active_agents_view_to_contract,
-    subject_execution_view_to_contract,
+    lifecycle_run_view_query_error, lifecycle_run_view_to_contract,
+    project_active_agents_view_to_contract, subject_execution_view_to_contract,
 };
 
 pub fn router() -> axum::Router<Arc<AppState>> {
@@ -50,17 +48,19 @@ pub async fn get_lifecycle_run_view(
     Path(run_id): Path<String>,
 ) -> Result<Json<LifecycleRunView>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
-    let run = load_lifecycle_run(state.as_ref(), run_id).await?;
+    let view = state
+        .services
+        .lifecycle_run_views
+        .lifecycle_run_view(run_id)
+        .await
+        .map_err(lifecycle_run_view_query_error)?;
     load_project_with_permission(
         state.as_ref(),
         &current_user,
-        run.project_id,
+        view.run.project_id,
         ProjectPermission::Use,
     )
     .await?;
-
-    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
-    let view = run_view_builder::build_lifecycle_run_view(&lifecycle_repos, &run).await?;
     Ok(Json(lifecycle_run_view_to_contract(view)))
 }
 
@@ -70,9 +70,12 @@ pub async fn get_subject_execution(
     Path((kind, id)): Path<(String, String)>,
 ) -> Result<Json<SubjectExecutionView>, ApiError> {
     let subject = SubjectRef::new(kind, parse_uuid(&id, "subject_id")?);
-    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
-    let view =
-        run_view_builder::build_subject_execution_view(&lifecycle_repos, subject.clone()).await?;
+    let view = state
+        .services
+        .lifecycle_run_views
+        .subject_execution_view(subject.clone())
+        .await
+        .map_err(lifecycle_run_view_query_error)?;
     authorize_subject_execution_view(&state, &current_user, &subject, &view).await?;
     Ok(Json(subject_execution_view_to_contract(view)))
 }
@@ -91,9 +94,12 @@ pub async fn get_project_active_agents(
     )
     .await?;
 
-    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
-    let view =
-        run_view_builder::build_project_active_agents_view(&lifecycle_repos, project_id).await?;
+    let view = state
+        .services
+        .lifecycle_run_views
+        .project_active_agents_view(project_id)
+        .await
+        .map_err(lifecycle_run_view_query_error)?;
     Ok(Json(project_active_agents_view_to_contract(view)))
 }
 
@@ -103,11 +109,7 @@ async fn authorize_subject_execution_view(
     subject: &SubjectRef,
     view: &SubjectExecutionReadModel,
 ) -> Result<(), ApiError> {
-    if let Some(project_id) = view
-        .runs
-        .first()
-        .and_then(|run| Uuid::parse_str(&run.project_id).ok())
-    {
+    if let Some(project_id) = view.runs.first().map(|run| run.run.project_id) {
         load_project_with_permission(state, current_user, project_id, ProjectPermission::Use)
             .await?;
         return Ok(());

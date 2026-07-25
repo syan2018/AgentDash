@@ -166,6 +166,7 @@ pub async fn fanout_tasks(
         let result = dispatcher
             .dispatch_task_subject(SubjectExecutionIntent {
                 project_id: candidate.project_id,
+                project_agent_id: None,
                 source: agentdash_domain::workflow::ExecutionSource::ParentAgent,
                 created_by_user_id: None,
                 subject_ref: SubjectRef::new("task", candidate.task.id),
@@ -435,6 +436,7 @@ mod tests {
                     subject_ref: intent.subject_ref,
                     association_id: Uuid::new_v4(),
                 },
+                delivery_runtime_ref: Uuid::new_v4(),
             })
         }
     }

@@ -1,101 +1,145 @@
-# Integration Agent Runtime Driver Host
+# Integration Complete Agent Host
 
 ## 1. Scope / Trigger
 
-本规范适用于受信 Integration 提供 Agent Runtime Driver、service instance 管理、activation/offer、sticky binding、driver lease、source coordinate、surface/hook apply gate与Host PostgreSQL persistence。新增first-party或企业Agent service、修改RuntimeOffer/profile求交、generation/lease/router或0061/0064 Host-owned schema时必须复核本规范。
+本规范适用于 Integration 提供 Complete Agent service、live attachment、selection、surface
+admission、source route、generation fencing 与 reverse callback。新增 Agent provider、修改
+Host state、callback route 或 optional integration bootstrap 时必须复核。
+
+Host 是单进程路由器，不是 durable workflow owner。其状态可从 Integration definition、
+Product association 与 concrete Agent authority 重建。
 
 ## 2. Signatures
 
 ```rust
-pub struct AgentRuntimeDriverContribution {
-    pub definition: AgentServiceDefinition,
-    pub factory: Arc<dyn AgentRuntimeDriverFactory>,
+pub struct CompleteAgentHost {
+    live_catalog: SharedCompleteAgentLiveCatalog,
+    state: RwLock<CompleteAgentHostLiveState>,
 }
 
-pub trait AgentRuntimeDriverFactory: Send + Sync {
-    async fn create(
-        &self,
-        activation: ActivatedAgentService,
-        credentials: Arc<dyn AgentRuntimeCredentialBroker>,
-    ) -> Result<Arc<dyn AgentRuntimeDriver>, AgentRuntimeFactoryError>;
-}
-
-impl AgentRuntimeHost {
-    pub async fn activate(...) -> Result<RuntimeOffer, AgentRuntimeHostError>;
-    pub async fn bind(...) -> Result<RuntimeBinding, AgentRuntimeHostError>;
-    pub async fn dispatch(...) -> Result<(), AgentRuntimeHostError>;
-    pub async fn recover_pending_bindings(&self) -> Result<usize, AgentRuntimeHostError>;
+struct CompleteAgentHostLiveState {
+    runtime_targets: BTreeMap<RuntimeThreadId, CompleteAgentRuntimeTarget>,
+    bindings: BTreeMap<CompleteAgentBindingId, CompleteAgentBinding>,
+    callback_routes: BTreeMap<AgentCallbackRouteId, CompleteAgentCallbackRoute>,
+    lost_runtime_threads: BTreeSet<RuntimeThreadId>,
 }
 ```
 
-`AgentRuntimeHostRepository` 提供instance revision CAS、generation reserve、activation/offer、binding/source/lease与apply receipt的durable ports。Router输入必须携带binding/generation/lease，不能以裸executor ID发现owner。
+```rust
+impl CompleteAgentHost {
+    pub async fn attach_verified_service(...);
+    pub async fn provision_runtime_target(...);
+    pub async fn restore_runtime_source_route(...);
+    pub async fn runtime_binding_generation(...);
+    pub async fn resolve_callback_route(...);
+}
+```
+
+```rust
+pub trait CompleteAgentService {
+    async fn describe(&self) -> Result<AgentServiceDescriptor, AgentServiceError>;
+    async fn create(&self, command: CreateAgentCommand) -> Result<AgentCommandReceipt, AgentServiceError>;
+    async fn fork(&self, command: ForkAgentCommand) -> Result<ForkAgentReceipt, AgentServiceError>;
+    async fn execute(&self, command: AgentCommandEnvelope)
+        -> Result<AgentCommandReceipt, AgentServiceError>;
+    async fn read(&self, query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError>;
+    async fn inspect(&self, identity: AgentEffectIdentity)
+        -> Result<AgentEffectInspection, AgentServiceError>;
+    async fn apply_surface(&self, command: ApplyBoundAgentSurface)
+        -> Result<AppliedAgentSurfaceReceipt, AgentServiceError>;
+}
+```
 
 ## 3. Contracts
 
-- Integration API只贡献immutable `AgentServiceDefinition + AgentRuntimeDriverFactory`。同一Integration可贡献多个definition，同一definition可创建多个instance；registry一次性collect后不可变，duplicate definition/factory/schema/protocol/credential定义fail fast。
-- Service definition是编译期受信元数据；instance保存config、credential refs、placement、desired/observed state与revision。每个instance revision必须保留immutable history，activation始终引用精确历史快照。
-- config JSON Schema、credential slot/ref/purpose与host permission必须在factory/driver side effect前验证。Factory只能得到Scoped Credential Broker，不能借机访问definition或instance未声明的slot、ref或purpose；secret不得Serialize/Debug/日志化。
-- Activation生成单调generation与evidence-backed RuntimeOffer。effective profile严格等于service guarantee、placement transport guarantee与host policy的交集；self-report或配置文件存在不能提升能力。
-- Runtime-owned `BoundAgentSurface`由Business Surface/admission编译；Host只保存`BoundAgentSurfaceReference`、apply evidence、Hook plan/artifact digest与per-point ack，不复制Capability Pack/ToolCatalog/Hook rules。
-- RuntimeBinding固定exact offer digest、instance revision、generation、profile digest和surface ref。新binding只能使用仍available且current instance仍Active/healthy的offer；已durable Pending binding可以依靠immutable旧activation snapshot恢复。
-- Driver bind intent先durable Pending，再执行幂等driver.bind，最后原子写Active binding与source coordinates。崩溃后`recover_pending_bindings`用同一identity恢复；失败显式收敛Failed/Lost，不产生无owner native session。
-- DriverLease使用数据库时钟、owner/token/epoch/generation。相同owner+generation在未过期时幂等返回原lease；不同owner冲突；到期takeover产生新token/epoch并fence旧owner。
-- Source coordinates按binding/generation维护canonical与driver ID双向唯一。Dispatch前校验lease，event sink对每个event再次校验binding、generation、source coordinate、owner/token和DB lease，防止dispatch期间takeover后的late event推进Runtime。
-- Required surface/hook contribution只有在revision/digest/artifact与per-point applied ack匹配，且effective HookProfile满足actions/strength/failure policy/configuration boundary后才允许Turn dispatch。
-- 0061的`agent_runtime_binding`/`agent_runtime_source_coordinate`是Managed Runtime引用的最小Host-owned anchor；0064保存instance history、activation/offer、binding detail、lease和完整coordinates。Runtime repository不写Host authority，Host不写Runtime journal/projection。
-- Relay是placement transport而非service identity。Native/Codex/remote service通过相同contribution/Host seam接入，不在Application/router增加service类型分支。
+- Integration 贡献稳定 definition/factory/configuration；Host materialize 后验证 descriptor 与
+  offer，再把 callable service attach 到当前进程的 live catalog。
+- `CompleteAgentLiveAttachmentId`、placement、incarnation、availability、target、binding、
+  generation、callback route 和 lost set 全部是 process-local。
+- 同一当前 attachment + 相同 verified facts 注册幂等；同 identity 但事实不同是完整性冲突。
+  不同进程 incarnation 产生新 attachment，不与旧 attachment 做数据库事实合并。
+- Product execution profile 与 AgentFrame 是 desired intent；service descriptor 是 Agent
+  guarantee；Host 在当前进程求交得到 bound surface，并由 concrete Agent
+  `apply_surface/inspect` 证明 applied。
+- Product execution profile digest 标识 Product 的完整执行配置，Agent offer profile digest
+  标识 Complete Agent 对外声明的原生能力边界；两者属于不同命名空间。Host 使用前者选择并编译
+  desired surface，再用后者证明 admission，不能用字符串相等代替这次求交。
+- Host generation 只 fence 当前进程 route。Host 重启后重新从 1 建立 generation 是合法的，
+  因为旧 callback route/attachment 已经不可解析。
+- 每个 Runtime thread 只有一个 current target，后续 Product command 与新回合只读取该 target。
+  Surface rebind 已经接纳的新 generation 不改变旧回合开始时固定的 callback route、binding 与
+  applied surface；旧 route 在其 deadline 内继续解析，使在途工具按当时的 immutable grant 完成。
+  attachment Lost 或 Host incarnation 结束时统一清除这些进程内代际，因为此时 concrete Agent
+  已不存在可继续回调的执行通道。
+- stable effect identity 在 Product/Agent 协议中派生；Host 不保存 create/fork/command/surface
+  effect ledger。回包未知时由 concrete Agent `inspect(effect_id)` 收敛。
+- callback route、deadline 与 generation 在 Host 内存校验。真实 Tool/Hook handler 使用
+  invocation idempotency key 保存或重放自己的副作用 receipt。
+- optional Complete Agent 的 program、credential 或 materialization 不可用，只让对应
+  selection 缺席并产生诊断；核心 AppState 与其他 Agent contribution 继续启动。
+- definition 冲突、descriptor/verification 不一致、surface contract 破坏等平台完整性错误继续
+  fail fast，因为这些错误说明已注册事实不可信，而不是某个可选 provider 暂时不可用。
+- RuntimeWire/Relay 只承载 transport。断连 retire 当前 attachment/connection epoch；重新连接
+  建立新 attachment，不回放旧进程 route。
 
 ## 4. Validation & Error Matrix
 
-| 场景 | 必须得到的结果 |
+| 场景 | 必须结果 |
 | --- | --- |
-| duplicate definition/factory/schema/protocol | bootstrap fail-fast |
-| config非法、credential缺失或purpose越权 | factory side effect前typed reject |
-| service自报能力但无conformance evidence | offer不提升该guarantee |
-| transport/host policy弱于service | effective profile按交集削弱 |
-| config rev1已激活后更新rev2 | current推进rev2，rev1 history与旧generation仍可恢复 |
-| stale/unhealthy/withdrawn offer创建新binding | reserve前typed reject |
-| Pending bind后offer撤回或config更新 | 按原immutable activation snapshot幂等恢复 |
-| binding anchor写入后detail constraint失败 | 全事务回滚，不泄漏0061 anchor |
-| lease未过期时不同owner claim | conflict |
-| lease过期takeover后旧token dispatch/event | stale generation/lease reject |
-| required Hook未ack或artifact digest不符 | Turn dispatch gate拒绝 |
-| source ID跨binding/generation复用 | composite unique/FK或typed conflict |
+| optional program/credential/materialization 缺失 | typed unavailable diagnostic；应用继续启动 |
+| duplicate definition 或 verified facts 冲突 | fail fast |
+| target 引用非 live attachment | typed unavailable/rejected |
+| desired surface 超出 verified offer | side effect 前 typed incompatible |
+| 相同 live target + surface 重复 provision | 返回当前 target |
+| 当前 target 未 Lost 却请求不同 target/surface | provisioning conflict |
+| surface rebind expected generation 过期 | stale generation |
+| surface rebind 后旧回合在 deadline 内回调 | 解析旧 route/binding，并按旧 applied surface 授权 |
+| callback route 未注册或 generation/source 不匹配 | typed reject；handler 零调用 |
+| Host restart 后收到旧 callback | unknown route |
+| Agent effect 回包未知 | 使用同一 effect identity inspect；不写 Host ledger |
+| remote connection epoch 断开 | retire attachment；旧 frame/ack 永久 fence |
 
 ## 5. Good / Base / Bad Cases
 
-**Good case:** 企业Integration只注册definition/factory；Host验证instance config/credential，依据conformance生成交集offer，Runtime用offer完成surface admission，Host持久Pending binding并幂等bind，获得apply ack与lease后按sticky binding路由。
-
-**Base case:** Host在driver.bind后崩溃，重启扫描Pending binding，从原activation revision/generation恢复driver并用相同bind identity收敛Active，不受current instance新revision影响。
-
-**Bad case:** Router通过`executor_id`或live-session probe选择connector并OR能力，或把Relay当service identity。这会丢失sticky ownership和generation provenance，必须由Host模型替代。
+- Good：Host 启动后 materialize Dash/Codex，按当前 profile 选中一个 verified service，应用
+  surface 并在内存中建立 source/callback route。
+- Base：Host 重启，Product association 仍指向同一 logical service/source；新 Host 重新 attach、
+  apply surface、bind，Agent history 和 effect receipt 不变。
+- Bad：保存 singleton Host revision graph，再把 attachment/generation 与 Agent receipt 比较。
+  这会把进程身份错误提升成跨重启业务事实。
 
 ## 6. Tests Required
 
-- Registry/Integration测试覆盖多definition、多instance、duplicate/factory/schema/protocol/credential定义与immutable collect。
-- Instance/activation测试覆盖config/credential preflight、secret隐藏、revision CAS/history、deactivate/reactivate/unhealthy、evidence-backed profile intersection。
-- Binding测试覆盖sticky/idempotent bind、stale offer、Pending recovery、orphan failure、surface/hook apply gate和configuration boundary。
-- Lease/source/router行为覆盖same-owner replay、DB-clock takeover、stale token、dispatch期间takeover、source双向唯一与old-generation event fencing。
-- 真实embedded PostgreSQL覆盖0061/0064 ownership、instance并发CAS、history FK、binding完整复合FK、anchor rollback、offer锁与lease过期。
-- API/Executor测试证明Integration不再贡献旧connector，Composite不再OR/broadcast/first-success；彻底删除legacy probe随WP08 cutover验证。
-- Host/Integration/API/Executor/Infrastructure tests、contracts、migration guard、fmt、clippy与diff check必须通过。
+- live catalog 测试覆盖 attach idempotency、verified facts conflict、retire 与跨 incarnation。
+- provision/rebind 测试覆盖 surface intersection、same-target replay、conflict、在途旧 generation
+  callback、Lost 后统一清理和 stale generation。
+- restart 测试构造全新 Host，证明无需数据库即可从 association + Agent service 重建。
+- callback 测试覆盖 current route、unknown route、stale generation、source mismatch、deadline
+  与 handler idempotent replay。
+- bootstrap composition 测试覆盖 optional materialization 失败隔离和 integrity failure fail-fast。
+- Remote/Wire 测试覆盖新 connection epoch、旧 frame 零 replay 与 callback route 映射。
 
 ## 7. Wrong vs Correct
 
 ```rust
-// Wrong: application按service类型硬编码driver并动态探测owner。
-let connector = match connector_kind { Pi => build_pi(), Codex => build_codex() };
-connector.prompt(executor_id, request).await?;
+// Wrong: Host startup 依赖恢复 singleton revision graph。
+let snapshot = host_repository.load().await?;
+host.recover(snapshot).await?;
 
-// Correct: Integration贡献factory，Host只按durable binding与lease路由。
-let contribution = integration.agent_runtime_drivers();
-host.dispatch(binding_id, generation, lease, command).await?;
+// Correct: 当前进程从稳定两端重新建 route。
+let selection = catalog.select(&binding.execution_profile).await?;
+host.provision_runtime_target(request(selection)).await?;
+host.restore_runtime_source_route(&binding.runtime_thread_id, binding.agent.source, effect, owner, ttl).await?;
 ```
 
 ```rust
-// Wrong: factory拿到能读取所有secret的全局broker。
-factory.create(activation, global_credentials).await?;
+// Wrong: 任一可选 Agent 启动失败终止核心服务。
+register_optional_agent(contribution).await?;
 
-// Correct: Host按definition+instance声明构造purpose-scoped broker。
-factory.create(activation, scoped_credentials).await?;
+// Correct: materialization 类失败成为 selection unavailable；完整性错误仍返回。
+match register_optional_agent(contribution).await {
+    Ok(_) => {}
+    Err(error) if error.is_materialization_unavailable() => diagnose(error),
+    Err(error) => return Err(error),
+}
 ```

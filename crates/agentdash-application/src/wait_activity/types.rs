@@ -18,6 +18,14 @@ pub(crate) const WAIT_PREVIEW_CHARS: usize = 280;
 pub struct WaitToolContext {
     pub runtime_thread_id: Option<RuntimeThreadId>,
     pub turn_id: String,
+    pub owner: Option<WaitActivityOwnerScope>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WaitActivityOwnerScope {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub frame_id: Uuid,
 }
 
 #[derive(Debug, Clone)]

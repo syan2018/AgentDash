@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md","reason":"Native/Dash service mapping、Fork 与 Compaction。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-runtime-fork-state-boundaries.md","reason":"当前 Native product fork 与 checkpoint fork 接线差异。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/pi-mono-agentcore-crate-convergence.md","reason":"Dash Agent/Core/adapter 三层边界。"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"只读取当前 Native context/compaction 行为与测试；最终 owner 是 Dash Agent，目标 API 以父 design 为准。"}

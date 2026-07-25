@@ -461,7 +461,7 @@ mod tests {
         ExtensionGeneratedOperationProvenance, ExtensionRuntimeActionDefinition,
         ExtensionRuntimeActionKind, ExtensionTemplatePayload,
     };
-    use agentdash_spi::{AuthIdentity, AuthMode};
+    use agentdash_platform_spi::{AuthIdentity, AuthMode};
 
     use super::*;
 
@@ -621,7 +621,7 @@ mod tests {
                 .map(|_| {
                     vec![ExtensionRuntimeActionDefinition {
                         action_key,
-                        kind: ExtensionRuntimeActionKind::Runtime,
+                        kind: ExtensionRuntimeActionKind::RuntimeThread,
                         description: "Run".to_string(),
                         input_schema: json!({ "type": "object" }),
                         output_schema: json!(true),

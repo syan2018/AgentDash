@@ -122,8 +122,8 @@ pub fn extension_runtime_projection_response(
                 extension_id: action.extension_id,
                 action_key: action.action_key,
                 kind: match action.kind {
-                    ExtensionRuntimeActionKind::Runtime => {
-                        ExtensionRuntimeActionKindResponse::Runtime
+                    ExtensionRuntimeActionKind::RuntimeThread => {
+                        ExtensionRuntimeActionKindResponse::RuntimeThread
                     }
                     ExtensionRuntimeActionKind::Setup => ExtensionRuntimeActionKindResponse::Setup,
                 },
@@ -136,13 +136,13 @@ pub fn extension_runtime_projection_response(
         protocols: projection
             .protocols
             .into_iter()
-            .map(|channel| ExtensionProtocolProjectionResponse {
-                extension_key: channel.extension_key,
-                extension_id: channel.extension_id,
-                protocol_key: channel.protocol_key,
-                version: channel.version,
-                description: channel.description,
-                methods: channel
+            .map(|protocol| ExtensionProtocolProjectionResponse {
+                extension_key: protocol.extension_key,
+                extension_id: protocol.extension_id,
+                protocol_key: protocol.protocol_key,
+                version: protocol.version,
+                description: protocol.description,
+                methods: protocol
                     .methods
                     .into_iter()
                     .map(|method| ExtensionProtocolMethodProjectionResponse {

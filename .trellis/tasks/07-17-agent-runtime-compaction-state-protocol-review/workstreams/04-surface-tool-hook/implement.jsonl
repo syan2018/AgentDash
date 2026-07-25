@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md","reason":"Capability、Surface、Tool/Hook causal route 与 applied evidence。"}
+{"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/design.md","reason":"07-10 Surface/Offer/Bound/Applied 原始目标。"}
+{"file":".trellis/spec/backend/agent-runtime-surface-tool-broker.md","reason":"Surface/Tool Broker 当前实现基线。"}
+{"file":".trellis/spec/backend/agent-runtime-hooks.md","reason":"HookPlan/HookPoint/effect 当前实现基线。"}

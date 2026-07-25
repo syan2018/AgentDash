@@ -1,6 +1,5 @@
 import type {
   ExtensionRuntimeProjectionResponse,
-  AgentFrameHookRuntimeInfo,
   AgentFrameRuntimeView,
   LifecycleRunView,
   AgentRunView,
@@ -12,6 +11,7 @@ import type {
   TaskSessionExecutorSummary,
 } from "../../../types";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type { WorkspaceModuleDescriptor } from "../../../generated/workspace-module-contracts";
 
 export type WorkspaceRuntimeStateStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
 
@@ -32,6 +32,7 @@ export interface WorkspaceBackendTarget {
 
 export interface WorkspaceRuntimeData {
   projectId: string | null;
+  workspaceModules: WorkspaceModuleDescriptor[];
   agentRunRuntimeTarget?: AgentRunRuntimeTarget | null;
   lifecycleRun: LifecycleRunView | null;
   lifecycleAgent: AgentRunView | null;
@@ -46,6 +47,5 @@ export interface WorkspaceRuntimeData {
   executorSummary: TaskSessionExecutorSummary | null;
   runtimeSurface: ResolvedVfsSurface | null;
   workspaceBackend: WorkspaceBackendTarget | null;
-  hookRuntime: AgentFrameHookRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
 }

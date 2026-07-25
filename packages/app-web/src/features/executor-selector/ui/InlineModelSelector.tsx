@@ -23,7 +23,6 @@ export interface InlineModelSelectorProps {
     providerId: string;
     modelId: string;
     thinkingLevel: string;
-    permissionPolicy: string;
   }) => void;
   onRefresh: () => void;
 }
@@ -121,7 +120,6 @@ export function InlineModelSelector({
         providerId,
         modelId,
         thinkingLevel: reasoning ? execConfig.thinkingLevel : "",
-        permissionPolicy: execConfig.permissionPolicy,
       });
       setOpen(false);
       setHoveredProvider(null);
@@ -138,7 +136,6 @@ export function InlineModelSelector({
           providerId: execConfig.providerId,
           modelId,
           thinkingLevel: value,
-          permissionPolicy: execConfig.permissionPolicy,
         });
       }
     },

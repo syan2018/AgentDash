@@ -388,7 +388,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use agentdash_domain::operation::{OperationEffect, OperationRef, OperationReplayPolicy};
-    use agentdash_spi::{AuthIdentity, AuthMode};
+    use agentdash_platform_spi::{AuthIdentity, AuthMode};
     use serde_json::json;
     use uuid::Uuid;
 

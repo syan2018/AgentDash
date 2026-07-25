@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AgentRunWorkspaceView } from "../types";
 import { useWorkspaceTabStore, type WorkspaceTabLayoutOptions } from "../stores/workspaceTabStore";
@@ -9,22 +9,24 @@ import {
 } from "./AgentRunWorkspacePage.conversationCommandState";
 import type {
   WorkspaceModuleDescriptor,
-  WorkspaceModulePresentation,
 } from "../generated/workspace-module-contracts";
+import type { WorkspaceModulePresentation } from "../generated/backbone-protocol";
 import type {
   AgentRunOwnershipView,
   ConversationCommandView,
   ConversationKeyboardMapView,
 } from "../generated/workflow-contracts";
-import type { ProjectAgentSummary } from "../types";
+import type { AgentRunWorkspaceListEntry, ProjectAgentSummary } from "../types";
+import { collectCompanionSubagentRefs } from "./AgentRunWorkspacePage.companionRefs";
 import {
   openUserCanvasModule,
   selectCanvasModuleOpenOptions,
 } from "../features/workspace-panel/model/canvasModuleOpen";
 import {
   isConcreteCanvasPresentationUri,
+  isWorkspaceModulePresentationCurrent,
   workspaceModulePresentationFromPlatformEventData,
-  workspaceModulePresentedTabTarget,
+  workspaceModulePresentationTabTarget,
 } from "./AgentRunWorkspacePage.workspaceModulePresentation";
 
 const ownership: AgentRunOwnershipView = {
@@ -34,7 +36,7 @@ const ownership: AgentRunOwnershipView = {
 };
 
 function workspaceView(
-  controlStatus: AgentRunWorkspaceView["control_plane"]["status"],
+  controlStatus: "running" | "ready" | "completed" | "terminal",
   commands: ConversationCommandView[] = [],
   keyboard: ConversationKeyboardMapView = {},
 ): AgentRunWorkspaceView {
@@ -48,7 +50,19 @@ function workspaceView(
       delivery_status: controlStatus,
       last_activity_at: "2026-06-12T00:00:00.000Z",
     },
-    control_plane: { status: controlStatus, ownership },
+    control_plane: {
+      status: controlStatus === "running" ? "running" : controlStatus === "ready" ? "ready" : "terminal",
+      ownership,
+    },
+    workspace_modules: [],
+    agent: {
+      agent_ref: { run_id: "run-1", agent_id: "agent-1" },
+      project_id: "project-1",
+      source: "project_agent",
+      status: controlStatus,
+      created_at: "2026-06-12T00:00:00.000Z",
+      updated_at: "2026-06-12T00:00:00.000Z",
+    },
     subject_associations: [],
     children: [],
     conversation: {
@@ -58,9 +72,7 @@ function workspaceView(
         agent_ref: { run_id: "run-1", agent_id: "agent-1" },
         project_id: "project-1",
       },
-      lifecycle_context: {
-        subject_associations: [],
-      },
+      lifecycle_context: { subject_associations: [] },
       execution: {
         status: controlStatus === "running" ? "running_active" : controlStatus === "ready" ? "ready" : "terminal",
       },
@@ -73,17 +85,74 @@ function workspaceView(
         commands,
         keyboard,
       },
-      mailbox: {
-        visible_message_count: 0,
-        paused: false,
-        user_attention: false,
-        messages: [],
-        waiting_items: [],
-      },
+      waiting_items: [],
       diagnostics: [],
     },
   };
 }
+
+describe("AgentRun list child presentation parity", () => {
+  it("preserves Main display fields, depth-first nested order, and navigation coordinates", () => {
+    const entries: AgentRunWorkspaceListEntry[] = [{
+      run_ref: { run_id: "run-1" },
+      agent_ref: { run_id: "run-1", agent_id: "agent-root" },
+      title: "Root",
+      lifecycle_status: "running",
+      last_activity_at: "2026-07-10T00:00:00Z",
+      source: "project_agent",
+      subagent_count: 3,
+      children: [{
+        run_ref: { run_id: "run-1" },
+        agent_ref: { run_id: "run-1", agent_id: "agent-child-a" },
+        title: "Child A",
+        lifecycle_status: "running",
+        last_activity_at: "2026-07-10T00:01:00Z",
+        source: "subagent",
+        children: [{
+          run_ref: { run_id: "run-1" },
+          agent_ref: { run_id: "run-1", agent_id: "agent-grandchild" },
+          title: "Grandchild",
+          lifecycle_status: "completed",
+          last_activity_at: "2026-07-10T00:02:00Z",
+          source: "subagent",
+          children: [],
+        }],
+      }, {
+        run_ref: { run_id: "run-1" },
+        agent_ref: { run_id: "run-1", agent_id: "agent-child-b" },
+        title: "Child B",
+        lifecycle_status: "failed",
+        last_activity_at: "2026-07-10T00:03:00Z",
+        source: "subagent",
+        children: [],
+      }],
+    }];
+
+    expect(collectCompanionSubagentRefs(entries, "run-1")).toEqual([
+      {
+        run_id: "run-1",
+        agent_id: "agent-child-a",
+        display_title: "Child A",
+        delivery_status: "running",
+        last_activity_at: "2026-07-10T00:01:00Z",
+      },
+      {
+        run_id: "run-1",
+        agent_id: "agent-grandchild",
+        display_title: "Grandchild",
+        delivery_status: "completed",
+        last_activity_at: "2026-07-10T00:02:00Z",
+      },
+      {
+        run_id: "run-1",
+        agent_id: "agent-child-b",
+        display_title: "Child B",
+        delivery_status: "failed",
+        last_activity_at: "2026-07-10T00:03:00Z",
+      },
+    ]);
+  });
+});
 
 function commandState(
   workspaceStateStatus: "ready" | "refreshing" | "error" | "idle" | "loading",
@@ -129,28 +198,27 @@ function presentation(params: {
   };
 }
 
-describe("workspaceModulePresentedTabTarget", () => {
+describe("workspaceModulePresentationTabTarget", () => {
   it("opens Canvas tabs from presentation_uri", () => {
-    expect(workspaceModulePresentedTabTarget(presentation({
+    expect(workspaceModulePresentationTabTarget(presentation({
       renderer_kind: "canvas",
       presentation_uri: "canvas://cvs-dashboard-a",
     }))).toEqual({
       typeId: "canvas",
       uri: "canvas://cvs-dashboard-a",
-      refreshRuntime: true,
     });
   });
 
   it("does not treat empty canvas:// as a concrete Canvas tab target", () => {
     expect(isConcreteCanvasPresentationUri("canvas://")).toBe(false);
-    expect(workspaceModulePresentedTabTarget(presentation({
+    expect(workspaceModulePresentationTabTarget(presentation({
       renderer_kind: "canvas",
       presentation_uri: "canvas://",
     }))).toBeNull();
   });
 
   it("does not infer Canvas URI from view_key or module_id", () => {
-    expect(workspaceModulePresentedTabTarget(presentation({
+    expect(workspaceModulePresentationTabTarget(presentation({
       module_id: "canvas:cvs-dashboard-a",
       renderer_kind: "canvas",
       view_key: "preview",
@@ -189,15 +257,30 @@ describe("workspaceModulePresentedTabTarget", () => {
   });
 
   it("opens non-Canvas module views by view_key", () => {
-    expect(workspaceModulePresentedTabTarget(presentation({
+    expect(workspaceModulePresentationTabTarget(presentation({
       renderer_kind: "webview",
       view_key: "inspector",
       presentation_uri: "ext-demo://panel",
     }))).toEqual({
       typeId: "inspector",
       uri: "ext-demo://panel",
-      refreshRuntime: false,
     });
+  });
+
+  it("只让仍存在于 current AgentRun projection 的精确 presentation 生效", () => {
+    const module = canvasModule("canvas:cvs-dashboard-a", "canvas://cvs-dashboard-a");
+    const current = presentation({
+      module_id: "canvas:cvs-dashboard-a",
+      renderer_kind: "canvas",
+      presentation_uri: "canvas://cvs-dashboard-a",
+    });
+
+    expect(isWorkspaceModulePresentationCurrent(current, [module])).toBe(true);
+    expect(isWorkspaceModulePresentationCurrent({
+      ...current,
+      presentation_uri: "canvas://deleted",
+    }, [module])).toBe(false);
+    expect(isWorkspaceModulePresentationCurrent(current, [])).toBe(false);
   });
 });
 
@@ -375,20 +458,20 @@ describe("AgentRun workspace conversation command authority", () => {
   it("does not infer command enablement from top-level control_plane status", () => {
     const state = commandState("ready", workspaceView("running"));
 
-    expect(state.executionStatus).toBe("ready");
+    expect(state.executionStatus).toBe("running_active");
     expect(state.commands.commands).toHaveLength(0);
     expect(state.commands.keyboard.enter).toBeUndefined();
     expect(state.commands.keyboard.ctrl_enter).toBeUndefined();
   });
 
-  it("freezes stale backend commands while projection is refreshing", () => {
+  it("keeps the committed conversation commands while projection is refreshing", () => {
     const state = commandState("refreshing", workspaceView("running", [
       command("submit_message", "cmd-submit"),
     ], { enter: "cmd-submit" }));
 
-    expect(state.executionStatus).toBe("refreshing");
-    expect(state.commands.keyboard.enter).toBeUndefined();
-    expect(state.commands.commands).toHaveLength(0);
+    expect(state.executionStatus).toBe("running_active");
+    expect(state.commands.keyboard.enter).toBe("cmd-submit");
+    expect(state.commands.commands).toHaveLength(1);
   });
 
   it("requires conversation snapshot before exposing commands", () => {
@@ -474,6 +557,30 @@ describe("workspaceTabStore Canvas tab identity", () => {
 
     useWorkspaceTabStore.getState().reset();
   });
+
+  it("prunes a persisted Canvas tab that is absent from the current workspace projection", () => {
+    useWorkspaceTabStore.getState().reset();
+    useWorkspaceTabStore.getState().initialize("agentrun:run-1:agent-1", {
+      tabs: [{
+        type_id: "canvas",
+        uri: "canvas://cvs-deleted",
+        title: "Deleted Canvas",
+        pinned: false,
+      }],
+      active_tab_uri: "canvas://cvs-deleted",
+    }, canvasLayoutOptions);
+
+    useWorkspaceTabStore.getState().pruneInvalidTabs({
+      ...canvasLayoutOptions,
+      tabTypes: [{
+        ...canvasLayoutOptions.tabTypes[0],
+        canCreateUri: (uri) => uri === "canvas://cvs-current",
+      }],
+    });
+
+    expect(useWorkspaceTabStore.getState().tabs).toEqual([]);
+    useWorkspaceTabStore.getState().reset();
+  });
 });
 
 function canvasModule(
@@ -509,18 +616,30 @@ function canvasModule(
 describe("Canvas workspace module selector and user-open flow", () => {
   it("selects only ready Canvas modules with concrete canonical presentation URIs", () => {
     const options = selectCanvasModuleOpenOptions([
-      canvasModule("canvas:def-a", "canvas://def-a"),
+      canvasModule("canvas:cvs-mount-a", "canvas://cvs-mount-a"),
       canvasModule("canvas:cvs-empty", "canvas://"),
       canvasModule("canvas:cvs-missing", null),
       canvasModule("canvas:cvs-disabled", "canvas://cvs-disabled", "unavailable"),
     ]);
 
     expect(options).toEqual([{
-      module_id: "canvas:def-a",
+      module_id: "canvas:cvs-mount-a",
       view_key: "preview",
-      title: "Preview canvas:def-a",
-      presentation_uri: "canvas://def-a",
+      title: "Preview canvas:cvs-mount-a",
+      presentation_uri: "canvas://cvs-mount-a",
     }]);
+  });
+
+  it("uses the backend workspace module projection without a second surface join", () => {
+    const options = selectCanvasModuleOpenOptions([
+      canvasModule("canvas:cvs-mount-a", "canvas://cvs-mount-a"),
+      canvasModule("canvas:cvs-mount-b", "canvas://cvs-mount-b"),
+    ]);
+
+    expect(options.map((option) => option.presentation_uri)).toEqual([
+      "canvas://cvs-mount-a",
+      "canvas://cvs-mount-b",
+    ]);
   });
 
   it("opens an already active Canvas from the canonical project presentation URI", async () => {

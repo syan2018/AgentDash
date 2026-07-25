@@ -5,11 +5,9 @@ use agentdash_domain::workflow::{
     ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
     AgentProcedureContract, AgentReusePolicy, BashExecExecutorSpec, ExecutorSpec,
     FunctionActivityExecutorSpec, LifecycleNodeType, LifecycleRun, MountDirective,
-    OrchestrationInstance, OrchestrationSourceRef, PlanNode, RuntimeNodeState,
-    RuntimeSessionPolicy,
+    OrchestrationInstance, OrchestrationSourceRef, PlanNode, RuntimeNodeState, RuntimeThreadPolicy,
 };
-use agentdash_spi::Vfs;
-use agentdash_spi::{CapabilityState, RuntimeMcpServer};
+use agentdash_platform_spi::{CapabilityState, RuntimeMcpServer, Vfs};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -65,14 +63,14 @@ pub fn activity_definition_from_plan_node(plan_node: &PlanNode) -> ActivityDefin
         Some(ExecutorSpec::AgentProcedure {
             procedure,
             agent_reuse_policy,
-            runtime_session_policy,
+            runtime_thread_policy,
         }) => ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
             procedure_key: procedure
                 .procedure_key()
                 .unwrap_or("__inline_agent_procedure")
                 .to_string(),
             agent_reuse_policy: *agent_reuse_policy,
-            runtime_session_policy: *runtime_session_policy,
+            runtime_thread_policy: *runtime_thread_policy,
         }),
         Some(ExecutorSpec::Function { spec }) => ActivityExecutorSpec::Function(spec.clone()),
         Some(ExecutorSpec::Human { spec }) => ActivityExecutorSpec::Human(spec.clone()),
@@ -86,7 +84,6 @@ pub fn activity_definition_from_plan_node(plan_node: &PlanNode) -> ActivityDefin
             },
         )),
     };
-
     ActivityDefinition {
         key: plan_node.node_path.clone(),
         description: plan_node
@@ -128,7 +125,6 @@ pub fn lifecycle_identity_from_orchestration(
         OrchestrationSourceRef::WorkflowGraph { graph_id, .. } => Some(*graph_id),
         _ => None,
     };
-
     LifecycleProjectionIdentity {
         graph_id,
         key,
@@ -148,17 +144,12 @@ fn lifecycle_key_from_source_ref(source_ref: &OrchestrationSourceRef) -> String 
             format!("workflow_script:{script_id}")
         }
         OrchestrationSourceRef::Inline { source_digest } => {
-            format!("inline:{}", digest_suffix(source_digest))
+            let digest = source_digest
+                .strip_prefix("sha256:")
+                .unwrap_or(source_digest);
+            format!("inline:{}", digest.get(..12).unwrap_or(digest))
         }
     }
-}
-
-fn digest_suffix(digest: &str) -> &str {
-    digest
-        .strip_prefix("sha256:")
-        .unwrap_or(digest)
-        .get(..12)
-        .unwrap_or(digest)
 }
 
 pub fn derive_agent_node_facts(plan_node: &PlanNode) -> (Option<String>, LifecycleNodeType) {
@@ -166,10 +157,10 @@ pub fn derive_agent_node_facts(plan_node: &PlanNode) -> (Option<String>, Lifecyc
         Some(ExecutorSpec::AgentProcedure {
             procedure,
             agent_reuse_policy,
-            runtime_session_policy,
+            runtime_thread_policy,
         }) => {
             let node_type = if *agent_reuse_policy == AgentReusePolicy::ContinueCurrentAgent
-                && *runtime_session_policy == RuntimeSessionPolicy::DeliverToCurrentTrace
+                && *runtime_thread_policy == RuntimeThreadPolicy::DeliverToCurrentThread
             {
                 LifecycleNodeType::PhaseNode
             } else {
@@ -253,26 +244,10 @@ pub fn writable_port_keys_for_active_workflow(workflow: &ActiveWorkflowProjectio
     writable_port_keys_for_activity(&workflow.active_activity)
 }
 
-pub fn lifecycle_mount_surface_for_active_workflow(
-    workflow: &ActiveWorkflowProjection,
-) -> LifecycleMountSurface {
-    LifecycleMountSurface {
-        run_id: workflow.run.id,
-        orchestration_id: workflow.orchestration_id,
-        node_path: workflow.node_path.clone(),
-        lifecycle_key: workflow.lifecycle_key.clone(),
-        attempt: workflow.active_attempt.attempt,
-        writable_port_keys: writable_port_keys_for_active_workflow(workflow),
-    }
-}
-
 pub fn lifecycle_mount_overlay_for_surface(surface: &LifecycleMountSurface) -> Vfs {
     Vfs {
-        mounts: vec![build_lifecycle_mount_with_node_scope(surface)],
-        default_mount_id: None,
-        source_project_id: None,
-        source_story_id: None,
-        links: Vec::new(),
+        mounts: vec![node_lifecycle_mount(surface)],
+        ..Vfs::default()
     }
 }
 
@@ -283,15 +258,16 @@ pub fn project_active_workflow_lifecycle_vfs(
     let Some(workflow) = workflow else {
         return vfs;
     };
-
     let mut vfs = vfs.unwrap_or_default();
-    let surface = lifecycle_mount_surface_for_active_workflow(workflow);
-    let mut overlay = lifecycle_mount_overlay_for_surface(&surface);
-    let mount = overlay
-        .mounts
-        .pop()
-        .expect("lifecycle surface overlay must contain one mount");
-
+    let surface = LifecycleMountSurface {
+        run_id: workflow.run.id,
+        orchestration_id: workflow.orchestration_id,
+        node_path: workflow.node_path.clone(),
+        lifecycle_key: workflow.lifecycle_key.clone(),
+        attempt: workflow.active_attempt.attempt,
+        writable_port_keys: writable_port_keys_for_active_workflow(workflow),
+    };
+    let mount = node_lifecycle_mount(&surface);
     if let Some(existing) = vfs
         .mounts
         .iter_mut()
@@ -305,22 +281,16 @@ pub fn project_active_workflow_lifecycle_vfs(
     Some(vfs)
 }
 
-fn build_lifecycle_mount_with_node_scope(surface: &LifecycleMountSurface) -> Mount {
-    let mut metadata = serde_json::json!({
-        "run_id": surface.run_id.to_string(),
-        "orchestration_id": surface.orchestration_id.to_string(),
-        "node_path": surface.node_path.as_str(),
-        "lifecycle_key": surface.lifecycle_key.as_str(),
-        "scope": "node_runtime",
-        "writable_port_keys": surface.writable_port_keys.as_slice(),
-        "directory_hint": "Use artifacts/ for deliverables and records/ for supporting notes."
-    });
-    metadata["attempt"] = serde_json::json!(surface.attempt);
-
+fn node_lifecycle_mount(surface: &LifecycleMountSurface) -> Mount {
     Mount {
         id: LIFECYCLE_MOUNT_ID.to_string(),
         provider: PROVIDER_LIFECYCLE_VFS.to_string(),
-        backend_id: String::new(),
+        backend_id: format!(
+            "lifecycle-node:{}:{}:{}",
+            surface.run_id,
+            surface.orchestration_id,
+            encode_node_path_segment(&surface.node_path)
+        ),
         root_ref: format!(
             "lifecycle://run/{}/orchestration/{}/node/{}",
             surface.run_id,
@@ -335,7 +305,16 @@ fn build_lifecycle_mount_with_node_scope(surface: &LifecycleMountSurface) -> Mou
         ],
         default_write: false,
         display_name: "Lifecycle 执行记录".to_string(),
-        metadata,
+        metadata: serde_json::json!({
+            "run_id": surface.run_id,
+            "orchestration_id": surface.orchestration_id,
+            "node_path": surface.node_path,
+            "lifecycle_key": surface.lifecycle_key,
+            "scope": "node_runtime",
+            "writable_port_keys": surface.writable_port_keys,
+            "attempt": surface.attempt,
+            "directory_hint": "Use artifacts/ for deliverables and records/ for supporting notes."
+        }),
     }
 }
 
@@ -359,13 +338,12 @@ pub fn encode_node_path_segment(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut encoded = String::new();
     for byte in value.as_bytes() {
-        let is_safe = byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-');
-        if is_safe {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-') {
             encoded.push(char::from(*byte));
         } else {
             encoded.push('%');
             encoded.push(char::from(HEX[(byte >> 4) as usize]));
-            encoded.push(char::from(HEX[(byte & 0x0F) as usize]));
+            encoded.push(char::from(HEX[(byte & 0x0f) as usize]));
         }
     }
     encoded
@@ -389,17 +367,18 @@ pub struct ActivityActivation {
     pub mount_directives: Vec<MountDirective>,
 }
 
+/// A reference to the Complete Agent conversation selected by Product frame construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageStreamProjectionRef {
-    pub runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub trace_kind: MessageStreamTraceKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageStreamTraceKind {
-    ConnectorRuntimeSession,
-    RestoredTranscript,
+    ManagedRuntimeThread,
+    RestoredConversation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -410,14 +389,6 @@ pub struct OrchestrationNodeProjectionInput {
     pub lifecycle_key: String,
     pub attempt: u32,
     pub writable_port_keys: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OrchestrationNodeEvidenceRef {
-    pub run_id: Uuid,
-    pub orchestration_id: Uuid,
-    pub node_path: String,
-    pub attempt: u32,
 }
 
 impl OrchestrationNodeProjectionInput {
@@ -431,6 +402,14 @@ impl OrchestrationNodeProjectionInput {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrchestrationNodeEvidenceRef {
+    pub run_id: Uuid,
+    pub orchestration_id: Uuid,
+    pub node_path: String,
+    pub attempt: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinLifecycleSkill {
     CompanionSystem,
@@ -441,38 +420,7 @@ pub enum BuiltinLifecycleSkill {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuiltinLifecycleSkillPolicy {
     PreserveProjected,
-    EnsureAndProject(Vec<BuiltinLifecycleSkill>),
-}
-
-impl BuiltinLifecycleSkillPolicy {
-    pub fn ensure(skills: impl IntoIterator<Item = BuiltinLifecycleSkill>) -> Self {
-        Self::EnsureAndProject(skills.into_iter().collect())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunLifecycleSkillProjectionFacts {
-    pub explicit_skill_asset_keys: Vec<String>,
-    pub builtin_skills: BuiltinLifecycleSkillPolicy,
-}
-
-impl AgentRunLifecycleSkillProjectionFacts {
-    pub fn preserve_projected() -> Self {
-        Self {
-            explicit_skill_asset_keys: Vec::new(),
-            builtin_skills: BuiltinLifecycleSkillPolicy::PreserveProjected,
-        }
-    }
-
-    pub fn ensure(
-        explicit_skill_asset_keys: Vec<String>,
-        skills: impl IntoIterator<Item = BuiltinLifecycleSkill>,
-    ) -> Self {
-        Self {
-            explicit_skill_asset_keys,
-            builtin_skills: BuiltinLifecycleSkillPolicy::ensure(skills),
-        }
-    }
+    Project(Vec<BuiltinLifecycleSkill>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -497,26 +445,6 @@ pub struct AgentRunLifecycleSurfaceInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunLifecycleSessionEvidenceFacts {
-    pub base_vfs: Option<Vfs>,
-    pub address: AgentRunRuntimeAddress,
-    pub message_stream: MessageStreamProjectionRef,
-    pub project_id: Uuid,
-    pub node_evidence: Option<OrchestrationNodeEvidenceRef>,
-    pub skill_projection: AgentRunLifecycleSkillProjectionFacts,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunLifecycleNodeRuntimeFacts {
-    pub base_vfs: Option<Vfs>,
-    pub address: AgentRunRuntimeAddress,
-    pub message_stream: Option<MessageStreamProjectionRef>,
-    pub project_id: Uuid,
-    pub node_projection: OrchestrationNodeProjectionInput,
-    pub skill_projection: AgentRunLifecycleSkillProjectionFacts,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunLifecycleSurface {
     pub vfs: Vfs,
     pub lifecycle_mount: Mount,
@@ -535,7 +463,7 @@ pub struct AgentRunLifecycleProjectionSet {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageStreamProjectionFacts {
-    pub runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub trace_kind: MessageStreamTraceKind,
 }
 

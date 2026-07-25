@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Rust 质量门与回归测试要求"}
+{"file":".trellis/spec/backend/embedded-skill-bundles.md","reason":"检查 provisioning 与纯 projection 合同"}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"检查首次 frame lifecycle mount 坐标"}
+{"file":".trellis/spec/cross-layer/shared-library-contract.md","reason":"检查 Assets 中 builtin 管理语义"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查 catalog、policy key 与 provisioning 入口没有重复事实源"}

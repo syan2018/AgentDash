@@ -1,6 +1,8 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { ExecutorConfig } from "../../../services/executor";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import { subscribeProjectEvents } from "../../../stores/eventStore";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { useTaskPlanStore } from "../../../stores/taskPlanStore";
 import type {
@@ -10,13 +12,18 @@ import type {
   ProjectAgentSummary,
 } from "../../../types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
+import {
+  connectAgentRunTerminalFeed,
+  projectAgentRunTerminalChanges,
+  projectAgentRunTerminalSnapshot,
+} from "../../agent-run-product-projections";
 import type {
   AgentRunWorkspaceState,
 } from "../../workspace-panel/model/useAgentRunWorkspaceState";
+import { isWorkspaceModulePresentationCurrent } from "../../workspace-module/model/presentation";
 import {
-  planAgentRunMessageSent,
-  planAgentRunTurnEnded,
-  planAgentRunWorkspaceModuleOpened,
+  planAgentRunLiveEvent,
+  planAgentRunProjectEvent,
   resolveAgentRunSubmitCommand,
   type AgentRunControlPlaneEffectPlan,
   type AgentRunWorkspacePanelTarget,
@@ -30,7 +37,6 @@ import {
   conversationCommandByKind,
   isCompleteExecutorConfig,
   projectAgentRunChatCommandState,
-  projectAgentRunChatMailboxModel,
   resolveExecutorConfigForConversationCommand,
 } from "./conversationCommandState";
 import { useAgentRunWorkspaceCommands } from "./useAgentRunWorkspaceCommands";
@@ -43,8 +49,7 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
   draftProjectAgent: ProjectAgentSummary | null;
   isProjectAgentDraft: boolean;
   agentRunWorkspaceState: AgentRunWorkspaceState;
-  refreshAgentRunWorkspaceState: () => Promise<unknown>;
-  refreshAgentRunHookRuntime: () => Promise<unknown>;
+  refreshAgentRunWorkspaceState: () => Promise<AgentRunWorkspaceView | null>;
   traceExecutorHint?: string | null;
   taskExecutorSummary?: TaskSessionExecutorSummary | null;
   createProjectAgentRun: (
@@ -52,9 +57,12 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
     agentKey: string,
     payload: CreateProjectAgentRunRequest,
   ) => Promise<ProjectAgentRunStartResult>;
-  onDraftStarted: (response: ProjectAgentRunStartResult) => void;
+  onDraftStarted: (
+    response: ProjectAgentRunStartResult,
+    initialSubmit: Omit<AgentRunChatSubmitIntent, "command_id">,
+  ) => void;
+  onAgentRunRedirect: (target: { runId: string; agentId: string }) => void;
   refreshAgentRunList: (reason: string) => void;
-  refreshWorkspaceModuleCatalog: () => void;
   openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
 }
 
@@ -62,12 +70,72 @@ interface UseAgentRunWorkspaceControlPlaneResult {
   workspaceControl: AgentRunWorkspaceView | null;
   chatModel: AgentRunChatModel;
   chatIntents: AgentRunChatViewIntents;
-  refreshAgentRunWorkspaceState: () => Promise<unknown>;
-  refreshAgentRunHookRuntime: () => Promise<unknown>;
-  handleMessageSent: () => void;
-  handleTurnEnd: () => void;
-  handleTaskPlanChanged: () => void;
-  handleWorkspaceModuleOpened: () => void;
+  handleAgentRunLiveEvent: (event: BackboneEvent) => void;
+}
+
+export interface AgentRunControlPlaneEffectExecutor {
+  refreshAgentRunWorkspaceState: () => Promise<AgentRunWorkspaceView | null>;
+  openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
+  refreshAgentRunList: (reason: string) => void;
+  refreshTaskPlan: () => Promise<unknown>;
+  workspacePanelOpened?: () => void;
+  workspacePanelOpenFailed?: (error: Error) => void;
+}
+
+export function applyAgentRunControlPlaneEffectPlan(
+  plan: AgentRunControlPlaneEffectPlan,
+  executor: AgentRunControlPlaneEffectExecutor,
+): void {
+  const openPlan = plan.openWorkspacePanel;
+  if (openPlan?.afterWorkspaceRefresh) {
+    void (async () => {
+      const workspace = plan.refreshWorkspaceState
+        ? await executor.refreshAgentRunWorkspaceState().catch((error: unknown) => {
+            executor.workspacePanelOpenFailed?.(
+              error instanceof Error ? error : new Error("Workspace 刷新失败"),
+            );
+            return null;
+          })
+        : null;
+      if (
+        !workspace
+        || !isWorkspaceModulePresentationCurrent(
+          openPlan.presentation,
+          workspace.workspace_modules,
+        )
+      ) {
+        if (workspace) {
+          executor.workspacePanelOpenFailed?.(
+            new Error("Workspace presentation currentness fence 尚未生效"),
+          );
+        }
+        return;
+      }
+      try {
+        executor.openWorkspacePanel(openPlan.target);
+        executor.workspacePanelOpened?.();
+      } catch (error) {
+        executor.workspacePanelOpenFailed?.(
+          error instanceof Error ? error : new Error("Workspace 面板打开失败"),
+        );
+      }
+    })();
+  } else {
+    if (plan.refreshWorkspaceState) {
+      void executor.refreshAgentRunWorkspaceState().catch(() => {});
+    }
+    if (openPlan) {
+      executor.openWorkspacePanel(openPlan.target);
+      executor.workspacePanelOpened?.();
+    }
+  }
+
+  if (plan.refreshAgentRunListReason) {
+    executor.refreshAgentRunList(plan.refreshAgentRunListReason);
+  }
+  if (plan.refreshTaskPlan) {
+    void executor.refreshTaskPlan().catch(() => {});
+  }
 }
 
 export function useAgentRunWorkspaceControlPlane({
@@ -79,17 +147,16 @@ export function useAgentRunWorkspaceControlPlane({
   isProjectAgentDraft,
   agentRunWorkspaceState,
   refreshAgentRunWorkspaceState,
-  refreshAgentRunHookRuntime,
   traceExecutorHint,
   taskExecutorSummary = null,
   createProjectAgentRun,
   onDraftStarted,
+  onAgentRunRedirect,
   refreshAgentRunList,
-  refreshWorkspaceModuleCatalog,
   openWorkspacePanel,
 }: UseAgentRunWorkspaceControlPlaneOptions): UseAgentRunWorkspaceControlPlaneResult {
   const fetchAndIngestLifecycleRun = useLifecycleStore((state) => state.fetchAndIngestLifecycleRun);
-  const hookRuntimeRefreshTimerRef = useRef<number | null>(null);
+  const fetchAgentRunTasks = useTaskPlanStore((state) => state.fetchAgentRunTasks);
   const [explicitExecutorConfigOverrideState, setExplicitExecutorConfigOverrideState] = useState<{
     scopeKey: string | null;
     config: ExecutorConfig | null;
@@ -113,31 +180,6 @@ export function useAgentRunWorkspaceControlPlane({
       config,
     });
   }, [executorOverrideScopeKey]);
-
-  useEffect(() => {
-    return () => {
-      if (hookRuntimeRefreshTimerRef.current) {
-        window.clearTimeout(hookRuntimeRefreshTimerRef.current);
-        hookRuntimeRefreshTimerRef.current = null;
-      }
-    };
-  }, []);
-
-  const scheduleHookRuntimeRefresh = useCallback((_reason: string, immediate = false) => {
-    if (!currentRunId || !currentAgentId) return;
-    if (hookRuntimeRefreshTimerRef.current) {
-      window.clearTimeout(hookRuntimeRefreshTimerRef.current);
-      hookRuntimeRefreshTimerRef.current = null;
-    }
-    if (immediate) {
-      void refreshAgentRunHookRuntime();
-      return;
-    }
-    hookRuntimeRefreshTimerRef.current = window.setTimeout(() => {
-      hookRuntimeRefreshTimerRef.current = null;
-      void refreshAgentRunHookRuntime();
-    }, 180);
-  }, [currentAgentId, currentRunId, refreshAgentRunHookRuntime]);
 
   const executorStateKey = useMemo(() => {
     if (isProjectAgentDraft) {
@@ -174,7 +216,6 @@ export function useAgentRunWorkspaceControlPlane({
           conversation: workspaceControl?.conversation,
           workspaceStateStatus: agentRunWorkspaceState.status,
           workspaceStateError: agentRunWorkspaceState.error,
-          runtimeSnapshot: agentRunWorkspaceState.runtime_inspect?.snapshot,
         }),
     [
       agentRunWorkspaceState.error,
@@ -185,15 +226,13 @@ export function useAgentRunWorkspaceControlPlane({
       explicitExecutorConfigOverride,
       isProjectAgentDraft,
       workspaceControl?.conversation,
-      agentRunWorkspaceState.runtime_inspect?.snapshot,
     ],
   );
-
-  const conversationMailbox = workspaceControl?.conversation?.mailbox;
 
   const {
     handleAgentRunCommand,
     handleCancelAgentRun,
+    handleForkFromMessageRef,
   } = useAgentRunWorkspaceCommands({
     currentRunId,
     currentAgentId,
@@ -204,7 +243,7 @@ export function useAgentRunWorkspaceControlPlane({
     createProjectAgentRun,
     fetchAndIngestLifecycleRun,
     refreshWorkspaceState: refreshAgentRunWorkspaceState,
-    scheduleHookRuntimeRefresh,
+    onAgentRunRedirect,
     resolveExecutorConfig: resolveExecutorConfigForConversationCommand,
     isCompleteExecutorConfig,
     onDraftStarted,
@@ -223,16 +262,13 @@ export function useAgentRunWorkspaceControlPlane({
       intent.imageAttachments,
       intent.deliveryIntent,
     );
-    refreshAgentRunList("command_submitted");
-  }, [commandState, handleAgentRunCommand, refreshAgentRunList]);
+  }, [commandState, handleAgentRunCommand]);
 
   const cancelAction = useCallback(async () => {
     await handleCancelAgentRun();
-    refreshAgentRunList("agent_run_cancelled");
-  }, [handleCancelAgentRun, refreshAgentRunList]);
+  }, [handleCancelAgentRun]);
 
   const chatModel = useMemo<AgentRunChatModel>(() => ({
-    runtimeInspect: agentRunWorkspaceState.runtime_inspect,
     executorHint,
     agentDefaults: draftProjectAgent?.effective_executor_config
       ?? workspaceControl?.conversation?.model_config.effective_executor_config
@@ -240,18 +276,17 @@ export function useAgentRunWorkspaceControlPlane({
     executorStateKey,
     commandState: projectAgentRunChatCommandState(commandState),
     compactContextCommand: conversationCommandByKind(commandState.commands.commands, "compact_context"),
-    mailbox: projectAgentRunChatMailboxModel(commandState, conversationMailbox),
+    waitingItems: workspaceControl?.conversation?.waiting_items ?? [],
     statusBarRunId: currentRunId,
     statusBarAgentId: currentAgentId,
   }), [
-    agentRunWorkspaceState.runtime_inspect,
     commandState,
-    conversationMailbox,
     currentAgentId,
     currentRunId,
     draftProjectAgent?.effective_executor_config,
     executorHint,
     executorStateKey,
+    workspaceControl?.conversation?.waiting_items,
     workspaceControl?.conversation?.model_config.effective_executor_config,
     taskExecutorSummary,
   ]);
@@ -260,88 +295,78 @@ export function useAgentRunWorkspaceControlPlane({
     submitComposer,
     cancelAction,
     setExecutorConfigOverride: setExplicitExecutorConfigOverride,
+    forkFromMessageRef: handleForkFromMessageRef,
   }), [
     cancelAction,
+    handleForkFromMessageRef,
     setExplicitExecutorConfigOverride,
     submitComposer,
   ]);
 
-  const applyControlPlaneEffectPlan = useCallback((plan: AgentRunControlPlaneEffectPlan) => {
-    const openPlan = plan.openWorkspacePanel;
-    if (openPlan?.afterWorkspaceRefresh) {
-      void (async () => {
-        if (plan.refreshWorkspaceState) {
-          await refreshAgentRunWorkspaceState().catch(() => {});
-        }
-        if (plan.refreshWorkspaceModuleCatalog) {
-          refreshWorkspaceModuleCatalog();
-        }
-        openWorkspacePanel(openPlan.target);
-      })();
-    } else {
-      if (plan.refreshWorkspaceState) {
-        void refreshAgentRunWorkspaceState().catch(() => {});
-      }
-      if (plan.refreshWorkspaceModuleCatalog) {
-        refreshWorkspaceModuleCatalog();
-      }
-      if (openPlan) {
-        openWorkspacePanel(openPlan.target);
-      }
-    }
-
-    if (plan.hookRuntimeRefresh) {
-      scheduleHookRuntimeRefresh(
-        plan.hookRuntimeRefresh.reason,
-        plan.hookRuntimeRefresh.immediate,
-      );
-    }
-    if (plan.refreshAgentRunListReason) {
-      refreshAgentRunList(plan.refreshAgentRunListReason);
-    }
+  const applyControlPlaneEffectPlan = useCallback((
+    plan: AgentRunControlPlaneEffectPlan,
+    workspacePanelOpened?: () => void,
+    workspacePanelOpenFailed?: (error: Error) => void,
+  ) => {
+    applyAgentRunControlPlaneEffectPlan(plan, {
+      refreshAgentRunWorkspaceState,
+      openWorkspacePanel,
+      refreshAgentRunList,
+      refreshTaskPlan: async () => {
+        if (!currentRunId || !currentAgentId) return null;
+        return fetchAgentRunTasks(currentRunId, currentAgentId);
+      },
+      workspacePanelOpened,
+      workspacePanelOpenFailed,
+    });
   }, [
     openWorkspacePanel,
+    currentAgentId,
+    currentRunId,
+    fetchAgentRunTasks,
     refreshAgentRunList,
     refreshAgentRunWorkspaceState,
-    refreshWorkspaceModuleCatalog,
-    scheduleHookRuntimeRefresh,
   ]);
 
-  const handleMessageSent = useCallback(() => {
-    applyControlPlaneEffectPlan(planAgentRunMessageSent());
+  const handleAgentRunLiveEvent = useCallback((event: BackboneEvent) => {
+    applyControlPlaneEffectPlan(planAgentRunLiveEvent(event).effects);
   }, [applyControlPlaneEffectPlan]);
 
-  const refreshStatusBarTasks = useCallback(() => {
-    if (currentRunId && currentAgentId) {
-      void useTaskPlanStore
-        .getState()
-        .fetchAgentRunTasks(currentRunId, currentAgentId)
-        .catch(() => {});
-    }
-  }, [currentAgentId, currentRunId]);
+  useEffect(() => {
+    if (!currentRunId || !currentAgentId) return;
+    return subscribeProjectEvents((event) => {
+      applyControlPlaneEffectPlan(
+        planAgentRunProjectEvent(event, {
+          runId: currentRunId,
+          agentId: currentAgentId,
+        }),
+      );
+    });
+  }, [
+    applyControlPlaneEffectPlan,
+    currentAgentId,
+    currentRunId,
+  ]);
 
-  const handleTurnEnd = useCallback(() => {
-    applyControlPlaneEffectPlan(planAgentRunTurnEnded());
-    refreshStatusBarTasks();
-  }, [applyControlPlaneEffectPlan, refreshStatusBarTasks]);
-
-  const handleTaskPlanChanged = useCallback(() => {
-    refreshStatusBarTasks();
-  }, [refreshStatusBarTasks]);
-
-  const handleWorkspaceModuleOpened = useCallback(() => {
-    applyControlPlaneEffectPlan(planAgentRunWorkspaceModuleOpened());
-  }, [applyControlPlaneEffectPlan]);
+  useEffect(() => {
+    if (!currentRunId || !currentAgentId) return;
+    const target = { runId: currentRunId, agentId: currentAgentId };
+    const terminalFeed = connectAgentRunTerminalFeed(target, {
+      onSnapshot: projectAgentRunTerminalSnapshot,
+      onChanges: projectAgentRunTerminalChanges,
+    });
+    return () => {
+      terminalFeed.close();
+    };
+  }, [
+    currentAgentId,
+    currentRunId,
+  ]);
 
   return {
     workspaceControl,
     chatModel,
     chatIntents,
-    refreshAgentRunWorkspaceState,
-    refreshAgentRunHookRuntime,
-    handleMessageSent,
-    handleTurnEnd,
-    handleTaskPlanChanged,
-    handleWorkspaceModuleOpened,
+    handleAgentRunLiveEvent,
   };
 }

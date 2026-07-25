@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/design.md","reason":"Runtime State、Host coordination、transaction 与 projection authority。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-runtime-fork-state-boundaries.md","reason":"当前 Runtime/Host/persistence/journal 真实接线。"}
+{"file":".trellis/spec/backend/agent-runtime-kernel.md","reason":"只读取统一 Runtime kernel 的当前行为/测试基线；state owner 与目标 API 以父 design 为准。"}
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"Host offer/binding/effect/recovery 基线。"}
+{"file":".trellis/spec/backend/agent-runtime-persistence.md","reason":"只读取 journal/repository/outbox 当前事实；最终 persistence owner 与 schema 以父 design 为准。"}

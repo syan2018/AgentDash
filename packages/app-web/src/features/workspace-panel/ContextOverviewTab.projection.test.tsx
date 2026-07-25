@@ -2,7 +2,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type {
-  AgentFrameHookRuntimeInfo,
   LifecycleRunView,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
@@ -54,8 +53,8 @@ const contextSnapshot: SessionContextSnapshot = {
 const runtimeSurface: ResolvedVfsSurface = {
   surface_ref: "session:sess-projection",
   source: {
-    source_type: "session_runtime",
-    session_id: "sess-projection",
+    source_type: "runtime_thread",
+    runtime_thread_id: "sess-projection",
   },
   default_mount_id: "runtime-shared",
   mounts: [
@@ -183,39 +182,10 @@ const lifecycleRunView: LifecycleRunView = {
   ],
   agents: [],
   subject_associations: [],
-  runtime_trace_refs: [],
   execution_log: [],
   created_at: "2026-06-02T00:00:00Z",
   updated_at: "2026-06-02T00:00:00Z",
   last_activity_at: "2026-06-02T00:00:00Z",
-};
-
-const hookRuntime: AgentFrameHookRuntimeInfo = {
-  runtime_adapter_session_id: "sess-projection",
-  revision: 1,
-  snapshot: {
-    runtime_adapter_session_id: "sess-projection",
-    sources: [],
-    tags: [],
-    injections: [],
-    diagnostics: [],
-    metadata: {
-      active_workflow: {
-        workflow_graph_id: "lifecycle-projection",
-        lifecycle_key: "projection-lifecycle",
-        lifecycle_name: "Projection Lifecycle",
-        run_id: "run-projection-123456",
-        run_status: "running",
-        activity_key: "implement",
-        activity_title: "Implement Projection",
-        primary_workflow_id: "graph-projection",
-        primary_workflow_name: "Primary Projection",
-      },
-    },
-  },
-  diagnostics: [],
-  trace: [],
-  pending_actions: [],
 };
 
 describe("ContextOverviewTab projection contract", () => {
@@ -227,7 +197,6 @@ describe("ContextOverviewTab projection contract", () => {
         ownerProjectName="Projection Project"
         executorSummary={contextSnapshot.executor}
         runtimeSurface={runtimeSurface}
-        hookRuntime={null}
         sessionCapabilities={sessionCapabilities}
         lifecycleRun={null}
       />,
@@ -247,13 +216,12 @@ describe("ContextOverviewTab projection contract", () => {
         ownerProjectName="Projection Project"
         executorSummary={contextSnapshot.executor}
         runtimeSurface={runtimeSurface}
-        hookRuntime={hookRuntime}
         sessionCapabilities={sessionCapabilities}
         lifecycleRun={lifecycleRunView}
       />,
     );
 
-    expect(html).toContain("Projection Lifecycle");
+    expect(html).toContain("Run run-proj");
     expect(html).toContain("Node · Running");
     expect(html).toContain("进度 1/2");
     expect(html).toContain("orchestration-projection:implement#2");
@@ -267,7 +235,6 @@ describe("ContextOverviewTab projection contract", () => {
         ownerProjectName=""
         executorSummary={null}
         runtimeSurface={null}
-        hookRuntime={null}
         sessionCapabilities={null}
         lifecycleRun={lifecycleRunView}
       />,
@@ -287,7 +254,6 @@ describe("ContextOverviewTab projection contract", () => {
         ownerProjectName="Projection Project"
         executorSummary={contextSnapshot.executor}
         runtimeSurface={runtimeSurface}
-        hookRuntime={null}
         sessionCapabilities={sessionCapabilities}
         lifecycleRun={null}
       />,

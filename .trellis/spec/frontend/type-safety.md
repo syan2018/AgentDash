@@ -67,7 +67,7 @@ Validation:
 
 Project extension runtime surface 消费 `generated/extension-runtime-contracts.ts`，`services/extensionRuntime.ts` 只保留 endpoint 调用与 webview asset URL 拼装。`features/extension-runtime` 以 Project ID 为 key 缓存 runtime projection，并向 WorkspacePanel 输出 tab descriptor 与 webview bridge；installation 的 `installed_source` 与 `package_artifact` 是显式可空字段，用来区分 Shared Library 安装来源与 packaged artifact 安装来源；前端不从 Shared Library payload 或 Session Context 推断 extension runtime 声明。
 
-Extension webview bridge 的 `runtime.invoke_action` 与 `extension.invoke_protocol` 校验 Project、AgentRun target、backend 与 action/protocol key，并把 generated request DTO 交给 AgentRun scoped extension runtime service。后端从 AgentRun current delivery 推导内部 runtime context，原因是具体 action/protocol 是否在当前 actor/context 下可执行由 Gateway catalog / invoke 同源裁决，而产品执行身份属于 AgentRun workspace。Project extension runtime projection 的 `runtime_actions` 服务资产展示，不作为前端执行可用性 gate。
+Extension webview bridge 的 `runtime.invoke_action` 与 `extension.invoke_channel` 校验 Project、AgentRun target、backend 与 action/channel key，并把 generated request DTO 交给 AgentRun scoped extension runtime service。后端从 AgentRun current delivery 推导内部 runtime context，原因是具体 action/channel 是否在当前 actor/context 下可执行由 Gateway catalog / invoke 同源裁决，而产品执行身份属于 AgentRun workspace。Project extension runtime projection 的 `runtime_actions` 服务资产展示，不作为前端执行可用性 gate。
 
 新增或修改跨层 DTO 时同步运行：
 
@@ -176,18 +176,80 @@ AgentRun workspace panel、context overview与VFS tab以`resource_surface: Resol
 
 Project/Story/Task/Agent knowledge预览使用`ResolvedVfsSurfaceSource`；AgentRun入口消费current resource surface。两类入口共享browser组件但source显式分型。
 
-AgentRun 右侧 WorkspacePanel 消费 current workspace projection state。该 state 以 `run_id + agent_id + frame/runtime projection key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities 或 context snapshot。`workspace_module_presented`、`capability_state_changed` 等事件只触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。Canvas 打开动作读取 generated event payload 的 `presentation_uri`，值为 `canvas://{canvas_mount_id}`；`view_key`、`module_id` 与 `{canvas_mount_id}://...` 分别保留 UI entry selection、module ref 与 VFS authoring URI 语义。
+AgentRun 右侧 WorkspacePanel 消费 current workspace projection state。该 state 以 `run_id + agent_id + frame/runtime projection key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities、context snapshot 或 `workspace_modules`。`capability_state_changed`、`context_frame_changed` 等真实 surface 变化触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。`AgentRunWorkspaceView.workspace_modules` 是菜单、presentation validation与持久化tab恢复校验的generated wire事实源：Canvas打开事件先读取generated payload的`module_id`、`view_key`、`renderer_kind`与`presentation_uri`，再等待Workspace refetch并与当前ready descriptor精确匹配；布局恢复在该projection ready后清理不存在的Canvas URI，且更早发起的异步恢复不能覆盖currentness校验。`presentation_uri=canvas://{canvas_mount_id}` 是 tab identity；`view_key`、`module_id` 与 `{canvas_mount_id}://...` 分别保留 UI entry selection、module ref 与 VFS authoring URI 语义。
 
-## AgentRun Conversation DTO
+## Scenario: AgentRun Product Projection 与 Runtime Command 分权
 
-AgentRun workspace 消费 `AgentConversationSnapshot` / `AgentRunWorkspaceView.conversation` 的 generated DTO。输入区、pending row、model selector 与 keyboard submit 使用 `ConversationCommandSetView.commands`、
-`ConversationKeyboardMapView`、`ConversationModelConfigView` 和 `ConversationPendingSnapshotView`，原因是这些字段携带后端同一轮 snapshot 的 command id、stale guard、模型解析和用户注意力语义。
+### 1. Scope / Trigger
 
-AgentRun command handlers 以 `ConversationCommandView.enabled`、`unavailable_reason` 和 `commandPrecondition(command)` 作为 mutating command 的语义准入来源；`delivery_status` 与 workspace projection loading state 只服务展示和刷新 UX。这样做的原因是后端 command resolver 与 command policy 共享 stale guard，前端如果再用展示状态派生 allow/deny 会绕开同源 command contract。
+- 修改 AgentRun 详情加载、模型选择、composer/cancel/compact command 或 Runtime inspect 时适用。
+- 该分权防止退役的 workspace conversation DTO 再次同时充当产品、模型和执行状态权威。
 
-ProjectAgent draft start 使用 generated `CreateProjectAgentRunRequest` / `ProjectAgentRunStartResult`。启动成功后前端用 `run_ref` / `agent_ref` 导航，并从`initial_message`与后续canonical Runtime snapshot/events观察queued/dispatched结果。`runtime_thread_id`和`runtime_operation_id`只作typed evidence；HTTP success不等于turn terminal。
+### 2. Signatures
 
-AgentRun 右侧 WorkspacePanel 使用当前 AgentFrame/Business Surface的`resource_surface: ResolvedVfsSurface`。后端从`AgentRunRuntimeBinding`解析canonical thread/binding，并把资源facts与Runtime facts分离；浏览器不从trace metadata重建surface。
+```text
+GET  /agent-runs/{run_id}/agents/{agent_id}/workspace -> AgentRunProductView
+GET  /agent-runs/{run_id}/agents/{agent_id}/runtime   -> Managed Runtime inspect
+POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit
+     { input, client_command_id, delivery_intent?: "steer" }
+POST .../cancel | .../runtime/context/compact
+     { client_command_id }
+POST .../runtime/interactions/{interaction_id}/respond
+     InteractionResponse
+```
+
+### 3. Contracts
+
+- `AgentRunProductView` 只包含 Lifecycle identity/shell、current AgentFrame、`model_config`、subject associations 与 `resource_surface`；不嵌入 Runtime snapshot、mailbox command policy或旧 RuntimeSession source anchor。
+- Runtime command enabled 状态只读取 `RuntimeSnapshot.command_availability`。前端 action ID 可以投影 Runtime command kind，但不携带自造 stale guard。
+- Draft create可以携带model/runtime/backend selection；既有Run composer禁止executor/backend override。active turn时command projection只发送generated `delivery_intent="steer"`，idle时省略该字段并进入durable mailbox/TurnStart。
+- Runtime event只提供interaction identity与展示内容；response按钮读取刷新后的`interaction_respond` availability。context popup直接消费`RuntimeContextView`并用target generation丢弃迟到响应。
+- 服务端在 mutating command 前 inspect 当前 Runtime snapshot并生成 `AgentRunCommandGuard`，因此请求只携带幂等 `client_command_id` 与命令 payload。
+- workspace product 与 runtime inspect 独立加载、独立记录错误；refresh 单路失败时保留该 owner 上一份成功事实。
+- ProjectAgent draft start 继续使用 generated `CreateProjectAgentRunRequest` / `ProjectAgentRunStartResult`；HTTP success不等于 turn terminal。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| workspace失败、runtime inspect成功 | 保留Runtime snapshot并记录`workspace_error` |
+| runtime inspect失败、workspace成功 | 保留产品/Frame/model/surface并记录`runtime_inspect_error` |
+| refresh单路失败 | 保留该owner上一份成功事实，不清空另一owner的新结果 |
+| command availability缺失或unavailable | UI禁用；API在副作用前按当前snapshot拒绝 |
+| current AgentFrame缺少cloud-native provider/model | `model_config.status=model_required`并列出missing fields |
+| 请求携带旧workspace stale guard | generated request不包含该字段；TypeScript/serde拒绝契约漂移 |
+| 既有Run请求携带executor/backend override | TypeScript/serde拒绝；运行配置只来自current AgentFrame |
+| interaction event存在但availability未刷新 | 控件disabled并触发Runtime inspect refresh |
+| context响应target key不匹配 | 不提交到当前popup state |
+
+### 5. Good / Base / Bad Cases
+
+- Good：详情页从 product route得到current Frame/model/surface，从runtime route得到active snapshot；一侧刷新失败不会抹掉另一侧。
+- Base：Runtime尚未创建时product projection仍可展示Lifecycle/Frame，命令保持不可用。
+- Bad：使用`Promise.all`统一catch两路请求，或从Lifecycle status/conversation DTO制造Runtime command authority。
+
+### 6. Tests Required
+
+- state model测试首次单路失败与refresh单路失败保留语义。
+- command-state测试submit/steer/interrupt/compact只由`command_availability`决定。
+- service测试URL encoding与request不再发送dead command precondition。
+- service/feed/context测试覆盖generic interaction route、四类Runtime lifecycle invalidation与target-key迟到响应隔离。
+- generated contract check、frontend typecheck及真实Draft create-run验证model/surface/runtime三条事实一致。
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong：一个旧聚合DTO和一次统一catch覆盖两个owner。
+const [workspace, runtime] = await Promise.all([loadWorkspace(), inspectRuntime()]);
+const canCancel = workspace.control_plane.status === "running";
+
+// Correct：两路事实独立settle，命令只消费canonical Runtime availability。
+const [productResult, runtimeResult] = await Promise.allSettled([
+  loadAgentRunProduct(),
+  inspectRuntime(),
+]);
+const canCancel = runtimeSnapshot?.command_availability.turn_interrupt?.status === "available";
+```
 
 Round action只暴露已有canonical command的动作。新增fork前必须先在`AgentRunRuntime` facade实现typed ThreadFork、availability、operation receipt与产品child binding，再生成前端合同。
 

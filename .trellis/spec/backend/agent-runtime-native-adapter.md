@@ -1,103 +1,442 @@
-# Native Agent Runtime Adapter and Clean Agent Core
+# Dash Complete Agent 与 Clean Agent Core
 
 ## 1. Scope / Trigger
 
-本规范适用于 first-party Native Agent service contribution、Native `AgentRuntimeDriver`、Agent Core依赖边界，以及Managed Runtime Surface/Context/Tool/Hook能力到本地Agent loop的映射。修改Native descriptor、bind/dispatch/inspect、exact context/compaction、Core delegate或旧Pi切换时必须复核本规范。
+本规范适用于 first-party Dash Complete Agent、`DashAgentRepositoryState`、Agent Core、
+provider bridge、execution callbacks、native history/context/fork/compaction 与 live event。
+修改 Dash source document、Core callback、terminal evidence 或 Complete Agent adapter 时必须复核。
+
+Dash 是 concrete Agent owner：它保存自己的 source/history/effect，并实现平台中立
+`CompleteAgentService`。Runtime 与 Product 不复制这些事实。
 
 ## 2. Signatures
 
 ```rust
-pub fn native_agent_contribution(
-    resolver: Arc<dyn NativeBridgeResolver>,
-) -> AgentRuntimeDriverContribution;
+pub struct DashAgentRepositoryState {
+    pub store: DashAgentStore,
+    // source-owned execution/context/surface facts live in native history
+}
 
-pub struct NativeAgentRuntimeIntegration { /* explicit resolver */ }
-
-impl AgentRuntimeDriver for NativeAgentDriver {
-    async fn describe(&self) -> Result<RuntimeDescriptor, DriverError>;
-    async fn bind(&self, request: DriverBindRequest)
-        -> Result<DriverBinding, DriverError>;
-    async fn dispatch(
+pub trait DashAgentRepository {
+    async fn load(&self) -> Result<DashAgentRepositoryState, DashServiceError>;
+    async fn compare_and_swap(
         &self,
-        request: DriverCommandEnvelope,
-        sink: Arc<dyn DriverEventSink>,
-    ) -> Result<DriverDispatchReceipt, DriverError>;
-    async fn inspect(&self, request: DriverInspectRequest)
-        -> Result<DriverInspectResult, DriverError>;
+        expected: DashAgentRepositoryState,
+        replacement: DashAgentRepositoryState,
+    ) -> Result<(), DashServiceError>;
 }
 ```
 
-Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver只解析真实Native bridge；生产composition显式构造Integration，不使用全局静态connector。
+```rust
+pub struct DashAgentCompleteService { /* store + bridge + live channels */ }
+
+impl CompleteAgentService for DashAgentCompleteService {
+    async fn create(...);
+    async fn resume(...);
+    async fn fork(...);
+    async fn execute(...);
+    async fn read(...);
+    async fn changes(...);
+    async fn live_events(...);
+    async fn inspect(...);
+    async fn apply_surface(...);
+}
+```
+
+```rust
+pub trait DashExecutionCallbacks {
+    async fn emit(&self, event: DashExecutionEvent) -> Result<(), DashCoreError>;
+    async fn drain_steering(
+        &self,
+        turn_id: &AgentTurnId,
+        round: u32,
+        terminal_boundary: bool,
+    ) -> Result<Vec<String>, DashCoreError>;
+}
+
+pub trait DashHistoryCallbacks {
+    async fn committed(&self, commit: DashHistoryCommit) -> Result<(), DashCoreError>;
+}
+
+pub trait DashProvider {
+    async fn stream(
+        &self,
+        request: DashProviderRequest,
+    ) -> Result<DashProviderEventStream, DashCoreError>;
+}
+```
+
+```rust
+pub trait DashConversationNamer {
+    async fn generate(
+        &self,
+        request: DashConversationNamingRequest,
+    ) -> Result<String, DashServiceError>;
+}
+
+pub enum HistoryPayload {
+    ThreadNameChanged { thread_name: String },
+    // other native history facts
+}
+
+pub enum ContextFrameSection {
+    ToolSchemaDelta {
+        added_tools: Vec<RuntimeToolSchemaEntry>,
+        removed_tools: Vec<String>,
+        changed_tools: Vec<RuntimeToolSchemaEntry>,
+    },
+    // other platform presentation sections
+}
+```
+
+```rust
+const DEFAULT_SYSTEM_PROMPT: &str = include_str!("prompts/default_system_prompt.md");
+
+fn dash_surface_from_bound(
+    surface: &BoundAgentSurface,
+) -> Result<DashSurface, AgentServiceError>;
+
+fn materialization_digest(
+    instructions: &[DashSurfaceInstruction],
+    tools: &[DashToolDefinition],
+) -> Result<String, serde_json::Error>;
+
+pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
+```
 
 ## 3. Contracts
 
-- Native service通过与Codex/企业service相同的Integration contribution/factory进入Host。Application/router不按Pi或Native类型分支，service descriptor与conformance是能力事实源。
-- Native service instance使用schema-validated `provider`、`model`与显式`credential_scope`。`credential_scope`只能是平台凭据或带非空`user_id`的账户凭据；缺失scope不得解释为平台回退。instance只保存凭据查找坐标，API key/OAuth token仍由repository/secret codec在driver激活时短暂解析。
-- Bind intent显式区分Start、Resume与Fork。Resume必须保留source thread；Fork必须导入请求指定的checkpoint并验证checkpoint ID/context digest，不能选择任意最新context。
-- Native descriptor只声明实际原生支持的输入与能力。当前Text/Image可进入本地Core；FileReference/Structured不得文本拍平冒充支持，必须在request lock、status event、prompt或任何side effect前typed Unsupported。
-- Surface materialization返回真实surface/tool-set/hook plan revision与digest。ToolSetReplace receipt必须携带`DriverToolSetApplyReceipt`；其他命令为None。Host只依据ack开放required dispatch gate。
-- Platform tools通过WP03 Direct Callback Broker；Native driver不接收`DynAgentTool`、application delegate、credential或VFS runtime object。Approval使用canonical Interaction。
-- AgentCore callback facets只表达真实inner-loop Hook点，业务Hook plan/rule仍由Runtime拥有。Native driver不得查询workflow/project/repository。
-- Context read/Thread projection使用typed inspect。Managed compaction只接受Runtime已durable candidate activation，验证activation/checkpoint/digest后幂等应用；Native Core不拥有AgentDash自动压缩策略或checkpoint事实源。
-- Turn、steer、interrupt、settings与tool replace按binding/request维度幂等。Active-turn fence在成功、mapper error、sink error、Agent task error与cancel所有路径都必须finally清理；失败turn不能继续被steer/interrupt命中。
-- Driver使用`Arc<dyn DriverEventSink>`，streaming和terminal可以异步送达；authoritative sink failure必须向上返回，不能静默丢事件后报告成功。
-- Clean Agent Core只拥有provider-neutral inference/stream/tool loop。它不依赖Application、Domain、Codex/Backbone/vendor DTO、AgentDash lifecycle prompt、runtime compaction policy或repository。
-- Provider-specific DTO放在protocol/adapter；`ThinkingLevel`是provider-neutral Core type。Core不公开RuntimeCompactionDelegate，也不执行pre-provider/compact-only/manual AgentDash policy。
-- API旧Pi生产构造入口在Native阶段删除。Provider registry从legacy Pi源码抽离、Pi物理删除与runtime-session dead compaction SPI删除随WP08唯一cutover完成，不保留双轨或fallback。
+- 一个 Dash source 使用一个 canonical repository document 保存 history、context、branch、
+  command/effect state 与 compaction facts。document 内部 CAS 可以使用 owner revision；数据库
+  不再拆出 branch/history/command/effect/change 关系镜像。
+- `DashSurface` 以 `SurfaceApplied/SurfaceRevoked` native history entry 表达，当前 surface 从
+  history fold 得出。repository root 不保存第二个 `surface` 字段。
+- `DashSurface` 保存按应用顺序排列的materialized instructions
+  `[{ key, channel, text }]`、callable tools与最终accepted ContextFrames。ContextFrame保存typed
+  sections、delivery metadata和唯一的`rendered_text`；provider materializer与
+  `ContextFrameChanged`都读取该值，因此模型输入、history重放和前端审计不会产生第二套文本渲染。
+- concrete Agent内建工作基底属于该Complete Agent实现，不属于Product或AgentFrame。Dash以稳定
+  intrinsic instruction key把编译期提示词放在Product instructions之前，再把合并后的完整
+  `DashSurface`提交到native history；provider prompt与Identity ContextFrame都从该entry投影。
+- `AppliedAgentSurface.digest`证明Product binding，`DashSurface.digest`证明concrete Agent实际接纳的
+  instructions/tools内容，两者不共享数值。intrinsic prompt内容进入Dash verified profile evidence，
+  build digest标识发布构建；实现基底变化通过正常rebind追加新的`SurfaceApplied`事实。
+- Dash registration claim 与 production verification template 必须调用同一个
+  `dash_complete_agent_build_digest()`。build digest 证明当前服务构建，profile digest 由独立
+  verification 字段证明；共享构造保证进程重启恢复 route 时不会因两端格式漂移而拒绝内建 Agent。
+- intrinsic instruction的namespace由concrete Agent保留。Product contribution与保留key冲突时，
+  Native Adapter在history mutation前返回typed invalid argument，保证accepted surface中每个key
+  只有一个owner。
+- callable tools在`RuntimeToolDefinition`中同时保存名称、description、input schema、owner
+  projector与typed provenance；Product surface无损携带capability/source/tool path/context usage，
+  Native adapter按字段接纳而不从runtime name或route反推。provider `tools[]`携带完整机器契约；
+  accepted tool保留同一provenance。
+  Native Adapter把capability manifest各维度与`ToolSchemaDelta`合并到同一个
+  `CapabilityStateDelta` ContextFrame：首次接纳按empty→current生成完整初始增量，后续revision只
+  保留真正变化的section，语义未变时不生成空frame。ToolSchema renderer从同一列表生成完整、
+  确定性的nested-schema说明与无损JSON Schema，同时保存added/removed/changed结构化证据。
+  合并为单frame的原因是capability状态和它开放的工具说明属于同一次surface transition，不能让
+  模型与审计分别观察两个可独立漂移的revision。
+- Dash对`CapabilityStateDelta`固定声明`context/system_append`。Native history按当前active
+  surface链累积这些append frame，每个provider round重放initial delta与后续真delta；surface
+  revoke清空该链。这样平台拥有工具上下文的更新、顺序与撤销语义，connector只接收最终物化文本，
+  不拥有native prompt注入策略。
+- `DashSurface.context_frames`中的非`SystemAppend` frame表达当前surface的完整stable context
+  snapshot，provider每轮需要完整消费；canonical projector则比较相邻`SurfaceApplied`事实，只发布
+  新增或语义变化的stable frame。比较时忽略仅由surface revision/digest带来的frame id与cache
+  identity变化，保留delivery order、role、sections和`rendered_text`等真实语义。区分snapshot与
+  transition的原因是模型恢复需要完整当前状态，而timeline/live需要exactly-once变化，二者不能由
+  “直接遍历当前frames”同时满足。
+- Dash provider port在每个逻辑provider round固定一份request snapshot：当前accepted
+  stable ContextFrames与active system-append ledger生成system/context文本，当前tools生成structured
+  tool contract，并同时固定该round的owner projector。工具结果提交与surface mutation完成后，
+  下一round重新物化；同一round重试复用已固定snapshot，原因是一次已发出的provider请求不能在
+  中途改变语义。
+- Product的skill、memory、MCP、workspace与context requirement必须先物化为Agent实际接纳的
+  instruction/tool surface，再由Native Adapter按channel映射为Identity、Environment、
+  SystemGuidelines、AssignmentContext、CapabilityStateDelta、MemoryContext或UserContext。
+  Adapter不读取Product表反补ContextFrame，也不从展示文本反猜Agent输入。
+- source metadata 与 repository描述同一个 concrete Agent source，必须在同一 Dash source
+  document/atomic commit 中更新。
+- Create 前还没有 source coordinate 的 effect 可以保留独立 `effect_id` lookup receipt。
+  receipt 属于 Dash Complete Agent，用于 `inspect`，不进入 Runtime/Host/Product。
+- `create/fork/execute/apply_surface` 使用稳定 effect identity。相同 identity + 相同 request
+  返回原 receipt；不同 request 返回 typed conflict。
+- 普通 `SubmitInput` 在 `InputAccepted + TurnStarted`、active execution 与 effect `Accepted`
+  原子提交后立即返回；provider/tool loop由source owner后台推进。后台错误或panic必须提交typed
+  terminal，Interrupt必须原子终结原effect并取消同turn的pending interaction，因此HTTP生命周期、
+  worker生命周期和挂起交互不会形成彼此等待的第二状态机。
+- active turn 的 `Steer` 由 Dash Agent owner 接纳：校验当前 turn 后先把新的
+  `InputAccepted` 与成功 command receipt 提交到同一 repository，再由 Core 在工具结果之后或
+  provider `Stop` 边界调用 `drain_steering` 消费。`Stop` 边界存在新输入时继续同一 turn 的下一
+  provider round；没有新输入时才结束 turn。自动压缩切换 continuation turn 时保留同一消费游标，
+  因而压缩期间已接纳的输入不会丢失。
+- `DashProvider` 只负责一次 provider request/stream，不拥有 active turn，也不提供 steering
+  方法。运行中输入的持久化、排序、消费与终态竞争都属于 Dash service/Core callback 边界。
+- 每个provider round确认的input/output token与模型context window以
+  `ProviderUsageConfirmed`写入同一native history。folded state保存最新round并累计source totals，
+  canonical snapshot/changes/live从该entry统一投影`TokenUsageUpdated`，使重连恢复与实时展示使用
+  同一provider事实。
+- `read` 从 Dash document 投影 authoritative history/context/lifecycle。`changes` 只发布 Dash
+  自己真正保存的 change evidence；平台不能替 Dash 发明 durable cursor。
+- Provider/Core 失败以真实 `code + message + retryable` 写入 Dash terminal history并通过
+  `read/changes` 原样投影。通用错误文案不能替代 owner evidence。
+- source service 打开时必须把真实 `DashExecutionCallbacks` 与 `DashHistoryCallbacks` 绑定到
+  source-scoped Complete Agent live sink。未绑定 callback 是 composition error；当前没有
+  subscriber 不是错误。
+- 成功 CAS 后，`DashHistoryCallbacks` 把本次提交的 exact history suffix 经 canonical projector
+  发布为 durable live record；外层原子事务只能在事务提交成功后发布。live 通知失败不改变已提交
+  history 的真值，消费者通过重新 `read` 恢复。
+- `DashExecutionCallbacks` 只发布 provider/Core 尚未提交的 ephemeral delta。它不补造
+  `TurnStarted`、user input 或 terminal lifecycle。
+- `AgentLiveEvent.sequence` 只在当前 service process + source 内单调。broadcast lag 返回
+  retryable unavailable；消费者重新 `read`，不从 Runtime DB replay。
+- `InitialContextInstalled`、`SurfaceApplied` 与 `SurfaceRevoked` 必须从 Agent 实际保存的 native
+  history 投影 `Platform(ContextFrameChanged)`；Product intent 或 repository metadata 不能直接
+  冒充 Agent 已接纳 context。
+- 会话标题是 Dash Agent 从已接纳 user input 与已完成 Agent output 生成的原生展示事实。
+  首个具备上述内容的 terminal 回合后，Dash 通过 `DashConversationNamer` 生成非空标题，并以
+  `ThreadNameChanged` 提交到同一 source history；`read`、`changes` 与 durable live event
+  从该 entry 分别投影 `AgentThreadNameSnapshot`、`AgentChangePayload::ThreadNameChanged` 与
+  canonical `ThreadNameUpdated`。Product 消费 Agent snapshot 中的首次有效标题来初始化自己的
+  AgentRun 标题；这两个 owner 各自持久化一次的原因是 Dash thread 与 AgentRun 可以独立存在，
+  且 AgentRun 标题允许用户独立修改。Product 不持续同步，也不从消息文本推导标题。
+- 标题生成不是回合 terminal 的组成部分：Succeeded、Failed、Lost、Interrupted 都保留各自原始
+  terminal；只要该回合已有非空 user input 与 Agent output，就在 terminal 提交后尝试命名。
+  Accepted/interaction 尚未终态时不命名；无 Agent output 的失败回合也没有可命名证据。命名失败时，
+  未命名 source 可在后续满足条件的 terminal 回合再次尝试。history 一旦已有标题，自动命名不再重复调用。
+- Core 只拥有 provider-neutral inference/stream/tool loop，不依赖 Product workflow、
+  Lifecycle、PostgreSQL repository、Codex DTO 或 Runtime persistence。
+- Core 不维护隐式 provider round 上限。一次Agent turn只由provider `Stop`、typed provider/tool/
+  callback failure、interaction、context overflow或显式cancel结束；工具调用后继续请求provider是同一
+  turn的正常执行，不具有可由内部计数推导的业务终态。未来若产品需要deadline或成本预算，应作为
+  显式执行策略在owner边界触发cancel/typed terminal，而不是重新引入Core匿名轮次常量。
+- Tool/Hook 通过 Host callback route调用真实 handler。Dash 在 callback identity 上重试；
+  handler owner负责副作用幂等。
+- callback result以typed text/image/reasoning content parts与structured details穿过Core、Dash event和
+  folded state。provider transcript只选择其支持的content，Native Adapter按owner projector生成
+  AgentDash ThreadItem；两者不解析序列化callback envelope。
+- owner projector固定展示family，不决定工具执行准入。presentation所需的path/command等参数缺失时，
+  callback仍到达实际工具owner，由owner的typed validation result形成同一ToolResult。
+- compaction/fork/context state 属于 Dash source。Product只保存 fork lineage与 source
+  association，不复制 checkpoint/history digest作为执行 authority。
+- provider protocol terminal决定一次 model response是否完成。transport EOF不能冒充 terminal；
+  解码/断流保留 provider分类。
 
 ## 4. Validation & Error Matrix
 
-| 场景 | 必须得到的结果 |
+| 场景 | 必须结果 |
 | --- | --- |
-| Start/Resume/Fork缺少或错用source coordinate | typed bind error，无session side effect |
-| user credential scope缺失或user_id为空 | typed configuration error，不尝试平台全局凭据 |
-| Fork broker返回非请求checkpoint/digest | reject，不激活context |
-| FileReference/Structured输入 | side effect前Unsupported |
-| surface/tool/hook applied digest不匹配 | Host gate保持未应用/失败 |
-| duplicate ToolSetReplace | 返回相同revision/digest receipt，不重复替换 |
-| compaction activation重复 | exact idempotent receipt |
-| compaction activation digest不匹配 | reject，不改变live context |
-| mapper/sink/Agent task失败 | error传播且active-turn fence清理 |
-| 失败后steer/interrupt旧turn | Rejected |
-| stale binding/generation | fence，不发送Core command/event |
-| Core依赖domain/vendor/application | dependency/spec gate失败 |
+| source document CAS conflict | reload owner document并按 typed command重试/冲突 |
+| 同surface digest重放但instruction列表不同 | typed idempotency conflict；迁移必须从已提交callback surface恢复精确列表 |
+| 连续surface只增加一个tool | 只发布该tool的`added_tools`，不重放完整当前schema |
+| tool同名但description/schema变化 | 发布到`changed_tools`，不同时出现在`added_tools` |
+| tool从surface消失 | tool name进入`removed_tools` |
+| capability manifest与tool schema同时变化 | 合并为一个`context/system_append` CAP frame |
+| surface revision变化但instruction/tool语义未变 | 不发布伪ContextFrame delta |
+| 只改变tool/capability的surface revision | provider继续消费完整stable snapshot；canonical只发布CAP |
+| stable instruction内容、顺序或delivery语义变化 | canonical发布对应changed ContextFrame |
+| active surface连续热更新 | provider context按history顺序累积initial CAP delta与后续真delta |
+| active surface被revoke | 清空该surface链的append context，后续request不保留失效schema |
+| Product contribution使用Dash intrinsic保留key | side effect与history mutation前typed invalid argument |
+| Product binding digest与Dash materialization digest比较 | 分别解释上游binding与实际接纳内容，不要求相等 |
+| 内建提示内容升级 | verified profile/build evidence变化；rebind提交新的实际surface，既有history保持原事实 |
+| registration claim 与 verification template 构建摘要 | 两端使用同一 helper，摘要完全一致 |
+| effect identity相同且request相同 | 返回原 receipt |
+| effect identity相同但request不同 | typed idempotency conflict |
+| 普通Submit已完成admission但provider仍在运行 | 立即返回`Accepted`；active turn可被read/live观察，HTTP不等待terminal |
+| active turn在provider请求进行中收到Steer | 原子提交`InputAccepted`与成功receipt；当前round在安全边界后带该输入继续下一round |
+| provider返回Stop且没有待消费Steer | fence该turn的steering接纳并正常提交terminal |
+| 自动压缩期间收到Steer | 输入保持durable；continuation turn继承消费游标并在下一安全边界消费 |
+| active turn正在等待interaction resolution | Steer返回typed invalid state；只接受ResolveInteraction或Interrupt |
+| 已完成或已fence的turn收到Steer | typed invalid state；不得调用provider或写入输入history |
+| active turn等待interaction时收到Interrupt | 原effect提交`Interrupted`、pending interaction取消、active execution清空并唤醒等待者 |
+| source-owned后台worker返回错误或panic | 若回合尚未终态则提交typed Failed；不得遗留永久active turn |
+| Complete outer effect仍为Accepted但Dash effect已终态 | `inspect`按Dash权威终态收敛并持久化outer terminal |
+| provider完成一轮并报告usage | 同一history commit保存本轮input/output与context window；snapshot/changes/live投影一致 |
+| unsupported input family | Core side effect 前 typed unsupported |
+| 空输入 | side effect 前 rejected |
+| provider失败 | terminal history保留真实 code/message/retryable |
+| 正常任务需要超过8次provider响应 | 继续执行，直到收到真实terminal或显式cancel |
+| source callback未绑定 | composition/configuration error |
+| 没有 live subscriber | execution/history commit 正常完成 |
+| live subscriber lagged | retryable unavailable；重新 read |
+| history commit成功但live通知失败 | commit保持成功；subscriber重新read authoritative history |
+| 命名输入缺少非空user input或Agent output | 不生成标题，不提交history entry |
+| 回合仍为Accepted或等待interaction | 不调用namer，等待terminal |
+| Failed/Lost/Interrupted terminal且已有Agent output | 尝试首次命名；原terminal保持不变 |
+| namer返回空标题 | 拒绝标题提交；原回合terminal保持不变 |
+| namer/provider失败 | 不提交标题；原回合terminal保持不变，后续满足条件的terminal回合可重试 |
+| history已有标题 | 不调用namer，不重复提交自动标题 |
+| fork cutoff/context digest不匹配 | typed reject；source document不变 |
+| transport在provider terminal前EOF | retryable `stream_disconnected` |
+| provider terminal后transport继续开放 | 逻辑 response立即完成且只完成一次 |
 
 ## 5. Good / Base / Bad Cases
 
-**Good case:** Host用Native contribution激活service，Fork bind从Context Broker取得指定checkpoint并验证digest，surface/tool/hook ack后启动Turn；Direct Callback工具经Broker执行，流式事件通过Arc sink持续进入Runtime，终态清理active fence。
-
-**Base case:** 相同request重放返回原binding/receipt，ToolSet revision和compaction activation不会重复产生副作用。
-
-**Bad case:** Adapter把Structured序列化成普通文本却在profile声明Structured Native，或Core自行根据token阈值压缩context。这会产生虚假能力和双context authority，必须拒绝。
+- Good：Dash command 原子更新 source document，成功后把同一 committed suffix 发布为 durable
+  live record；Core callback只在其间发布partial delta，重连从同一document read得到完整终态。
+- Good：首个具备非空 user input 与 Agent output 的 terminal 回合提交后，Dash 根据该 source 的原生对话生成标题并追加
+  `ThreadNameChanged`；snapshot与live notification来自该 entry，Product据此仅初始化一次
+  AgentRun标题，之后两个owner可以独立修改各自标题。
+- Good：Product提交skills/MCP/memory instructions与tool surface，Native Adapter在接纳边界生成
+  typed ContextFrames并与tool definitions一起写入`SurfaceApplied`；provider与canonical projector
+  消费同一已接纳frame。
+- Good：Dash Adapter先加入自身intrinsic instruction，再物化Product surface；Agent收到的基础行为
+  规则和平台展示的Identity frame来自同一source-owned history entry。
+- Base：live subscriber掉线，Core继续执行并提交 history；新 subscriber先 read再订阅。
+- Base：同一surface幂等重放不产生新的history entry，因此不产生重复ContextFrame。
+- Base：首回合在多轮工具执行后以Failed结束，但已保存Agent output；Dash仍生成会话标题，回合保持Failed。
+- Base：标题生成暂时失败，原回合terminal不变且source保持未命名；下一满足条件的terminal回合可以再次生成。
+- Base：Submit返回`Accepted`后客户端断开；source-owned worker继续执行，重连通过read恢复active或terminal，
+  不依赖原HTTP请求存活。
+- Good：provider首轮仍在运行时提交Steer，Dash立即持久化输入并返回成功；首轮到达`Stop`后Core把
+  该输入加入同一turn transcript并发起第二轮provider请求。
+- Base：Steer与首轮`Stop`同时到达；Dash steering mutex在接纳与terminal fence之间给出唯一顺序，
+  输入要么进入下一round，要么收到typed invalid state，不会成功返回后丢失。
+- Good：每个provider round只提交一次`ProviderUsageConfirmed`，canonical live显示latest round，
+  authoritative read同时恢复latest与source cumulative totals。
+- Bad：Dash 同时写 repository JSONB 与 history/effect镜像，再逐次校验相等。镜像没有独立
+  owner，只会制造 drift。
+- Bad：用tokio task推进回合却只记录`JoinError`日志。panic会让active execution永久存在，
+  UI持续显示运行且后续Interrupt无法完成原effect。
+- Bad：Product 从首条用户消息截断标题。该值没有 Agent 接纳与生成的证据，不能作为 AgentRun
+  的首次标题。
+- Bad：生产 composition 注入 Noop execution callback。输入可能执行成功，但用户永远看不到
+  live delta。
+- Bad：在Dash、canonical projector或provider bridge各自格式化工具说明。三处都能单独工作，但
+  surface热更新后无法证明模型所见文本、结构化schema与平台审计属于同一accepted revision。
+- Bad：把Steer调用转发给`DashProvider`。provider是单次模型请求端口，不持有Agent执行队列，
+  production bridge会拒绝该调用，也无法提供durable receipt与恢复语义。
 
 ## 6. Tests Required
 
-- Native behavior覆盖contribution/factory、truthful descriptor、Start/Resume/Fork、exact checkpoint/digest、Turn/steer/interrupt/settings/idempotency。
-- 覆盖surface/tool/hook applied receipts、hot ToolSetReplace、Direct Callback、approval Interaction与typed inspect。
-- 覆盖managed compaction exact activation、wrong digest/checkpoint、duplicate replay和digest选择不依赖map ordering。
-- 覆盖unsupported modality在任何副作用前拒绝，以及mapper/sink/task error的active fence清理。
-- Contract/Wire/TestSupport/Host conformance与generated TS/schema check必须通过。
-- Agent Core dependency tree与source scan必须证明无Application/Domain/Codex/Backbone/repository依赖；Core/Native strict clippy与tests通过。
-- WP08必须验证provider registry抽离后legacy Pi与dead runtime-session compaction SPI物理删除、生产Host composition使用Native Integration。
+- Dash repository测试覆盖首次 create、CAS、restart read、fork、compaction与 owner document
+  原子性。
+- Complete Agent tests覆盖 create/resume/fork/execute/read/changes/inspect/apply surface及
+  stable effect replay/conflict。
+- background admission测试覆盖Accepted立即返回、并发同effect只启动一次、interaction期间
+  Interrupt、worker error/panic终态，以及Complete effect在Dash已终态后的inspection收敛。
+- steering集成测试使用只实现`DashProvider::stream`的production-shape provider：首轮阻塞时
+  提交Steer必须立即成功；释放首轮后必须产生第二个provider request，且其messages包含已接纳输入。
+  同组测试继续断言Interrupt终结active turn。
+- usage测试覆盖多provider round的last/total/context window，并断言read、changes与live投影一致。
+- failure tests断言 provider/Core code、message、retryable 在 terminal history与 Agent snapshot
+  一致。
+- Core loop测试至少执行12轮工具调用后再返回`Stop`，断言不会由内部轮次计数终止；provider真实
+  失败的回归测试断言此前完成的每条ToolCall/ToolResult仍在native history中。
+- live composition test在执行前订阅，断言顺序为 durable user input、durable `TurnStarted`、
+  ephemeral text/reasoning/tool delta 与 durable terminal；执行后从 read断言同 turn 已终态。
+- surface/context tests断言 native history保存实际instruction、tools与accepted ContextFrames，
+  provider prompt逐字包含frame `rendered_text`，snapshot与live逐项发布同一frame，repository root
+  不存在平行surface字段；连续surface只改变tool时，第二个`SurfaceApplied`的canonical projection
+  只包含CAP frame，不重发unchanged identity/environment/guidelines/assignment snapshot。
+- intrinsic surface测试断言内建`.md`进入provider request与Identity ContextFrame，Product applied
+  receipt不认领该contribution，且Product binding digest不同于Dash materialization digest。
+- surface delta tests连续应用三版surface，覆盖tool新增、修改、删除，断言read重放只返回真实
+  变化、capability与ToolSchema只形成一个`context/system_append` frame、`rendered_text`包含完整
+  nested字段说明与无损JSON Schema且section保留原始schema；context channel矩阵覆盖system、
+  identity、workspace、workflow、skills、MCP、memory与user context的typed frame映射。
+- active-turn测试在第一轮tool callback期间替换surface，断言旧call沿已接纳route完成、下一round
+  读取新ContextFrame/tools/projector、provider prompt仍包含同一active surface链的早期append
+  frame，且native user/tool transcript没有重复；revoke测试证明失效链被清空。
+- naming test断言Succeeded与“已有Agent output的Failed”回合都把accepted user input与最终
+  Agent output交给namer，只提交一次非空`ThreadNameChanged`，且`read/changes/live`均投影同一标题；
+  Accepted、interaction与无output失败不命名，命名失败不改变原回合terminal。
+- verification test断言 native registration claim 与 production template 的 build digest 都来自
+  `dash_complete_agent_build_digest()`，profile digest 仍由独立字段校验。
+- lag/no-subscriber tests区分临时没有观察者与 callback未装配。
+- source scan/migration test断言 Dash关系镜像表和 production Noop callback缺席。
+- Core dependency test断言不依赖 Application/Domain workflow/vendor DTO/repository。
 
 ## 7. Wrong vs Correct
 
 ```rust
-// Wrong: profile声称Structured，但adapter只是format成文本。
-RuntimeInput::Structured { value, .. } => ContentPart::text(value.to_string())
+// Wrong: 同一个 source 写两份执行事实。
+save_dash_document(&state).await?;
+replace_history_rows(&state.store.history).await?;
 
-// Correct: 未实现保持语义的ingress时，在任何副作用前typed拒绝。
-RuntimeInput::Structured { .. } => return Err(DriverError::Unsupported(...))
+// Correct: Dash owner document是唯一原子事实。
+repository.compare_and_swap(expected, replacement).await?;
 ```
 
 ```rust
-// Wrong: `?`提前返回留下active turn。
-self.active_turn.insert(turn_id.clone());
-run_agent(...).await?;
-self.active_turn.remove(&turn_id);
+// Wrong: Product根据输入推导标题，或在每次read时持续覆盖AgentRun标题。
+let title = infer_title(prompt);
+lifecycle_agent.workspace_title = snapshot.thread_name;
 
-// Correct: 所有成功/失败路径统一清理fence，再返回原结果。
-let result = run_agent(...).await;
-self.active_turn.remove(&turn_id);
-result
+// Correct: Dash保存原生标题；Product以该证据仅初始化一次自己的AgentRun标题。
+store.commit(HistoryPayload::ThreadNameChanged { thread_name })?;
+lifecycle_agents.initialize_title_from_agent(&target, &thread_name).await?;
+```
+
+```rust
+// Wrong: 只有Succeeded回合才有资格形成会话标题。
+if matches!(receipt.state, DashReceiptState::Terminal(DashTerminalOutcome::Succeeded)) {
+    try_assign_thread_name().await?;
+}
+
+// Correct: terminal只决定何时尝试；是否可命名由已提交的user input + Agent output证据决定。
+if matches!(receipt.state, DashReceiptState::Terminal(_)) {
+    try_assign_thread_name().await?;
+}
+```
+
+```rust
+// Wrong: live delta缺失时从平台 durable projection恢复。
+let replay = runtime_projection.load_changes(source).await?;
+
+// Correct: partial stream失效后读取 concrete Agent authority。
+let snapshot = dash_complete_agent.read(AgentReadQuery {
+    source,
+    at_revision: None,
+}).await?;
+```
+
+```rust
+// Wrong: 把当前完整snapshot伪装成每次都新增的tool delta。
+let added_tools = surface.tools.iter().map(runtime_tool_schema_entry).collect();
+
+// Correct: Native Adapter比较同一source history中的相邻surface事实。
+let previous = history.state_at(entry.sequence - 1)?.surface;
+let (added_tools, removed_tools, changed_tools) = diff_tools(previous, &surface);
+```
+
+```rust
+// Wrong: Product compiler复制concrete Agent的默认行为，或provider bridge在最后隐藏拼接。
+requirements.push(dash_specific_default_prompt());
+provider.system_prompt.push_str(HIDDEN_DEFAULT);
+
+// Correct: concrete Agent先形成自己的intrinsic contribution和accepted ContextFrames。
+let mut instructions = vec![dash_intrinsic_instruction()];
+instructions.extend(materialize_product_instructions(bound_surface)?);
+let digest = materialization_digest(&instructions, &tools)?;
+let context_frames = materialize_accepted_context(&instructions, &tools, previous_surface)?;
+history.commit(HistoryPayload::SurfaceApplied {
+    surface: DashSurface { digest, instructions, tools, context_frames, .. },
+})?;
+```
+
+```rust
+// Wrong: 用内部响应次数伪造Agent turn终态。
+for round in 1..=8 { run_provider_round(round).await?; }
+return Err(ProviderRoundLimit);
+
+// Correct: Core只响应真实协议终态；外部策略通过显式cancel进入typed terminal。
+loop {
+    match run_provider_round().await? {
+        ProviderTerminal::Stop => break,
+        ProviderTerminal::ToolCalls => continue,
+    }
+}
+```
+
+```rust
+// Wrong: 一次性provider端口被迫理解并修改正在运行的Agent turn。
+execution.provider.steer(&turn_id, &content).await?;
+
+// Correct: Agent先持久化输入；Core只在确定性的round边界消费。
+repository.commit(HistoryPayload::InputAccepted { input_id, content })?;
+let steering = callbacks.drain_steering(round, terminal_boundary).await?;
+messages.extend(steering);
 ```

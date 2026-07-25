@@ -1,7 +1,7 @@
 use agentdash_domain::workflow::{
     AgentProcedureContract, WorkflowHookRuleSpec, WorkflowHookTrigger,
 };
-use agentdash_spi::{ActiveWorkflowMeta, AgentFrameHookSnapshot, SessionSnapshotMetadata};
+use agentdash_platform_spi::{ActiveWorkflowMeta, AgentFrameHookSnapshot, SessionSnapshotMetadata};
 
 pub fn snapshot_with_workflow(activity_key: &str, completion_mode: &str) -> AgentFrameHookSnapshot {
     snapshot_with_workflow_ports(activity_key, completion_mode, &[], &[])
@@ -55,7 +55,7 @@ pub fn snapshot_with_workflow_ports(
         Some(fulfilled_port_keys.iter().map(|k| k.to_string()).collect())
     };
     AgentFrameHookSnapshot {
-        runtime_adapter_session_id: "sess-test".to_string(),
+        runtime_adapter_runtime_thread_id: "sess-test".to_string(),
         sources: vec![workflow_source],
         metadata: Some(SessionSnapshotMetadata {
             active_workflow: Some(ActiveWorkflowMeta {
@@ -72,17 +72,6 @@ pub fn snapshot_with_workflow_ports(
                 fulfilled_port_keys: fulfilled_opt,
                 ..Default::default()
             }),
-            ..Default::default()
-        }),
-        ..AgentFrameHookSnapshot::default()
-    }
-}
-
-pub fn snapshot_with_supervised_policy() -> AgentFrameHookSnapshot {
-    AgentFrameHookSnapshot {
-        runtime_adapter_session_id: "sess-supervised".to_string(),
-        metadata: Some(SessionSnapshotMetadata {
-            permission_policy: Some("SUPERVISED".to_string()),
             ..Default::default()
         }),
         ..AgentFrameHookSnapshot::default()

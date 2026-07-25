@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use agentdash_spi::{
+use agentdash_platform_spi::hooks::HookContextPresentationFacts;
+use agentdash_platform_spi::{
     HookApprovalRequest, HookCompactionDecision, HookCompletionStatus, HookDiagnosticEntry,
     HookEffect, HookInjection, HookScriptEvaluator,
 };
+use serde::Deserialize;
 
 use crate::HookApplicationError;
 
@@ -23,6 +25,19 @@ pub(crate) struct ScriptDecision {
     pub diagnostics: Vec<HookDiagnosticEntry>,
     pub effects: Vec<HookEffect>,
     pub compaction: Option<HookCompactionDecision>,
+}
+
+/// Script effects stay extensible at the domain payload boundary, while model-visible context
+/// must cross the Hook provider boundary as typed semantic facts. Runtime owns frame identity,
+/// coordinates, delivery metadata derivation and the atomic journal commit.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+struct ScriptHookEffect {
+    kind: String,
+    #[serde(default)]
+    payload: serde_json::Value,
+    #[serde(default)]
+    presentation: Option<HookContextPresentationFacts>,
 }
 
 impl ScriptDecision {
@@ -158,7 +173,6 @@ impl HookScriptEngine {
             },
 
             "meta": {
-                "permission_policy": ctx.snapshot.metadata.as_ref().and_then(|m| m.permission_policy.as_deref()),
                 "working_directory": ctx.snapshot.metadata.as_ref().and_then(|m| m.working_directory.as_deref()),
                 "connector_id": ctx.snapshot.metadata.as_ref().and_then(|m| m.connector_id.as_deref()),
                 "executor": ctx.snapshot.metadata.as_ref().and_then(|m| m.executor.as_deref()),
@@ -272,21 +286,22 @@ impl HookScriptEngine {
             })
             .unwrap_or_default();
 
-        let effects = obj
-            .get("effects")
-            .and_then(serde_json::Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|item| {
-                        let o = item.as_object()?;
-                        Some(HookEffect {
-                            kind: o.get("kind")?.as_str()?.to_string(),
-                            payload: o.get("payload").cloned().unwrap_or(serde_json::Value::Null),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let effects = match obj.get("effects") {
+            None | Some(serde_json::Value::Null) => Vec::new(),
+            Some(value) => serde_json::from_value::<Vec<ScriptHookEffect>>(value.clone())
+                .map_err(|error| {
+                    HookApplicationError::InvalidConfig(format!(
+                        "effects must use the typed Hook effect schema: {error}"
+                    ))
+                })?
+                .into_iter()
+                .map(|effect| HookEffect {
+                    kind: effect.kind,
+                    payload: effect.payload,
+                    presentation: effect.presentation,
+                })
+                .collect(),
+        };
 
         let compaction = obj
             .get("compaction")
@@ -323,11 +338,10 @@ fn empty_decision() -> ScriptDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::HookRuleEvaluationQuery;
+    use crate::rules::{HookRuleEvaluationQuery, HookRuleTestInput};
     use crate::test_script_evaluator::TestHookScriptEvaluator;
-    use agentdash_spi::{
-        AgentFrameHookSnapshot, HookControlTarget, HookEvaluationQuery, HookTrigger,
-        RuntimeAdapterProvenance,
+    use agentdash_platform_spi::{
+        AgentFrameHookSnapshot, HookControlTarget, HookTrigger, RuntimeAdapterProvenance,
     };
     use uuid::Uuid;
 
@@ -337,17 +351,16 @@ mod tests {
 
     fn base_ctx() -> (AgentFrameHookSnapshot, HookRuleEvaluationQuery) {
         let snapshot = AgentFrameHookSnapshot {
-            runtime_adapter_session_id: "sess-test".to_string(),
+            runtime_adapter_runtime_thread_id: "sess-test".to_string(),
             ..AgentFrameHookSnapshot::default()
         };
-        let query = HookRuleEvaluationQuery::from_session_query(HookEvaluationQuery {
+        let query = HookRuleEvaluationQuery::from_test_query(HookRuleTestInput {
             session_id: "sess-test".to_string(),
             trigger: HookTrigger::BeforeTool,
             turn_id: None,
             tool_name: Some("shell_exec".to_string()),
             tool_call_id: Some("call-1".to_string()),
             subagent_type: None,
-            snapshot: None,
             payload: None,
             token_stats: None,
         });
@@ -369,7 +382,7 @@ mod tests {
     #[test]
     fn context_carries_frame_target_and_runtime_provenance() {
         let snapshot = AgentFrameHookSnapshot {
-            runtime_adapter_session_id: "sess-frame".to_string(),
+            runtime_adapter_runtime_thread_id: "sess-frame".to_string(),
             ..AgentFrameHookSnapshot::default()
         };
         let target = HookControlTarget {
@@ -379,7 +392,7 @@ mod tests {
         };
         let query = HookRuleEvaluationQuery {
             target: Some(target),
-            provenance: RuntimeAdapterProvenance::runtime_session(
+            provenance: RuntimeAdapterProvenance::runtime_thread(
                 "sess-frame",
                 Some("turn-frame".to_string()),
                 "frame_evaluation_test",
@@ -443,6 +456,65 @@ mod tests {
         let result = engine.eval_script(script, &ctx, None).unwrap();
         assert_eq!(result.inject.len(), 1);
         assert_eq!(result.inject[0].slot, "constraint");
+    }
+
+    #[test]
+    fn script_effect_preserves_typed_context_presentation_facts() {
+        let engine = test_engine();
+        let (snapshot, query) = base_ctx();
+        let decision = engine
+            .eval_script(
+                "typed_context_presentation",
+                &HookEvaluationContext {
+                    snapshot: &snapshot,
+                    query: &query,
+                },
+                None,
+            )
+            .expect("typed effect from script evaluator");
+
+        let effect = decision.effects.first().expect("effect");
+        let presentation = effect.presentation.as_ref().expect("presentation facts");
+        assert_eq!(
+            serde_json::to_value(presentation).expect("presentation"),
+            serde_json::json!({
+                "kind": "system_notice",
+                "title": "Hook Notice",
+                "summary": "Hook provider produced typed presentation facts.",
+                "body": "继续完成 Hook 请求"
+            })
+        );
+    }
+
+    #[test]
+    fn malformed_or_frame_shaped_script_effect_is_rejected() {
+        let arbitrary_frame = HookScriptEngine::parse_decision(&serde_json::json!({
+            "effects": [{
+                "kind": "runtime:context_presentation",
+                "presentation": {
+                    "id": "caller-owned-frame-id",
+                    "kind": "system_notice",
+                    "source": "runtime_context_update",
+                    "delivery_status": "queued_for_transform_context",
+                    "delivery_channel": "turn_start",
+                    "message_role": "user",
+                    "rendered_text": "notice",
+                    "sections": []
+                }
+            }]
+        }));
+        assert!(matches!(
+            arbitrary_frame,
+            Err(HookApplicationError::InvalidConfig(_))
+        ));
+
+        let malformed = HookScriptEngine::parse_decision(&serde_json::json!({
+            "effects": [{"payload": {}}]
+        }));
+        assert!(matches!(
+            malformed,
+            Err(HookApplicationError::InvalidConfig(_))
+        ));
     }
 
     #[test]

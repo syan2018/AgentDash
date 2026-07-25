@@ -21,7 +21,7 @@ crates/
 ├── agentdash-infrastructure/    # Infrastructure Layer — PostgreSQL/SQLite 持久化
 ├── agentdash-workspace-module/  # Workspace Module Boundary — module contract 与 Canvas 子模块业务
 ├── agentdash-executor/          # Infrastructure Layer — 连接器、LLM Bridge
-├── agentdash-spi/               # SPI — Connector/Hook trait + 能力协议
+├── agentdash-platform-spi/               # 平台能力、工具与 Hook SPI
 ├── agentdash-agent/             # Agent Loop 引擎（纯 loop + bridge trait）
 ├── agentdash-agent-types/       # Agent 领域通用类型
 ├── agentdash-llm-provider/      # Provider catalog、凭据解析与Agent Core LLM bridges

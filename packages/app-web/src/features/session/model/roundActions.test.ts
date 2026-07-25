@@ -1,59 +1,62 @@
 import { describe, expect, it } from "vitest";
 import type { SessionDisplayEntry } from "./types";
 import type { TurnSegment } from "./useSessionFeed";
-import { lastAgentReplyText } from "./roundActions";
+import { buildRoundActionModel, lastAgentReplyText } from "./roundActions";
 
-function agentEntry(params: {
-  id: string;
-  text: string;
-  turnId: string;
-  entryIndex: number;
-}): SessionDisplayEntry {
+function agentEntry(text: string, entryIndex: number): SessionDisplayEntry {
   return {
-    id: params.id,
-    sessionId: "session-1",
-    timestamp: 1,
-    eventSeq: params.entryIndex + 1,
+    id: `assistant-${entryIndex}`,
+    sessionId: "thread-1",
+    timestamp: entryIndex,
+    eventSeq: entryIndex,
+    turnId: "turn-1",
+    entryIndex,
+    accumulatedText: text,
     event: {
       type: "agent_message_delta",
       payload: {
         threadId: "thread-1",
-        turnId: params.turnId,
-        itemId: params.id,
-        delta: params.text,
+        turnId: "turn-1",
+        itemId: `assistant-${entryIndex}`,
+        delta: text,
       },
     },
-    turnId: params.turnId,
-    entryIndex: params.entryIndex,
-    accumulatedText: params.text,
   };
 }
 
-function segment(items: SessionDisplayEntry[], status: TurnSegment["status"] = "completed"): TurnSegment {
+function segment(
+  entries: SessionDisplayEntry[],
+  status: TurnSegment["status"] = "completed",
+): TurnSegment {
   return {
     turnId: "turn-1",
     status,
-    items,
-    finalOutput: items[items.length - 1] ?? null,
+    items: entries,
+    finalOutput: entries.at(-1) ?? null,
   };
 }
 
 describe("round action model", () => {
-  it("copies only the current round last agent reply readable text", () => {
-    const first = agentEntry({
-      id: "assistant-1",
-      text: "intermediate answer",
-      turnId: "turn-1",
-      entryIndex: 1,
-    });
-    const last = agentEntry({
-      id: "assistant-2",
-      text: "final answer\nwith detail",
-      turnId: "turn-1",
-      entryIndex: 3,
-    });
-
-    expect(lastAgentReplyText(segment([first, last]))).toBe("final answer\nwith detail");
+  it("copies the canonical final agent reply", () => {
+    expect(lastAgentReplyText(segment([
+      agentEntry("intermediate", 1),
+      agentEntry("final answer\nwith detail", 3),
+    ]))).toBe("final answer\nwith detail");
   });
 
+  it("uses the canonical turn and entry coordinates as the fork point", () => {
+    const model = buildRoundActionModel(segment([agentEntry("done", 7)]));
+
+    expect(model.forkFromHere).toMatchObject({
+      enabled: true,
+      forkPointRef: { turn_id: "turn-1", entry_index: 7 },
+    });
+  });
+
+  it("disables fork while the canonical turn is active", () => {
+    const model = buildRoundActionModel(segment([agentEntry("still running", 2)], "active"));
+
+    expect(model.forkFromHere.enabled).toBe(false);
+    expect(model.forkFromHere.disabledReason).toContain("仍在运行");
+  });
 });

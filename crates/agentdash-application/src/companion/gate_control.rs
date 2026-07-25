@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::agent_run_runtime::{
-    AgentRunRuntimeBindingRepository, AgentRunRuntimeTarget,
-};
+use agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository;
 use agentdash_application_workflow::gate::{
     CompleteChildResultGateCommand, GateDeliveryIntent, LifecycleGateResolver,
     OpenParentRequestGateCommand, ResolveParentRequestGateCommand, RespondHumanGateCommand,
@@ -11,6 +9,7 @@ use agentdash_application_workflow::gate::{
 use agentdash_application_workflow::gate::{
     GateProducerTerminalConvergenceResult, GateProducerTerminalEvent,
 };
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository, LifecycleGate,
     LifecycleGateRepository,
@@ -56,14 +55,14 @@ pub struct CompanionGateRespondResult {
 #[derive(Debug, Clone)]
 pub struct CompleteCompanionChildResultCommand {
     pub request_id: String,
-    pub child_runtime_session_id: String,
+    pub child_runtime_thread_id: String,
     pub resolved_turn_id: String,
     pub payload: serde_json::Value,
 }
 
 #[derive(Debug, Clone)]
 pub struct OpenCompanionParentRequestCommand {
-    pub child_runtime_session_id: String,
+    pub child_runtime_thread_id: String,
     pub turn_id: String,
     pub wait: bool,
     pub payload: serde_json::Value,
@@ -81,14 +80,14 @@ pub struct CompanionParentRequestOpenResult {
     pub child_frame_id: Uuid,
     pub child_runtime_thread_id: String,
     pub companion_label: String,
-    pub parent_mailbox_delivery: CompanionParentMailboxDeliveryResult,
+    pub parent_input_handoff_delivery: CompanionParentInputHandoffDeliveryResult,
     pub payload: serde_json::Value,
 }
 
 #[derive(Debug, Clone)]
 pub struct ResolveCompanionParentRequestCommand {
     pub request_id: String,
-    pub parent_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub resolved_turn_id: String,
     pub payload: serde_json::Value,
 }
@@ -102,7 +101,7 @@ pub struct CompanionParentRequestResolveResult {
     pub child_agent_id: Uuid,
     pub child_frame_id: Uuid,
     pub child_runtime_thread_id: String,
-    pub child_mailbox_delivery: CompanionParentMailboxDeliveryResult,
+    pub child_input_handoff_delivery: CompanionParentInputHandoffDeliveryResult,
     pub payload: serde_json::Value,
 }
 
@@ -112,7 +111,7 @@ pub struct CompanionChildResultCompleteResult {
     pub parent_agent_id: Uuid,
     pub parent_runtime_thread_id: Option<String>,
     pub child_runtime_thread_id: Option<String>,
-    pub parent_mailbox_delivery: CompanionParentMailboxDeliveryResult,
+    pub parent_input_handoff_delivery: CompanionParentInputHandoffDeliveryResult,
     pub payload: serde_json::Value,
 }
 
@@ -142,11 +141,11 @@ struct ResolvedChildResultDeliveryInput {
 
 struct CurrentRuntimeBindingSelection {
     current_frame_id: Uuid,
-    runtime_session_id: String,
+    runtime_thread_id: String,
 }
 
 #[derive(Debug, Clone)]
-pub struct CompanionParentMailboxDeliveryCommand {
+pub struct CompanionParentInputHandoffDeliveryCommand {
     pub gate_id: Uuid,
     pub request_id: String,
     pub run_id: Uuid,
@@ -160,7 +159,7 @@ pub struct CompanionParentMailboxDeliveryCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompanionParentRequestMailboxDeliveryCommand {
+pub struct CompanionParentRequestInputHandoffDeliveryCommand {
     pub gate_id: Uuid,
     pub request_id: String,
     pub run_id: Uuid,
@@ -175,7 +174,7 @@ pub struct CompanionParentRequestMailboxDeliveryCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompanionParentResponseMailboxDeliveryCommand {
+pub struct CompanionParentResponseInputHandoffDeliveryCommand {
     pub gate_id: Uuid,
     pub request_id: String,
     pub run_id: Uuid,
@@ -189,7 +188,7 @@ pub struct CompanionParentResponseMailboxDeliveryCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompanionHumanResponseMailboxDeliveryCommand {
+pub struct CompanionHumanResponseInputHandoffDeliveryCommand {
     pub gate_id: Uuid,
     pub request_id: String,
     pub run_id: Uuid,
@@ -202,86 +201,85 @@ pub struct CompanionHumanResponseMailboxDeliveryCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompanionParentMailboxDeliveryResult {
-    pub mailbox_message_id: Option<Uuid>,
-    pub accepted_runtime_operation_id: Option<String>,
+pub struct CompanionParentInputHandoffDeliveryResult {
+    pub input_handoff_id: Option<Uuid>,
+    pub accepted_operation_id: Option<String>,
     pub command_receipt_client_command_id: String,
     pub command_receipt_status: String,
     pub command_receipt_duplicate: bool,
     pub outcome: String,
-    pub runtime_operation_id: Option<String>,
 }
 
 #[async_trait]
-pub trait CompanionParentMailboxDelivery: Send + Sync {
+pub trait CompanionParentInputHandoffDelivery: Send + Sync {
     async fn deliver_child_result_to_parent(
         &self,
-        command: CompanionParentMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError>;
+        command: CompanionParentInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError>;
 
     async fn deliver_parent_request_to_parent(
         &self,
-        command: CompanionParentRequestMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError>;
+        command: CompanionParentRequestInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError>;
 
     async fn deliver_parent_response_to_child(
         &self,
-        command: CompanionParentResponseMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError>;
+        command: CompanionParentResponseInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError>;
 }
 
 #[async_trait]
-pub trait CompanionHumanResponseMailboxDelivery: Send + Sync {
+pub trait CompanionHumanResponseInputHandoffDelivery: Send + Sync {
     async fn deliver_human_response_to_requesting_agent(
         &self,
-        command: CompanionHumanResponseMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError>;
+        command: CompanionHumanResponseInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError>;
 }
 
 #[derive(Clone, Default)]
-pub struct NoopCompanionParentMailboxDelivery;
+pub struct NoopCompanionParentInputHandoffDelivery;
 
 #[derive(Clone, Default)]
-pub struct NoopCompanionHumanResponseMailboxDelivery;
+pub struct NoopCompanionHumanResponseInputHandoffDelivery;
 
 #[async_trait]
-impl CompanionParentMailboxDelivery for NoopCompanionParentMailboxDelivery {
+impl CompanionParentInputHandoffDelivery for NoopCompanionParentInputHandoffDelivery {
     async fn deliver_child_result_to_parent(
         &self,
-        _command: CompanionParentMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+        _command: CompanionParentInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
         Err(ApplicationError::Internal(
-            "companion parent mailbox delivery 未配置".to_string(),
+            "companion parent Agent input handoff 未配置".to_string(),
         ))
     }
 
     async fn deliver_parent_request_to_parent(
         &self,
-        _command: CompanionParentRequestMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+        _command: CompanionParentRequestInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
         Err(ApplicationError::Internal(
-            "companion parent request mailbox delivery 未配置".to_string(),
+            "companion parent request Agent input handoff 未配置".to_string(),
         ))
     }
 
     async fn deliver_parent_response_to_child(
         &self,
-        _command: CompanionParentResponseMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+        _command: CompanionParentResponseInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
         Err(ApplicationError::Internal(
-            "companion parent response mailbox delivery 未配置".to_string(),
+            "companion parent response Agent input handoff 未配置".to_string(),
         ))
     }
 }
 
 #[async_trait]
-impl CompanionHumanResponseMailboxDelivery for NoopCompanionHumanResponseMailboxDelivery {
+impl CompanionHumanResponseInputHandoffDelivery for NoopCompanionHumanResponseInputHandoffDelivery {
     async fn deliver_human_response_to_requesting_agent(
         &self,
-        _command: CompanionHumanResponseMailboxDeliveryCommand,
-    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+        _command: CompanionHumanResponseInputHandoffDeliveryCommand,
+    ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
         Err(ApplicationError::Internal(
-            "companion human response mailbox delivery 未配置".to_string(),
+            "companion human response Agent input handoff 未配置".to_string(),
         ))
     }
 }
@@ -291,10 +289,10 @@ pub struct CompanionGateControlService {
     gate_resolver: LifecycleGateResolver,
     frame_repo: Arc<dyn AgentFrameRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
-    runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     lineage_repo: Arc<dyn AgentLineageRepository>,
-    parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>,
-    human_response_mailbox_delivery: Arc<dyn CompanionHumanResponseMailboxDelivery>,
+    parent_input_handoff_delivery: Arc<dyn CompanionParentInputHandoffDelivery>,
+    human_response_input_handoff_delivery: Arc<dyn CompanionHumanResponseInputHandoffDelivery>,
 }
 
 #[derive(Clone)]
@@ -302,7 +300,7 @@ pub struct CompanionGateControlRepos {
     pub gate_repo: Arc<dyn LifecycleGateRepository>,
     pub frame_repo: Arc<dyn AgentFrameRepository>,
     pub agent_repo: Arc<dyn LifecycleAgentRepository>,
-    pub runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    pub runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     pub lineage_repo: Arc<dyn AgentLineageRepository>,
 }
 
@@ -320,24 +318,26 @@ impl CompanionGateControlService {
             agent_repo: repos.agent_repo,
             runtime_binding_repo: repos.runtime_binding_repo,
             lineage_repo: repos.lineage_repo,
-            parent_mailbox_delivery: Arc::new(NoopCompanionParentMailboxDelivery),
-            human_response_mailbox_delivery: Arc::new(NoopCompanionHumanResponseMailboxDelivery),
+            parent_input_handoff_delivery: Arc::new(NoopCompanionParentInputHandoffDelivery),
+            human_response_input_handoff_delivery: Arc::new(
+                NoopCompanionHumanResponseInputHandoffDelivery,
+            ),
         }
     }
 
-    pub fn with_parent_mailbox_delivery(
+    pub fn with_parent_input_handoff_delivery(
         mut self,
-        parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>,
+        parent_input_handoff_delivery: Arc<dyn CompanionParentInputHandoffDelivery>,
     ) -> Self {
-        self.parent_mailbox_delivery = parent_mailbox_delivery;
+        self.parent_input_handoff_delivery = parent_input_handoff_delivery;
         self
     }
 
-    pub fn with_human_response_mailbox_delivery(
+    pub fn with_human_response_input_handoff_delivery(
         mut self,
-        human_response_mailbox_delivery: Arc<dyn CompanionHumanResponseMailboxDelivery>,
+        human_response_input_handoff_delivery: Arc<dyn CompanionHumanResponseInputHandoffDelivery>,
     ) -> Self {
-        self.human_response_mailbox_delivery = human_response_mailbox_delivery;
+        self.human_response_input_handoff_delivery = human_response_input_handoff_delivery;
         self
     }
 
@@ -381,7 +381,7 @@ impl CompanionGateControlService {
 
         let Some(runtime_thread_id) = runtime_thread_id.clone() else {
             let error =
-                "requesting agent 缺少 current delivery runtime session，无法投递 human response"
+                "requesting agent 缺少 current delivery RuntimeThread，无法投递 human response"
                     .to_string();
             return Err(ApplicationError::Conflict(error));
         };
@@ -407,15 +407,15 @@ impl CompanionGateControlService {
                     gate.id
                 ))
             })?;
-        let input_text = build_human_response_mailbox_input_text(
+        let input_text = build_human_response_input_handoff_input_text(
             human_response_intent.gate_id,
             &human_response_intent.request_id,
             human_response_intent.turn_id.as_deref(),
             &human_response_intent.payload,
         );
-        self.human_response_mailbox_delivery
+        self.human_response_input_handoff_delivery
             .deliver_human_response_to_requesting_agent(
-                CompanionHumanResponseMailboxDeliveryCommand {
+                CompanionHumanResponseInputHandoffDeliveryCommand {
                     gate_id: human_response_intent.gate_id,
                     request_id: human_response_intent.request_id.clone(),
                     run_id: human_response_intent.run_id,
@@ -502,9 +502,9 @@ impl CompanionGateControlService {
             summary,
             &input.payload,
         );
-        let mailbox_result = self
-            .parent_mailbox_delivery
-            .deliver_child_result_to_parent(CompanionParentMailboxDeliveryCommand {
+        let input_handoff_result = self
+            .parent_input_handoff_delivery
+            .deliver_child_result_to_parent(CompanionParentInputHandoffDeliveryCommand {
                 gate_id: input.gate_id,
                 request_id: input.request_id,
                 run_id: input.run_id,
@@ -523,7 +523,7 @@ impl CompanionGateControlService {
             parent_agent_id: input.parent_agent_id,
             parent_runtime_thread_id: Some(input.parent_runtime_thread_id),
             child_runtime_thread_id: input.child_runtime_thread_id,
-            parent_mailbox_delivery: mailbox_result,
+            parent_input_handoff_delivery: input_handoff_result,
             payload: input.payload,
         })
     }
@@ -541,7 +541,7 @@ impl CompanionGateControlService {
         }
 
         let child_frame = match resolve_current_frame_from_delivery_trace_ref(
-            &command.child_runtime_session_id,
+            &command.child_runtime_thread_id,
             self.runtime_binding_repo.as_ref(),
             self.agent_repo.as_ref(),
             self.frame_repo.as_ref(),
@@ -572,7 +572,7 @@ impl CompanionGateControlService {
         };
 
         let resolved_turn_id = command.resolved_turn_id.clone();
-        let child_runtime_session_id = command.child_runtime_session_id.clone();
+        let child_runtime_thread_id = command.child_runtime_thread_id.clone();
         let gate_meta = gate.payload_json.clone();
         let companion_label = gate_meta
             .as_ref()
@@ -586,13 +586,13 @@ impl CompanionGateControlService {
             .validate_bound_runtime_thread_id(
                 lineage.run_id,
                 child_frame.agent_id,
-                &child_runtime_session_id,
+                &child_runtime_thread_id,
             )
             .await?;
 
         let Some(parent_runtime_thread_id) = parent_runtime_thread_id.clone() else {
             let error =
-                "parent agent 缺少 current delivery runtime session，无法投递 companion result"
+                "parent agent 缺少 current delivery RuntimeThread，无法投递 companion result"
                     .to_string();
             return Err(ApplicationError::Conflict(error));
         };
@@ -692,11 +692,11 @@ impl CompanionGateControlService {
         &self,
         event: GateProducerTerminalEvent,
     ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
-        crate::gate_wait_policy::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
+        crate::gate_wait_policy::GateProducerTerminalConvergenceServiceAdapter::with_input_handoff_wake_delivery(
             self.gate_repo.clone(),
             self.runtime_binding_repo.clone(),
-            Arc::new(crate::gate_wait_policy::CompanionGateMailboxWakeDelivery::new(
-                self.parent_mailbox_delivery.clone(),
+            Arc::new(crate::gate_wait_policy::CompanionGateInputHandoffWakeDelivery::new(
+                self.parent_input_handoff_delivery.clone(),
             )),
         )
         .observe_gate_producer_terminal(event)
@@ -719,7 +719,7 @@ impl CompanionGateControlService {
             .ok_or_else(|| ApplicationError::BadRequest("payload.message 不能为空".to_string()))?;
 
         let (child_anchor, _agent, child_frame) = resolve_current_frame_from_delivery_trace_ref(
-            &command.child_runtime_session_id,
+            &command.child_runtime_thread_id,
             self.runtime_binding_repo.as_ref(),
             self.agent_repo.as_ref(),
             self.frame_repo.as_ref(),
@@ -727,7 +727,7 @@ impl CompanionGateControlService {
         .await?
         .ok_or_else(|| {
             ApplicationError::Conflict(
-                "当前 runtime session 没有关联的 AgentFrame，无法向 parent 提审".to_string(),
+                "当前 RuntimeThread 没有关联的 AgentFrame，无法向 parent 提审".to_string(),
             )
         })?;
         let lineage = self
@@ -746,12 +746,12 @@ impl CompanionGateControlService {
             .validate_bound_runtime_thread_id(
                 child_anchor.target.run_id,
                 child_frame.agent_id,
-                &command.child_runtime_session_id,
+                &command.child_runtime_thread_id,
             )
             .await?
             .ok_or_else(|| {
                 ApplicationError::Conflict(format!(
-                    "child agent {} 缺少 current delivery runtime session",
+                    "child agent {} 缺少 current delivery RuntimeThread",
                     child_frame.agent_id
                 ))
             })?;
@@ -760,11 +760,11 @@ impl CompanionGateControlService {
             .await?
             .ok_or_else(|| {
                 ApplicationError::Conflict(
-                    "parent agent 缺少 current delivery runtime session".to_string(),
+                    "parent agent 缺少 current delivery RuntimeThread".to_string(),
                 )
             })?;
         let parent_frame_id = parent_selection.current_frame_id;
-        let parent_runtime_thread_id = parent_selection.runtime_session_id;
+        let parent_runtime_thread_id = parent_selection.runtime_thread_id;
 
         let companion_label = format!("child:{}", child_frame.agent_id);
         let outcome = self
@@ -803,7 +803,7 @@ impl CompanionGateControlService {
                 ))
             })?;
 
-        let input_text = build_parent_request_mailbox_input_text(
+        let input_text = build_parent_request_input_handoff_input_text(
             parent_request_intent.gate_id,
             &parent_request_intent.request_id,
             &companion_label,
@@ -811,9 +811,9 @@ impl CompanionGateControlService {
             parent_request_intent.wait,
             &parent_request_intent.payload,
         );
-        let mailbox_result = self
-            .parent_mailbox_delivery
-            .deliver_parent_request_to_parent(CompanionParentRequestMailboxDeliveryCommand {
+        let input_handoff_result = self
+            .parent_input_handoff_delivery
+            .deliver_parent_request_to_parent(CompanionParentRequestInputHandoffDeliveryCommand {
                 gate_id: parent_request_intent.gate_id,
                 request_id: parent_request_intent.request_id.clone(),
                 run_id: parent_request_intent.run_id,
@@ -839,7 +839,7 @@ impl CompanionGateControlService {
             child_frame_id: child_frame.id,
             child_runtime_thread_id,
             companion_label,
-            parent_mailbox_delivery: mailbox_result,
+            parent_input_handoff_delivery: input_handoff_result,
             payload: review_payload,
         })
     }
@@ -868,7 +868,7 @@ impl CompanionGateControlService {
         }
 
         let (parent_anchor, _agent, parent_frame) = resolve_current_frame_from_delivery_trace_ref(
-            &command.parent_runtime_session_id,
+            &command.parent_runtime_thread_id,
             self.runtime_binding_repo.as_ref(),
             self.agent_repo.as_ref(),
             self.frame_repo.as_ref(),
@@ -876,8 +876,8 @@ impl CompanionGateControlService {
         .await?
         .ok_or_else(|| {
             ApplicationError::Conflict(format!(
-                "runtime session {} 没有关联的 parent AgentFrame",
-                command.parent_runtime_session_id
+                "RuntimeThread {} 没有关联的 parent AgentFrame",
+                command.parent_runtime_thread_id
             ))
         })?;
         if gate.agent_id != Some(parent_frame.agent_id) || gate.frame_id != Some(parent_frame.id) {
@@ -896,12 +896,12 @@ impl CompanionGateControlService {
             .validate_bound_runtime_thread_id(
                 parent_anchor.target.run_id,
                 parent_frame.agent_id,
-                &command.parent_runtime_session_id,
+                &command.parent_runtime_thread_id,
             )
             .await?
             .ok_or_else(|| {
                 ApplicationError::Conflict(format!(
-                    "parent agent {} 缺少 current delivery runtime session",
+                    "parent agent {} 缺少 current delivery RuntimeThread",
                     parent_frame.agent_id
                 ))
             })?;
@@ -917,7 +917,7 @@ impl CompanionGateControlService {
             .map(str::to_string)
             .ok_or_else(|| {
                 ApplicationError::Conflict(format!(
-                    "parent request gate {} 缺少 child delivery runtime session",
+                    "parent request gate {} 缺少 child delivery RuntimeThread",
                     gate.id
                 ))
             })?;
@@ -930,7 +930,7 @@ impl CompanionGateControlService {
             .await?
             .ok_or_else(|| {
                 ApplicationError::Conflict(format!(
-                    "child agent {} 缺少 current delivery runtime session",
+                    "child agent {} 缺少 current delivery RuntimeThread",
                     child_agent_id
                 ))
             })?;
@@ -966,15 +966,15 @@ impl CompanionGateControlService {
             })?;
         let resolution_payload = parent_response_intent.payload.clone();
 
-        let input_text = build_parent_response_mailbox_input_text(
+        let input_text = build_parent_response_input_handoff_input_text(
             parent_response_intent.gate_id,
             &parent_response_intent.request_id,
             &parent_response_intent.resolved_turn_id,
             &parent_response_intent.payload,
         );
-        let mailbox_result = self
-            .parent_mailbox_delivery
-            .deliver_parent_response_to_child(CompanionParentResponseMailboxDeliveryCommand {
+        let input_handoff_result = self
+            .parent_input_handoff_delivery
+            .deliver_parent_response_to_child(CompanionParentResponseInputHandoffDeliveryCommand {
                 gate_id: parent_response_intent.gate_id,
                 request_id: parent_response_intent.request_id.clone(),
                 run_id: parent_response_intent.run_id,
@@ -996,7 +996,7 @@ impl CompanionGateControlService {
             child_agent_id,
             child_frame_id,
             child_runtime_thread_id,
-            child_mailbox_delivery: mailbox_result,
+            child_input_handoff_delivery: input_handoff_result,
             payload: resolution_payload,
         }))
     }
@@ -1010,12 +1010,9 @@ impl CompanionGateControlService {
                 ApplicationError::NotFound(format!("gate frame 不存在: {frame_id}"))
             })?
         } else if let Some(agent_id) = gate.agent_id {
-            self.frame_repo
-                .get_current(agent_id)
-                .await?
-                .ok_or_else(|| {
-                    ApplicationError::NotFound(format!("gate agent 没有当前 frame: {agent_id}"))
-                })?
+            self.frame_repo.get_latest(agent_id).await?.ok_or_else(|| {
+                ApplicationError::NotFound(format!("gate agent 没有当前 frame: {agent_id}"))
+            })?
         } else {
             return Err(ApplicationError::Conflict(format!(
                 "gate 缺少 agent/frame owner: {}",
@@ -1044,24 +1041,24 @@ impl CompanionGateControlService {
         Ok(self
             .select_current_delivery(run_id, agent_id)
             .await?
-            .map(|selection| selection.runtime_session_id))
+            .map(|selection| selection.runtime_thread_id))
     }
 
     async fn validate_bound_runtime_thread_id(
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: &str,
+        runtime_thread_id: &str,
     ) -> Result<Option<String>, ApplicationError> {
         let Some(selection) = self.select_current_delivery(run_id, agent_id).await? else {
             return Ok(None);
         };
-        if selection.runtime_session_id == runtime_session_id {
-            return Ok(Some(selection.runtime_session_id));
+        if selection.runtime_thread_id == runtime_thread_id {
+            return Ok(Some(selection.runtime_thread_id));
         }
         Err(ApplicationError::Conflict(format!(
-            "agent {agent_id} current delivery runtime session {} 不匹配提交 runtime session {runtime_session_id}",
-            selection.runtime_session_id
+            "agent {agent_id} current delivery RuntimeThread {} 不匹配提交 RuntimeThread {runtime_thread_id}",
+            selection.runtime_thread_id
         )))
     }
 
@@ -1070,10 +1067,10 @@ impl CompanionGateControlService {
         run_id: Uuid,
         agent_id: Uuid,
     ) -> Result<Option<CurrentRuntimeBindingSelection>, ApplicationError> {
-        let target = AgentRunRuntimeTarget { run_id, agent_id };
+        let target = AgentRunTarget { run_id, agent_id };
         let Some(binding) = self
             .runtime_binding_repo
-            .load(&target)
+            .load_product_binding(&target)
             .await
             .map_err(|error| ApplicationError::Internal(error.to_string()))?
         else {
@@ -1089,14 +1086,22 @@ impl CompanionGateControlService {
                 "LifecycleAgent {agent_id} 不属于 LifecycleRun {run_id}"
             )));
         }
-        let Some(frame) = self.frame_repo.get_current(agent_id).await? else {
+        let Some(frame) = self.frame_repo.get(binding.launch_frame.frame_id).await? else {
             return Err(ApplicationError::NotFound(format!(
-                "LifecycleAgent {agent_id} 没有 current AgentFrame"
+                "Product binding 指向的 AgentFrame {} 不存在",
+                binding.launch_frame.frame_id
             )));
         };
+        if frame.agent_id != agent_id
+            || u64::try_from(frame.revision).ok() != Some(binding.launch_frame.revision)
+        {
+            return Err(ApplicationError::Conflict(
+                "Companion gate Product binding 与 immutable launch frame 不一致".to_string(),
+            ));
+        }
         Ok(Some(CurrentRuntimeBindingSelection {
             current_frame_id: frame.id,
-            runtime_session_id: binding.thread_id.to_string(),
+            runtime_thread_id: binding.runtime_thread_id.to_string(),
         }))
     }
 }
@@ -1193,7 +1198,7 @@ fn bounded_projection_text(text: &str, max_chars: usize) -> String {
     bounded
 }
 
-fn build_parent_request_mailbox_input_text(
+fn build_parent_request_input_handoff_input_text(
     gate_id: Uuid,
     request_id: &str,
     companion_label: &str,
@@ -1218,7 +1223,7 @@ fn build_parent_request_mailbox_input_text(
     lines.join("\n")
 }
 
-fn build_parent_response_mailbox_input_text(
+fn build_parent_response_input_handoff_input_text(
     gate_id: Uuid,
     request_id: &str,
     resolved_turn_id: &str,
@@ -1246,7 +1251,7 @@ fn build_parent_response_mailbox_input_text(
     lines.join("\n")
 }
 
-fn build_human_response_mailbox_input_text(
+fn build_human_response_input_handoff_input_text(
     gate_id: Uuid,
     request_id: &str,
     turn_id: Option<&str>,
@@ -1289,14 +1294,13 @@ fn payload_uuid(payload: &serde_json::Value, key: &str) -> Result<Uuid, Applicat
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{BTreeSet, HashMap, HashSet},
-        str::FromStr,
+        collections::{HashMap, HashSet},
         sync::{Arc, Mutex},
     };
 
-    use agentdash_agent_runtime_contract::*;
-    use agentdash_application_ports::agent_run_runtime::{
-        AgentRunRuntimeBinding, AgentRunRuntimeBindingError,
+    use agentdash_agent_runtime_contract::RuntimeThreadId;
+    use agentdash_application_agentrun::agent_run::{
+        AgentRunProductRuntimeBinding, ProductAgentFrameRef, ProductExecutionProfileRef,
     };
     use agentdash_domain::{
         DomainError,
@@ -1434,16 +1438,16 @@ mod tests {
     #[derive(Default)]
     struct FixtureFrameRepo {
         frames: Mutex<HashMap<Uuid, AgentFrame>>,
-        runtime_sessions_by_frame: Mutex<HashMap<Uuid, Vec<String>>>,
+        runtime_threads_by_frame: Mutex<HashMap<Uuid, Vec<String>>>,
     }
 
     impl FixtureFrameRepo {
-        fn seed_runtime_sessions<I, S>(&self, frame_id: Uuid, session_ids: I)
+        fn seed_runtime_threads<I, S>(&self, frame_id: Uuid, session_ids: I)
         where
             I: IntoIterator<Item = S>,
             S: Into<String>,
         {
-            self.runtime_sessions_by_frame
+            self.runtime_threads_by_frame
                 .lock()
                 .unwrap()
                 .insert(frame_id, session_ids.into_iter().map(Into::into).collect());
@@ -1461,7 +1465,7 @@ mod tests {
             Ok(self.frames.lock().unwrap().get(&frame_id).cloned())
         }
 
-        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+        async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
             Ok(self
                 .frames
                 .lock()
@@ -1589,18 +1593,18 @@ mod tests {
 
     #[derive(Default)]
     struct FixtureRuntimeBindingRepo {
-        bindings: Mutex<Vec<AgentRunRuntimeBinding>>,
+        bindings: Mutex<Vec<AgentRunProductRuntimeBinding>>,
     }
 
     impl FixtureRuntimeBindingRepo {
         fn from_frame_repo(frame_repo: &FixtureFrameRepo, run_id: Uuid) -> Self {
             let mut bindings = Vec::new();
-            let sessions_by_frame = frame_repo.runtime_sessions_by_frame.lock().unwrap();
+            let sessions_by_frame = frame_repo.runtime_threads_by_frame.lock().unwrap();
             for frame in frame_repo.frames.lock().unwrap().values() {
                 if let Some(session_ids) = sessions_by_frame.get(&frame.id)
-                    && let Some(runtime_session_id) = session_ids.last()
+                    && let Some(runtime_thread_id) = session_ids.last()
                 {
-                    bindings.push(runtime_binding(run_id, frame.agent_id, runtime_session_id));
+                    bindings.push(runtime_binding(run_id, frame, runtime_thread_id));
                 }
             }
             Self {
@@ -1610,11 +1614,11 @@ mod tests {
     }
 
     #[async_trait]
-    impl AgentRunRuntimeBindingRepository for FixtureRuntimeBindingRepo {
-        async fn load(
+    impl AgentRunProductRuntimeBindingRepository for FixtureRuntimeBindingRepo {
+        async fn load_product_binding(
             &self,
-            target: &AgentRunRuntimeTarget,
-        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            target: &AgentRunTarget,
+        ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
             Ok(self
                 .bindings
                 .lock()
@@ -1623,115 +1627,55 @@ mod tests {
                 .find(|binding| &binding.target == target)
                 .cloned())
         }
-        async fn load_by_thread_id(
+
+        async fn load_product_binding_by_runtime_thread(
             &self,
             thread_id: &RuntimeThreadId,
-        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+        ) -> Result<Option<AgentRunProductRuntimeBinding>, String> {
             Ok(self
                 .bindings
                 .lock()
                 .unwrap()
                 .iter()
-                .find(|binding| &binding.thread_id == thread_id)
+                .find(|binding| &binding.runtime_thread_id == thread_id)
                 .cloned())
         }
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
-            Ok(self
-                .bindings
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|binding| binding.target.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-        async fn list_by_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
-            Ok(self
-                .bindings
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|binding| binding.target.agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
-        async fn insert(
-            &self,
-            binding: AgentRunRuntimeBinding,
-        ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
-            self.bindings.lock().unwrap().push(binding.clone());
-            Ok(binding)
-        }
     }
 
-    fn runtime_id<T: FromStr>(value: &str) -> T
-    where
-        T::Err: std::fmt::Debug,
-    {
-        value.parse().expect("valid runtime id")
-    }
-
-    fn runtime_binding(run_id: Uuid, agent_id: Uuid, thread_id: &str) -> AgentRunRuntimeBinding {
-        AgentRunRuntimeBinding {
-            target: AgentRunRuntimeTarget { run_id, agent_id },
-            thread_id: runtime_id(thread_id),
-            binding_id: runtime_id(&format!("binding-{thread_id}")),
-            driver_generation: RuntimeDriverGeneration(1),
-            source_thread_id: runtime_id(&format!("source-{thread_id}")),
-            profile_digest: runtime_id("profile-gate-control"),
-            profile_provenance: ProfileProvenance {
-                service_digest: runtime_id("service-gate-control"),
-                transport_digest: runtime_id("transport-gate-control"),
-                host_policy_digest: runtime_id("policy-gate-control"),
+    fn runtime_binding(
+        run_id: Uuid,
+        frame: &AgentFrame,
+        thread_id: &str,
+    ) -> AgentRunProductRuntimeBinding {
+        let mut execution_profile = ProductExecutionProfileRef {
+            profile_key: "gate-control-profile".to_string(),
+            profile_revision: 1,
+            profile_digest: String::new(),
+            configuration: serde_json::json!({"provider": "fixture"}),
+            credential_scope: None,
+        };
+        execution_profile.refresh_digest();
+        AgentRunProductRuntimeBinding {
+            target: AgentRunTarget {
+                run_id,
+                agent_id: frame.agent_id,
             },
-            bound_profile: RuntimeProfile {
-                reference_class: ReferenceRuntimeClass::ManagedThread,
-                input: InputProfile {
-                    modalities: BTreeSet::new(),
-                },
-                instruction: InstructionProfile {
-                    channels: BTreeSet::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                },
-                tools: ToolProfile {
-                    channels: BTreeSet::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                    cancellation: true,
-                },
-                workspace: WorkspaceProfile {
-                    capabilities: BTreeSet::new(),
-                    mechanism: DeliveryMechanism::Native,
-                },
-                interactions: InteractionProfile {
-                    kinds: BTreeSet::new(),
-                    durable_correlation: true,
-                },
-                lifecycle: BTreeSet::new(),
-                hooks: HookProfile {
-                    points: Vec::new(),
-                    configuration_boundary: ConfigurationBoundary::Binding,
-                },
-                context: ContextProfile {
-                    capabilities: BTreeSet::new(),
-                    fidelity: ContextFidelity::Opaque,
-                    activation_idempotent: false,
-                },
-                telemetry_config: BTreeSet::new(),
+            runtime_thread_id: RuntimeThreadId::new(thread_id).expect("runtime thread id"),
+            agent: agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
+                service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
+                    "fixture-agent",
+                )
+                .unwrap(),
+                source: agentdash_agent_service_api::AgentSourceCoordinate::new("fixture-source")
+                    .unwrap(),
             },
-            surface_digest: runtime_id("surface-gate-control"),
-            settings_revision: ThreadSettingsRevision(0),
-            tool_set_revision: ToolSetRevision(0),
-            hook_plan: BoundRuntimeHookPlan {
-                revision: HookPlanRevision(1),
-                digest: runtime_id("hook-gate-control"),
-                entries: Vec::new(),
+            launch_frame: ProductAgentFrameRef {
+                frame_id: frame.id,
+                agent_id: frame.agent_id,
+                revision: u64::try_from(frame.revision).expect("positive frame revision"),
             },
+            execution_profile_digest: execution_profile.profile_digest.clone(),
+            execution_profile,
         }
     }
 
@@ -1742,42 +1686,42 @@ mod tests {
         _delivery: Arc<CapturingDelivery>,
         run_id: Uuid,
     ) -> CompanionGateControlService {
-        service_for_test_with_parent_mailbox(
+        service_for_test_with_parent_input_handoff(
             gate_repo,
             frame_repo,
             lineage_repo,
             Arc::new(CapturingDelivery::default()),
-            Arc::new(CapturingParentMailboxDelivery::default()),
+            Arc::new(CapturingParentInputHandoffDelivery::default()),
             run_id,
         )
     }
 
-    fn service_for_test_with_parent_mailbox(
+    fn service_for_test_with_parent_input_handoff(
         gate_repo: Arc<FixtureGateRepo>,
         frame_repo: Arc<FixtureFrameRepo>,
         lineage_repo: Arc<FixtureLineageRepo>,
         _delivery: Arc<CapturingDelivery>,
-        parent_mailbox_delivery: Arc<CapturingParentMailboxDelivery>,
+        parent_input_handoff_delivery: Arc<CapturingParentInputHandoffDelivery>,
         run_id: Uuid,
     ) -> CompanionGateControlService {
-        service_for_test_with_mailboxes(
+        service_for_test_with_input_handoffs(
             gate_repo,
             frame_repo,
             lineage_repo,
             Arc::new(CapturingDelivery::default()),
-            parent_mailbox_delivery,
-            Arc::new(CapturingHumanMailboxDelivery::default()),
+            parent_input_handoff_delivery,
+            Arc::new(CapturingHumanInputHandoffDelivery::default()),
             run_id,
         )
     }
 
-    fn service_for_test_with_mailboxes(
+    fn service_for_test_with_input_handoffs(
         gate_repo: Arc<FixtureGateRepo>,
         frame_repo: Arc<FixtureFrameRepo>,
         lineage_repo: Arc<FixtureLineageRepo>,
         _delivery: Arc<CapturingDelivery>,
-        parent_mailbox_delivery: Arc<CapturingParentMailboxDelivery>,
-        human_mailbox_delivery: Arc<CapturingHumanMailboxDelivery>,
+        parent_input_handoff_delivery: Arc<CapturingParentInputHandoffDelivery>,
+        human_input_handoff_delivery: Arc<CapturingHumanInputHandoffDelivery>,
         run_id: Uuid,
     ) -> CompanionGateControlService {
         let project_id = Uuid::new_v4();
@@ -1799,8 +1743,8 @@ mod tests {
                 lineage_repo,
             },
         })
-        .with_parent_mailbox_delivery(parent_mailbox_delivery)
-        .with_human_response_mailbox_delivery(human_mailbox_delivery)
+        .with_parent_input_handoff_delivery(parent_input_handoff_delivery)
+        .with_human_response_input_handoff_delivery(human_input_handoff_delivery)
     }
 
     #[derive(Default)]
@@ -1810,59 +1754,61 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct CapturingParentMailboxDelivery {
-        commands: Mutex<Vec<CompanionParentMailboxDeliveryCommand>>,
-        parent_request_commands: Mutex<Vec<CompanionParentRequestMailboxDeliveryCommand>>,
-        parent_response_commands: Mutex<Vec<CompanionParentResponseMailboxDeliveryCommand>>,
+    struct CapturingParentInputHandoffDelivery {
+        commands: Mutex<Vec<CompanionParentInputHandoffDeliveryCommand>>,
+        parent_request_commands: Mutex<Vec<CompanionParentRequestInputHandoffDeliveryCommand>>,
+        parent_response_commands: Mutex<Vec<CompanionParentResponseInputHandoffDeliveryCommand>>,
         delivered_child_result_gate_ids: Mutex<HashSet<Uuid>>,
         fail_with: Mutex<Option<String>>,
     }
 
     #[derive(Default)]
-    struct CapturingHumanMailboxDelivery {
-        commands: Mutex<Vec<CompanionHumanResponseMailboxDeliveryCommand>>,
+    struct CapturingHumanInputHandoffDelivery {
+        commands: Mutex<Vec<CompanionHumanResponseInputHandoffDeliveryCommand>>,
         fail_with: Mutex<Option<String>>,
     }
 
-    impl CapturingHumanMailboxDelivery {
+    impl CapturingHumanInputHandoffDelivery {
         fn fail_next(&self, message: impl Into<String>) {
             *self.fail_with.lock().unwrap() = Some(message.into());
         }
     }
 
     #[async_trait]
-    impl CompanionHumanResponseMailboxDelivery for CapturingHumanMailboxDelivery {
+    impl CompanionHumanResponseInputHandoffDelivery for CapturingHumanInputHandoffDelivery {
         async fn deliver_human_response_to_requesting_agent(
             &self,
-            command: CompanionHumanResponseMailboxDeliveryCommand,
-        ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+            command: CompanionHumanResponseInputHandoffDeliveryCommand,
+        ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
             self.commands.lock().unwrap().push(command);
             if let Some(message) = self.fail_with.lock().unwrap().take() {
                 return Err(ApplicationError::Internal(message));
             }
-            Ok(captured_mailbox_result("companion-human-response:test"))
+            Ok(captured_input_handoff_result(
+                "companion-human-response:test",
+            ))
         }
     }
 
-    impl CapturingParentMailboxDelivery {
+    impl CapturingParentInputHandoffDelivery {
         fn fail_next(&self, message: impl Into<String>) {
             *self.fail_with.lock().unwrap() = Some(message.into());
         }
     }
 
     #[async_trait]
-    impl CompanionParentMailboxDelivery for CapturingParentMailboxDelivery {
+    impl CompanionParentInputHandoffDelivery for CapturingParentInputHandoffDelivery {
         async fn deliver_child_result_to_parent(
             &self,
-            command: CompanionParentMailboxDeliveryCommand,
-        ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+            command: CompanionParentInputHandoffDeliveryCommand,
+        ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
             if self
                 .delivered_child_result_gate_ids
                 .lock()
                 .unwrap()
                 .contains(&command.gate_id)
             {
-                return Ok(captured_mailbox_result_with_duplicate(
+                return Ok(captured_input_handoff_result_with_duplicate(
                     "companion-result:test",
                     true,
                 ));
@@ -1875,50 +1821,53 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(command.gate_id);
-            Ok(captured_mailbox_result("companion-result:test"))
+            Ok(captured_input_handoff_result("companion-result:test"))
         }
 
         async fn deliver_parent_request_to_parent(
             &self,
-            command: CompanionParentRequestMailboxDeliveryCommand,
-        ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+            command: CompanionParentRequestInputHandoffDeliveryCommand,
+        ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
             self.parent_request_commands.lock().unwrap().push(command);
             if let Some(message) = self.fail_with.lock().unwrap().take() {
                 return Err(ApplicationError::Internal(message));
             }
-            Ok(captured_mailbox_result("companion-parent-request:test"))
+            Ok(captured_input_handoff_result(
+                "companion-parent-request:test",
+            ))
         }
 
         async fn deliver_parent_response_to_child(
             &self,
-            command: CompanionParentResponseMailboxDeliveryCommand,
-        ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+            command: CompanionParentResponseInputHandoffDeliveryCommand,
+        ) -> Result<CompanionParentInputHandoffDeliveryResult, ApplicationError> {
             self.parent_response_commands.lock().unwrap().push(command);
             if let Some(message) = self.fail_with.lock().unwrap().take() {
                 return Err(ApplicationError::Internal(message));
             }
-            Ok(captured_mailbox_result("companion-parent-response:test"))
+            Ok(captured_input_handoff_result(
+                "companion-parent-response:test",
+            ))
         }
     }
 
-    fn captured_mailbox_result(
+    fn captured_input_handoff_result(
         client_command_id: impl Into<String>,
-    ) -> CompanionParentMailboxDeliveryResult {
-        captured_mailbox_result_with_duplicate(client_command_id, false)
+    ) -> CompanionParentInputHandoffDeliveryResult {
+        captured_input_handoff_result_with_duplicate(client_command_id, false)
     }
 
-    fn captured_mailbox_result_with_duplicate(
+    fn captured_input_handoff_result_with_duplicate(
         client_command_id: impl Into<String>,
         duplicate: bool,
-    ) -> CompanionParentMailboxDeliveryResult {
-        CompanionParentMailboxDeliveryResult {
-            mailbox_message_id: Some(Uuid::new_v4()),
-            accepted_runtime_operation_id: Some("operation-test".to_string()),
+    ) -> CompanionParentInputHandoffDeliveryResult {
+        CompanionParentInputHandoffDeliveryResult {
+            input_handoff_id: Some(Uuid::new_v4()),
+            accepted_operation_id: Some("operation-test".to_string()),
             command_receipt_client_command_id: client_command_id.into(),
             command_receipt_status: "accepted".to_string(),
             command_receipt_duplicate: duplicate,
             outcome: "queued".to_string(),
-            runtime_operation_id: Some("operation-parent-1".to_string()),
         }
     }
 
@@ -1945,18 +1894,19 @@ mod tests {
         gate_repo.create(&gate).await.expect("seed gate");
         let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo.create(&frame).await.expect("seed frame");
-        frame_repo.seed_runtime_sessions(frame_id, ["session-old", "session-latest"]);
+        frame_repo.seed_runtime_threads(frame_id, ["session-old", "session-latest"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let human_mailbox_delivery = Arc::new(CapturingHumanMailboxDelivery::default());
-        let service = service_for_test_with_mailboxes(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let human_input_handoff_delivery = Arc::new(CapturingHumanInputHandoffDelivery::default());
+        let service = service_for_test_with_input_handoffs(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery,
-            human_mailbox_delivery.clone(),
+            parent_input_handoff_delivery,
+            human_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -1994,13 +1944,13 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("human_mailbox_delivery"))
+                .and_then(|payload| payload.get("human_input_handoff_delivery"))
                 .is_none()
         );
 
         let notifications = delivery.response_notifications.lock().unwrap();
         assert!(notifications.is_empty());
-        let commands = human_mailbox_delivery.commands.lock().unwrap();
+        let commands = human_input_handoff_delivery.commands.lock().unwrap();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].gate_id, gate_id);
         assert_eq!(commands[0].agent_id, agent_id);
@@ -2028,7 +1978,7 @@ mod tests {
         gate_repo.create(&gate).await.expect("seed gate");
         let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo.create(&frame).await.expect("seed frame");
-        frame_repo.seed_runtime_sessions(frame.id, ["session-1"]);
+        frame_repo.seed_runtime_threads(frame.id, ["session-1"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let service = service_for_test(
@@ -2074,19 +2024,20 @@ mod tests {
         gate_repo.create(&gate).await.expect("seed gate");
         let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo.create(&frame).await.expect("seed frame");
-        frame_repo.seed_runtime_sessions(frame_id, ["session-latest"]);
+        frame_repo.seed_runtime_threads(frame_id, ["session-latest"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let human_mailbox_delivery = Arc::new(CapturingHumanMailboxDelivery::default());
-        human_mailbox_delivery.fail_next("mailbox unavailable");
-        let service = service_for_test_with_mailboxes(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let human_input_handoff_delivery = Arc::new(CapturingHumanInputHandoffDelivery::default());
+        human_input_handoff_delivery.fail_next("Agent input handoff unavailable");
+        let service = service_for_test_with_input_handoffs(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery,
-            parent_mailbox_delivery,
-            human_mailbox_delivery.clone(),
+            parent_input_handoff_delivery,
+            human_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -2101,7 +2052,7 @@ mod tests {
                 }),
             })
             .await
-            .expect_err("mailbox failure should be returned");
+            .expect_err("input_handoff failure should be returned");
 
         assert!(matches!(error, ApplicationError::Internal(_)));
         let stored = gate_repo
@@ -2122,14 +2073,18 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("human_mailbox_delivery"))
+                .and_then(|payload| payload.get("human_input_handoff_delivery"))
                 .is_none()
         );
-        assert_eq!(human_mailbox_delivery.commands.lock().unwrap().len(), 1);
+        assert_eq!(
+            human_input_handoff_delivery.commands.lock().unwrap().len(),
+            1
+        );
     }
 
     #[tokio::test]
-    async fn complete_child_result_resolves_child_owned_gate_and_delivers_parent_mailbox_wake() {
+    async fn complete_child_result_resolves_child_owned_gate_and_delivers_parent_input_handoff_wake()
+     {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2165,29 +2120,30 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
-        frame_repo.seed_runtime_sessions(parent_frame.id, ["parent-session"]);
+        frame_repo.seed_runtime_threads(parent_frame.id, ["parent-session"]);
         frame_repo
             .create(&child_frame)
             .await
             .expect("seed child frame");
-        frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
+        frame_repo.seed_runtime_threads(child_frame.id, ["child-session"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
         let result = service
             .complete_child_result_to_parent(CompleteCompanionChildResultCommand {
                 request_id: "dispatch-1".to_string(),
-                child_runtime_session_id: "child-session".to_string(),
+                child_runtime_thread_id: "child-session".to_string(),
                 resolved_turn_id: "turn-child-1".to_string(),
                 payload: serde_json::json!({
                     "status": "completed",
@@ -2211,7 +2167,7 @@ mod tests {
             result.child_runtime_thread_id.as_deref(),
             Some("child-session")
         );
-        assert_eq!(result.parent_mailbox_delivery.outcome, "queued");
+        assert_eq!(result.parent_input_handoff_delivery.outcome, "queued");
 
         let stored = gate_repo
             .get(gate_id)
@@ -2236,36 +2192,36 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("parent_mailbox_delivery"))
+                .and_then(|payload| payload.get("parent_input_handoff_delivery"))
                 .and_then(|delivery| delivery.get("status"))
                 .and_then(serde_json::Value::as_str),
             None
         );
 
         {
-            let mailbox_commands = parent_mailbox_delivery.commands.lock().unwrap();
-            assert_eq!(mailbox_commands.len(), 1);
-            assert_eq!(mailbox_commands[0].gate_id, gate_id);
-            assert_eq!(mailbox_commands[0].request_id, "dispatch-1");
-            assert_eq!(mailbox_commands[0].run_id, run_id);
-            assert_eq!(mailbox_commands[0].parent_agent_id, parent_agent_id);
-            assert_eq!(mailbox_commands[0].child_agent_id, child_agent_id);
+            let input_handoff_commands = parent_input_handoff_delivery.commands.lock().unwrap();
+            assert_eq!(input_handoff_commands.len(), 1);
+            assert_eq!(input_handoff_commands[0].gate_id, gate_id);
+            assert_eq!(input_handoff_commands[0].request_id, "dispatch-1");
+            assert_eq!(input_handoff_commands[0].run_id, run_id);
+            assert_eq!(input_handoff_commands[0].parent_agent_id, parent_agent_id);
+            assert_eq!(input_handoff_commands[0].child_agent_id, child_agent_id);
             assert_eq!(
-                mailbox_commands[0].parent_runtime_thread_id,
+                input_handoff_commands[0].parent_runtime_thread_id,
                 "parent-session"
             );
             assert!(
-                mailbox_commands[0]
+                input_handoff_commands[0]
                     .input_text
                     .contains("- status: completed")
             );
             assert!(
-                mailbox_commands[0]
+                input_handoff_commands[0]
                     .input_text
                     .contains("- summary: review complete")
             );
             assert!(
-                mailbox_commands[0]
+                input_handoff_commands[0]
                     .input_text
                     .starts_with("Companion result delivery projection.")
             );
@@ -2274,7 +2230,7 @@ mod tests {
         let duplicate = service
             .complete_child_result_to_parent(CompleteCompanionChildResultCommand {
                 request_id: "dispatch-1".to_string(),
-                child_runtime_session_id: "child-session".to_string(),
+                child_runtime_thread_id: "child-session".to_string(),
                 resolved_turn_id: "turn-child-2".to_string(),
                 payload: serde_json::json!({
                     "status": "completed",
@@ -2287,8 +2243,15 @@ mod tests {
             .await
             .expect("duplicate child result should ensure delivery")
             .expect("resolved gate should return delivery result");
-        assert!(duplicate.parent_mailbox_delivery.command_receipt_duplicate);
-        assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
+        assert!(
+            duplicate
+                .parent_input_handoff_delivery
+                .command_receipt_duplicate
+        );
+        assert_eq!(
+            parent_input_handoff_delivery.commands.lock().unwrap().len(),
+            1
+        );
         assert!(delivery.event_notifications.lock().unwrap().is_empty());
     }
 
@@ -2367,22 +2330,23 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
-        frame_repo.seed_runtime_sessions(parent_frame.id, ["parent-session"]);
+        frame_repo.seed_runtime_threads(parent_frame.id, ["parent-session"]);
         frame_repo
             .create(&child_frame)
             .await
             .expect("seed child frame");
-        frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
+        frame_repo.seed_runtime_threads(child_frame.id, ["child-session"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
@@ -2461,13 +2425,17 @@ mod tests {
         );
 
         {
-            let mailbox_commands = parent_mailbox_delivery.commands.lock().unwrap();
-            assert_eq!(mailbox_commands.len(), 1);
-            assert_eq!(mailbox_commands[0].gate_id, gate_id);
-            assert_eq!(mailbox_commands[0].request_id, "dispatch-terminal");
-            assert_eq!(mailbox_commands[0].parent_agent_id, parent_agent_id);
-            assert_eq!(mailbox_commands[0].child_agent_id, child_agent_id);
-            assert!(mailbox_commands[0].input_text.contains("- status: failed"));
+            let input_handoff_commands = parent_input_handoff_delivery.commands.lock().unwrap();
+            assert_eq!(input_handoff_commands.len(), 1);
+            assert_eq!(input_handoff_commands[0].gate_id, gate_id);
+            assert_eq!(input_handoff_commands[0].request_id, "dispatch-terminal");
+            assert_eq!(input_handoff_commands[0].parent_agent_id, parent_agent_id);
+            assert_eq!(input_handoff_commands[0].child_agent_id, child_agent_id);
+            assert!(
+                input_handoff_commands[0]
+                    .input_text
+                    .contains("- status: failed")
+            );
         }
 
         let replay = service
@@ -2479,7 +2447,10 @@ mod tests {
             replay.outcomes[0].kind,
             agentdash_application_workflow::gate::GateProducerTerminalConvergenceOutcomeKind::AlreadyResolvedEnsuredDelivery
         );
-        assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
+        assert_eq!(
+            parent_input_handoff_delivery.commands.lock().unwrap().len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -2507,28 +2478,29 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
-        frame_repo.seed_runtime_sessions(parent_frame_id, ["parent-session"]);
+        frame_repo.seed_runtime_threads(parent_frame_id, ["parent-session"]);
         frame_repo
             .create(&child_frame)
             .await
             .expect("seed child frame");
-        frame_repo.seed_runtime_sessions(child_frame_id, ["child-session"]);
+        frame_repo.seed_runtime_threads(child_frame_id, ["child-session"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
         let result = service
             .open_parent_request(OpenCompanionParentRequestCommand {
-                child_runtime_session_id: "child-session".to_string(),
+                child_runtime_thread_id: "child-session".to_string(),
                 turn_id: "turn-child-1".to_string(),
                 wait: true,
                 payload: serde_json::json!({ "message": "please review" }),
@@ -2567,17 +2539,17 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("parent_mailbox_delivery"))
+                .and_then(|payload| payload.get("parent_input_handoff_delivery"))
                 .is_none()
         );
         assert_eq!(
             result
-                .parent_mailbox_delivery
+                .parent_input_handoff_delivery
                 .command_receipt_client_command_id,
             "companion-parent-request:test"
         );
 
-        let parent_request_commands = parent_mailbox_delivery
+        let parent_request_commands = parent_input_handoff_delivery
             .parent_request_commands
             .lock()
             .unwrap();
@@ -2599,7 +2571,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn open_parent_request_keeps_mailbox_failure_out_of_gate_payload() {
+    async fn open_parent_request_keeps_input_handoff_failure_out_of_gate_payload() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2620,35 +2592,36 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
-        frame_repo.seed_runtime_sessions(parent_frame.id, ["parent-session"]);
+        frame_repo.seed_runtime_threads(parent_frame.id, ["parent-session"]);
         frame_repo
             .create(&child_frame)
             .await
             .expect("seed child frame");
-        frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
+        frame_repo.seed_runtime_threads(child_frame.id, ["child-session"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        parent_mailbox_delivery.fail_next("parent mailbox unavailable");
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        parent_input_handoff_delivery.fail_next("parent Agent input handoff unavailable");
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
         let error = service
             .open_parent_request(OpenCompanionParentRequestCommand {
-                child_runtime_session_id: "child-session".to_string(),
+                child_runtime_thread_id: "child-session".to_string(),
                 turn_id: "turn-child-1".to_string(),
                 wait: false,
                 payload: serde_json::json!({ "message": "please review" }),
             })
             .await
-            .expect_err("mailbox failure should fail command");
+            .expect_err("input_handoff failure should fail command");
 
         assert!(matches!(error, ApplicationError::Internal(_)));
         assert!(delivery.event_notifications.lock().unwrap().is_empty());
@@ -2659,11 +2632,11 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("parent_mailbox_delivery"))
+                .and_then(|payload| payload.get("parent_input_handoff_delivery"))
                 .is_none()
         );
         assert_eq!(
-            parent_mailbox_delivery
+            parent_input_handoff_delivery
                 .parent_request_commands
                 .lock()
                 .unwrap()
@@ -2673,7 +2646,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_child_result_keeps_mailbox_failure_out_of_gate_payload() {
+    async fn complete_child_result_keeps_input_handoff_failure_out_of_gate_payload() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2709,29 +2682,30 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
-        frame_repo.seed_runtime_sessions(parent_frame.id, ["parent-session"]);
+        frame_repo.seed_runtime_threads(parent_frame.id, ["parent-session"]);
         frame_repo
             .create(&child_frame)
             .await
             .expect("seed child frame");
-        frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
+        frame_repo.seed_runtime_threads(child_frame.id, ["child-session"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        parent_mailbox_delivery.fail_next("mailbox unavailable");
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        parent_input_handoff_delivery.fail_next("Agent input handoff unavailable");
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
         let command = CompleteCompanionChildResultCommand {
             request_id: "dispatch-fail".to_string(),
-            child_runtime_session_id: "child-session".to_string(),
+            child_runtime_thread_id: "child-session".to_string(),
             resolved_turn_id: "turn-child-1".to_string(),
             payload: serde_json::json!({
                 "status": "completed",
@@ -2741,7 +2715,7 @@ mod tests {
         let error = service
             .complete_child_result_to_parent(command.clone())
             .await
-            .expect_err("mailbox failure should be returned");
+            .expect_err("input_handoff failure should be returned");
 
         assert!(matches!(error, ApplicationError::Internal(_)));
         let stored = gate_repo
@@ -2754,12 +2728,15 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("parent_mailbox_delivery"))
+                .and_then(|payload| payload.get("parent_input_handoff_delivery"))
                 .and_then(|delivery| delivery.get("status"))
                 .and_then(serde_json::Value::as_str),
             None
         );
-        assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
+        assert_eq!(
+            parent_input_handoff_delivery.commands.lock().unwrap().len(),
+            1
+        );
         assert!(delivery.event_notifications.lock().unwrap().is_empty());
 
         let retry = service
@@ -2767,12 +2744,19 @@ mod tests {
             .await
             .expect("resolved gate delivery retry")
             .expect("resolved gate should retry delivery");
-        assert!(!retry.parent_mailbox_delivery.command_receipt_duplicate);
-        assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 2);
+        assert!(
+            !retry
+                .parent_input_handoff_delivery
+                .command_receipt_duplicate
+        );
+        assert_eq!(
+            parent_input_handoff_delivery.commands.lock().unwrap().len(),
+            2
+        );
     }
 
     #[tokio::test]
-    async fn duplicate_child_result_does_not_deliver_second_parent_mailbox_message() {
+    async fn duplicate_child_result_does_not_deliver_second_parent_input_handoff_message() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2803,28 +2787,29 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
-        frame_repo.seed_runtime_sessions(parent_frame.id, ["parent-session"]);
+        frame_repo.seed_runtime_threads(parent_frame.id, ["parent-session"]);
         frame_repo
             .create(&child_frame)
             .await
             .expect("seed child frame");
-        frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
+        frame_repo.seed_runtime_threads(child_frame.id, ["child-session"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo,
             frame_repo,
             lineage_repo,
             delivery,
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
         let command = CompleteCompanionChildResultCommand {
             request_id: "dispatch-duplicate".to_string(),
-            child_runtime_session_id: "child-session".to_string(),
+            child_runtime_thread_id: "child-session".to_string(),
             resolved_turn_id: "turn-child-1".to_string(),
             payload: serde_json::json!({
                 "status": "completed",
@@ -2844,10 +2829,13 @@ mod tests {
                 .await
                 .expect("duplicate completion")
                 .expect("resolved gate should ensure delivery")
-                .parent_mailbox_delivery
+                .parent_input_handoff_delivery
                 .command_receipt_duplicate
         );
-        assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
+        assert_eq!(
+            parent_input_handoff_delivery.commands.lock().unwrap().len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -2878,12 +2866,12 @@ mod tests {
             .create(&parent_current_frame)
             .await
             .expect("seed parent current frame");
-        frame_repo.seed_runtime_sessions(parent_current_frame.id, ["parent-current-session"]);
+        frame_repo.seed_runtime_threads(parent_current_frame.id, ["parent-current-session"]);
         frame_repo
             .create(&child_frame)
             .await
             .expect("seed child frame");
-        frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
+        frame_repo.seed_runtime_threads(child_frame.id, ["child-session"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
@@ -2897,7 +2885,7 @@ mod tests {
 
         let result = service
             .open_parent_request(OpenCompanionParentRequestCommand {
-                child_runtime_session_id: "child-session".to_string(),
+                child_runtime_thread_id: "child-session".to_string(),
                 turn_id: "turn-child-1".to_string(),
                 wait: false,
                 payload: serde_json::json!({ "message": "please review latest frame" }),
@@ -2964,28 +2952,29 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
-        frame_repo.seed_runtime_sessions(parent_frame_id, ["parent-session"]);
+        frame_repo.seed_runtime_threads(parent_frame_id, ["parent-session"]);
         frame_repo
             .create(&child_frame)
             .await
             .expect("seed child frame");
-        frame_repo.seed_runtime_sessions(child_frame_id, ["child-session"]);
+        frame_repo.seed_runtime_threads(child_frame_id, ["child-session"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
         let result = service
             .resolve_parent_request(ResolveCompanionParentRequestCommand {
                 request_id: gate_id.to_string(),
-                parent_runtime_session_id: "parent-session".to_string(),
+                parent_runtime_thread_id: "parent-session".to_string(),
                 resolved_turn_id: "turn-parent-1".to_string(),
                 payload: serde_json::json!({
                     "status": "approved",
@@ -3005,7 +2994,7 @@ mod tests {
         assert_eq!(result.child_runtime_thread_id, "child-session");
         assert_eq!(
             result
-                .child_mailbox_delivery
+                .child_input_handoff_delivery
                 .command_receipt_client_command_id,
             "companion-parent-response:test"
         );
@@ -3033,7 +3022,7 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("child_mailbox_delivery"))
+                .and_then(|payload| payload.get("child_input_handoff_delivery"))
                 .is_none()
         );
         assert_eq!(
@@ -3046,7 +3035,7 @@ mod tests {
         );
 
         {
-            let parent_response_commands = parent_mailbox_delivery
+            let parent_response_commands = parent_input_handoff_delivery
                 .parent_response_commands
                 .lock()
                 .unwrap();
@@ -3066,7 +3055,7 @@ mod tests {
         let duplicate_error = service
             .resolve_parent_request(ResolveCompanionParentRequestCommand {
                 request_id: gate_id.to_string(),
-                parent_runtime_session_id: "parent-session".to_string(),
+                parent_runtime_thread_id: "parent-session".to_string(),
                 resolved_turn_id: "turn-parent-2".to_string(),
                 payload: serde_json::json!({
                     "status": "approved",
@@ -3077,7 +3066,7 @@ mod tests {
             .expect_err("closed gate should reject duplicate response");
         assert!(matches!(duplicate_error, ApplicationError::Conflict(_)));
         assert_eq!(
-            parent_mailbox_delivery
+            parent_input_handoff_delivery
                 .parent_response_commands
                 .lock()
                 .unwrap()
@@ -3087,7 +3076,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_parent_request_keeps_child_mailbox_failure_out_of_gate_payload() {
+    async fn resolve_parent_request_keeps_child_input_handoff_failure_out_of_gate_payload() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -3117,29 +3106,30 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
-        frame_repo.seed_runtime_sessions(parent_frame.id, ["parent-session"]);
+        frame_repo.seed_runtime_threads(parent_frame.id, ["parent-session"]);
         frame_repo
             .create(&child_frame)
             .await
             .expect("seed child frame");
-        frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
+        frame_repo.seed_runtime_threads(child_frame.id, ["child-session"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
-        parent_mailbox_delivery.fail_next("child mailbox unavailable");
-        let service = service_for_test_with_parent_mailbox(
+        let parent_input_handoff_delivery =
+            Arc::new(CapturingParentInputHandoffDelivery::default());
+        parent_input_handoff_delivery.fail_next("child Agent input handoff unavailable");
+        let service = service_for_test_with_parent_input_handoff(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
-            parent_mailbox_delivery.clone(),
+            parent_input_handoff_delivery.clone(),
             run_id,
         );
 
         let error = service
             .resolve_parent_request(ResolveCompanionParentRequestCommand {
                 request_id: gate_id.to_string(),
-                parent_runtime_session_id: "parent-session".to_string(),
+                parent_runtime_thread_id: "parent-session".to_string(),
                 resolved_turn_id: "turn-parent-1".to_string(),
                 payload: serde_json::json!({
                     "status": "approved",
@@ -3147,7 +3137,7 @@ mod tests {
                 }),
             })
             .await
-            .expect_err("mailbox failure should fail command");
+            .expect_err("input_handoff failure should fail command");
 
         assert!(matches!(error, ApplicationError::Internal(_)));
         assert!(delivery.event_notifications.lock().unwrap().is_empty());
@@ -3161,11 +3151,11 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("child_mailbox_delivery"))
+                .and_then(|payload| payload.get("child_input_handoff_delivery"))
                 .is_none()
         );
         assert_eq!(
-            parent_mailbox_delivery
+            parent_input_handoff_delivery
                 .parent_response_commands
                 .lock()
                 .unwrap()
@@ -3199,12 +3189,12 @@ mod tests {
             .create(&parent_frame)
             .await
             .expect("seed parent frame");
-        frame_repo.seed_runtime_sessions(parent_frame_id, ["parent-session"]);
+        frame_repo.seed_runtime_threads(parent_frame_id, ["parent-session"]);
         frame_repo
             .create(&other_frame)
             .await
             .expect("seed other frame");
-        frame_repo.seed_runtime_sessions(other_frame.id, ["other"]);
+        frame_repo.seed_runtime_threads(other_frame.id, ["other"]);
         let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let service = service_for_test(
@@ -3218,7 +3208,7 @@ mod tests {
         let error = service
             .resolve_parent_request(ResolveCompanionParentRequestCommand {
                 request_id: gate.id.to_string(),
-                parent_runtime_session_id: "other".to_string(),
+                parent_runtime_thread_id: "other".to_string(),
                 resolved_turn_id: "turn-parent-1".to_string(),
                 payload: serde_json::json!({ "status": "approved" }),
             })

@@ -103,6 +103,9 @@ pub struct AgentLaunchIntent {
     pub project_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_agent_id: Option<Uuid>,
+    /// 本次 AgentRun 的 effective execution profile；缺失时使用 ProjectAgent 默认配置。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_profile_override: Option<serde_json::Value>,
     pub source: ExecutionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_user_id: Option<String>,
@@ -125,6 +128,8 @@ pub struct AgentLaunchIntent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubjectExecutionIntent {
     pub project_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_agent_id: Option<Uuid>,
     pub source: ExecutionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_user_id: Option<String>,
@@ -248,12 +253,14 @@ pub type RuntimeControlRefs = AgentRuntimeRefs;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentLaunchDispatchResult {
     pub runtime_refs: AgentRuntimeRefs,
+    pub delivery_runtime_ref: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubjectExecutionDispatchResult {
     pub runtime_refs: AgentRuntimeRefs,
     pub subject_execution_ref: SubjectExecutionRef,
+    pub delivery_runtime_ref: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,6 +273,7 @@ pub struct LifecycleRunStartDispatchResult {
 pub struct InteractionGateOpenedDispatchResult {
     pub runtime_refs: AgentRuntimeRefs,
     pub gate_ref: Uuid,
+    pub delivery_runtime_ref: Uuid,
 }
 
 /// Dispatch 调度结果按 intent family 分类，避免全 optional DTO 掩盖必需锚点。
@@ -286,6 +294,7 @@ mod tests {
     fn execution_intent_serializes_as_discriminated_taxonomy() {
         let intent = ExecutionIntent::SubjectExecution(SubjectExecutionIntent {
             project_id: Uuid::new_v4(),
+            project_agent_id: None,
             source: ExecutionSource::ProjectAgent,
             created_by_user_id: None,
             subject_ref: SubjectRef::new("project", Uuid::new_v4()),
@@ -314,6 +323,7 @@ mod tests {
     #[test]
     fn subject_execution_result_serializes_orchestration_binding() {
         let orchestration_ref = Uuid::new_v4();
+        let delivery_runtime_ref = Uuid::new_v4();
         let result = ExecutionDispatchResult::SubjectExecution(SubjectExecutionDispatchResult {
             runtime_refs: AgentRuntimeRefs::new(
                 Uuid::new_v4(),
@@ -329,11 +339,13 @@ mod tests {
                 subject_ref: SubjectRef::new("task", Uuid::new_v4()),
                 association_id: Uuid::new_v4(),
             },
+            delivery_runtime_ref,
         });
         let json = serde_json::to_string(&result).expect("serialize");
         assert!(json.contains(&orchestration_ref.to_string()));
         assert!(json.contains("orchestration_ref"));
         assert!(json.contains("node_path"));
         assert!(json.contains("subject_execution"));
+        assert!(json.contains(&delivery_runtime_ref.to_string()));
     }
 }

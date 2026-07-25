@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"检查 R1-R3、R9-R10 与 AC1-AC4。"}
+{"file":".trellis/spec/backend/architecture.md","reason":"检查 contract crate 依赖方向。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 Rust contract、错误与测试质量。"}
+{"file":".trellis/spec/cross-layer/agent-runtime-wire-relay.md","reason":"检查 wire framing 不拥有业务状态。"}

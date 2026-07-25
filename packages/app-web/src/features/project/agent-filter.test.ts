@@ -14,7 +14,6 @@ function makeAgent(overrides: Partial<ProjectAgentSummary> = {}): ProjectAgentSu
       provider_id: null,
       agent_id: null,
       thinking_level: null,
-      permission_policy: null,
     },
     preset_name: "backend",
     source: "preset",
@@ -37,7 +36,6 @@ describe("filterAgents", () => {
         provider_id: null,
         agent_id: null,
         thinking_level: null,
-        permission_policy: null,
       },
     }),
   ];

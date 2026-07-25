@@ -43,7 +43,7 @@ pub struct LifecycleDispatchService<'a> {
     run_repo: &'a dyn LifecycleRunRepository,
     workflow_graph_repo: &'a dyn WorkflowGraphRepository,
     agent_repo: &'a dyn LifecycleAgentRepository,
-    _frame_repo: &'a dyn AgentFrameRepository,
+    frame_repo: &'a dyn AgentFrameRepository,
     association_repo: &'a dyn LifecycleSubjectAssociationRepository,
     gate_repo: &'a dyn LifecycleGateRepository,
     lineage_repo: &'a dyn AgentLineageRepository,
@@ -69,7 +69,7 @@ impl<'a> LifecycleDispatchService<'a> {
             run_repo,
             workflow_graph_repo,
             agent_repo,
-            _frame_repo: frame_repo,
+            frame_repo,
             association_repo,
             gate_repo,
             lineage_repo,
@@ -159,6 +159,47 @@ impl<'a> LifecycleDispatchService<'a> {
         );
         Ok(AgentLaunchDispatchResult {
             runtime_refs: facts.runtime_refs,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
+        })
+    }
+
+    pub async fn launch_agent_with_stable_runtime_identity(
+        &self,
+        intent: &AgentLaunchIntent,
+        agent_id: uuid::Uuid,
+        delivery_runtime_ref: uuid::Uuid,
+    ) -> Result<AgentLaunchDispatchResult, WorkflowApplicationError> {
+        let mut plan = DispatchPlan::from(intent);
+        plan.stable_agent_id = Some(agent_id);
+        plan.stable_delivery_runtime_ref = Some(delivery_runtime_ref);
+        let facts = self.dispatch_common(plan).await?;
+        Ok(AgentLaunchDispatchResult {
+            runtime_refs: facts.runtime_refs,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
+        })
+    }
+
+    /// 以 Product 预分配的完整 identity 集合幂等 materialize AgentRun launch graph。
+    ///
+    /// 这些 identity 在任何 Runtime side effect 之前由 Product command saga 固定；
+    /// 重试必须重新观察并验证同一 run/agent/frame/runtime owner evidence。
+    pub async fn launch_agent_with_stable_product_identities(
+        &self,
+        intent: &AgentLaunchIntent,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+        frame_id: uuid::Uuid,
+        delivery_runtime_ref: uuid::Uuid,
+    ) -> Result<AgentLaunchDispatchResult, WorkflowApplicationError> {
+        let mut plan = DispatchPlan::from(intent);
+        plan.stable_run_id = Some(run_id);
+        plan.stable_agent_id = Some(agent_id);
+        plan.stable_frame_id = Some(frame_id);
+        plan.stable_delivery_runtime_ref = Some(delivery_runtime_ref);
+        let facts = self.dispatch_common(plan).await?;
+        Ok(AgentLaunchDispatchResult {
+            runtime_refs: facts.runtime_refs,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
         })
     }
 
@@ -184,6 +225,31 @@ impl<'a> LifecycleDispatchService<'a> {
         Ok(SubjectExecutionDispatchResult {
             runtime_refs,
             subject_execution_ref,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
+        })
+    }
+
+    pub async fn execute_subject_with_stable_runtime_identity(
+        &self,
+        intent: &SubjectExecutionIntent,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+        delivery_runtime_ref: uuid::Uuid,
+    ) -> Result<SubjectExecutionDispatchResult, WorkflowApplicationError> {
+        let mut plan = DispatchPlan::from(intent);
+        plan.stable_run_id = Some(run_id);
+        plan.stable_agent_id = Some(agent_id);
+        plan.stable_delivery_runtime_ref = Some(delivery_runtime_ref);
+        let facts = self.dispatch_common(plan).await?;
+        let subject_execution_ref = facts.subject_execution_ref.ok_or_else(|| {
+            WorkflowApplicationError::Internal(
+                "SubjectExecutionIntent 未创建 subject_execution_ref".to_string(),
+            )
+        })?;
+        Ok(SubjectExecutionDispatchResult {
+            runtime_refs: facts.runtime_refs,
+            subject_execution_ref,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
         })
     }
 
@@ -209,6 +275,7 @@ impl<'a> LifecycleDispatchService<'a> {
         Ok(InteractionGateOpenedDispatchResult {
             runtime_refs: facts.runtime_refs,
             gate_ref,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
         })
     }
 
@@ -270,6 +337,7 @@ impl<'a> LifecycleDispatchService<'a> {
     fn agent_runtime_materializer(&self) -> AgentRuntimeMaterializer<'_> {
         AgentRuntimeMaterializer::new(
             self.agent_repo,
+            self.frame_repo,
             self.frame_construction,
             self.workflow_agent_frame_materialization,
         )
@@ -334,6 +402,7 @@ impl<'a> LifecycleDispatchService<'a> {
 
         Ok(DispatchFacts {
             runtime_refs: materialized.runtime_refs,
+            delivery_runtime_ref: materialized.delivery_runtime_ref,
             gate_ref: relation_result.gate_ref,
             subject_execution_ref: subject_result.subject_execution_ref,
         })
@@ -362,6 +431,7 @@ impl<'a> LifecycleDispatchService<'a> {
 
         Ok(DispatchFacts {
             runtime_refs: materialized.runtime_refs,
+            delivery_runtime_ref: materialized.delivery_runtime_ref,
             gate_ref: relation_result.gate_ref,
             subject_execution_ref: subject_result.subject_execution_ref,
         })

@@ -5,7 +5,7 @@ use agentdash_domain::operation::{
     OperationEffect, OperationOriginRef, OperationPrincipalRef, OperationProviderRef, OperationRef,
     OperationReplayPolicy, OperationScopeRef,
 };
-use agentdash_spi::AuthIdentity;
+use agentdash_platform_spi::AuthIdentity;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

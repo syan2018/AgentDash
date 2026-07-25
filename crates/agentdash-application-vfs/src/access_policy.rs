@@ -1,4 +1,4 @@
-use agentdash_spi::{
+use agentdash_platform_spi::{
     RuntimeVfsAccessPolicy, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern, Vfs,
 };
 
@@ -33,7 +33,7 @@ pub fn runtime_vfs_path_pattern_matches(
 mod tests {
     use std::collections::BTreeSet;
 
-    use agentdash_spi::{Mount, MountCapability, RuntimeVfsAccessRule};
+    use agentdash_platform_spi::{Mount, MountCapability, RuntimeVfsAccessRule};
 
     use super::*;
 
@@ -91,7 +91,7 @@ mod tests {
                     RuntimeVfsOperation::Read,
                     RuntimeVfsOperation::Search,
                 ]),
-                source: RuntimeVfsAccessSource::PermissionGrant,
+                source: RuntimeVfsAccessSource::ProjectPreset,
             }],
         };
 

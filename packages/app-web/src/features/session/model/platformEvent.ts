@@ -16,12 +16,13 @@ export function extractPlatformEventType(event: BackboneEvent): string | null {
   if (event.type !== "platform") return null;
   const platform: PlatformEvent = event.payload;
 
-  if (platform.kind === "executor_session_bound") return "executor_session_bound";
   if (platform.kind === "hook_trace") return "hook_event";
-  if (platform.kind === "control_plane_projection_changed") {
-    return "control_plane_projection_changed";
+  if (platform.kind === "provider_attempt_status") return "provider_attempt_status";
+  if (platform.kind === "session_rewound") return "session_rewound";
+  if (platform.kind === "context_frame_changed") return "context_frame";
+  if (platform.kind === "workspace_module_presentation_requested") {
+    return "workspace_module_presentation_requested";
   }
-
   if (platform.kind === "session_meta_update") {
     return platform.data.key;
   }
@@ -33,10 +34,6 @@ export function extractPlatformEventType(event: BackboneEvent): string | null {
 export function extractPlatformEventData(event: BackboneEvent): Record<string, unknown> | null {
   if (event.type !== "platform") return null;
   const platform: PlatformEvent = event.payload;
-
-  if (platform.kind === "executor_session_bound") {
-    return { executor_session_id: platform.data.executor_session_id };
-  }
 
   if (platform.kind === "hook_trace") {
     const traceData = platform.data.data;
@@ -52,7 +49,19 @@ export function extractPlatformEventData(event: BackboneEvent): Record<string, u
     };
   }
 
-  if (platform.kind === "control_plane_projection_changed" && isRecord(platform.data)) {
+  if (platform.kind === "provider_attempt_status" && isRecord(platform.data)) {
+    return platform.data;
+  }
+
+  if (platform.kind === "session_rewound" && isRecord(platform.data)) {
+    return platform.data;
+  }
+
+  if (platform.kind === "context_frame_changed" && isRecord(platform.data.frame)) {
+    return platform.data.frame;
+  }
+
+  if (platform.kind === "workspace_module_presentation_requested" && isRecord(platform.data)) {
     return platform.data;
   }
 
@@ -75,6 +84,22 @@ export function extractPlatformEventMessage(event: BackboneEvent): string | null
     return platform.data.message ?? null;
   }
 
+  if (platform.kind === "provider_attempt_status") {
+    return platform.data.message ?? null;
+  }
+
+  if (platform.kind === "session_rewound") {
+    return platform.data.message ?? null;
+  }
+
+  if (platform.kind === "context_frame_changed") {
+    return platform.data.frame.rendered_text;
+  }
+
+  if (platform.kind === "workspace_module_presentation_requested") {
+    return `请求展示 ${platform.data.title}`;
+  }
+
   if (platform.kind === "session_meta_update") {
     const value = platform.data.value;
     if (isRecord(value) && typeof value.message === "string") {
@@ -84,6 +109,18 @@ export function extractPlatformEventMessage(event: BackboneEvent): string | null
   }
 
   return null;
+}
+
+/** 提取 canonical PlatformEvent::ContextFrameChanged 中的 Agent 实际接纳帧。 */
+export function extractContextFrameValue(event: BackboneEvent): Record<string, unknown> | null {
+  if (
+    event.type !== "platform" ||
+    event.payload.kind !== "context_frame_changed" ||
+    !isRecord(event.payload.data.frame)
+  ) {
+    return null;
+  }
+  return event.payload.data.frame;
 }
 
 /**

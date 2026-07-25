@@ -66,7 +66,7 @@ async fn reload_updates_action_handler() {
 }
 
 #[tokio::test]
-async fn protocol_method_registers_and_self_invokes() {
+async fn protocol_channel_registers_and_self_invokes() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_channel_echo_package(temp.path())
         .await
@@ -93,7 +93,7 @@ async fn protocol_method_registers_and_self_invokes() {
 }
 
 #[tokio::test]
-async fn protocol_output_schema_is_validated_by_local_host() {
+async fn channel_output_schema_is_validated_by_local_host() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir =
         write_channel_echo_package_with_output_schema(temp.path(), json!({ "type": "string" }))
@@ -349,7 +349,7 @@ async fn runtime_invoke_limits_recursive_calls() {
 }
 
 #[tokio::test]
-async fn protocol_method_invoke_reports_unloaded_method_without_host_api_substitution() {
+async fn protocol_invoke_reports_unloaded_method_without_host_api_substitution() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package(temp.path(), unloaded_channel_invoke_bundle(), false, false)
         .await
@@ -363,7 +363,7 @@ async fn protocol_method_invoke_reports_unloaded_method_without_host_api_substit
     let err = manager
         .invoke_action("local-hello.profile", json!({ "source": "channel" }))
         .await
-        .expect_err("unloaded protocol method");
+        .expect_err("unloaded channel method");
 
     assert!(err.to_string().contains(
         "extension protocol method is not loaded in current extension host: provider.api.echo"
@@ -601,7 +601,7 @@ fn activation_with_root(workspace_root: PathBuf) -> LocalExtensionHostActivation
         extension_key: "local-hello".to_string(),
         backend_id: "backend-1".to_string(),
         project_id: Some("project-1".to_string()),
-        execution_id: Some("session-1".to_string()),
+        execution_id: Some("execution-1".to_string()),
         default_workspace_root: Some(workspace_root.clone()),
         workspace_roots: vec![workspace_root],
     }
@@ -662,7 +662,7 @@ async fn write_package_with_action_contract(
         "asset_version": "0.1.0",
         "runtime_actions": [{
             "action_key": "local-hello.profile",
-            "kind": "runtime",
+            "kind": "runtime_thread",
             "description": "Read local profile",
             "input_schema": input_schema,
             "output_schema": output_schema,
@@ -707,7 +707,7 @@ async fn write_channel_echo_package_with_output_schema(
         "asset_version": "0.1.0",
         "runtime_actions": [{
             "action_key": "local-hello.profile",
-            "kind": "runtime",
+            "kind": "runtime_thread",
             "description": "Read local profile",
             "input_schema": true,
             "output_schema": true,
@@ -871,11 +871,11 @@ async fn write_consumer_package(root: &Path) -> anyhow::Result<PathBuf> {
         "asset_version": "1.0.0",
         "runtime_actions": [{
             "action_key": "consumer.call",
-            "kind": "runtime",
+            "kind": "runtime_thread",
             "description": "Call provider",
             "input_schema": true,
             "output_schema": true,
-            "permissions": ["extension.protocol.invoke:provider.api.echo"],
+            "permissions": ["extension.channel.invoke:provider.api.echo"],
         }],
         "extension_dependencies": [{
             "alias": "provider",
@@ -909,7 +909,7 @@ async fn write_runtime_provider_package(root: &Path) -> anyhow::Result<PathBuf> 
         "asset_version": "1.0.0",
         "runtime_actions": [{
             "action_key": "provider.echo",
-            "kind": "runtime",
+            "kind": "runtime_thread",
             "description": "Echo input",
             "input_schema": true,
             "output_schema": true,
@@ -953,7 +953,7 @@ async fn write_runtime_consumer_package(
         "asset_version": "1.0.0",
         "runtime_actions": [{
             "action_key": "consumer.runtime_call",
-            "kind": "runtime",
+            "kind": "runtime_thread",
             "description": "Call provider runtime action",
             "input_schema": true,
             "output_schema": true,
@@ -979,7 +979,7 @@ export default {
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: "local-hello.profile",
-      kind: "runtime",
+      kind: "runtime_thread",
       description: "Read local profile",
       async invoke() {
         return await ctx.api.local.getProfile();
@@ -998,7 +998,7 @@ export default {{
   activate(ctx) {{
     ctx.runtime.registerAction({{
       action_key: "local-hello.profile",
-      kind: "runtime",
+      kind: "runtime_thread",
       description: "Version",
       invoke() {{
         return {{ version: {version} }};
@@ -1016,7 +1016,7 @@ export default {
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: "local-hello.profile",
-      kind: "runtime",
+      kind: "runtime_thread",
       description: "Throw",
       invoke() {
         throw new Error("boom");
@@ -1034,7 +1034,7 @@ export default {
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: "local-hello.profile",
-      kind: "runtime",
+      kind: "runtime_thread",
       description: "Read local profile",
       async invoke() {
         return await ctx.api.local.getProfile();
@@ -1042,7 +1042,7 @@ export default {
     });
     ctx.runtime.registerAction({
       action_key: "local-hello.extra",
-      kind: "runtime",
+      kind: "runtime_thread",
       description: "Extra",
       invoke() {
         return {};
@@ -1069,7 +1069,7 @@ export default {
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: "local-hello.profile",
-      kind: "runtime",
+      kind: "runtime_thread",
       description: "Recursive runtime invoke",
       async invoke() {
         return await ctx.api.runtime.invoke("local-hello.profile", {});
@@ -1087,7 +1087,7 @@ export default {
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: "local-hello.profile",
-      kind: "runtime",
+      kind: "runtime_thread",
       description: "Invoke unloaded runtime action",
       async invoke(input) {
         return await ctx.api.runtime.invoke("provider.missing", input);
@@ -1105,8 +1105,8 @@ export default {
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: "local-hello.profile",
-      kind: "runtime",
-      description: "Invoke unloaded protocol method",
+      kind: "runtime_thread",
+      description: "Invoke unloaded channel method",
       async invoke(input) {
         return await ctx.api.protocols.invoke("provider.api", "echo", input);
       },
@@ -1136,7 +1136,7 @@ export default {
     });
     ctx.runtime.registerAction({
       action_key: "local-hello.profile",
-      kind: "runtime",
+      kind: "runtime_thread",
       description: "Invoke own channel",
       async invoke(input) {
         return await ctx.api.protocols.self("api").invoke("echo", input);
@@ -1177,8 +1177,8 @@ export default {
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: "consumer.call",
-      kind: "runtime",
-      description: "Call provider protocol",
+      kind: "runtime_thread",
+      description: "Call provider channel",
       async invoke(input) {
         return await ctx.api.protocols.from("provider").invoke("echo", input);
       },
@@ -1242,7 +1242,7 @@ export default {
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: "provider.echo",
-      kind: "runtime",
+      kind: "runtime_thread",
       description: "Echo input",
       invoke(input) {
         return { provider: "provider", echoed: input };
@@ -1260,7 +1260,7 @@ export default {
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: "consumer.runtime_call",
-      kind: "runtime",
+      kind: "runtime_thread",
       description: "Call provider runtime action",
       async invoke(input) {
         return await ctx.api.runtime.invoke("provider.echo", input);
@@ -1278,7 +1278,7 @@ export default {
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: "local-hello.profile",
-      kind: "runtime",
+      kind: "runtime_thread",
       description: "Use built-in host APIs",
       permissions: [
         "workspace.vfs.write",

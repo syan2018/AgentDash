@@ -17,14 +17,12 @@ export interface ExecutorSelectorProps {
   modelId: string;
   /** 推理级别，替代旧的 reasoningId */
   thinkingLevel: string;
-  permissionPolicy: string;
 
   onExecutorChange: (executor: string) => void;
   onProviderIdChange: (providerId: string) => void;
   onModelIdChange: (modelId: string) => void;
   /** 推理级别变更回调，替代旧的 onReasoningIdChange */
   onThinkingLevelChange: (thinkingLevel: string) => void;
-  onPermissionPolicyChange: (policy: string) => void;
   onReset: () => void;
   onRefetch: () => void;
 
@@ -81,12 +79,10 @@ export function ExecutorSelector({
   providerId,
   modelId,
   thinkingLevel,
-  permissionPolicy,
   onExecutorChange,
   onProviderIdChange,
   onModelIdChange,
   onThinkingLevelChange,
-  onPermissionPolicyChange,
   onReset,
   onRefetch,
   defaultExpanded = false,
@@ -105,9 +101,6 @@ export function ExecutorSelector({
     [executors, executor],
   );
 
-  // 只显示可用的执行器
-  const availableExecutors = useMemo(() => executors.filter((e) => e.available), [executors]);
-
   const displayLabel = useMemo(() => {
     if (!executor) return "选择执行器…";
     const info = executors.find((e) => e.id === executor);
@@ -115,7 +108,6 @@ export function ExecutorSelector({
   }, [executor, executors]);
 
   const modelSelector = discoveredOptions?.model_selector ?? null;
-  const permissions = modelSelector?.permissions ?? [];
 
   const providersById = useMemo(() => {
     const map = new Map<string, string>();
@@ -165,7 +157,6 @@ export function ExecutorSelector({
             {providerId && <ConfigTag label={`provider: ${providersById.get(providerId) ?? providerId}`} />}
             {modelId && <ConfigTag label={`model: ${modelId}`} />}
             {thinkingLevel && <ConfigTag label={`thinking: ${thinkingLevel}`} />}
-            {permissionPolicy && <ConfigTag label={`policy: ${permissionPolicy}`} />}
           </>
         ) : (
           <span className="text-xs text-muted-foreground">未选择执行器 · 点击展开配置</span>
@@ -252,9 +243,9 @@ export function ExecutorSelector({
               <option value="">
                 {isLoading ? "加载中…" : "选择执行器…"}
               </option>
-              {availableExecutors.map((info) => (
-                <option key={info.id} value={info.id}>
-                  {info.name}
+              {executors.map((info) => (
+                <option key={info.id} value={info.id} disabled={!info.available}>
+                  {info.name}{info.available ? "" : `（不可用：${info.unavailable_reason ?? "运行条件未满足"}）`}
                 </option>
               ))}
             </select>
@@ -384,8 +375,8 @@ export function ExecutorSelector({
                 >
                   <option value="">默认 / 自动判断</option>
                   {(modelSelector?.providers ?? []).map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name}
+                    <option key={provider.id} value={provider.id} disabled={provider.executable === false}>
+                      {provider.name}{provider.executable === false ? `（不可用：${provider.unavailable_reason ?? "运行条件未满足"}）` : ""}
                     </option>
                   ))}
                 </select>
@@ -404,24 +395,6 @@ export function ExecutorSelector({
               />
             </div>
 
-            <div>
-              <span className={FIELD_LABEL_CLASS}>权限策略</span>
-              <div className="relative">
-                <select
-                  value={permissionPolicy}
-                  onChange={(e) => onPermissionPolicyChange(e.target.value)}
-                  className={SELECT_CLASS}
-                >
-                  <option value="">默认（Auto）</option>
-                  {permissions.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              </div>
-            </div>
           </div>
         </div>
       )}

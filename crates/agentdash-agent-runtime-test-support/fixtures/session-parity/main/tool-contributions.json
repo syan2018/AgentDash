@@ -1,0 +1,22 @@
+{
+  "oracle_commit": "957fa9d60",
+  "oracle_source_path": "crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs",
+  "oracle_source_sha256": "d2e1cea154e40e8f66aa8e5ec36ef0cd57ebee78332f157a22c639a4db4bbb05",
+  "oracle_source_blob": "ec0cfdf485a231090ba538c546c9c681d6ece1fb",
+  "oracle_test_source": "crates/agentdash-executor/src/connectors/pi_agent/connector_tests.rs",
+  "oracle_test_source_sha256": "43eb493aaf08cf749ba857ce97f6fc4c55367203eb7f9c0e9792613032f5e94d",
+  "oracle_test_source_blob": "2e0edfdf25aba4dda36d1d6100fa09fa4475ba99",
+  "capture_harness_path": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+  "capture_test_function": "capture_production_tool_projection_fixture",
+  "capture_build_path": "crates/agentdash-agent-runtime-test-support/build.rs",
+  "capture_method": "The pinned-main-capture feature includes the fixed Main stream mapper, applies three exact-count typed compatibility transforms in build.rs, executes ToolExecutionStart/Update/End, hashes the uncompressed protected scenario JSON, then stores it as gzip+base64.",
+  "compatibility_transforms": [
+    "ErrorNotification.codex_error_info Option wrapping",
+    "TurnError.additional_details Option wrapping",
+    "CodexErrorInfo.http_status_code Option wrapping",
+    "deterministic capture clock for notification timestamps"
+  ],
+  "capture_sha256": "a9e23017bd2e57ed3acaf4f8441af859abfc163f63b651c1feeef4f69693fbd7",
+  "encoding": "gzip+base64",
+  "protected_scenarios": "H4sIAAAAAAAC/+Wa32+jOBDH/5WIx152+0N3OilP2+v2TpWuulXVe9pWyAUnsWoMC6ZtVOV/37ENBJoAATs1dPuSBHvGM9+Z+YQm+f7qzMkLT2PsEt+ZOQEizOVhSN1kiSl18Qv2XErm2Ft5FDtTR64xFGDYvNkCCyhepAFmPHFmr44XBgFiwqEH18MJxwmHPd6zuBRRxOdhHMyOj5311InikGOPY9/FT8r++6vDV5E4gXAcuAlHMSyDfYRWNES+OEGsiMdsowzlUkUiE4GUmHtycjrzAl88itP3DWrqiJxSTkJ2Hfq4tKqTJ6TB00Qkxb7F4SLGSSLcLeDZAkF+/6U8SrkzYymlIgLCL+Th6nWSep6wmPE4xeCNL2OM/CtxTgLXIdRPWSFFkSD5q1yF0vVMyXN+DY5O/zw7Kf7W62mhZZaUG8qAXB9Tjqriq0vlBphkh0wgrZQKDUSBrmoq0SP4coCyKyDKiOKP1BfljLbbolHsg3RLEc92v5yt1/eiIDXsmCcuiiK6ciPEvWUtP6rb3mqoLs6co6OjyV94Qdjkm7hyx8SF/yMfxJn8TSieTW4uz79eX34O/Dv25csd+xRSePYbw89q7yXzc1NjvJnDwRdLxBZSKPlEOfLJfA7r1ThgzyNhfsk+lfHLcBAXWRY5OOv7t60qNVO9ugsih6WBlESF+/ElyfLcluS0J3+si7IJ0woGxHlN8y/Wdwx+NdOpE87nCQYI/j51KAkIPDs9MzbKyY0KolbMPQPqncbuOwMvZBx8XUG0yRbXxcuhzP0o9Cs1BoP301v8It43uXgoGvHt+6qYMCOKm8fKcDQvB2xYcms3L9BCURO1xPoOanEcM9hwvoBrX1Gy3JTBi6H+oikXNHwQ9zSf48TcvUjyj4qnqRk6xjaV71y38gCFHvXfwHXpJnMJVflXtUS2JWsV9UpfnbFz8RcuS9vsiwkaE24/ein7U7y1kvYoDrk2UlxoUavi0dFxVqe3GgboxVWJgskfJwYxrgLao8kag7vZxGYku9FjeLyytg4fpDYqjA68FBoYbKuEHQw+QWhBmII6rr8C9JH6T/OzbZTIjyorquaRVDeZAl8W2C3EcoEo3fvwTp8IqVy3nQwBUX0F6NChJctdXWpPSuOQGYOY5UwqgDAqbX9q5JYbVrgMbktbEVJjV1+DOoN3R0tDIP1mo8HhqJDTkEeHianxYg5FpuW2h6UBCt6OK9Py66ELMTgFbvF+pPC1617Qqlg016a61QqotkLoPzNbrkYHp60MOk5Jxd4skMyIaxdFA5B3P/yYEdsMeJIoZH4n8EiL/SqhtloFTxGC/mwUrkYLniKDnpMh7Q8DHj1xhwEei/J2A4+e2P3Bw1HyqH5n0QacYme98pst7w6YytH9er/iYlRAqUTeodMLO3MA0RfRHjgsydgOCn1RNQHxHIOm+xFCbm3RWO2xw4jibI3+LnyMjxJF6F37Wxoa5oSejpZBYUPJPVGhp2t/Vjwjwl3kcfJE+KoVF2J3vcZy9d0RkZ/ar6lz61FhIQ+6QxsLE3Mo0FLNHgTeVbf2wddSUWPkw/gxiZCH4YtiP6VYfunUPvq7rBqk3rn9/eFQF0bPvq9zNy581GXRZS52+TAIGKNCWyTOsKTeg0lGhTcIKR8nXkwecHdQ5ZYdqlSY2AdWORRDs1R2OW5wlTPRmajczwEBpi36gCA2DNl7wEy7CAaBFkZY/ECxO88yww71yi3s06wUiaG5KnkcN8tKiejMVObmgCTTVXxAIBuC5j0wplsBgxRLGXpChKIH2oNkhD2Fj11AlhnY59gmEENDtXE4bopt8tAZKOXlgAzTlHtACLMveA+AacpvkF8RpAqidWdXZtihUrmFfXqVIjE0TyWP4+ZXKRGdecrcHJBguooPCGFD0LwHxHQr0Eax+5+D7vyHrE0AAA=="
+}

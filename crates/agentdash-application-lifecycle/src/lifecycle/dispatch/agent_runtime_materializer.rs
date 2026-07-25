@@ -6,8 +6,9 @@ use agentdash_application_ports::lifecycle_materialization::{
 };
 use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
 use agentdash_domain::workflow::{
-    AgentPolicy, AgentProcedureContract, AgentRuntimeRefs, AgentSource, ExecutionSource,
-    LifecycleAgent, LifecycleAgentRepository, LifecycleRun, OrchestrationBindingRefs,
+    AgentFrameRepository, AgentPolicy, AgentProcedureContract, AgentRuntimeRefs, AgentSource,
+    ExecutionSource, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+    OrchestrationBindingRefs,
 };
 
 use crate::lifecycle::WorkflowApplicationError;
@@ -19,6 +20,7 @@ use super::plan::{
 
 pub(crate) struct AgentRuntimeMaterializer<'a> {
     agent_repo: &'a dyn LifecycleAgentRepository,
+    frame_repo: &'a dyn AgentFrameRepository,
     frame_construction:
         Option<&'a dyn agent_frame_materialization_port::AgentRunFrameConstructionPort>,
     workflow_agent_frame_materialization:
@@ -28,6 +30,7 @@ pub(crate) struct AgentRuntimeMaterializer<'a> {
 impl<'a> AgentRuntimeMaterializer<'a> {
     pub(crate) fn new(
         agent_repo: &'a dyn LifecycleAgentRepository,
+        frame_repo: &'a dyn AgentFrameRepository,
         frame_construction: Option<
             &'a dyn agent_frame_materialization_port::AgentRunFrameConstructionPort,
         >,
@@ -37,6 +40,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
     ) -> Self {
         Self {
             agent_repo,
+            frame_repo,
             frame_construction,
             workflow_agent_frame_materialization,
         }
@@ -49,13 +53,35 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         orchestration_binding: Option<OrchestrationBindingRefs>,
     ) -> Result<MaterializedAgentRuntime, WorkflowApplicationError> {
         let agent = self.resolve_or_create_agent(run, plan).await?;
-        let frame_id = self.construct_launch_anchor_frame(&agent).await?;
+        let delivery_runtime_ref = plan
+            .stable_delivery_runtime_ref
+            .unwrap_or_else(Uuid::new_v4);
+        let frame_id = match self.frame_repo.get_latest(agent.id).await? {
+            Some(frame) if plan.stable_agent_id.is_some() => {
+                if frame.created_by_id.as_deref() != Some(delivery_runtime_ref.to_string().as_str())
+                    || plan
+                        .stable_frame_id
+                        .is_some_and(|stable_frame_id| stable_frame_id != frame.id)
+                {
+                    return Err(WorkflowApplicationError::Conflict(format!(
+                        "stable LifecycleAgent {} 已绑定不同 frame/runtime identity",
+                        agent.id
+                    )));
+                }
+                frame.id
+            }
+            _ => {
+                self.construct_launch_anchor_frame(&agent, plan, delivery_runtime_ref)
+                    .await?
+            }
+        };
 
         let runtime_refs = AgentRuntimeRefs::new(run.id, agent.id, frame_id, orchestration_binding);
         Ok(MaterializedAgentRuntime {
             agent,
             frame_id,
             runtime_refs,
+            delivery_runtime_ref,
         })
     }
 
@@ -65,26 +91,65 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         request: WorkflowAgentNodeMaterializationRequest,
     ) -> Result<WorkflowAgentNodeMaterializationResult, WorkflowApplicationError> {
         let run = context.run;
-        let agent = LifecycleAgent::new_root_for_user(
+        let mut agent = LifecycleAgent::new_root_for_user(
             run.id,
             run.project_id,
             AgentSource::WorkflowAgent,
             &run.created_by_user_id,
         )
         .with_bootstrap_status(agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE);
-        self.agent_repo.create(&agent).await?;
+        if let Some(project_agent_id) = request.project_agent_id {
+            agent = agent.with_project_agent(project_agent_id);
+        }
+        if let Some(target_agent_id) = request.target_agent_id {
+            if let Some(existing) = self.agent_repo.get(target_agent_id).await? {
+                if existing.run_id != run.id
+                    || existing.project_id != run.project_id
+                    || existing.project_agent_id != request.project_agent_id
+                    || existing.source != AgentSource::WorkflowAgent
+                {
+                    return Err(WorkflowApplicationError::Conflict(format!(
+                        "Workflow AgentCall target agent {target_agent_id} owner evidence drifted"
+                    )));
+                }
+                agent = existing;
+            } else {
+                agent.id = target_agent_id;
+                self.agent_repo.create(&agent).await?;
+            }
+        } else {
+            self.agent_repo.create(&agent).await?;
+        }
 
-        let frame_id = self
-            .materialize_workflow_agent_node_frame(
-                &run,
-                &agent,
-                request.frame_created_by_id,
-                request.orchestration_binding.clone(),
-                context.lifecycle_key,
-                context.activity,
-                request.workflow_contract,
-            )
-            .await?;
+        let delivery_runtime_ref = request.delivery_runtime_ref.unwrap_or_else(Uuid::new_v4);
+        let frame_id = match self.frame_repo.get_latest(agent.id).await? {
+            Some(frame)
+                if request.target_agent_id.is_some()
+                    && frame.created_by_id == request.frame_created_by_id =>
+            {
+                frame.id
+            }
+            Some(_) if request.target_agent_id.is_some() => {
+                return Err(WorkflowApplicationError::Conflict(format!(
+                    "Workflow AgentCall target agent {} 已绑定不同 Runtime/frame authority",
+                    agent.id
+                )));
+            }
+            _ => {
+                self.materialize_workflow_agent_node_frame(
+                    &run,
+                    &agent,
+                    delivery_runtime_ref,
+                    request.frame_created_by_id,
+                    request.orchestration_binding.clone(),
+                    context.lifecycle_key,
+                    context.activity,
+                    request.workflow_contract,
+                    request.inherited_executor_config,
+                )
+                .await?
+            }
+        };
 
         Ok(WorkflowAgentNodeMaterializationResult {
             runtime_refs: AgentRuntimeRefs::new(
@@ -93,6 +158,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                 frame_id,
                 Some(request.orchestration_binding),
             ),
+            delivery_runtime_ref,
         })
     }
 
@@ -160,6 +226,20 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                 .as_deref()
                 .unwrap_or(run.created_by_user_id.as_str()),
         );
+        if let Some(stable_agent_id) = plan.stable_agent_id {
+            if let Some(existing) = self.agent_repo.get(stable_agent_id).await? {
+                if existing.run_id != run.id
+                    || existing.project_id != plan.project_id
+                    || existing.project_agent_id != plan.project_agent_id
+                {
+                    return Err(WorkflowApplicationError::Conflict(format!(
+                        "stable LifecycleAgent {stable_agent_id} owner evidence drifted"
+                    )));
+                }
+                return Ok(existing);
+            }
+            agent.id = stable_agent_id;
+        }
         if let Some(project_agent_id) = plan.project_agent_id {
             agent = agent.with_project_agent(project_agent_id);
         }
@@ -170,6 +250,8 @@ impl<'a> AgentRuntimeMaterializer<'a> {
     async fn construct_launch_anchor_frame(
         &self,
         agent: &LifecycleAgent,
+        plan: &DispatchPlan,
+        delivery_runtime_ref: Uuid,
     ) -> Result<Uuid, WorkflowApplicationError> {
         let frame_construction = self.frame_construction.ok_or_else(|| {
             WorkflowApplicationError::Internal(
@@ -181,8 +263,11 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                 agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
                     run_id: agent.run_id,
                     agent_id: agent.id,
-                    runtime_session_id: None,
-                    created_by_id: None,
+                    target_frame_id: plan.stable_frame_id,
+                    subject_ref: plan.subject_ref.clone(),
+                    runtime_thread_id: Some(delivery_runtime_ref.to_string()),
+                    created_by_id: Some(delivery_runtime_ref.to_string()),
+                    execution_profile: plan.execution_profile_override.clone(),
                 },
             )
             .await
@@ -199,11 +284,13 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         &self,
         run: &LifecycleRun,
         agent: &LifecycleAgent,
+        delivery_runtime_ref: Uuid,
         created_by_id: Option<String>,
         orchestration_binding: OrchestrationBindingRefs,
         lifecycle_key: String,
         activity: agentdash_domain::workflow::ActivityDefinition,
         workflow_contract: Option<AgentProcedureContract>,
+        inherited_executor_config: Option<agentdash_platform_spi::AgentConfig>,
     ) -> Result<Uuid, WorkflowApplicationError> {
         let frame_materialization = self.workflow_agent_frame_materialization.ok_or_else(|| {
             WorkflowApplicationError::Internal(
@@ -217,7 +304,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                     run_id: run.id,
                     project_id: run.project_id,
                     agent_id: agent.id,
-                    runtime_session_id: None,
+                    runtime_thread_id: Some(delivery_runtime_ref.to_string()),
                     created_by_id,
                     orchestration_id: orchestration_binding.orchestration_ref,
                     node_path: orchestration_binding.node_path,
@@ -226,7 +313,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                     activity,
                     workflow_contract,
                     base_vfs: None,
-                    inherited_executor_config: None,
+                    inherited_executor_config,
                     ready_port_keys: Default::default(),
                 },
             )

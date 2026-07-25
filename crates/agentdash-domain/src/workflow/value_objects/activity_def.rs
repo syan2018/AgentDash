@@ -45,7 +45,7 @@ impl ActivityExecutorSpec {
 pub struct AgentActivityExecutorSpec {
     pub procedure_key: String,
     pub agent_reuse_policy: AgentReusePolicy,
-    pub runtime_session_policy: RuntimeSessionPolicy,
+    pub runtime_thread_policy: RuntimeThreadPolicy,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,10 +58,10 @@ pub enum AgentReusePolicy {
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum RuntimeSessionPolicy {
+pub enum RuntimeThreadPolicy {
     #[default]
     CreateNew,
-    DeliverToCurrentTrace,
+    DeliverToCurrentThread,
 }
 
 impl AgentActivityExecutorSpec {
@@ -69,7 +69,7 @@ impl AgentActivityExecutorSpec {
         Self {
             procedure_key: procedure_key.into(),
             agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
-            runtime_session_policy: RuntimeSessionPolicy::CreateNew,
+            runtime_thread_policy: RuntimeThreadPolicy::CreateNew,
         }
     }
 
@@ -77,18 +77,18 @@ impl AgentActivityExecutorSpec {
         Self {
             procedure_key: procedure_key.into(),
             agent_reuse_policy: AgentReusePolicy::ContinueCurrentAgent,
-            runtime_session_policy: RuntimeSessionPolicy::DeliverToCurrentTrace,
+            runtime_thread_policy: RuntimeThreadPolicy::DeliverToCurrentThread,
         }
     }
 
     pub fn creates_activity_agent(&self) -> bool {
         self.agent_reuse_policy == AgentReusePolicy::CreateActivityAgent
-            && self.runtime_session_policy == RuntimeSessionPolicy::CreateNew
+            && self.runtime_thread_policy == RuntimeThreadPolicy::CreateNew
     }
 
     pub fn continues_current_agent(&self) -> bool {
         self.agent_reuse_policy == AgentReusePolicy::ContinueCurrentAgent
-            && self.runtime_session_policy == RuntimeSessionPolicy::DeliverToCurrentTrace
+            && self.runtime_thread_policy == RuntimeThreadPolicy::DeliverToCurrentThread
     }
 }
 

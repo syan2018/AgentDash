@@ -9,9 +9,9 @@ mod operation_types;
 mod schema;
 mod setup_operations;
 
-pub use agentdash_application_ports::runtime_gateway_setup::{
-    MCP_PROBE_TRANSPORT_ACTION, McpProbeSetupPort, McpProbeTarget, McpProbeToolOutput,
-    McpProbeTransportInput, McpProbeTransportOutput, RuntimeGatewaySetupError,
+pub use agentdash_application_ports::extension_gateway_setup::{
+    ExtensionGatewaySetupError, MCP_PROBE_TRANSPORT_ACTION, McpProbeSetupPort, McpProbeTarget,
+    McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION,
     WORKSPACE_DISCOVER_BY_IDENTITY_ACTION, WorkspaceBrowseDirectoryEntry,
     WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,

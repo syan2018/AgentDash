@@ -23,7 +23,7 @@ function makeActivity(
       kind: "agent",
       procedure_key: "demo.implement",
       agent_reuse_policy: "create_activity_agent",
-      runtime_session_policy: "create_new",
+      runtime_thread_policy: "create_new",
     },
     output_ports: [{ key: "done", description: "完成", gate_strategy: "existence" }],
     input_ports: [],

@@ -5,7 +5,7 @@ use agentdash_domain::shared_library::{
     LibraryAsset, LibraryAssetListFilter, LibraryAssetRepository, LibraryAssetScope,
     LibraryAssetSource, LibraryAssetType,
 };
-use agentdash_spi::{MarketplaceAssetListing, MarketplaceFetchedAsset};
+use agentdash_platform_spi::{MarketplaceAssetListing, MarketplaceFetchedAsset};
 
 use super::seed_digest;
 
@@ -310,7 +310,7 @@ mod tests {
     use serde_json::json;
 
     use agentdash_domain::shared_library::{LibraryAssetPayload, SkillTemplatePayload};
-    use agentdash_spi::MarketplaceFetchedAssetPayload;
+    use agentdash_platform_spi::MarketplaceFetchedAssetPayload;
 
     use super::*;
 

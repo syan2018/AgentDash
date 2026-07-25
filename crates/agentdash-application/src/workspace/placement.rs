@@ -718,7 +718,7 @@ mod workspace_placement_tests {
     use agentdash_domain::backend::{
         BackendConfig, BackendRepository, BackendShareScopeKind, BackendType, BackendVisibility,
         BackendWorkspaceInventory, BackendWorkspaceInventoryRepository, ProjectBackendAccess,
-        ProjectBackendAccessRepository, ProjectBackendAccessStatus, ViewConfig,
+        ProjectBackendAccessRepository, ProjectBackendAccessStatus,
     };
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workspace::{
@@ -1350,14 +1350,6 @@ mod workspace_placement_tests {
 
         async fn remove_backend(&self, id: &str) -> Result<(), DomainError> {
             self.backends.lock().await.remove(id);
-            Ok(())
-        }
-
-        async fn list_views(&self) -> Result<Vec<ViewConfig>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn save_view(&self, _view: &ViewConfig) -> Result<(), DomainError> {
             Ok(())
         }
     }

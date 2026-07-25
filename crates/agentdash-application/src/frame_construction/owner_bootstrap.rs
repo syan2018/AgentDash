@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::common::{AgentConfig, ProjectVfsMountExposureGrant};
@@ -12,8 +13,8 @@ use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::CapabilityScopeCtx;
-use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, Vfs};
+use agentdash_platform_spi::CapabilityScopeCtx;
+use agentdash_platform_spi::{CapabilityState, SessionContextBundle, ToolCapability, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::AgentFrameBuilder;
@@ -23,8 +24,8 @@ use crate::capability::{
     load_available_presets, tool_directives_from_active_workflow,
 };
 use crate::context::{
-    AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
-    build_session_context_bundle, emit_bundle_fragments, resolve_workspace_declared_sources,
+    ContextBuildPhase, Contribution, SessionContextConfig, build_session_context_bundle,
+    resolve_workspace_declared_sources,
 };
 use crate::mcp_preset::McpRuntimeBindingContext;
 use crate::platform_config::PlatformConfig;
@@ -114,20 +115,16 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     pub agent_tool_directives: Vec<ToolCapabilityDirective>,
     pub agent_skill_asset_keys: Vec<String>,
     pub project_vfs_mount_exposure_grants: Vec<ProjectVfsMountExposureGrant>,
-    pub request_mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
+    pub request_mcp_servers: Vec<agentdash_platform_spi::RuntimeMcpServer>,
     pub existing_vfs: Option<Vfs>,
     /// ProjectAgent preset 声明的 workspace module 可见性白名单。
     ///
     /// `None` / `Some([])` 代表全集可见，非空列表代表 allowlist。
-    pub visible_workspace_module_refs: Option<Vec<String>>,
+    pub workspace_module_policy_refs: Option<Vec<String>>,
     pub active_workflow: Option<ports_lifecycle_surface::ActiveWorkflowProjection>,
     pub launch_path: OwnerPromptLaunchPath,
-    /// Runtime session ID — used for execution anchor lookup (non-audit).
-    pub audit_session_key: Option<String>,
-    /// AgentRun run_id for audit bus keying.
-    pub audit_run_id: Option<String>,
-    /// AgentRun agent_id for audit bus keying.
-    pub audit_agent_id: Option<String>,
+    pub lifecycle_address: ports_agent_run_surface::AgentRunRuntimeAddress,
+    pub lifecycle_message_stream: ports_lifecycle_surface::MessageStreamProjectionRef,
     pub caller_agent_id: Option<Uuid>,
 }
 
@@ -141,13 +138,6 @@ pub(crate) enum OwnerPromptLaunchPath {
     Plain,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OwnerAuditLaunchPath {
-    Bootstrap,
-    Rehydrate,
-    Plain,
-}
-
 pub(crate) struct OwnerBootstrapComposer<'a> {
     pub vfs_service: &'a VfsService,
     pub availability: &'a dyn BackendAvailability,
@@ -155,7 +145,6 @@ pub(crate) struct OwnerBootstrapComposer<'a> {
     pub platform_config: &'a PlatformConfig,
     pub lifecycle_surface_projection:
         &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
-    pub audit_bus: Option<SharedContextAuditBus>,
 }
 
 impl<'a> OwnerBootstrapComposer<'a> {
@@ -172,13 +161,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             repos,
             platform_config,
             lifecycle_surface_projection,
-            audit_bus: None,
         }
-    }
-
-    pub(crate) fn with_audit_bus(mut self, bus: SharedContextAuditBus) -> Self {
-        self.audit_bus = Some(bus);
-        self
     }
 
     pub(crate) async fn compose_owner_bootstrap_to_frame(
@@ -216,7 +199,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         let backend_bound_surface = vfs_has_runtime_backend_anchor(vfs.as_ref());
         apply_owner_backend_surface_capabilities(
             &mut cap_output,
-            spec.visible_workspace_module_refs.as_deref(),
+            spec.workspace_module_policy_refs.as_deref(),
             backend_bound_surface,
         );
         let runtime_mcp_servers = normalize_owner_bootstrap_mcp_projection(
@@ -235,7 +218,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
                 subject_context_contributions,
             )
             .await?;
-        let audit_launch_path = owner_audit_launch_path(&spec.launch_path);
         let (user_input, effective_bundle) = match spec.launch_path {
             OwnerPromptLaunchPath::OwnerBootstrap => {
                 (spec.user_input.clone(), Some(context_bundle))
@@ -255,18 +237,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
             }
             OwnerPromptLaunchPath::Plain => (spec.user_input.clone(), None),
         };
-        if let (Some(bundle), Some(trigger)) = (
-            effective_bundle.as_ref(),
-            resolve_owner_audit_trigger(audit_launch_path, effective_bundle.is_some()),
-        ) {
-            self.audit_bundle(
-                bundle,
-                spec.audit_run_id.as_deref(),
-                spec.audit_agent_id.as_deref(),
-                trigger,
-            );
-        }
-
         let workspace_defaults = match &spec.owner {
             OwnerScope::Story { workspace, .. } => workspace.cloned(),
             OwnerScope::Project { workspace, .. } => spec
@@ -349,79 +319,59 @@ impl<'a> OwnerBootstrapComposer<'a> {
         }
 
         let vfs = if matches!(spec.owner, OwnerScope::Project { .. }) {
-            let runtime_refs = match spec.audit_session_key.as_deref() {
-                Some(session_id) => {
-                    super::resolve_runtime_surface_refs(self.repos, session_id).await?
-                }
-                None => None,
+            let builtin_skills =
+                ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::Project(vec![
+                    ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
+                    ports_lifecycle_surface::BuiltinLifecycleSkill::WorkspaceModuleSystem,
+                ]);
+            let surface = if let Some(workflow) = active_workflow {
+                let node_projection = ports_lifecycle_surface::OrchestrationNodeProjectionInput {
+                    run_id: workflow.run.id,
+                    orchestration_id: workflow.orchestration_id,
+                    node_path: workflow.node_path.clone(),
+                    lifecycle_key: workflow.lifecycle_key.clone(),
+                    attempt: workflow.active_attempt.attempt,
+                    writable_port_keys:
+                        ports_lifecycle_surface::writable_port_keys_for_active_workflow(workflow),
+                };
+                self.lifecycle_surface_projection
+                    .project_lifecycle_surface(
+                        ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
+                            base_vfs: vfs,
+                            address: spec.lifecycle_address.clone(),
+                            message_stream: Some(spec.lifecycle_message_stream.clone()),
+                            project_id,
+                            mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
+                            explicit_skill_asset_keys: spec.agent_skill_asset_keys.clone(),
+                            builtin_skills,
+                            node_evidence: Some(node_projection.evidence_ref()),
+                            node_projection: Some(node_projection),
+                        },
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
+            } else {
+                self.lifecycle_surface_projection
+                    .project_lifecycle_surface(
+                        ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
+                            base_vfs: vfs,
+                            address: spec.lifecycle_address.clone(),
+                            message_stream: Some(spec.lifecycle_message_stream.clone()),
+                            project_id,
+                            mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
+                            explicit_skill_asset_keys: spec.agent_skill_asset_keys.clone(),
+                            builtin_skills,
+                            node_evidence: None,
+                            node_projection: None,
+                        },
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
             };
-            match runtime_refs {
-                Some((address, message_stream)) => {
-                    let builtin_skills =
-                        ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(
-                            vec![
-                                ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
-                                ports_lifecycle_surface::BuiltinLifecycleSkill::WorkspaceModuleSystem,
-                            ],
-                        );
-                    let surface = if let Some(workflow) = active_workflow {
-                        let node_projection =
-                            ports_lifecycle_surface::OrchestrationNodeProjectionInput {
-                                run_id: workflow.run.id,
-                                orchestration_id: workflow.orchestration_id,
-                                node_path: workflow.node_path.clone(),
-                                lifecycle_key: workflow.lifecycle_key.clone(),
-                                attempt: workflow.active_attempt.attempt,
-                                writable_port_keys:
-                                    ports_lifecycle_surface::writable_port_keys_for_active_workflow(
-                                        workflow,
-                                    ),
-                            };
-                        self.lifecycle_surface_projection
-                            .project_lifecycle_surface(
-                                ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
-                                    base_vfs: vfs,
-                                    address,
-                                    message_stream: Some(message_stream),
-                                    project_id,
-                                    mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
-                                    explicit_skill_asset_keys: spec.agent_skill_asset_keys.clone(),
-                                    builtin_skills,
-                                    node_evidence: Some(node_projection.evidence_ref()),
-                                    node_projection: Some(node_projection),
-                                },
-                            )
-                            .await
-                            .map_err(|error| error.to_string())?
-                    } else {
-                        self.lifecycle_surface_projection
-                            .project_lifecycle_surface(
-                                ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
-                                    base_vfs: vfs,
-                                    address,
-                                    message_stream: Some(message_stream),
-                                    project_id,
-                                    mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
-                                    explicit_skill_asset_keys: spec.agent_skill_asset_keys.clone(),
-                                    builtin_skills,
-                                    node_evidence: None,
-                                    node_projection: None,
-                                },
-                            )
-                            .await
-                            .map_err(|error| error.to_string())?
-                    };
-                    Some(surface.vfs)
-                }
-                None => ports_lifecycle_surface::project_active_workflow_lifecycle_vfs(
-                    vfs,
-                    active_workflow,
-                ),
-            }
+            Some(surface.vfs)
         } else {
             ports_lifecycle_surface::project_active_workflow_lifecycle_vfs(vfs, active_workflow)
         };
-
         Ok(vfs)
     }
 
@@ -503,7 +453,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         &self,
         spec: &OwnerBootstrapSpec<'_>,
         vfs: Option<&Vfs>,
-        runtime_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
+        runtime_mcp_servers: &[agentdash_platform_spi::RuntimeMcpServer],
         subject_context_contributions: Vec<Contribution>,
     ) -> Result<SessionContextBundle, String> {
         let runtime_mcp_servers = runtime_mcp_servers_to_summaries(runtime_mcp_servers);
@@ -543,54 +493,16 @@ impl<'a> OwnerBootstrapComposer<'a> {
             SessionContextConfig {
                 session_id: Uuid::new_v4(),
                 phase: owner_scope_phase(&spec.owner),
-                default_scope: agentdash_spi::ContextFragment::default_scope(),
+                default_scope: agentdash_platform_spi::ContextFragment::default_scope(),
             },
             contributions,
         ))
-    }
-
-    fn audit_bundle(
-        &self,
-        bundle: &SessionContextBundle,
-        run_id: Option<&str>,
-        agent_id: Option<&str>,
-        trigger: AuditTrigger,
-    ) {
-        let (Some(bus), Some(run_id), Some(agent_id)) =
-            (self.audit_bus.as_deref(), run_id, agent_id)
-        else {
-            return;
-        };
-        emit_bundle_fragments(bus, bundle, run_id, agent_id, trigger);
-    }
-}
-
-fn owner_audit_launch_path(launch_path: &OwnerPromptLaunchPath) -> OwnerAuditLaunchPath {
-    match launch_path {
-        OwnerPromptLaunchPath::OwnerBootstrap => OwnerAuditLaunchPath::Bootstrap,
-        OwnerPromptLaunchPath::RepositoryRehydrate { .. } => OwnerAuditLaunchPath::Rehydrate,
-        OwnerPromptLaunchPath::Plain => OwnerAuditLaunchPath::Plain,
-    }
-}
-
-fn resolve_owner_audit_trigger(
-    launch_path: OwnerAuditLaunchPath,
-    has_effective_bundle: bool,
-) -> Option<AuditTrigger> {
-    if !has_effective_bundle {
-        return None;
-    }
-
-    match launch_path {
-        OwnerAuditLaunchPath::Bootstrap => Some(AuditTrigger::SessionBootstrap),
-        OwnerAuditLaunchPath::Rehydrate => Some(AuditTrigger::ComposerRebuild),
-        OwnerAuditLaunchPath::Plain => None,
     }
 }
 
 fn build_owner_context_contribution(
     owner: &OwnerScope<'_>,
-    workspace_source_fragments: Vec<agentdash_spi::ContextFragment>,
+    workspace_source_fragments: Vec<agentdash_platform_spi::ContextFragment>,
     workspace_source_warnings: Vec<String>,
 ) -> Contribution {
     match owner {
@@ -688,7 +600,7 @@ async fn load_companion_candidates(
     repos: &RepositorySet,
     project_id: Uuid,
     caller_agent_id: Option<Uuid>,
-) -> Result<Vec<agentdash_spi::context::capability::CompanionAgentEntry>, String> {
+) -> Result<Vec<agentdash_platform_spi::context::capability::CompanionAgentEntry>, String> {
     let agents = match repos.project_agent_repo.list_by_project(project_id).await {
         Ok(agents) => agents,
         Err(_) => return Ok(Vec::new()),
@@ -703,7 +615,7 @@ async fn load_companion_candidates(
 fn build_companion_roster_from_project_agents(
     agents: &[ProjectAgent],
     caller_agent_id: Option<Uuid>,
-) -> Result<Vec<agentdash_spi::context::capability::CompanionAgentEntry>, String> {
+) -> Result<Vec<agentdash_platform_spi::context::capability::CompanionAgentEntry>, String> {
     let caller_extra: BTreeSet<String> = if let Some(caller_id) = caller_agent_id {
         if let Some(agent) = agents.iter().find(|item| item.id == caller_id) {
             let preset = agent.preset_config().map_err(|error| error.to_string())?;
@@ -743,11 +655,13 @@ fn build_companion_roster_from_project_agents(
             .filter(|s| !s.is_empty())
             .map(String::from)
             .unwrap_or_else(|| agent_key.clone());
-        entries.push(agentdash_spi::context::capability::CompanionAgentEntry {
-            name: agent_key,
-            executor: agent.agent_type.clone(),
-            display_name: display,
-        });
+        entries.push(
+            agentdash_platform_spi::context::capability::CompanionAgentEntry {
+                name: agent_key,
+                executor: agent.agent_type.clone(),
+                display_name: display,
+            },
+        );
     }
     Ok(entries)
 }
@@ -811,9 +725,9 @@ async fn resolve_owner_workflow_tool_directives(
 
 fn normalize_owner_bootstrap_mcp_projection(
     capability_state: &mut CapabilityState,
-    request_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
+    request_mcp_servers: &[agentdash_platform_spi::RuntimeMcpServer],
     include_backend_bound_mcp: bool,
-) -> Vec<agentdash_spi::RuntimeMcpServer> {
+) -> Vec<agentdash_platform_spi::RuntimeMcpServer> {
     let mut servers = Vec::new();
     servers.extend(
         request_mcp_servers
@@ -864,32 +778,32 @@ fn normalize_owner_bootstrap_mcp_projection(
 
 fn apply_owner_backend_surface_capabilities(
     capability_state: &mut CapabilityState,
-    visible_workspace_module_refs: Option<&[String]>,
+    workspace_module_policy_refs: Option<&[String]>,
     include_backend_bound_surface: bool,
 ) {
     if include_backend_bound_surface {
         capability_state.workspace_module =
             crate::agent_run::runtime_capability::project_workspace_module_dimension(
-                visible_workspace_module_refs,
+                workspace_module_policy_refs,
             );
         return;
     }
 
-    capability_state.workspace_module = agentdash_spi::WorkspaceModuleDimension::default();
+    capability_state.workspace_module = agentdash_platform_spi::WorkspaceModuleDimension::default();
     capability_state
         .tool
         .capabilities
         .remove(&ToolCapability::new(
-            agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE,
+            agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE,
         ));
     capability_state
         .tool
         .enabled_clusters
-        .remove(&agentdash_spi::ToolCluster::WorkspaceModule);
+        .remove(&agentdash_platform_spi::ToolCluster::WorkspaceModule);
     capability_state
         .tool
         .tool_policy
-        .remove(agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE);
+        .remove(agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE);
 }
 
 fn vfs_has_runtime_backend_anchor(vfs: Option<&Vfs>) -> bool {
@@ -897,22 +811,24 @@ fn vfs_has_runtime_backend_anchor(vfs: Option<&Vfs>) -> bool {
         .is_some_and(|mount| !mount.backend_id.trim().is_empty())
 }
 
-fn normalize_runtime_mcp_servers(servers: &mut Vec<agentdash_spi::RuntimeMcpServer>) {
+fn normalize_runtime_mcp_servers(servers: &mut Vec<agentdash_platform_spi::RuntimeMcpServer>) {
     let mut seen = BTreeSet::<String>::new();
     servers.retain(|server| seen.insert(server.name.clone()));
 }
 
-fn capability_for_runtime_mcp_server(server: &agentdash_spi::RuntimeMcpServer) -> ToolCapability {
+fn capability_for_runtime_mcp_server(
+    server: &agentdash_platform_spi::RuntimeMcpServer,
+) -> ToolCapability {
     match agent_facing_mcp_server_name(&server.name).as_str() {
-        "agentdash-relay-tools" => {
-            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_RELAY_MANAGEMENT)
-        }
-        "agentdash-story-tools" => {
-            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_STORY_MANAGEMENT)
-        }
-        "agentdash-workflow-tools" => {
-            ToolCapability::new(agentdash_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT)
-        }
+        "agentdash-relay-tools" => ToolCapability::new(
+            agentdash_platform_spi::platform::tool_capability::CAP_RELAY_MANAGEMENT,
+        ),
+        "agentdash-story-tools" => ToolCapability::new(
+            agentdash_platform_spi::platform::tool_capability::CAP_STORY_MANAGEMENT,
+        ),
+        "agentdash-workflow-tools" => ToolCapability::new(
+            agentdash_platform_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT,
+        ),
         custom => ToolCapability::custom_mcp(custom),
     }
 }
@@ -936,10 +852,10 @@ fn agent_facing_mcp_server_name(server_name: &str) -> String {
 mod tests {
     use super::*;
 
-    fn runtime_mcp_server(name: &str, url: &str) -> agentdash_spi::RuntimeMcpServer {
-        agentdash_spi::RuntimeMcpServer {
+    fn runtime_mcp_server(name: &str, url: &str) -> agentdash_platform_spi::RuntimeMcpServer {
+        agentdash_platform_spi::RuntimeMcpServer {
             name: name.to_string(),
-            transport: agentdash_spi::McpTransportConfig::Http {
+            transport: agentdash_platform_spi::McpTransportConfig::Http {
                 url: url.to_string(),
                 headers: vec![],
             },
@@ -963,9 +879,9 @@ mod tests {
         agent
     }
 
-    fn server_url(server: &agentdash_spi::RuntimeMcpServer) -> &str {
+    fn server_url(server: &agentdash_platform_spi::RuntimeMcpServer) -> &str {
         match &server.transport {
-            agentdash_spi::McpTransportConfig::Http { url, .. } => url.as_str(),
+            agentdash_platform_spi::McpTransportConfig::Http { url, .. } => url.as_str(),
             _ => "",
         }
     }
@@ -1086,7 +1002,7 @@ mod tests {
                 .tool
                 .capabilities
                 .contains(&ToolCapability::new(
-                    agentdash_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT
+                    agentdash_platform_spi::platform::tool_capability::CAP_WORKFLOW_MANAGEMENT
                 ))
         );
         assert!(
@@ -1139,15 +1055,15 @@ mod tests {
     #[test]
     fn owner_bootstrap_backend_surface_removes_workspace_module_without_backend_anchor() {
         let mut capability_state =
-            CapabilityState::from_clusters([agentdash_spi::ToolCluster::WorkspaceModule]);
+            CapabilityState::from_clusters([agentdash_platform_spi::ToolCluster::WorkspaceModule]);
         capability_state
             .tool
             .capabilities
             .insert(ToolCapability::new(
-                agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE,
+                agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE,
             ));
         capability_state.tool.tool_policy.insert(
-            agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE.to_string(),
+            agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE.to_string(),
             Default::default(),
         );
 
@@ -1159,63 +1075,26 @@ mod tests {
 
         assert_eq!(
             capability_state.workspace_module,
-            agentdash_spi::WorkspaceModuleDimension::default()
+            agentdash_platform_spi::WorkspaceModuleDimension::default()
         );
         assert!(
             !capability_state
                 .tool
                 .enabled_clusters
-                .contains(&agentdash_spi::ToolCluster::WorkspaceModule)
+                .contains(&agentdash_platform_spi::ToolCluster::WorkspaceModule)
         );
         assert!(
             !capability_state
                 .tool
                 .capabilities
                 .contains(&ToolCapability::new(
-                    agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE
+                    agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE
                 ))
         );
         assert!(
-            !capability_state
-                .tool
-                .tool_policy
-                .contains_key(agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE)
-        );
-    }
-
-    #[test]
-    fn owner_bootstrap_audit_trigger_requires_effective_bundle() {
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Bootstrap, true),
-            Some(AuditTrigger::SessionBootstrap),
-        );
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Bootstrap, false),
-            None,
-        );
-    }
-
-    #[test]
-    fn owner_rehydrate_audit_trigger_maps_to_composer_rebuild() {
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Rehydrate, true),
-            Some(AuditTrigger::ComposerRebuild),
-        );
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Rehydrate, false),
-            None,
-        );
-    }
-
-    #[test]
-    fn owner_plain_launch_path_never_emits_owner_audit() {
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Plain, true),
-            None,
-        );
-        assert_eq!(
-            resolve_owner_audit_trigger(OwnerAuditLaunchPath::Plain, false),
-            None,
+            !capability_state.tool.tool_policy.contains_key(
+                agentdash_platform_spi::platform::tool_capability::CAP_WORKSPACE_MODULE
+            )
         );
     }
 }

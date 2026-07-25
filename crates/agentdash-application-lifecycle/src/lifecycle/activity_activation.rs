@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use agentdash_domain::common::Mount;
 use agentdash_domain::workflow::MountDirective;
-use agentdash_spi::{CapabilityState, RuntimeMcpServer, Vfs};
+use agentdash_platform_spi::{CapabilityState, RuntimeMcpServer, Vfs};
 
 #[derive(Debug, Clone, Default)]
 pub struct KickoffPromptFragment {

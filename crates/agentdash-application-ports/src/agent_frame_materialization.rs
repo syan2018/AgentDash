@@ -1,3 +1,8 @@
+use std::sync::{Arc, OnceLock};
+
+use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_domain::agent_run_target::AgentRunTarget;
+use agentdash_domain::workflow::SubjectRef;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -21,11 +26,14 @@ pub enum FrameConstructionCommand {
     DispatchLaunchAnchor {
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: Option<String>,
+        target_frame_id: Option<Uuid>,
+        subject_ref: Option<SubjectRef>,
+        runtime_thread_id: Option<String>,
         created_by_id: Option<String>,
+        execution_profile: Option<serde_json::Value>,
     },
     CommitAcceptedLaunch {
-        runtime_session_id: String,
+        runtime_thread_id: String,
         turn_id: String,
     },
 }
@@ -40,13 +48,20 @@ impl FrameConstructionCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RuntimeSurfaceUpdateRequest {
-    PermissionGrantApplied {
-        grant_id: Uuid,
-    },
-    PermissionGrantRevoked {
-        grant_id: Uuid,
-    },
+pub struct RuntimeSurfaceUpdateRequest {
+    pub target: AgentRunTarget,
+    pub runtime_thread_id: RuntimeThreadId,
+    pub change: RuntimeSurfaceChange,
+}
+
+impl RuntimeSurfaceUpdateRequest {
+    pub fn surface_kind(&self) -> RuntimeSurfaceKind {
+        self.change.surface_kind()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeSurfaceChange {
     McpPresetChanged {
         preset_key: String,
     },
@@ -68,12 +83,9 @@ pub enum RuntimeSurfaceUpdateRequest {
     },
 }
 
-impl RuntimeSurfaceUpdateRequest {
+impl RuntimeSurfaceChange {
     pub fn surface_kind(&self) -> RuntimeSurfaceKind {
         match self {
-            Self::PermissionGrantApplied { .. } | Self::PermissionGrantRevoked { .. } => {
-                RuntimeSurfaceKind::Permission
-            }
             Self::McpPresetChanged { .. } => RuntimeSurfaceKind::Mcp,
             Self::ProjectVfsMountChanged { .. } => RuntimeSurfaceKind::Vfs,
             Self::WorkspaceModuleVisibilityChanged { .. } => RuntimeSurfaceKind::WorkspaceModule,
@@ -85,7 +97,6 @@ impl RuntimeSurfaceUpdateRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeSurfaceKind {
-    Permission,
     Mcp,
     Vfs,
     WorkspaceModule,
@@ -105,7 +116,7 @@ pub struct AgentRunFrameSurfaceCommandOutcome {
     pub role: AgentFrameWriteRole,
     pub frame_id: Option<Uuid>,
     pub agent_id: Option<Uuid>,
-    pub runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     pub wrote_frame_revision: bool,
     pub adopted_active_runtime: bool,
     pub diagnostics: Vec<String>,
@@ -117,7 +128,7 @@ impl AgentRunFrameSurfaceCommandOutcome {
             role,
             frame_id: None,
             agent_id: None,
-            runtime_session_id: None,
+            runtime_thread_id: None,
             wrote_frame_revision: false,
             adopted_active_runtime: false,
             diagnostics: Vec::new(),
@@ -146,6 +157,48 @@ pub trait AgentRunFrameConstructionPort: Send + Sync {
         &self,
         command: FrameConstructionCommand,
     ) -> Result<AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError>;
+}
+
+/// Composition-time handle for the canonical frame-construction implementation.
+///
+/// Repository bootstrap precedes VFS bootstrap, while ProjectAgent owner surface
+/// materialization requires the fully assembled VFS service. The composition root
+/// injects clones of this handle into lifecycle services, then binds the single
+/// application-owned implementation before the application state becomes visible.
+#[derive(Clone, Default)]
+pub struct SharedAgentRunFrameConstructionHandle {
+    inner: Arc<OnceLock<Arc<dyn AgentRunFrameConstructionPort>>>,
+}
+
+impl SharedAgentRunFrameConstructionHandle {
+    pub fn set(
+        &self,
+        frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    ) -> Result<(), Arc<dyn AgentRunFrameConstructionPort>> {
+        self.inner.set(frame_construction)
+    }
+
+    pub fn is_bound(&self) -> bool {
+        self.inner.get().is_some()
+    }
+}
+
+#[async_trait]
+impl AgentRunFrameConstructionPort for SharedAgentRunFrameConstructionHandle {
+    async fn execute_frame_construction_command(
+        &self,
+        command: FrameConstructionCommand,
+    ) -> Result<AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError> {
+        let frame_construction =
+            self.inner
+                .get()
+                .ok_or_else(|| AgentRunFrameSurfaceError::ConstructionRejected {
+                    message: "AgentRun frame-construction composition 尚未完成绑定".to_string(),
+                })?;
+        frame_construction
+            .execute_frame_construction_command(command)
+            .await
+    }
 }
 
 #[async_trait]

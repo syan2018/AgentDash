@@ -1,7 +1,6 @@
-﻿import type {
+import type {
   ConversationCommandSetView,
   ConversationCommandView,
-  ConversationMailboxSnapshotView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
@@ -9,22 +8,16 @@ import type { ProjectAgentSummary } from "../../../types";
 import type {
   SessionChatCommandModel,
   SessionChatCommandState,
-  SessionChatMailboxModel,
   SessionChatModel,
   SessionChatModelConfig,
   SessionChatSubmitIntent,
   SessionChatViewIntents,
 } from "../../session";
 import type { ExecutorConfig } from "../../../services/executor";
-import type {
-  RuntimeCommandKind,
-  RuntimeSnapshot,
-} from "../../../generated/agent-runtime-contracts";
 
 // Adapter boundary to the reusable SessionChatView shell; AgentRun command authority stays in the conversation snapshot.
 export type AgentRunChatCommandModel = SessionChatCommandModel;
 export type AgentRunChatCommandState = SessionChatCommandState;
-export type AgentRunChatMailboxModel = SessionChatMailboxModel;
 export type AgentRunChatModel = SessionChatModel;
 export type AgentRunChatModelConfig = SessionChatModelConfig;
 export type AgentRunChatSubmitIntent = SessionChatSubmitIntent;
@@ -41,7 +34,6 @@ export interface LocalDraftStartAction {
   requires_input: true;
   executor_config_policy: "required";
 }
-
 export type AgentRunConversationCommand = ConversationCommandView | LocalDraftStartAction;
 
 export interface AgentRunConversationCommandState {
@@ -83,7 +75,6 @@ function baseExecutorConfigForDraft(
     model_id: optionalTrimmed(agent?.executor.model_id),
     agent_id: optionalTrimmed(agent?.executor.agent_id),
     thinking_level: optionalTrimmed(agent?.executor.thinking_level),
-    permission_policy: optionalTrimmed(agent?.executor.permission_policy),
     source: "project_agent_preset",
   };
 }
@@ -103,7 +94,6 @@ function effectiveExecutorConfigForDraft(input: {
     model_id: optionalTrimmed(override.model_id) ?? base?.model_id,
     agent_id: optionalTrimmed(override.agent_id) ?? base?.agent_id,
     thinking_level: optionalTrimmed(override.thinking_level) ?? base?.thinking_level,
-    permission_policy: optionalTrimmed(override.permission_policy) ?? base?.permission_policy,
     source: "user_override",
   };
 }
@@ -127,7 +117,6 @@ export function executorConfigFromConversationModel(
     model_id: effective.model_id,
     agent_id: effective.agent_id,
     thinking_level: effective.thinking_level as ExecutorConfig["thinking_level"],
-    permission_policy: effective.permission_policy as ExecutorConfig["permission_policy"],
   };
 }
 
@@ -236,9 +225,11 @@ export function buildAgentRunConversationCommandState(input: {
   } | null | undefined;
   workspaceStateStatus: string;
   workspaceStateError: string | null;
-  runtimeSnapshot?: RuntimeSnapshot | null;
 }): AgentRunConversationCommandState {
-  if (input.workspaceStateStatus !== "ready") {
+  const canUseCommittedConversation =
+    input.workspaceStateStatus === "ready"
+    || (input.workspaceStateStatus === "refreshing" && input.conversation != null);
+  if (!canUseCommittedConversation) {
     const reason = input.workspaceStateError ?? "当前 AgentRun 工作台状态正在刷新。";
     return {
       mode: "runtime",
@@ -268,46 +259,14 @@ export function buildAgentRunConversationCommandState(input: {
     };
   }
 
-  const runtimeSnapshot = input.runtimeSnapshot ?? null;
-  const commands = {
-    ...input.conversation.commands,
-    commands: input.conversation.commands.commands.map((command) => {
-      const runtimeKind = runtimeCommandKind(command.kind, runtimeSnapshot);
-      if (!runtimeKind) return command;
-      const availability = runtimeSnapshot?.command_availability[runtimeKind];
-      const available = availability?.status === "available";
-      return {
-        ...command,
-        enabled: command.enabled && available,
-        unavailable_reason: available
-          ? command.unavailable_reason
-          : availability?.status === "unavailable"
-            ? availability.reason
-            : "Agent Runtime snapshot 尚未声明该命令可用。",
-        disabled_code: available ? command.disabled_code : "runtime_command_unavailable",
-      };
-    }),
-  };
   return {
     mode: "runtime",
-    executionStatus: runtimeSnapshot?.active_turn_id ? "running_active" : "ready",
-    activeTurnId: runtimeSnapshot?.active_turn_id ?? undefined,
-    commands,
+    executionStatus: input.conversation.execution.status,
+    activeTurnId: input.conversation.execution.active_turn_id,
+    commands: input.conversation.commands,
     modelConfig: input.conversation.model_config,
     helperText: input.conversation.execution.reason,
   };
-}
-
-function runtimeCommandKind(
-  command: ConversationCommandView["kind"],
-  snapshot: RuntimeSnapshot | null,
-): RuntimeCommandKind | null {
-  if (command === "submit_message") {
-    return snapshot?.active_turn_id ? "turn_steer" : "turn_start";
-  }
-  if (command === "cancel") return "turn_interrupt";
-  if (command === "compact_context") return "context_compact";
-  return null;
 }
 
 function normalizeExecutorConfigPolicy(value: string): AgentRunChatCommandModel["executor_config_policy"] {
@@ -349,13 +308,6 @@ export function conversationCommandByKind(
   return commands.find((command) => command.kind === kind);
 }
 
-export function mailboxRowCommand(
-  commands: ConversationCommandView[],
-  kind: ConversationCommandView["kind"],
-): ConversationCommandView | undefined {
-  return commands.find((command) => command.kind === kind && command.placement.includes("mailbox_row"));
-}
-
 export function projectAgentRunChatCommandState(
   commandState: AgentRunConversationCommandState,
 ): AgentRunChatCommandState {
@@ -382,23 +334,5 @@ export function projectAgentRunChatCommandState(
     cancelCommand: cancelCommand ? projectCommand(cancelCommand) : undefined,
     modelConfig: projectModelConfig(commandState.modelConfig),
     helperText: commandState.helperText,
-  };
-}
-
-export function projectAgentRunChatMailboxModel(
-  _commandState: AgentRunConversationCommandState,
-  mailbox: ConversationMailboxSnapshotView | null | undefined,
-): AgentRunChatMailboxModel {
-  return {
-    messages: mailbox?.messages ?? [],
-    waiting_items: mailbox?.waiting_items ?? [],
-    state: mailbox?.state,
-    paused: Boolean(mailbox?.paused || mailbox?.state?.paused),
-    user_attention: Boolean(mailbox?.user_attention),
-    hide_system_steer_messages: Boolean(mailbox?.state?.hide_system_steer_messages),
-    can_resume: false,
-    resumeAction: undefined,
-    promoteAction: undefined,
-    deleteAction: undefined,
   };
 }

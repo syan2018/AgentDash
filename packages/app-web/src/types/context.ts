@@ -66,7 +66,7 @@ export interface TaskSessionToolVisibilitySummary {
   mcp_servers: RuntimeMcpServerSummary[];
 }
 
-export interface TaskSessionRuntimePolicySummary {
+export interface TaskRuntimeThreadPolicySummary {
   markdown: string;
   workspace_attached: boolean;
   vfs_attached: boolean;
@@ -85,7 +85,6 @@ export interface TaskSessionExecutorSummary {
   agent_id?: string | null;
   /** 推理级别（替代旧的 reasoning_id） */
   thinking_level?: ThinkingLevel | null;
-  permission_policy?: string | null;
   preset_name?: string | null;
   source: string;
   resolution_error?: string | null;
@@ -105,7 +104,7 @@ export interface SessionStoryOverrides {
 export interface SessionEffectiveContext {
   session_composition: SessionComposition;
   tool_visibility: TaskSessionToolVisibilitySummary;
-  runtime_policy: TaskSessionRuntimePolicySummary;
+  runtime_policy: TaskRuntimeThreadPolicySummary;
 }
 
 export type SessionOwnerContext =

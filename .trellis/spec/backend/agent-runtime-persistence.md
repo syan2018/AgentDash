@@ -1,90 +1,176 @@
-# Managed Agent Runtime PostgreSQL Persistence
+# Agent Runtime 持久化权威
 
 ## 1. Scope / Trigger
 
-本规范适用于 `agentdash-agent-runtime` 的持久化 ports、PostgreSQL adapter、managed runtime/context migration，以及消费 runtime durable work 的 worker。修改 `RuntimeCommit`、runtime/context 表、binding/source 引用或 claim/ack/release 语义时必须同步复核本规范。
+本规范适用于 AgentRun、AgentFrame、Complete Agent source、Agent Runtime、Complete Agent
+Host、Agent input handoff、Tool/Hook callback 与 presentation effect 的持久化设计。新增表、
+JSONB 字段、repository、revision、receipt、outbox 或 recovery worker 时必须复核。
+
+持久化的目的，是让某个领域 owner 在进程全部丢失后仍能继续履行业务承诺。可从 owner 的
+document、`CompleteAgentService::read/changes/inspect` 或稳定输入 identity 恢复的中间协调状态
+没有独立业务寿命，因此不建立数据库 owner。
 
 ## 2. Signatures
 
-```rust
-pub trait RuntimeUnitOfWork {
-    async fn commit(&self, commit: RuntimeCommit) -> Result<(), RuntimeStoreError>;
-    async fn quarantine(&self, event: QuarantinedDriverEvent) -> Result<(), RuntimeStoreError>;
-}
+Product owner document 的最终数据库边界：
 
-pub trait RuntimeWorkQueue {
-    async fn claim(
-        &self,
-        request: RuntimeWorkClaimRequest,
-    ) -> Result<Vec<RuntimeWorkClaim>, RuntimeStoreError>;
-    async fn ack(&self, claim: &RuntimeWorkClaim) -> Result<(), RuntimeStoreError>;
-    async fn release(
-        &self,
-        claim: &RuntimeWorkClaim,
-        error: String,
-    ) -> Result<(), RuntimeStoreError>;
+```text
+lifecycle_agents(
+  id text,
+  run_id text,
+  project_id text,
+  ...Product lifecycle fields...,
+  frames jsonb not null,
+  runtime_binding jsonb null
+)
+```
+
+`frames` 保存该 LifecycleAgent 的不可变 AgentFrame history。`runtime_binding` 保存 Product
+定位 concrete Agent 所需的稳定关联：
+
+```rust
+pub struct AgentRunProductRuntimeBinding {
+    pub target: AgentRunTarget,
+    pub runtime_thread_id: RuntimeThreadId,
+    pub agent: AgentRunCompleteAgentAssociation,
+    pub launch_frame: ProductAgentFrameRef,
+    pub execution_profile: ProductExecutionProfileRef,
+    pub execution_profile_digest: String,
 }
 ```
 
-`RuntimeCommit` 是 projection、operation、event journal、entity projection、context saga、outbox 与 quarantine 的完整原子写集。`RuntimeWorkKind` 当前包含 `RuntimeOutbox`、`ContextPreparation`、`ContextActivationDispatch`、`ContextActivationRecovery`。
+名称中的 `Runtime` 表示 Product 的执行关联，不表示 Runtime 持久化聚合。repository 只读写
+`lifecycle_agents.runtime_binding`：
+
+```rust
+pub trait AgentRunProductRuntimeBindingRepository {
+    async fn load_product_binding(
+        &self,
+        target: &AgentRunTarget,
+    ) -> Result<Option<AgentRunProductRuntimeBinding>, String>;
+}
+```
+
+concrete Agent 的权威边界：
+
+```rust
+pub trait CompleteAgentService {
+    async fn read(&self, query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError>;
+    async fn changes(&self, query: AgentChangesQuery)
+        -> Result<AgentChangePage, AgentServiceError>;
+    async fn inspect(
+        &self,
+        identity: AgentEffectIdentity,
+    ) -> Result<AgentEffectInspection, AgentServiceError>;
+}
+```
+
+Dash 使用一个 source document 保存 repository history 与 source metadata；Create 前尚无 source
+coordinate 的 effect 可以按 `effect_id` 保存 Agent-owned receipt。Runtime、Host 和 callback
+没有 repository signature 或 revision table。
 
 ## 3. Contracts
 
-- PostgreSQL adapter 在同一事务中先锁定并校验 Thread projection CAS，再写入 `RuntimeCommit` 的全部 durable facts，最后校验 projection cursor 与实际 operation/event 序列一致。首次创建也必须通过 insert-if-absent 后重读实际 revision 形成真实 CAS。
-- operation sequence 与 event sequence 必须从数据库现有 cursor 的下一位开始严格连续。projection 不得在缺少对应 durable fact 时推进 cursor。
-- Runtime-owned schema 持有 Thread、Operation、Event、Turn、Item、Interaction、Outbox、Quarantine 及 Context Checkpoint/Preparation/Candidate/Activation/Dispatch/Head。跨实体一致性同时由 domain 校验与 composite foreign key/unique constraint 保护。
-- Context Head 只能指向同一 Thread 下的非 `opaque` immutable checkpoint，并完整匹配 checkpoint revision、digest、fidelity、settings revision 与 tool-set revision。
-- `agent_runtime_binding` 与 `agent_runtime_source_coordinate` 是 Integration Driver Host 所有的坐标事实。Runtime persistence 仅引用并校验它们，不创建、不推进 generation，也不改写 source coordinate。
-- Runtime schema 从新 contract 独立建立；旧 session/connector 表不参与读取、回填或双写。切换与删除旧事实源属于 AgentRun cutover 阶段。
-- claim 使用数据库时钟、`FOR UPDATE SKIP LOCKED`、owner、随机 token、到期时间和 attempt。只有仍持有相同 owner/token 且 lease 未过期的 worker 能 ack/release；到期后新 claim 必须生成新 token 并增加 attempt，旧 worker 不得确认新一轮工作。
-- queue 只负责 work 的租约和交付确认，业务状态仍留在各自 runtime/context 表。Activation dispatch 仅能 claim `prepared` activation。
+- Product 持久化 LifecycleRun/LifecycleAgent、owner-local AgentFrame history、execution profile
+  intent、workflow/lineage，以及 AgentRun 到 concrete Agent service/source 的稳定关联。
+- `lifecycle_agents.frames` 与 `runtime_binding` 都是 LifecycleAgent 局部事实。scalar column
+  只用于 owner lookup、唯一约束和索引；repository 从 JSONB document 解码，不从拆分列重建
+  第二份对象。
+- concrete Complete Agent 独占 native source history、context、fork lineage、compaction state、
+  command/effect receipt、applied surface evidence 与 source change cursor。
+- Dash source 使用单个 canonical JSONB document。source document 与 branch/history/command/
+  effect/change 关系镜像不能同时作为写入目标。
+- Create 前需要按 effect identity 查询的 receipt 属于 concrete Agent，不属于 Product、
+  Runtime 或 Host。
+- Agent Runtime 只在内存中完成 command mapping、timeout/cancel、snapshot normalize 与 live
+  broadcast。Runtime process restart 通过 Product association 与 Agent `read/inspect` 重建。
+- Complete Agent Host 只在内存中保存 attachment、target、binding、generation、callback route
+  与 availability。Host process restart 重新 materialize、attach、apply surface 和 bind。
+- Product input 在当前请求内同步 handoff。Product 不保存 pending input、claim、mailbox、
+  background retry 或 handoff receipt ledger；真正接收输入的 Agent 保存 effect receipt。
+- LifecycleGate、Routine、Channel 或 Workflow 可以保存自己的未决业务状态和下游 handoff
+  coordinate，因为它们拥有独立 Product 生命周期。其 JSONB receipt 只能引用
+  `handoff_id/operation_id`，不能复制 Agent command/history。
+- Workspace/Terminal 等 Product presentation store 只有在表达独立 Product effect 时持久化。
+  写入方向固定为 Agent observation → Product effect；这些 store 不回写 Agent execution，
+  不参与 command、list、workspace 或 delete 的正确性 gate。
+- owner document revision 只用于该 owner 内部 CAS。Agent snapshot/change revision 只用于
+  Agent read/cursor。跨 Product、Runtime、Host 比较 generic revision、digest 或 surface
+  snapshot 不构成合法并发命题。
+
+一份新状态只有同时满足以下判据才允许持久化：
+
+1. 进程全部丢失后，该事实仍必须成立；
+2. 不能从唯一 owner 的 durable intent、`read`、`changes` 或 `inspect` 恢复；
+3. 丢失会破坏业务承诺、造成不可接受的重复外部副作用或失去安全 fencing；
+4. 有唯一 writer、独立生命周期和明确清理边界；
+5. 它不是缓存、JOIN、availability、diagnostic 或一致性复验副本。
+
+满足判据后仍优先写入归属聚合的 JSONB document。只有真正跨 owner 查询、独立 claim/retention
+或独立生命周期需要时才建立全局表。
 
 ## 4. Validation & Error Matrix
 
-| 场景 | 必须得到的结果 |
+| 条件 | 结果 |
 | --- | --- |
-| projection revision 与数据库不一致 | `ProjectionConflict`，事务不产生部分写入 |
-| 首次创建 Thread 并发冲突 | 重读实际 revision 后返回 typed conflict |
-| operation/event sequence 跳号、重复或 cursor 无事实推进 | 拒绝整个 commit |
-| context candidate/activation/head 坐标不一致 | `ContextInvariant` 或数据库 constraint violation，事务回滚 |
-| binding/source/generation 不存在或不匹配 | foreign key/typed store error；Runtime 不补造 Host 事实 |
-| claim 参数非法 | `InvalidWorkClaim` |
-| owner/token 不匹配、lease 已过期或已被接管 | `WorkClaimConflict`，不得 ack/release |
-| worker release 有效 claim | 记录错误并释放租约，业务 work 保持可重试 |
-| worker ack 有效 claim | durable work 被确认，不能再次 claim |
+| LifecycleAgent 不存在 | binding/frame 写入失败；不创建悬空局部事实 |
+| 同一 LifecycleAgent 已有不同 association | typed conflict；不双写 |
+| `runtime_binding` target/frame/profile digest 非法 | repository decode/commit 失败 |
+| Agent source 不可用 | Product shell 仍可读；Agent presentation 返回 typed unavailable |
+| Runtime/Host process restart | 内存状态为空；从 Product association + Agent source 重建 |
+| callback route 不属于当前 Host incarnation | typed unknown/stale route；不查询数据库恢复旧 route |
+| 相同 Agent effect identity 重试 | Agent `inspect/execute` 返回原 receipt 或 typed conflict |
+| presentation cache/store 缺失 | 重新从 Product/Agent owner 读取；不阻断业务命令 |
+| schema readiness 发现 Runtime/Host/Callback revision table | readiness 失败并列出残留 schema |
+| owner-local handoff receipt 缺少下游 identity | owner 自己保持 pending/failed；不得推断 Agent 已接收 |
 
 ## 5. Good / Base / Bad Cases
 
-**Good case:** command transaction 以预期 revision 提交连续 operation/event，原子更新 projection 和 outbox；worker 通过有效 lease 执行副作用后 ack。
-
-**Base case:** worker 在 lease 内失败并 release，另一个 worker 随后 claim 同一业务 work，attempt 增加且获得新 token。
-
-**Bad case:** worker 超时后仍用旧 token ack，或 adapter 为通过外键自行创建 binding/source。这两种行为都会破坏 generation fencing 与 Host/Runtime ownership，必须被拒绝。
+- Good：LifecycleAgent 一行保存 frames 与 concrete Agent association；删除 owner 时局部事实自然
+  消失，Dash history 仍由 Dash source 生命周期处理。
+- Good：Host 重启后依据 association 重新 attach 和 apply surface；Agent `inspect(effect_id)`
+  返回已应用结果，平台不需要 Host effect ledger。
+- Base：Agent 暂时不可用，列表返回 Product shell 和 unavailable presentation；恢复后下一次
+  read 直接组合 Agent snapshot。
+- Bad：把 Agent operation、surface、source revision 再写进 Runtime/Product 表，然后在 List
+  时比较 currentness。该比较只检测副本漂移，不能证明 Agent 事实。
+- Bad：为同步 input handoff 建 pending row/outbox/receipt，再由 worker 投递。这样 Product
+  在 Agent 接收前制造了离线可靠投递承诺。
 
 ## 6. Tests Required
 
-- 使用真实 embedded PostgreSQL 覆盖 migration readiness、create/update CAS、并发首次创建、事务回滚、幂等与 sequence/cursor 连续性。
-- 覆盖 composite foreign key、Head/checkpoint fidelity 与 revision/digest/settings/tool-set 一致性。
-- 对四类 `RuntimeWorkKind` 覆盖 claim 隔离、limit、attempt、ack、release、lease 到期接管和 stale worker fencing。
-- 明确验证 Runtime adapter 不写 binding/source；测试 fixture 需要由 Host 角色显式 seed 坐标。
-- migration guard 必须确认 managed runtime migration 不引用旧 session runtime/connector 表。
+- PostgreSQL migration 测试断言 `lifecycle_agents.frames/runtime_binding` 存在，
+  `agent_frames`、Product binding 全局表、Runtime/Host/Callback revision 表及 mailbox/command
+  ledger 不存在。
+- LifecycleAgent repository 测试覆盖 frame exact/latest/history、binding commit/replay/conflict、
+  runtime-thread unique lookup 与 owner deletion。
+- Dash repository 测试覆盖 source document restart、fork/compaction/history read、effect
+  inspection，以及不存在关系镜像双写。
+- Product list/workspace/delete 测试在 Agent resolve/read 失败时仍返回 Product shell。
+- Host restart 测试使用全新 Host 实例，从 Product association 与 Agent receipt 重建 route。
+- input handoff 测试断言成功一定包含 concrete operation receipt；Agent unavailable 直接返回
+  typed error，数据库中不产生 pending delivery。
+- migration history guard、schema readiness、负向源码搜索与 `git diff --check` 必须通过。
 
 ## 7. Wrong vs Correct
 
 ```rust
-// Wrong: projection cursor 可以脱离 durable facts 单独前进。
-commit.projection.next_event_sequence = EventSequence(42);
-commit.events.clear();
+// Wrong: 持久化可从 concrete Agent 重建的 Runtime 副本。
+runtime_repository.commit(operation, projection, source_snapshot).await?;
 
-// Correct: cursor 由同一事务内严格连续的 journal facts 推进并被 adapter 校验。
-commit.events = next_contiguous_events;
-commit.projection.next_event_sequence = sequence_after(&commit.events);
+// Correct: Product 保存定位关联；读取时即时投影 Agent owner facts。
+let binding = bindings.load_product_binding(&target).await?;
+let snapshot = complete_agent.read(AgentReadQuery {
+    source: binding.agent.source,
+    at_revision: None,
+}).await?;
 ```
 
 ```rust
-// Wrong: 仅凭 work identity 删除/确认工作，超时 worker 可以误伤新的 claim。
-queue.ack_by_identity(identity).await?;
+// Wrong: Host callback route 跨重启进入通用 receipt ledger。
+callback_repository.reserve(route, invocation).await?;
 
-// Correct: ack/release 携带完整 claim，并校验 owner、token 与数据库时钟下的 lease。
-queue.ack(&claim).await?;
+// Correct: Host 只 fence 当前 route，真实 handler 按 idempotency key 拥有 receipt。
+let route = host.resolve_callback_route(&invocation.meta).await?;
+handler.invoke(invocation.meta.idempotency_key, invocation.payload).await
 ```

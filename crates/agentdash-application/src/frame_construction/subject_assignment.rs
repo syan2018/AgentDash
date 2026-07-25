@@ -3,7 +3,7 @@ use uuid::Uuid;
 use agentdash_domain::story::Story;
 use agentdash_domain::workflow::SubjectRef;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{CapabilityScopeCtx, ContextFragment, MergeStrategy};
+use agentdash_platform_spi::{CapabilityScopeCtx, ContextFragment, MergeStrategy};
 
 use crate::agent_run::resolve_project_workspace;
 use crate::context::{

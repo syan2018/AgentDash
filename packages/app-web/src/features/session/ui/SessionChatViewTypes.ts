@@ -1,18 +1,17 @@
 import type { ReactNode } from "react";
 
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type {
   BackendSelectionRequestDto,
-  MailboxMessageView,
-  MailboxStateView,
-} from "../../../generated/agent-run-mailbox-contracts";
+  SessionMessageRefDto,
+} from "../../../generated/agent-run-interaction-contracts";
 import type {
   ConversationCommandView,
   ConversationWaitingItemView,
 } from "../../../generated/workflow-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
-import type { AgentRunRuntimeInspectResponse } from "../../../services/agentRunRuntime";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { ImageAttachment } from "./composer/useImageAttachments";
@@ -58,22 +57,8 @@ export interface SessionChatCommandState {
   helperText?: string;
 }
 
-export interface SessionChatMailboxModel {
-  messages: MailboxMessageView[];
-  waiting_items: ConversationWaitingItemView[];
-  state?: MailboxStateView;
-  paused: boolean;
-  user_attention: boolean;
-  hide_system_steer_messages: boolean;
-  can_resume: boolean;
-  resumeAction?: SessionChatCommandModel;
-  promoteAction?: SessionChatCommandModel;
-  deleteAction?: SessionChatCommandModel;
-}
-
 export interface SessionChatModel {
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  runtimeInspect?: AgentRunRuntimeInspectResponse | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   workspaceId?: string | null;
   executorHint?: string | null;
@@ -82,7 +67,7 @@ export interface SessionChatModel {
   showExecutorSelector?: boolean;
   commandState: SessionChatCommandState;
   compactContextCommand?: ConversationCommandView;
-  mailbox: SessionChatMailboxModel;
+  waitingItems: ConversationWaitingItemView[];
   statusBarRunId?: string | null;
   statusBarAgentId?: string | null;
   injectedInputValue?: string | null;
@@ -97,15 +82,16 @@ export interface SessionChatSubmitIntent {
   deliveryIntent?: string;
 }
 
+export interface SessionChatInitialSubmit {
+  transitionId: string;
+  intent: Omit<SessionChatSubmitIntent, "command_id">;
+}
+
 export interface SessionChatViewIntents {
   submitComposer: (intent: SessionChatSubmitIntent) => Promise<void>;
   cancelAction?: () => Promise<void>;
   setExecutorConfigOverride?: (config: ExecutorConfig | null) => void;
-  promoteMailboxMessage?: (messageId: string) => void;
-  deleteMailboxMessage?: (messageId: string) => void;
-  resumeMailbox?: () => void;
-  recallMailboxMessage?: (messageId: string) => void;
-  moveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
+  forkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   injectedInputConsumed?: () => void;
 }
 
@@ -117,14 +103,8 @@ export interface SessionChatViewProps {
 
   // ─── 会话生命周期 ────────────────────────────────────
 
-  /** 消息发送成功后回调（父组件可刷新列表等） */
-  onMessageSent?: () => void;
-
-  /** Agent turn 结束时回调（turn_completed / turn_failed） */
-  onTurnEnd?: () => void;
-
-  /** task_write 工具完成时回调；用于刷新外部 Task plan 展示。 */
-  onTaskPlanChanged?: () => void;
+  /** Baseline 之后按 canonical sequence 提交的完整 live event 流。 */
+  onLiveEvent?: (event: BackboneEvent) => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 
@@ -148,6 +128,12 @@ export interface SessionChatViewProps {
 
   /** 初始输入值（仅首次挂载时填充） */
   initialInputValue?: string;
+
+  /** Draft 建立真实 AgentRun target 后，由该 target 的标准 composer 消费一次的首条输入。 */
+  initialSubmit?: SessionChatInitialSubmit;
+
+  /** 首条输入已提交或已恢复到 composer 后，清除路由携带的 transition。 */
+  onInitialSubmitConsumed?: (transitionId: string) => void;
 
   /** 页面级工作区面板打开能力；缺省时卡片不得直接写全局 tab store。 */
   openWorkspacePanel?: OpenSessionWorkspacePanel;

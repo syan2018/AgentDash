@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-// ─── re-exports from agent-types ────────────────────────────
+// ─── Core-owned primitive re-exports ────────────────────────
 
-pub use agentdash_agent_types::{
+pub use crate::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegateSet, AgentRuntimeError,
     AgentTool, AgentToolError, AgentToolResult, BeforeProviderRequestInput, BeforeStopInput,
@@ -16,9 +16,9 @@ pub use agentdash_agent_types::{
     ProjectionKind, ProviderVisibleContextStats, RuntimeContextTransformDelegate,
     RuntimeProviderObserverDelegate, RuntimeToolPolicyDelegate, RuntimeTurnBoundaryDelegate,
     StopDecision, StopReason, ThinkingLevel, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest,
-    ToolCallDecision, ToolCallInfo, ToolDefinition, ToolUpdateCallback, TransformContextInput,
-    TransformContextOutput, TurnControlDecision, estimate_message_tokens, estimate_request_tokens,
-    now_millis,
+    ToolCallDecision, ToolCallInfo, ToolDefinition, ToolProtocolProjector, ToolUpdateCallback,
+    TransformContextInput, TransformContextOutput, TurnControlDecision, estimate_message_tokens,
+    estimate_request_tokens, now_millis,
 };
 
 // ─── Agent-specific types (不属于通用 SPI) ──────────────────

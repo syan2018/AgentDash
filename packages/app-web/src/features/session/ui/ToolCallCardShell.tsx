@@ -7,10 +7,6 @@
 
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import type { KindMeta } from "../model/threadItemKind";
-import {
-  approveToolCallForAgentRun,
-  rejectToolCallForAgentRun,
-} from "../../../services/executor";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { ToolCardHeaderModel } from "./ToolCardHeader";
 import { ST } from "./bodies/cardBodyTokens";
@@ -52,8 +48,6 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
   const shouldDefaultExpand =
     defaultExpanded ?? needsAttention;
   const [expanded, setExpanded] = useState(shouldDefaultExpand);
-  const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
-  const [approvalError, setApprovalError] = useState<string | null>(null);
   const [renderStatus, setRenderStatus] = useState<DisplayStatus>(status);
   const inProgressSinceRef = useRef<number | null>(null);
 
@@ -61,6 +55,8 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
     const running = status === "inProgress" || status === "pending";
     if (running) {
       inProgressSinceRef.current = Date.now();
+      // 保持 Main 的同步状态交接；此 effect 只镜像外部生命周期属性。
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRenderStatus(status);
       return;
     }
@@ -82,38 +78,15 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
   }, [status]);
 
   useEffect(() => {
+    // 审批到达属于外部生命周期切换，需要立即展开操作控件。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (isPendingApproval) setExpanded(true);
   }, [isPendingApproval]);
 
   const statusConfig = getStatusConfig(renderStatus, isPendingApproval);
   const elapsed = useElapsed(renderStatus === "inProgress");
-  const canSubmitApproval = agentRunTarget != null;
-
-  const handleApprove = async () => {
-    if (!agentRunTarget || isSubmittingApproval) return;
-    setApprovalError(null);
-    setIsSubmittingApproval(true);
-    try {
-      await approveToolCallForAgentRun(agentRunTarget, itemId);
-    } catch (error) {
-      setApprovalError(error instanceof Error ? error.message : "审批失败");
-    } finally {
-      setIsSubmittingApproval(false);
-    }
-  };
-
-  const handleReject = async () => {
-    if (!agentRunTarget || isSubmittingApproval) return;
-    setApprovalError(null);
-    setIsSubmittingApproval(true);
-    try {
-      await rejectToolCallForAgentRun(agentRunTarget, itemId);
-    } catch (error) {
-      setApprovalError(error instanceof Error ? error.message : "拒绝失败");
-    } finally {
-      setIsSubmittingApproval(false);
-    }
-  };
+  void agentRunTarget;
+  void itemId;
 
   const displayDuration =
     durationMs != null && durationMs > 0
@@ -182,33 +155,6 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
                 拒绝
               </span>
               已拒绝执行
-            </div>
-          )}
-
-          {isPendingApproval && canSubmitApproval && (
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => { void handleApprove(); }}
-                disabled={isSubmittingApproval}
-                className="rounded-[6px] border border-success/30 bg-success/10 px-2.5 py-1 text-xs text-success transition-colors hover:bg-success/15 disabled:opacity-50"
-              >
-                {isSubmittingApproval ? "处理中…" : "批准"}
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleReject(); }}
-                disabled={isSubmittingApproval}
-                className="rounded-[6px] border border-warning/30 bg-warning/10 px-2.5 py-1 text-xs text-warning transition-colors hover:bg-warning/15 disabled:opacity-50"
-              >
-                拒绝
-              </button>
-            </div>
-          )}
-
-          {approvalError && (
-            <div className="rounded-[6px] bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
-              {approvalError}
             </div>
           )}
 

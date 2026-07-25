@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use agentdash_application_ports::runtime_gateway_setup::{
-    MCP_PROBE_TRANSPORT_ACTION, McpProbeSetupPort, McpProbeTransportInput,
-    RuntimeGatewaySetupError, WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION,
+use agentdash_application_ports::extension_gateway_setup::{
+    ExtensionGatewaySetupError, MCP_PROBE_TRANSPORT_ACTION, McpProbeSetupPort,
+    McpProbeTransportInput, WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION,
     WORKSPACE_DETECT_GIT_ACTION, WORKSPACE_DISCOVER_BY_IDENTITY_ACTION,
     WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput,
     WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectSetupPort,
@@ -358,7 +358,7 @@ impl OperationProvider for SetupOperationProvider {
         _cancel: CancellationToken,
     ) -> Result<Value, OperationExecutionError> {
         let operation_key = descriptor.operation_ref.operation_key.as_str();
-        let result: Result<Value, RuntimeGatewaySetupError> = async {
+        let result: Result<Value, ExtensionGatewaySetupError> = async {
             match operation_key {
                 MCP_PROBE_TRANSPORT_ACTION => {
                     let input = decode_input::<McpProbeTransportInput>(&envelope.input)?;
@@ -385,7 +385,7 @@ impl OperationProvider for SetupOperationProvider {
                     input.backend_id = placement_backend_id(&envelope)?.to_string();
                     encode_output(self.workspace_discover.discover_by_identity(input).await?)
                 }
-                _ => Err(RuntimeGatewaySetupError::BadRequest(format!(
+                _ => Err(ExtensionGatewaySetupError::BadRequest(format!(
                     "未知 Setup Operation: {operation_key}"
                 ))),
             }
@@ -399,7 +399,7 @@ impl OperationProvider for SetupOperationProvider {
 pub trait SetupOperationAccessPort: Send + Sync {
     async fn resolve_access(
         &self,
-        identity: &agentdash_spi::AuthIdentity,
+        identity: &agentdash_platform_spi::AuthIdentity,
         scope: &OperationAuthorizationScope,
         cancel: CancellationToken,
     ) -> Result<OperationAuthorityGrant, OperationExecutionError>;
@@ -441,40 +441,40 @@ impl OperationAuthorityResolver for SetupOperationAuthorityResolver {
     }
 }
 
-fn decode_input<T: DeserializeOwned>(input: &Value) -> Result<T, RuntimeGatewaySetupError> {
+fn decode_input<T: DeserializeOwned>(input: &Value) -> Result<T, ExtensionGatewaySetupError> {
     serde_json::from_value(input.clone()).map_err(|error| {
-        RuntimeGatewaySetupError::BadRequest(format!("Setup Operation input 非法: {error}"))
+        ExtensionGatewaySetupError::BadRequest(format!("Setup Operation input 非法: {error}"))
     })
 }
 
-fn encode_output<T: Serialize>(output: T) -> Result<Value, RuntimeGatewaySetupError> {
+fn encode_output<T: Serialize>(output: T) -> Result<Value, ExtensionGatewaySetupError> {
     serde_json::to_value(output)
-        .map_err(|error| RuntimeGatewaySetupError::ProviderFailed(error.to_string()))
+        .map_err(|error| ExtensionGatewaySetupError::ProviderFailed(error.to_string()))
 }
 
 fn placement_backend_id(
     envelope: &OperationInvocationEnvelope,
-) -> Result<&str, RuntimeGatewaySetupError> {
+) -> Result<&str, ExtensionGatewaySetupError> {
     match &envelope.placement {
         OperationPlacement::LocalBackend { backend_id } => Ok(backend_id),
-        OperationPlacement::Cloud => Err(RuntimeGatewaySetupError::BadRequest(
+        OperationPlacement::Cloud => Err(ExtensionGatewaySetupError::BadRequest(
             "Workspace Setup Operation 缺少 local backend placement".to_string(),
         )),
     }
 }
 
-fn map_setup_error(error: RuntimeGatewaySetupError) -> OperationExecutionError {
+fn map_setup_error(error: ExtensionGatewaySetupError) -> OperationExecutionError {
     match error {
-        RuntimeGatewaySetupError::BadRequest(message) => {
+        ExtensionGatewaySetupError::BadRequest(message) => {
             OperationExecutionError::invalid_request(message)
         }
-        RuntimeGatewaySetupError::BackendOffline(message) => OperationExecutionError::NotReady {
+        ExtensionGatewaySetupError::BackendOffline(message) => OperationExecutionError::NotReady {
             code: "backend_offline".to_string(),
             message,
         },
-        RuntimeGatewaySetupError::Timeout => OperationExecutionError::DeadlineExceeded,
-        RuntimeGatewaySetupError::TransportFailed(message)
-        | RuntimeGatewaySetupError::ProviderFailed(message) => {
+        ExtensionGatewaySetupError::Timeout => OperationExecutionError::DeadlineExceeded,
+        ExtensionGatewaySetupError::TransportFailed(message)
+        | ExtensionGatewaySetupError::ProviderFailed(message) => {
             OperationExecutionError::provider_failed(message)
         }
     }
@@ -484,10 +484,10 @@ fn map_setup_error(error: RuntimeGatewaySetupError) -> OperationExecutionError {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use agentdash_application_ports::runtime_gateway_setup::{
+    use agentdash_application_ports::extension_gateway_setup::{
         McpProbeTransportOutput, WorkspaceBrowseDirectoryOutput,
     };
-    use agentdash_spi::{AuthIdentity, AuthMode};
+    use agentdash_platform_spi::{AuthIdentity, AuthMode};
     use chrono::{Duration, Utc};
 
     use super::*;
@@ -506,7 +506,7 @@ mod tests {
         async fn probe_transport(
             &self,
             _input: McpProbeTransportInput,
-        ) -> Result<McpProbeTransportOutput, RuntimeGatewaySetupError> {
+        ) -> Result<McpProbeTransportOutput, ExtensionGatewaySetupError> {
             Ok(McpProbeTransportOutput::Unsupported {
                 reason: "test".to_string(),
             })
@@ -519,10 +519,10 @@ mod tests {
             &self,
             _input: WorkspaceDetectInput,
         ) -> Result<
-            agentdash_application_ports::runtime_gateway_setup::WorkspaceDetectOutput,
-            RuntimeGatewaySetupError,
+            agentdash_application_ports::extension_gateway_setup::WorkspaceDetectOutput,
+            ExtensionGatewaySetupError,
         > {
-            Err(RuntimeGatewaySetupError::ProviderFailed(
+            Err(ExtensionGatewaySetupError::ProviderFailed(
                 "not used".to_string(),
             ))
         }
@@ -534,10 +534,10 @@ mod tests {
             &self,
             _input: WorkspaceDetectGitInput,
         ) -> Result<
-            agentdash_application_ports::runtime_gateway_setup::WorkspaceDetectGitOutput,
-            RuntimeGatewaySetupError,
+            agentdash_application_ports::extension_gateway_setup::WorkspaceDetectGitOutput,
+            ExtensionGatewaySetupError,
         > {
-            Err(RuntimeGatewaySetupError::ProviderFailed(
+            Err(ExtensionGatewaySetupError::ProviderFailed(
                 "not used".to_string(),
             ))
         }
@@ -548,7 +548,7 @@ mod tests {
         async fn browse_directory(
             &self,
             _input: WorkspaceBrowseDirectoryInput,
-        ) -> Result<WorkspaceBrowseDirectoryOutput, RuntimeGatewaySetupError> {
+        ) -> Result<WorkspaceBrowseDirectoryOutput, ExtensionGatewaySetupError> {
             self.browse_calls.fetch_add(1, Ordering::SeqCst);
             Ok(WorkspaceBrowseDirectoryOutput {
                 current_path: "/tmp".to_string(),
@@ -563,10 +563,10 @@ mod tests {
             &self,
             _input: WorkspaceDiscoverByIdentityInput,
         ) -> Result<
-            agentdash_application_ports::runtime_gateway_setup::WorkspaceDiscoverByIdentityOutput,
-            RuntimeGatewaySetupError,
+            agentdash_application_ports::extension_gateway_setup::WorkspaceDiscoverByIdentityOutput,
+            ExtensionGatewaySetupError,
         > {
-            Err(RuntimeGatewaySetupError::ProviderFailed(
+            Err(ExtensionGatewaySetupError::ProviderFailed(
                 "not used".to_string(),
             ))
         }

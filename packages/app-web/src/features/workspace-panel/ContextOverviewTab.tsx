@@ -14,9 +14,6 @@ import {
   skillIdentityKey,
 } from "../../types";
 import type {
-  ActiveWorkflowHookMetadata,
-  HookInjection,
-  AgentFrameHookRuntimeInfo,
   LifecycleRunView,
   RuntimeNodeView,
   ResolvedMountSummary,
@@ -39,7 +36,6 @@ export interface ContextOverviewTabProps {
   ownerProjectName: string;
   executorSummary: TaskSessionExecutorSummary | null;
   runtimeSurface: ResolvedVfsSurface | null;
-  hookRuntime: AgentFrameHookRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
   lifecycleRun: LifecycleRunView | null;
 }
@@ -75,15 +71,6 @@ function formatRuntimeNodeStatus(status: string): string {
     : status;
 }
 
-function resolveActiveRun(
-  lifecycleRun: LifecycleRunView | null,
-  activeWorkflow: ActiveWorkflowHookMetadata | null,
-): LifecycleRunView | null {
-  if (!lifecycleRun) return null;
-  if (activeWorkflow && lifecycleRun.run_ref.run_id !== activeWorkflow.run_id) return null;
-  return lifecycleRun;
-}
-
 function collectRuntimeNodes(run: LifecycleRunView | null): RuntimeNodeView[] {
   const flatten = (node: RuntimeNodeView): RuntimeNodeView[] => [
     node,
@@ -92,26 +79,10 @@ function collectRuntimeNodes(run: LifecycleRunView | null): RuntimeNodeView[] {
   return run?.orchestrations.flatMap((instance) => instance.nodes.flatMap(flatten)) ?? [];
 }
 
-function resolveActiveNode(
-  run: LifecycleRunView | null,
-  activeWorkflow: ActiveWorkflowHookMetadata | null,
-): RuntimeNodeView | null {
+function resolveActiveNode(run: LifecycleRunView | null): RuntimeNodeView | null {
   const nodes = collectRuntimeNodes(run);
   if (nodes.length === 0) return null;
 
-  const latestByNode = (key: string): RuntimeNodeView | null => {
-    let best: RuntimeNodeView | null = null;
-    for (const node of nodes) {
-      if (node.node_path !== key && node.node_id !== key) continue;
-      if (!best || node.attempt >= best.attempt) best = node;
-    }
-    return best;
-  };
-
-  if (activeWorkflow?.activity_key) {
-    const matched = latestByNode(activeWorkflow.activity_key);
-    if (matched) return matched;
-  }
   return (
     nodes.find((node) => node.status === "running" || node.status === "claiming")
     ?? nodes.find((node) => node.status === "ready")
@@ -136,10 +107,6 @@ function activeRuntimeNodeLabels(run: LifecycleRunView | null): string[] {
     .map((node) => `${node.node_path}#${node.attempt}`);
 }
 
-function isWorkflowContextInjection(injection: HookInjection): boolean {
-  return injection.slot === "workflow" || injection.slot === "workflow_context";
-}
-
 // ─── Component ──────────────────────────────────────────
 
 export function ContextOverviewTab({
@@ -148,7 +115,6 @@ export function ContextOverviewTab({
   ownerProjectName,
   executorSummary,
   runtimeSurface,
-  hookRuntime,
   sessionCapabilities,
   lifecycleRun,
 }: ContextOverviewTabProps) {
@@ -157,7 +123,6 @@ export function ContextOverviewTab({
   const composition = contextSnapshot?.effective.session_composition ?? null;
   const hasRuntimeContext =
     Boolean(lifecycleRun) ||
-    Boolean(hookRuntime) ||
     Boolean(runtimeSurface) ||
     Boolean(sessionCapabilities);
 
@@ -200,7 +165,6 @@ export function ContextOverviewTab({
       />
 
       <WorkflowContextCard
-        hookRuntime={hookRuntime}
         lifecycleRun={lifecycleRun}
         runtimeSurface={runtimeSurface}
         composition={composition}
@@ -225,29 +189,25 @@ export function ContextOverviewTab({
 }
 
 function WorkflowContextCard({
-  hookRuntime,
   lifecycleRun,
   runtimeSurface,
   composition,
 }: {
-  hookRuntime: AgentFrameHookRuntimeInfo | null;
   lifecycleRun: LifecycleRunView | null;
   runtimeSurface: ResolvedVfsSurface | null;
   composition: SessionComposition | null;
 }) {
-  const activeWorkflow = hookRuntime?.snapshot.metadata?.active_workflow ?? null;
-  const activeRun = resolveActiveRun(lifecycleRun, activeWorkflow);
-  const activeNode = resolveActiveNode(activeRun, activeWorkflow);
+  const activeRun = lifecycleRun;
+  const activeNode = resolveActiveNode(activeRun);
   const activeLabels = activeRuntimeNodeLabels(activeRun);
   const lifecycleMounts = runtimeSurface?.mounts.filter((mount) => mount.provider === "lifecycle_vfs") ?? [];
-  const workflowInjections = hookRuntime?.snapshot.injections.filter(isWorkflowContextInjection) ?? [];
   const hasLegacySteps = (composition?.workflow_steps.length ?? 0) > 0;
 
-  if (!activeWorkflow && !activeRun && lifecycleMounts.length === 0 && workflowInjections.length === 0 && !hasLegacySteps) {
+  if (!activeRun && lifecycleMounts.length === 0 && !hasLegacySteps) {
     return (
       <SurfaceCard eyebrow="Workflow 上下文" title="未绑定活跃 Workflow">
         <p className="text-xs text-muted-foreground">
-          当前会话没有解析到 lifecycle run、workflow_context 注入项或 workflow 步骤。
+          当前会话没有解析到 lifecycle run、lifecycle mount 或 workflow 步骤。
         </p>
       </SurfaceCard>
     );
@@ -256,15 +216,7 @@ function WorkflowContextCard({
   const nodes = collectRuntimeNodes(activeRun);
   const completedCount = nodes.filter((node) => node.status === "completed").length;
   const totalCount = nodes.length;
-  const workflowTitle =
-    activeWorkflow?.lifecycle_name ??
-    activeWorkflow?.primary_workflow_name ??
-    activeWorkflow?.lifecycle_key ??
-    "当前 Workflow";
-  const activityTitle =
-    activeWorkflow?.activity_title ?? activeWorkflow?.activity_key ?? "当前步骤";
-  const lifecycleKey = activeWorkflow?.lifecycle_key ?? "unknown";
-  const runIdPrefix = activeWorkflow?.run_id ? activeWorkflow.run_id.slice(0, 8) : "—";
+  const workflowTitle = activeRun ? `Run ${activeRun.run_ref.run_id.slice(0, 8)}` : "当前 Workflow";
 
   return (
     <SurfaceCard eyebrow="Workflow 上下文" title={workflowTitle}>
@@ -272,11 +224,6 @@ function WorkflowContextCard({
         {activeRun && (
           <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
             Run · {RUN_STATUS_LABEL[activeRun.status] ?? activeRun.status}
-          </span>
-        )}
-        {activeWorkflow?.procedure_key && (
-          <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
-            Workflow · {activeWorkflow.procedure_key}
           </span>
         )}
         {activeNode && (
@@ -289,22 +236,14 @@ function WorkflowContextCard({
             进度 {completedCount}/{totalCount}
           </span>
         )}
-        {workflowInjections.length > 0 && (
-          <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
-            注入 {workflowInjections.length}
-          </span>
-        )}
       </div>
 
-      {(activeWorkflow || activeNode) && (
+      {(activeRun || activeNode) && (
         <div className="mt-3 space-y-1 rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-xs">
-          {activeWorkflow && (
-            <>
-              <p className="font-medium text-foreground">{activityTitle}</p>
-              <p className="text-[11px] text-muted-foreground">
-                lifecycle: {lifecycleKey} · run: {runIdPrefix}
-              </p>
-            </>
+          {activeRun && (
+            <p className="text-[11px] text-muted-foreground">
+              run: {activeRun.run_ref.run_id}
+            </p>
           )}
           {activeLabels.length > 0 && (
             <p className="text-[11px] text-muted-foreground">
@@ -333,54 +272,7 @@ function WorkflowContextCard({
           </div>
         </div>
       )}
-
-      {workflowInjections.length > 0 && (
-        <div className="mt-3 space-y-1.5">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            Workflow 注入项
-          </p>
-          {workflowInjections.slice(0, 4).map((injection, index) => (
-            <WorkflowInjectionPreview
-              key={`${injection.slot}-${injection.source}-${index}`}
-              injection={injection}
-            />
-          ))}
-          {workflowInjections.length > 4 && (
-            <p className="text-[11px] text-muted-foreground">
-              另有 {workflowInjections.length - 4} 条 workflow 注入项。
-            </p>
-          )}
-        </div>
-      )}
     </SurfaceCard>
-  );
-}
-
-function WorkflowInjectionPreview({ injection }: { injection: HookInjection }) {
-  const [expanded, setExpanded] = useState(false);
-  const preview = injection.content.length > 180
-    ? `${injection.content.slice(0, 180)}...`
-    : injection.content;
-
-  return (
-    <div className="overflow-hidden rounded-[8px] border border-border bg-background/70">
-      <button
-        type="button"
-        onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition-colors hover:bg-secondary/35"
-      >
-        <span className="rounded-[4px] border border-border bg-secondary/60 px-1.5 py-0 text-[9px] font-mono text-muted-foreground">
-          {injection.slot}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/80">
-          {injection.source}
-        </span>
-        <span className="text-[10px] text-muted-foreground/50">{expanded ? "收起" : "展开"}</span>
-      </button>
-      <pre className="max-h-56 overflow-auto whitespace-pre-wrap border-t border-border/50 px-2.5 py-2 text-[11px] leading-5 text-muted-foreground">
-        {expanded ? injection.content : preview}
-      </pre>
-    </div>
   );
 }
 
@@ -474,7 +366,6 @@ function AgentSummaryCard({
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
             {executor.preset_name && <span>预设：{executor.preset_name}</span>}
             {executor.model_id && <span>model：{executor.model_id}</span>}
-            {executor.permission_policy && <span>权限：{executor.permission_policy}</span>}
           </div>
           {executor.resolution_error && (
             <p className="mt-2 text-[11px] text-destructive">{executor.resolution_error}</p>

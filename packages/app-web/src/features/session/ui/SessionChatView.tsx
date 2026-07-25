@@ -5,10 +5,11 @@
  * 执行器选择、上下文用量指示、发送/取消。
  *
  * AgentRun workspace 等 runtime trace 场景复用此组件，
- * 由父组件提供 AgentRun journal target 与外层导航。
+ * 由父组件提供 AgentRun Managed Runtime target 与外层导航。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSessionFeed } from "../model";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   useExecutorDiscovery,
@@ -24,17 +25,20 @@ import type { FileEntry } from "../../../services/filePicker";
 import {
   SessionChatComposer,
   SessionChatStatusBar,
+  SessionChatStream,
 } from "./SessionChatViewParts";
 import {
+  computeProjectionRefreshKey,
+  dispatchLiveSessionEvents,
   isAgentRunWorkspaceActionRunning,
+  rawEventsBelongToRuntimeStreamTarget,
+  resolveSessionInitialSubmit,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
 import type { SessionChatCommandModel, SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
 import { SessionStatusBar } from "../../agent-run-workspace/ui";
-import { AgentRuntimeFeed } from "../../agent-run-workspace/ui/AgentRuntimeFeed";
-import { useAgentRuntimeFeed } from "../../agent-run-workspace/model/useAgentRuntimeFeed";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 import { SessionWorkspacePanelActionProvider } from "./SessionWorkspacePanelActionProvider";
 
@@ -57,9 +61,7 @@ function deferStateUpdate(update: () => void): void {
 export function SessionChatView({
   model,
   intents,
-  onMessageSent,
-  onTurnEnd,
-  onTaskPlanChanged,
+  onLiveEvent,
   headerSlot,
   inputPrefix,
   inputToolbarSlot,
@@ -67,11 +69,12 @@ export function SessionChatView({
   showStatusBar = true,
   promptTemplates,
   initialInputValue,
+  initialSubmit,
+  onInitialSubmitConsumed,
   openWorkspacePanel,
 }: SessionChatViewProps) {
   const {
     agentRunTarget,
-    runtimeInspect,
     workspaceId,
     executorHint,
     agentDefaults,
@@ -79,20 +82,16 @@ export function SessionChatView({
     showExecutorSelector = true,
     commandState,
     compactContextCommand,
-    mailbox,
+    waitingItems,
     statusBarRunId,
     statusBarAgentId,
     injectedInputValue,
+    companionSubagents,
   } = model;
   const {
     submitComposer,
     cancelAction,
     setExecutorConfigOverride,
-    promoteMailboxMessage,
-    deleteMailboxMessage,
-    resumeMailbox,
-    recallMailboxMessage,
-    moveMailboxMessage,
     injectedInputConsumed,
   } = intents;
   const [isSending, setIsSending] = useState(false);
@@ -106,6 +105,7 @@ export function SessionChatView({
   const shouldScrollRef = useRef(true);
   const initialValueAppliedRef = useRef(false);
   const cancelInFlightRef = useRef(false);
+  const initialSubmitConsumedRef = useRef<string | null>(null);
 
   const fileRef = useFileReference(workspaceId);
   const imageAttach = useImageAttachments();
@@ -185,7 +185,6 @@ export function SessionChatView({
         source.providerId ?? "",
         source.modelId ?? "",
         source.thinkingLevel ?? "",
-        source.permissionPolicy ?? "",
       ].join(":");
     }
     return resolvedHint ? `draft:${resolvedHint}` : null;
@@ -240,21 +239,18 @@ export function SessionChatView({
       model_id: execConfig.modelId.trim() || undefined,
       // 将 camelCase 的 thinkingLevel 转为 snake_case 发给后端
       thinking_level: (execConfig.thinkingLevel.trim() as ExecutorConfig["thinking_level"]) || undefined,
-      permission_policy: (execConfig.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
     };
   }, [
     execConfig.executor,
     execConfig.providerId,
     execConfig.modelId,
     execConfig.thinkingLevel,
-    execConfig.permissionPolicy,
   ]);
 
   const emitExplicitExecutorOverride = useCallback((config: {
     providerId: string;
     modelId: string;
     thinkingLevel: string;
-    permissionPolicy: string;
   }) => {
     const executor = execConfig.executor.trim();
     if (!executor) {
@@ -266,7 +262,6 @@ export function SessionChatView({
       provider_id: config.providerId.trim() || undefined,
       model_id: config.modelId.trim() || undefined,
       thinking_level: (config.thinkingLevel.trim() as ExecutorConfig["thinking_level"]) || undefined,
-      permission_policy: (config.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
     });
   }, [execConfig.executor, setExecutorConfigOverride]);
 
@@ -275,20 +270,42 @@ export function SessionChatView({
   const hasRuntimeStreamTarget = agentRunTarget != null;
 
   const {
-    entries: runtimeEntries,
-    durableCursor,
+    displayItems,
+    turnSegments,
+    rawEntries,
+    rawEvents,
+    historyReplayBoundarySeq,
+    boundTargetKey,
     isConnected,
     isLoading,
-    error: runtimeStreamError,
+    error: wsError,
     reconnect,
-  } = useAgentRuntimeFeed({
-    target: agentRunTarget ?? null,
-    snapshot: runtimeInspect?.snapshot ?? null,
+    streamingEntryId,
+    tokenUsage,
+  } = useSessionFeed({
+    agentRunTarget,
+    activeTurnId: commandState.activeTurnId ?? null,
     enabled: hasRuntimeStreamTarget,
-    onTurnTerminal: onTurnEnd,
-    onTaskPlanChanged,
   });
-  const projectionRefreshKey = durableCursor;
+
+  const projectionRefreshKey = useMemo(
+    () => computeProjectionRefreshKey(rawEvents),
+    [rawEvents],
+  );
+  const rawEventsBelongToCurrentSession = useMemo(
+    () =>
+      rawEventsBelongToRuntimeStreamTarget({
+        rawEvents,
+        agentRunTarget,
+        boundTargetKey,
+      }),
+    [agentRunTarget, boundTargetKey, rawEvents],
+  );
+  const canApplyLiveEventSideEffects =
+    hasRuntimeStreamTarget &&
+    rawEventsBelongToCurrentSession &&
+    rawEvents.length > 0 &&
+    historyReplayBoundarySeq != null;
 
   // ─── Action running 检测 ──────────────────────────────
 
@@ -296,13 +313,29 @@ export function SessionChatView({
     executionStatus: commandState.executionStatus,
   });
 
+  const onLiveEventRef = useRef(onLiveEvent);
+  const lastLiveEventSeqRef = useRef<number | null>(null);
+  useEffect(() => { onLiveEventRef.current = onLiveEvent; }, [onLiveEvent]);
+  useEffect(() => {
+    lastLiveEventSeqRef.current = null;
+  }, [agentRunTargetKey]);
+
+  useEffect(() => {
+    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
+    lastLiveEventSeqRef.current = dispatchLiveSessionEvents(
+      rawEvents,
+      lastLiveEventSeqRef.current,
+      historyReplayBoundarySeq,
+      (event) => onLiveEventRef.current?.(event),
+    );
+  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────
 
   useEffect(() => {
     if (!containerRef.current || !shouldScrollRef.current) return;
     containerRef.current.scrollTop = containerRef.current.scrollHeight;
-  }, [runtimeEntries]);
+  }, [displayItems.length, rawEntries, streamingEntryId]);
 
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return;
@@ -337,6 +370,8 @@ export function SessionChatView({
 
     setSendError(null);
     setIsSending(true);
+    richInputRef.current?.setValue("");
+    setInputValue("");
 
     try {
       await commandActionRef.current({
@@ -349,12 +384,13 @@ export function SessionChatView({
 
       execConfig.recordUsage();
       clearInput();
-      onMessageSent?.();
     } catch (e) {
       if (isSilentCommandRefreshError(e)) {
         setSendError(null);
         return;
       }
+      richInputRef.current?.setValue(promptText);
+      setInputValue(promptText);
       setSendError(e instanceof Error ? e.message : "发送失败，请重试。");
     } finally {
       setIsSending(false);
@@ -367,7 +403,47 @@ export function SessionChatView({
     executorConfig,
     imageAttach.attachments,
     isSending,
-    onMessageSent,
+  ]);
+
+  useEffect(() => {
+    if (!initialSubmit || initialSubmitConsumedRef.current === initialSubmit.transitionId) return;
+    const submitIntent = resolveSessionInitialSubmit({
+      initialSubmit,
+      isConnected,
+      historyReplayBoundarySeq,
+      isSending,
+      commands: commandState.commands,
+      primaryCommandId: commandState.primaryCommandId,
+    });
+    if (!submitIntent) return;
+
+    initialSubmitConsumedRef.current = initialSubmit.transitionId;
+    deferStateUpdate(() => {
+      setSendError(null);
+      setIsSending(true);
+    });
+    void commandActionRef.current(submitIntent).then(async () => {
+      execConfig.recordUsage();
+      clearInput();
+    }).catch((error) => {
+      const prompt = initialSubmit.intent.prompt;
+      richInputRef.current?.setValue(prompt);
+      setInputValue(prompt);
+      setSendError(error instanceof Error ? error.message : "发送失败，请重试。");
+    }).finally(() => {
+      setIsSending(false);
+      onInitialSubmitConsumed?.(initialSubmit.transitionId);
+    });
+  }, [
+    clearInput,
+    commandState.commands,
+    commandState.primaryCommandId,
+    execConfig,
+    historyReplayBoundarySeq,
+    initialSubmit,
+    isConnected,
+    isSending,
+    onInitialSubmitConsumed,
   ]);
 
   const commandById = useCallback((commandId: string | undefined): SessionChatCommandModel | undefined => {
@@ -494,8 +570,7 @@ export function SessionChatView({
     ? "bg-muted-foreground/40"
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
-  const displayError = sendError ?? (hasRuntimeStreamTarget ? runtimeStreamError?.message : null) ?? null;
-  const mailboxMessages = mailbox.messages;
+  const displayError = sendError ?? (hasRuntimeStreamTarget ? wsError?.message : null) ?? null;
 
   // ─── 渲染 ────────────────────────────────────────────
 
@@ -523,7 +598,7 @@ export function SessionChatView({
                 {displayError}
               </div>
             </div>
-            {runtimeStreamError && !isConnected && hasRuntimeStreamTarget && (
+            {wsError && !isConnected && hasRuntimeStreamTarget && (
               <button type="button" onClick={reconnect} className="shrink-0 rounded-md bg-destructive/20 px-2 py-0.5 text-xs hover:bg-destructive/30">
                 重新连接
               </button>
@@ -532,26 +607,26 @@ export function SessionChatView({
         </div>
       )}
 
-      <AgentRuntimeFeed
+      <SessionChatStream
         containerRef={containerRef}
-        entries={runtimeEntries}
+        displayItems={displayItems}
+        turnSegments={turnSegments}
+        agentRunTarget={agentRunTarget}
+        companionSubagents={companionSubagents}
+        hasRuntimeStreamTarget={hasRuntimeStreamTarget}
         isLoading={isLoading}
+        streamingEntryId={streamingEntryId}
         streamPrefixContent={streamPrefixContent}
+        onForkFromMessageRef={intents.forkFromMessageRef}
         onScroll={handleScroll}
       />
 
-      {/* Mailbox 消息 + 输入区 */}
+      {/* Agent 等待项 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
         <SessionStatusBar
           runId={statusBarRunId}
           agentId={statusBarAgentId}
-          messages={mailboxMessages}
-          mailbox={mailbox}
-          onPromote={promoteMailboxMessage ?? (() => {})}
-          onDelete={deleteMailboxMessage ?? (() => {})}
-          onResume={resumeMailbox}
-          onRecall={recallMailboxMessage}
-          onMove={moveMailboxMessage}
+          waitingItems={waitingItems}
         />
 
         <SessionChatComposer
@@ -573,7 +648,7 @@ export function SessionChatView({
           richInputRef={richInputRef}
           showExecutorSelector={showExecutorSelector}
           workspaceId={workspaceId}
-          tokenUsage={null}
+          tokenUsage={tokenUsage}
           agentRunTarget={agentRunTarget}
           projectionRefreshKey={projectionRefreshKey}
           compactContextCommand={compactContextCommand}

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use agentdash_spi::{AgentConfig, AuthIdentity};
+use agentdash_platform_spi::{AgentConfig, AuthIdentity};
 
 #[derive(Debug, Clone)]
 pub struct CompanionModelPreflightRequest {

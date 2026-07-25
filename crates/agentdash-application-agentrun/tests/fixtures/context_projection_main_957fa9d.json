@@ -1,0 +1,60 @@
+{
+  "oracle": {
+    "repository": "AgentDash-main-reference",
+    "commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "sources": [
+      "crates/agentdash-application-runtime-session/src/session/transcript_restore.rs",
+      "crates/agentdash-application-runtime-session/src/session/context_usage_projection.rs"
+    ]
+  },
+  "input": {
+    "session_id": "session-1",
+    "events": [
+      {"event_seq":9,"turn_id":"turn-1","entry_index":0,"type":"user_input_submitted","content":[{"type":"text","text":"hello"},{"type":"image","url":"data:image/png;base64,QUJD"}]},
+      {"event_seq":10,"turn_id":"turn-1","entry_index":1,"type":"item_completed","item":{"type":"agentMessage","id":"assistant-full-1","text":"world"}},
+      {"event_seq":11,"turn_id":"turn-1","entry_index":2,"type":"item_completed","item":{"type":"dynamicToolCall","id":"call-full-1","tool":"read_file","arguments":{"path":"a"},"status":"completed","contentItems":[{"type":"inputText","text":"done"}],"success":true}}
+    ],
+    "compaction":{"lifecycle_item_id":"compact-1","summary":"summary","tokens_before":100,"messages_compacted":3,"compacted_until_ref":{"turn_id":"turn-0","entry_index":4},"projection_version":2,"source_start_event_seq":1,"source_end_event_seq":8,"strategy":"summary_prefix","trigger":"auto","phase":"pre_provider"},
+    "context_frame":{"event_seq":10,"turn_id":"turn-1","sections":[{"kind":"identity","title":"Identity","content":"system prompt"},{"kind":"tool_schema_delta","name":"read_file","description":"Read file","parameters_schema":{"type":"object"},"context_usage_kind":"system_tools"}]}
+  },
+  "tool_family_projection": [
+    { "family": "command", "tool_name": "command_execution", "output_kind": "content", "details": false, "is_error": false },
+    { "family": "file", "tool_name": "file_change", "output_kind": "missing_placeholder", "details": true, "is_error": true },
+    { "family": "mcp", "tool_name": "read", "output_kind": "structured_result", "details": true, "is_error": false },
+    { "family": "dynamic", "tool_name": "read_file", "output_kind": "content", "details": false, "is_error": false },
+    { "family": "native", "tool_name": "shell_exec", "output_kind": "content", "details": false, "is_error": false }
+  ],
+  "output": {
+    "session_id": "session-1", "projection_kind": "model_context", "projection_version": 2,
+    "head_event_seq": 12, "active_compaction_id": "compaction-compact-1", "token_estimate": 62,
+    "message_count": 5,
+    "segments": [
+      {"id":"compaction-compact-1-summary","sort_order":0,"segment_type":"summary_chunk","role":"compaction_summary","origin":"projection","synthetic":true,"projection_kind":"model_context","message_ref":{"turn_id":"turn-0","entry_index":4},"source_event_seq":9,"source_range":{"start_event_seq":1,"end_event_seq":8},"projection_segment_id":"compaction-compact-1-summary","preview":"summary","token_estimate":6,"provenance":{"compaction_id":"compaction-compact-1","projection_version":2,"segment_type":"compaction_summary","strategy":"summary_prefix","trigger":"auto","phase":"pre_provider"}},
+      {"id":"original_event:0","sort_order":1,"segment_type":"original_event","role":"user","origin":"event","synthetic":false,"projection_kind":"model_context","message_ref":{"turn_id":"turn-1","entry_index":0},"source_event_seq":9,"preview":"hello","token_estimate":8,"attachment_tokens":7,"attachment_names":["image/png image #1"],"provenance":{"projection_version":2}},
+      {"id":"original_event:1","sort_order":2,"segment_type":"original_event","role":"assistant","origin":"event","synthetic":false,"projection_kind":"model_context","message_ref":{"turn_id":"turn-1","entry_index":1},"source_event_seq":10,"preview":"world","token_estimate":6,"provenance":{"projection_version":2}},
+      {"id":"original_event:2","sort_order":3,"segment_type":"original_event","role":"assistant","origin":"event","synthetic":false,"projection_kind":"model_context","message_ref":{"turn_id":"turn-1","entry_index":2},"source_event_seq":11,"preview":"tool_calls: read_file","token_estimate":15,"tool_names":["read_file"],"provenance":{"projection_version":2}},
+      {"id":"original_event:3","sort_order":4,"segment_type":"original_event","role":"tool_result","origin":"event","synthetic":false,"projection_kind":"model_context","message_ref":{"turn_id":"turn-1","entry_index":2},"source_event_seq":11,"preview":"done","token_estimate":13,"tool_names":["read_file"],"provenance":{"projection_version":2}}
+    ],
+    "context_usage": {
+      "categories": [
+        {"kind":"system_developer","label":"System / Developer","token_estimate":4,"source":"context_frame","deferred":false},
+        {"kind":"capability_state","label":"Capability State","token_estimate":0,"source":"projected","deferred":false},
+        {"kind":"system_tools","label":"System Tools","token_estimate":10,"source":"tool_schema","deferred":false},
+        {"kind":"mcp_tools","label":"MCP Tools","token_estimate":0,"source":"projected","deferred":false},
+        {"kind":"agents","label":"Agents","token_estimate":0,"source":"projected","deferred":false},
+        {"kind":"memory","label":"Memory","token_estimate":0,"source":"projected","deferred":false},
+        {"kind":"skills","label":"Skills","token_estimate":0,"source":"projected","deferred":false},
+        {"kind":"messages","label":"Messages","token_estimate":35,"source":"local_estimate","deferred":false},
+        {"kind":"attachments","label":"Attachments","token_estimate":7,"source":"local_estimate","deferred":false},
+        {"kind":"compaction_summary","label":"Compaction Summary","token_estimate":6,"source":"projected","deferred":false}
+      ],
+      "items": [
+        {"kind":"system_developer","label":"System / Developer","name":"Identity","token_estimate":4,"source":"context_frame","deferred":false,"source_event_seq":10,"turn_id":"turn-1"},
+        {"kind":"system_tools","label":"System Tools","name":"read_file","token_estimate":10,"source":"tool_schema","deferred":false,"source_event_seq":10,"turn_id":"turn-1"}
+      ],
+      "messages":{"user_message_tokens":8,"assistant_message_tokens":12,"tool_call_tokens":15,"tool_result_tokens":13,"attachment_tokens":7},
+      "top_tools":[{"name":"read_file","call_tokens":15,"result_tokens":13}],
+      "top_attachments":[{"name":"image/png image #1","tokens":7}]
+    }
+  }
+}

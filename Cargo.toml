@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/agentdash-agent-core",
+    "crates/agentdash-agent-service-api",
     "crates/agentdash-agent-runtime",
     "crates/agentdash-agent-runtime-host",
     "crates/agentdash-agent-runtime-contract",
@@ -9,6 +11,7 @@ members = [
     "crates/agentdash-agent-runtime-test-support",
     "crates/agentdash-domain",
     "crates/agentdash-application-ports",
+    "crates/agentdash-application-extension-gateway",
     "crates/agentdash-application-operation-gateway",
     "crates/agentdash-application-vfs",
     "crates/agentdash-application-skill",
@@ -23,8 +26,7 @@ members = [
     "crates/agentdash-workspace-module",
     "crates/agentdash-application",
     "crates/agentdash-infrastructure",
-    "crates/agentdash-spi",
-    "crates/agentdash-executor",
+    "crates/agentdash-platform-spi",
     "crates/agentdash-first-party-integrations",
     "crates/agentdash-integration-api",
     "crates/agentdash-integration-native-agent",
@@ -33,13 +35,13 @@ members = [
     "crates/agentdash-api",
 
     "crates/agentdash-mcp",
-    "crates/agentdash-agent-types",
     "crates/agentdash-agent",
     "crates/agentdash-llm-provider",
     "crates/agentdash-relay",
     "crates/agentdash-local",
     "crates/agentdash-local-tauri",
     "crates/agentdash-agent-protocol",
+    "crates/agentdash-agent-protocol-codegen",
 ]
 [workspace.package]
 version = "0.1.0"
@@ -91,14 +93,17 @@ sha2 = "0.10"
 json-patch = "2.0"
 globset = "0.4"
 tempfile = "3.18"
+typify = "0.7.0"
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls"] }
-rmcp = "1.7"
+rmcp = "1.8.0"
 
 # 嵌入式脚本引擎
 rhai = { version = "1.24", features = ["serde", "sync"] }
 
 # 工作区内部 crate 互相引用
 agentdash-domain = { path = "crates/agentdash-domain" }
+agentdash-agent-core = { path = "crates/agentdash-agent-core" }
+agentdash-agent-service-api = { path = "crates/agentdash-agent-service-api" }
 agentdash-agent-runtime = { path = "crates/agentdash-agent-runtime" }
 agentdash-agent-runtime-host = { path = "crates/agentdash-agent-runtime-host" }
 agentdash-agent-runtime-contract = { path = "crates/agentdash-agent-runtime-contract" }
@@ -106,6 +111,7 @@ agentdash-agent-runtime-wire = { path = "crates/agentdash-agent-runtime-wire" }
 agentdash-integration-remote-runtime = { path = "crates/agentdash-integration-remote-runtime" }
 agentdash-agent-runtime-test-support = { path = "crates/agentdash-agent-runtime-test-support" }
 agentdash-application-ports = { path = "crates/agentdash-application-ports" }
+agentdash-application-extension-gateway = { path = "crates/agentdash-application-extension-gateway" }
 agentdash-application-operation-gateway = { path = "crates/agentdash-application-operation-gateway" }
 agentdash-application-vfs = { path = "crates/agentdash-application-vfs" }
 agentdash-application-skill = { path = "crates/agentdash-application-skill" }
@@ -120,12 +126,10 @@ agentdash-process = { path = "crates/agentdash-process" }
 agentdash-workspace-module = { path = "crates/agentdash-workspace-module" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
-agentdash-spi = { path = "crates/agentdash-spi" }
-agentdash-executor = { path = "crates/agentdash-executor", default-features = false }
+agentdash-platform-spi = { path = "crates/agentdash-platform-spi" }
 agentdash-first-party-integrations = { path = "crates/agentdash-first-party-integrations" }
 
 agentdash-mcp = { path = "crates/agentdash-mcp" }
-agentdash-agent-types = { path = "crates/agentdash-agent-types" }
 agentdash-agent = { path = "crates/agentdash-agent" }
 agentdash-llm-provider = { path = "crates/agentdash-llm-provider" }
 agentdash-relay = { path = "crates/agentdash-relay" }
@@ -136,9 +140,9 @@ agentdash-integration-codex = { path = "crates/agentdash-integration-codex" }
 agentdash-contracts = { path = "crates/agentdash-contracts" }
 
 # Codex Rust crates
-codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-app-server-protocol" }
-codex-utils-pty = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-utils-pty" }
-codex-utils-output-truncation = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-utils-output-truncation" }
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.144.1", package = "codex-app-server-protocol" }
+codex-utils-pty = { git = "https://github.com/openai/codex.git", tag = "rust-v0.144.1", package = "codex-utils-pty" }
+codex-utils-output-truncation = { git = "https://github.com/openai/codex.git", tag = "rust-v0.144.1", package = "codex-utils-output-truncation" }
 
 # Agent 事件流传输协议
 agentdash-agent-protocol = { path = "crates/agentdash-agent-protocol" }

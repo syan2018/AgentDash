@@ -7,7 +7,7 @@ use agentdash_application_ports::operation_script::{
     OperationScriptRunRequest,
 };
 use agentdash_domain::operation::OperationRef;
-use agentdash_spi::AuthIdentity;
+use agentdash_platform_spi::AuthIdentity;
 use chrono::{Duration, Utc};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -428,7 +428,7 @@ impl ExtensionServiceOperationHost {
 mod tests {
     use std::collections::BTreeSet;
 
-    use agentdash_spi::AuthMode;
+    use agentdash_platform_spi::AuthMode;
     use async_trait::async_trait;
 
     use super::*;

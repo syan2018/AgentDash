@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use agentdash_agent_protocol::ControlPlaneProjectionChanged;
+use agentdash_application_ports::project_projection_notification::ControlPlaneProjectionChanged;
 
 use crate::context::ContextContainerDefinition;
 use crate::story::StoryResponse;

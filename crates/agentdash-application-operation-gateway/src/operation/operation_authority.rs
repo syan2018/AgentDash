@@ -74,7 +74,7 @@ impl OperationAuthorityResolver for CompositeOperationAuthorityResolver {
 mod tests {
     use std::collections::BTreeSet;
 
-    use agentdash_spi::{AuthIdentity, AuthMode};
+    use agentdash_platform_spi::{AuthIdentity, AuthMode};
     use serde_json::Value;
     use uuid::Uuid;
 

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/architecture.md","reason":"后端 application/domain/infrastructure 边界"}
+{"file":".trellis/spec/backend/embedded-skill-bundles.md","reason":"内嵌 Skill bundle、项目资产与 lifecycle 投影现有契约"}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"Lifecycle mount 与 SkillAsset VFS projection 边界"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"Project/SkillAsset repository 与 application service 写边界"}
+{"file":".trellis/spec/cross-layer/shared-library-contract.md","reason":"平台资产、Project Asset 与 builtin 来源语义"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"启动、项目创建、API、runtime 与前端跨层一致性"}

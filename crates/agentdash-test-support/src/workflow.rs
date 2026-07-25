@@ -1,23 +1,17 @@
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
 use agentdash_domain::DomainError;
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
-use agentdash_domain::agent_run_mailbox::{
-    AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
-    AgentRunMailboxState, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
-    MailboxMessageStatus, NewAgentRunMailboxMessage,
-};
 use agentdash_domain::backend::{
     ProjectBackendAccess, ProjectBackendAccessRepository, ProjectBackendAccessStatus,
 };
 use agentdash_domain::channel::{ChannelRegistryDocument, ChannelRegistryMutation};
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentLineage, AgentLineageRepository, AgentProcedure,
-    AgentProcedureRepository, AgentRunLineage, AgentRunLineageRepository, GateWaitPolicyEnvelope,
-    LifecycleAgent, LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleRun,
-    LifecycleRunRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
+    AgentProcedureRepository, GateWaitPolicyEnvelope, LifecycleAgent, LifecycleAgentRepository,
+    LifecycleGate, LifecycleGateRepository, LifecycleRun, LifecycleRunRepository,
+    LifecycleRunWriteError, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
     SubjectRef, WaitProducerRef, WorkflowGraph, WorkflowGraphRepository,
 };
-use chrono::Utc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -75,6 +69,31 @@ impl LifecycleRunRepository for MemoryLifecycleRunRepository {
         Ok(())
     }
 
+    async fn compare_and_swap(
+        &self,
+        expected_revision: u64,
+        run: &LifecycleRun,
+    ) -> Result<(), LifecycleRunWriteError> {
+        let mut runs = self.runs.lock().await;
+        let Some(existing) = runs.iter_mut().find(|item| item.id == run.id) else {
+            return Err(LifecycleRunWriteError::Persistence(DomainError::NotFound {
+                entity: "lifecycle_run",
+                id: run.id.to_string(),
+            }));
+        };
+        if existing.revision != expected_revision || run.revision != expected_revision + 1 {
+            return Err(LifecycleRunWriteError::RevisionConflict {
+                run_id: run.id,
+                expected_revision,
+                actual_revision: existing.revision,
+            });
+        }
+        let channel_registry = existing.channel_registry.clone();
+        *existing = run.clone();
+        existing.channel_registry = channel_registry;
+        Ok(())
+    }
+
     async fn load_channel_registry(
         &self,
         run_id: Uuid,
@@ -86,24 +105,6 @@ impl LifecycleRunRepository for MemoryLifecycleRunRepository {
             });
         };
         Ok(run.channel_registry)
-    }
-
-    async fn list_channel_registries_with_bindings(
-        &self,
-    ) -> Result<Vec<(Uuid, ChannelRegistryDocument)>, DomainError> {
-        Ok(self
-            .runs
-            .lock()
-            .await
-            .iter()
-            .filter(|run| {
-                run.channel_registry
-                    .channels
-                    .iter()
-                    .any(|record| !record.bindings.is_empty())
-            })
-            .map(|run| (run.id, run.channel_registry.clone()))
-            .collect())
     }
 
     async fn mutate_channel_registry(
@@ -139,74 +140,6 @@ pub struct MemoryAgentFrameRepository {
     frames: Mutex<Vec<AgentFrame>>,
 }
 
-#[derive(Default)]
-pub struct MemoryAgentRunLineageRepository {
-    lineages: Mutex<Vec<AgentRunLineage>>,
-}
-
-#[async_trait::async_trait]
-impl AgentRunLineageRepository for MemoryAgentRunLineageRepository {
-    async fn create(&self, lineage: &AgentRunLineage) -> Result<(), DomainError> {
-        let mut lineages = self.lineages.lock().await;
-        if lineages.iter().any(|existing| {
-            existing.child_run_id == lineage.child_run_id
-                && existing.child_agent_id == lineage.child_agent_id
-        }) {
-            return Err(DomainError::Conflict {
-                entity: "agent_run_lineage",
-                constraint: "unique_child",
-                message: "child AgentRun already has a parent lineage".to_string(),
-            });
-        }
-        lineages.push(lineage.clone());
-        Ok(())
-    }
-
-    async fn find_parent(
-        &self,
-        child_run_id: Uuid,
-        child_agent_id: Uuid,
-    ) -> Result<Option<AgentRunLineage>, DomainError> {
-        Ok(self
-            .lineages
-            .lock()
-            .await
-            .iter()
-            .find(|lineage| {
-                lineage.child_run_id == child_run_id && lineage.child_agent_id == child_agent_id
-            })
-            .cloned())
-    }
-
-    async fn list_children(
-        &self,
-        parent_run_id: Uuid,
-        parent_agent_id: Uuid,
-    ) -> Result<Vec<AgentRunLineage>, DomainError> {
-        Ok(self
-            .lineages
-            .lock()
-            .await
-            .iter()
-            .filter(|lineage| {
-                lineage.parent_run_id == parent_run_id && lineage.parent_agent_id == parent_agent_id
-            })
-            .cloned()
-            .collect())
-    }
-
-    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentRunLineage>, DomainError> {
-        Ok(self
-            .lineages
-            .lock()
-            .await
-            .iter()
-            .filter(|lineage| lineage.parent_run_id == run_id || lineage.child_run_id == run_id)
-            .cloned()
-            .collect())
-    }
-}
-
 #[async_trait::async_trait]
 impl AgentFrameRepository for MemoryAgentFrameRepository {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
@@ -224,7 +157,7 @@ impl AgentFrameRepository for MemoryAgentFrameRepository {
             .cloned())
     }
 
-    async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+    async fn get_latest(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         Ok(self
             .frames
             .lock()
@@ -266,7 +199,7 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
     > {
         let agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
             agent_id,
-            runtime_session_id,
+            runtime_thread_id,
             created_by_id,
             ..
         } = command
@@ -301,7 +234,7 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
         );
         outcome.frame_id = Some(frame.id);
         outcome.agent_id = Some(frame.agent_id);
-        outcome.runtime_session_id = runtime_session_id;
+        outcome.runtime_thread_id = runtime_thread_id;
         outcome.wrote_frame_revision = true;
         Ok(outcome)
     }
@@ -800,380 +733,6 @@ impl ProjectBackendAccessRepository for MemoryProjectBackendAccessRepository {
 }
 
 #[derive(Default)]
-pub struct MemoryAgentRunMailboxRepository {
-    messages: Mutex<Vec<AgentRunMailboxMessage>>,
-    states: Mutex<Vec<AgentRunMailboxState>>,
-    cleaned: Mutex<Vec<Uuid>>,
-}
-
-impl MemoryAgentRunMailboxRepository {
-    pub async fn messages_for(&self, run_id: Uuid, agent_id: Uuid) -> Vec<AgentRunMailboxMessage> {
-        self.list_messages(run_id, agent_id)
-            .await
-            .unwrap_or_default()
-    }
-}
-
-#[async_trait::async_trait]
-impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
-    async fn list_pending_targets(&self) -> Result<Vec<(Uuid, Uuid)>, DomainError> {
-        let mut targets = self
-            .messages
-            .lock()
-            .await
-            .iter()
-            .filter(|message| {
-                matches!(
-                    message.status,
-                    MailboxMessageStatus::Accepted
-                        | MailboxMessageStatus::Queued
-                        | MailboxMessageStatus::ReadyToConsume
-                        | MailboxMessageStatus::Consuming
-                )
-            })
-            .map(|message| (message.run_id, message.agent_id))
-            .collect::<Vec<_>>();
-        targets.sort_unstable();
-        targets.dedup();
-        Ok(targets)
-    }
-
-    async fn create_message(
-        &self,
-        message: NewAgentRunMailboxMessage,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        let message = mailbox_message_from_new(message);
-        self.messages.lock().await.push(message.clone());
-        Ok(message)
-    }
-
-    async fn create_message_idempotent(
-        &self,
-        message: NewAgentRunMailboxMessage,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        if let Some(dedup_key) = message.source_dedup_key.as_deref()
-            && let Some(existing) = self.messages.lock().await.iter().find(|existing| {
-                existing.run_id == message.run_id
-                    && existing.agent_id == message.agent_id
-                    && existing.source_dedup_key.as_deref() == Some(dedup_key)
-            })
-        {
-            return Ok(existing.clone());
-        }
-        self.create_message(message).await
-    }
-
-    async fn get_message(&self, id: Uuid) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
-        Ok(self
-            .messages
-            .lock()
-            .await
-            .iter()
-            .find(|message| message.id == id)
-            .cloned())
-    }
-
-    async fn list_messages(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-    ) -> Result<Vec<AgentRunMailboxMessage>, DomainError> {
-        Ok(self
-            .messages
-            .lock()
-            .await
-            .iter()
-            .filter(|message| message.run_id == run_id && message.agent_id == agent_id)
-            .cloned()
-            .collect())
-    }
-
-    async fn claim_next(
-        &self,
-        request: AgentRunMailboxClaimRequest,
-    ) -> Result<Vec<AgentRunMailboxMessage>, DomainError> {
-        let mut messages = self.messages.lock().await;
-        let mut claimed = Vec::new();
-        for message in messages.iter_mut() {
-            if claimed.len() >= request.limit as usize {
-                break;
-            }
-            if message.run_id != request.run_id
-                || message.agent_id != request.agent_id
-                || !request.barriers.contains(&message.barrier)
-                || request
-                    .drain_mode
-                    .is_some_and(|mode| mode != message.drain_mode)
-                || !matches!(
-                    message.status,
-                    MailboxMessageStatus::Queued | MailboxMessageStatus::ReadyToConsume
-                )
-            {
-                continue;
-            }
-            message.status = MailboxMessageStatus::Consuming;
-            message.claim_token = Some(request.claim_token);
-            message.claim_expires_at = Some(request.claim_expires_at);
-            message.attempt_count += 1;
-            claimed.push(message.clone());
-        }
-        Ok(claimed)
-    }
-
-    async fn recover_expired_consuming(
-        &self,
-        _now: chrono::DateTime<Utc>,
-    ) -> Result<u64, DomainError> {
-        Ok(0)
-    }
-
-    async fn mark_message_status(
-        &self,
-        id: Uuid,
-        claim_token: Option<Uuid>,
-        status: MailboxMessageStatus,
-        last_error: Option<String>,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        let mut messages = self.messages.lock().await;
-        let message = messages
-            .iter_mut()
-            .find(|message| message.id == id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_run_mailbox_message",
-                id: id.to_string(),
-            })?;
-        if message.claim_token != claim_token {
-            return Err(DomainError::Conflict {
-                entity: "agent_run_mailbox_message",
-                constraint: "claim_token",
-                message: "claim token mismatch".to_string(),
-            });
-        }
-        message.status = status;
-        message.last_error = last_error;
-        message.claim_token = None;
-        message.claim_expires_at = None;
-        message.consumed_at = Some(Utc::now());
-        message.updated_at = Utc::now();
-        Ok(message.clone())
-    }
-
-    async fn mark_runtime_operation_accepted(
-        &self,
-        id: Uuid,
-        claim_token: Uuid,
-        operation_id: String,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        let mut messages = self.messages.lock().await;
-        let message = messages
-            .iter_mut()
-            .find(|message| message.id == id && message.claim_token == Some(claim_token))
-            .ok_or_else(|| DomainError::Conflict {
-                entity: "agent_run_mailbox_message",
-                constraint: "runtime_operation_claim",
-                message: "claim token mismatch".to_string(),
-            })?;
-        message.status = MailboxMessageStatus::Dispatched;
-        message.accepted_runtime_operation_id = Some(operation_id);
-        message.claim_token = None;
-        message.claim_expires_at = None;
-        message.consumed_at = Some(Utc::now());
-        message.updated_at = Utc::now();
-        Ok(message.clone())
-    }
-
-    async fn update_message_policy(
-        &self,
-        id: Uuid,
-        delivery: MailboxDelivery,
-        barrier: ConsumptionBarrier,
-        drain_mode: MailboxDrainMode,
-        priority: i32,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        let mut messages = self.messages.lock().await;
-        let message = messages
-            .iter_mut()
-            .find(|message| message.id == id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_run_mailbox_message",
-                id: id.to_string(),
-            })?;
-        message.delivery = delivery;
-        message.barrier = barrier;
-        message.drain_mode = drain_mode;
-        message.priority = priority;
-        message.updated_at = Utc::now();
-        Ok(message.clone())
-    }
-
-    async fn delete_message(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<AgentRunMailboxMessage>, DomainError> {
-        let mut messages = self.messages.lock().await;
-        if let Some(message) = messages.iter_mut().find(|message| message.id == id) {
-            message.status = MailboxMessageStatus::Deleted;
-            message.deleted_at = Some(Utc::now());
-            return Ok(Some(message.clone()));
-        }
-        Ok(None)
-    }
-
-    async fn cleanup_user_payload(&self, id: Uuid) -> Result<(), DomainError> {
-        self.cleaned.lock().await.push(id);
-        if let Some(message) = self
-            .messages
-            .lock()
-            .await
-            .iter_mut()
-            .find(|message| message.id == id)
-        {
-            message.payload_json = None;
-        }
-        Ok(())
-    }
-
-    async fn pause_state(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-        reason: String,
-        message: Option<String>,
-    ) -> Result<AgentRunMailboxState, DomainError> {
-        let state = AgentRunMailboxState {
-            run_id,
-            agent_id,
-            paused: true,
-            pause_reason: Some(reason),
-            pause_message: message,
-            backend_selection_preference: None,
-            updated_at: Utc::now(),
-        };
-        self.upsert_state(state.clone()).await;
-        Ok(state)
-    }
-
-    async fn resume_state(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-    ) -> Result<AgentRunMailboxState, DomainError> {
-        let state = AgentRunMailboxState {
-            run_id,
-            agent_id,
-            paused: false,
-            pause_reason: None,
-            pause_message: None,
-            backend_selection_preference: None,
-            updated_at: Utc::now(),
-        };
-        self.upsert_state(state.clone()).await;
-        Ok(state)
-    }
-
-    async fn get_state(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-    ) -> Result<Option<AgentRunMailboxState>, DomainError> {
-        Ok(self
-            .states
-            .lock()
-            .await
-            .iter()
-            .find(|state| state.run_id == run_id && state.agent_id == agent_id)
-            .cloned())
-    }
-
-    async fn set_backend_selection_preference(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-        preference: serde_json::Value,
-    ) -> Result<AgentRunMailboxState, DomainError> {
-        let mut state = self
-            .get_state(run_id, agent_id)
-            .await?
-            .unwrap_or(AgentRunMailboxState {
-                run_id,
-                agent_id,
-                paused: false,
-                pause_reason: None,
-                pause_message: None,
-                backend_selection_preference: None,
-                updated_at: Utc::now(),
-            });
-        state.backend_selection_preference = Some(preference);
-        state.updated_at = Utc::now();
-        self.upsert_state(state.clone()).await;
-        Ok(state)
-    }
-
-    async fn move_message_after(
-        &self,
-        id: Uuid,
-        _after_id: Option<Uuid>,
-        _run_id: Uuid,
-        _agent_id: Uuid,
-    ) -> Result<AgentRunMailboxMessage, DomainError> {
-        self.get_message(id)
-            .await?
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_run_mailbox_message",
-                id: id.to_string(),
-            })
-    }
-}
-
-impl MemoryAgentRunMailboxRepository {
-    async fn upsert_state(&self, state: AgentRunMailboxState) {
-        let mut states = self.states.lock().await;
-        if let Some(existing) = states
-            .iter_mut()
-            .find(|item| item.run_id == state.run_id && item.agent_id == state.agent_id)
-        {
-            *existing = state;
-        } else {
-            states.push(state);
-        }
-    }
-}
-
-fn mailbox_message_from_new(message: NewAgentRunMailboxMessage) -> AgentRunMailboxMessage {
-    let now = Utc::now();
-    AgentRunMailboxMessage {
-        id: Uuid::new_v4(),
-        run_id: message.run_id,
-        agent_id: message.agent_id,
-        origin: message.origin,
-        source: message.source,
-        delivery: message.delivery,
-        barrier: message.barrier,
-        drain_mode: message.drain_mode,
-        status: MailboxMessageStatus::Queued,
-        priority: message.priority,
-        order_key: now.timestamp_micros(),
-        source_dedup_key: message.source_dedup_key,
-        accepted_runtime_operation_id: None,
-        claim_token: None,
-        claimed_at: None,
-        claim_expires_at: None,
-        payload_json: message.payload_json,
-        executor_config_json: message.executor_config_json,
-        launch_planning_input: message.launch_planning_input,
-        preview: message.preview,
-        has_images: message.has_images,
-        retain_payload: message.retain_payload,
-        attempt_count: 0,
-        last_error: None,
-        created_at: now,
-        updated_at: now,
-        consumed_at: None,
-        deleted_at: None,
-    }
-}
-
-#[derive(Default)]
 pub struct MemoryLifecycleGateRepository {
     gates: Mutex<Vec<LifecycleGate>>,
 }
@@ -1284,7 +843,7 @@ impl MemoryLifecycleGateRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeDelta;
+    use chrono::{TimeDelta, Utc};
 
     #[tokio::test]
     async fn current_frame_uses_revision_then_created_at() {
@@ -1312,7 +871,7 @@ mod tests {
         repo.create(&latest_high_revision).await.unwrap();
         repo.create(&other_agent_frame).await.unwrap();
 
-        let current = repo.get_current(agent_id).await.unwrap().unwrap();
+        let current = repo.get_latest(agent_id).await.unwrap().unwrap();
 
         assert_eq!(current.id, latest_high_revision_id);
         assert_ne!(current.id, older_high_revision_id);

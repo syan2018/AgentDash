@@ -13,7 +13,7 @@ use agentdash_application_skill::skill_asset::{
 use agentdash_domain::shared_library::LibraryAssetRepository;
 use agentdash_domain::skill_asset::SkillAsset;
 use agentdash_domain::skill_asset::SkillAssetRepository;
-use agentdash_spi::RemoteSkillSource;
+use agentdash_platform_spi::RemoteSkillSource;
 
 pub struct ImportRemoteSkillUrlDeps<'a> {
     pub skill_asset_repo: &'a dyn SkillAssetRepository,

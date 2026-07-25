@@ -8,12 +8,13 @@
 //! - `Story { project_id }` —— 查 `is_default_for_story=true` 的 ProjectAgent
 //! - `Routine { project_id, project_agent_id }` —— 复用 Project 查询（routine 自带 agent 绑定）
 //!
-//! Task session 已在 session_runtime_inputs / turn_context 就地拿到 `ActiveWorkflowProjection`，
+//! Task session 已在 runtime_thread_inputs / turn_context 就地拿到 `ActiveWorkflowProjection`，
 //! 无需走 helper；那边直接用 `tool_directives_from_active_workflow` 做单步计算即可。
 //!
 //! 错误处理哲学：repo 报错 / 未找到 / 未配置统一返回 `None`，
 //! 只记录 `tracing::warn!`，不中断 session 创建。
 
+use agentdash_application_ports::lifecycle_surface_projection::ActiveWorkflowProjection;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use uuid::Uuid;
 
@@ -287,7 +288,7 @@ pub fn tool_directives_from_active_workflow(
 }
 
 pub fn tool_directives_from_active_workflow_projection(
-    workflow: &crate::lifecycle::ActiveWorkflowProjection,
+    workflow: &ActiveWorkflowProjection,
 ) -> Vec<ToolCapabilityDirective> {
     workflow
         .active_contract()
@@ -829,7 +830,7 @@ mod tests {
         }];
         let output = CapabilityResolver::resolve(
             &CapabilityResolverInput {
-                owner_ctx: agentdash_spi::CapabilityScopeCtx::Project { project_id },
+                owner_ctx: agentdash_platform_spi::CapabilityScopeCtx::Project { project_id },
                 contributions,
                 mcp_candidates: Default::default(),
                 mcp_runtime_context: None,
@@ -853,7 +854,7 @@ mod tests {
         assert!(
             output.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
-                agentdash_spi::McpTransportConfig::Http { url, .. }
+                agentdash_platform_spi::McpTransportConfig::Http { url, .. }
                     if url.contains("/mcp/workflow/")
             )),
             "应注入 WorkflowMcpServer"

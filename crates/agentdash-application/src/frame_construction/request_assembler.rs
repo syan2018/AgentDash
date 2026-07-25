@@ -29,8 +29,8 @@ use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workflow::{
     ActivityDefinition, AgentProcedureContract, LifecycleRun, WorkflowGraph,
 };
-use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
-use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
+use agentdash_platform_spi::{CapabilityScope, CapabilityScopeCtx};
+use agentdash_platform_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -49,8 +49,7 @@ use crate::capability::{
 };
 use crate::companion::tools::CompanionSliceMode;
 use crate::context::{
-    AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
-    build_session_context_bundle, emit_bundle_fragments,
+    ContextBuildPhase, Contribution, SessionContextConfig, build_session_context_bundle,
 };
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -71,14 +70,11 @@ use agentdash_application_vfs::apply_project_vfs_mount_exposure_grants;
 /// 签名都携带 6-7 个 service 参数。
 pub struct FrameRequestAssembler<'a> {
     pub repos: &'a RepositorySet,
+    pub product_runtime_bindings:
+        &'a dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
     pub platform_config: &'a PlatformConfig,
     pub lifecycle_surface_projection:
         &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
-    /// 可选审计总线 —— 每次 compose 产出 Bundle 后批量 emit。
-    ///
-    /// 为 `None` 时（例如单元测试 / routine 内部降级路径）跳过 emit；
-    /// 生产路径由 `AppState` 注入 `InMemoryContextAuditBus` 共享实例。
-    pub audit_bus: Option<SharedContextAuditBus>,
     pub companion_parent_facts_provider: Option<&'a dyn CompanionParentFactsProvider>,
 }
 
@@ -95,20 +91,16 @@ impl<'a> FrameRequestAssembler<'a> {
         repos: &'a RepositorySet,
         platform_config: &'a PlatformConfig,
         lifecycle_surface_projection: &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
+        product_runtime_bindings:
+            &'a dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
     ) -> Self {
         Self {
             repos,
+            product_runtime_bindings,
             platform_config,
             lifecycle_surface_projection,
-            audit_bus: None,
             companion_parent_facts_provider: None,
         }
-    }
-
-    /// 配置审计总线（生产路径由 `AppState` 注入）。
-    pub fn with_audit_bus(mut self, bus: SharedContextAuditBus) -> Self {
-        self.audit_bus = Some(bus);
-        self
     }
 
     pub fn with_companion_parent_facts_provider(
@@ -193,6 +185,7 @@ impl<'a> FrameRequestAssembler<'a> {
             self.repos,
             self.platform_config,
             self.lifecycle_surface_projection,
+            self.product_runtime_bindings,
             CompanionWorkflowSpec {
                 companion: CompanionSpec {
                     parent_vfs: parent_facts.parent_vfs.as_ref(),
@@ -297,8 +290,12 @@ impl<'a> FrameRequestAssembler<'a> {
         prepared: &mut FrameAssemblyBuilder,
         explicit_skill_asset_keys: Vec<String>,
     ) -> Result<(), String> {
-        let Some((address, message_stream)) =
-            super::resolve_runtime_surface_refs(self.repos, child_session_id).await?
+        let Some((address, message_stream)) = resolve_existing_runtime_surface_refs(
+            self.repos,
+            self.product_runtime_bindings,
+            child_session_id,
+        )
+        .await?
         else {
             return Ok(());
         };
@@ -323,10 +320,9 @@ impl<'a> FrameRequestAssembler<'a> {
                 project_id: run.project_id,
                 mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::CompanionChildSurface,
                 explicit_skill_asset_keys,
-                builtin_skills:
-                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(vec![
-                        ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
-                    ]),
+                builtin_skills: ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::Project(
+                    vec![ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem],
+                ),
                 node_evidence: None,
                 node_projection: None,
             })
@@ -387,16 +383,15 @@ impl<'a> FrameRequestAssembler<'a> {
 
 /// lifecycle_node 的 frame builder 路径（free-standing 版本）。
 #[allow(clippy::too_many_arguments)]
-pub async fn compose_lifecycle_node_to_frame_with_audit(
+pub async fn compose_lifecycle_node_to_frame(
     frame_builder: crate::agent_run::frame::AgentFrameBuilder,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     lifecycle_surface_projection: &dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
+    product_runtime_bindings:
+        &dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
     spec: LifecycleNodeSpec<'_>,
-    audit_bus: Option<SharedContextAuditBus>,
-    audit_session_key: Option<&str>,
-    audit_run_id: Option<&str>,
-    audit_agent_id: Option<&str>,
+    runtime_thread_id: Option<&str>,
 ) -> Result<
     (
         crate::agent_run::frame::AgentFrameBuilder,
@@ -404,30 +399,27 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
     ),
     String,
 > {
-    let prepared = compose_lifecycle_node_with_audit(
+    let prepared = compose_lifecycle_node(
         repos,
         platform_config,
         lifecycle_surface_projection,
+        product_runtime_bindings,
         spec,
-        audit_bus,
-        audit_session_key,
-        audit_run_id,
-        audit_agent_id,
+        runtime_thread_id,
     )
     .await?;
     Ok(project_frame_assembly_to_frame(frame_builder, prepared))
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn compose_lifecycle_node_with_audit(
+async fn compose_lifecycle_node(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     lifecycle_surface_projection: &dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
+    product_runtime_bindings:
+        &dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
     spec: LifecycleNodeSpec<'_>,
-    audit_bus: Option<SharedContextAuditBus>,
-    audit_session_key: Option<&str>,
-    audit_run_id: Option<&str>,
-    audit_agent_id: Option<&str>,
+    runtime_thread_id: Option<&str>,
 ) -> Result<FrameAssemblyBuilder, String> {
     let owner_ctx = CapabilityScopeCtx::Project {
         project_id: spec.run.project_id,
@@ -465,8 +457,11 @@ async fn compose_lifecycle_node_with_audit(
         },
         platform_config,
     )?;
-    if let Some((address, message_stream)) = match audit_session_key {
-        Some(session_id) => super::resolve_runtime_surface_refs(repos, session_id).await?,
+    if let Some((address, message_stream)) = match runtime_thread_id {
+        Some(session_id) => {
+            resolve_existing_runtime_surface_refs(repos, product_runtime_bindings, session_id)
+                .await?
+        }
         None => None,
     } {
         let base_vfs = activation.lifecycle_vfs.clone();
@@ -492,7 +487,7 @@ async fn compose_lifecycle_node_with_audit(
                 mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
                 explicit_skill_asset_keys: Vec::new(),
                 builtin_skills:
-                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(vec![
+                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::Project(vec![
                         ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
                     ]),
                 node_evidence: Some(node_projection.evidence_ref()),
@@ -530,24 +525,13 @@ async fn compose_lifecycle_node_with_audit(
         SessionContextConfig {
             session_id: Uuid::new_v4(),
             phase: ContextBuildPhase::LifecycleNode,
-            default_scope: agentdash_spi::ContextFragment::default_scope(),
+            default_scope: agentdash_platform_spi::ContextFragment::default_scope(),
         },
         vec![
             contribute_lifecycle_context(&spec, &activation, &ready_port_keys),
             Contribution::fragments_only(lifecycle_plan.fragments),
         ],
     );
-    if let (Some(bus), Some(run_id), Some(agent_id)) =
-        (audit_bus.as_ref(), audit_run_id, audit_agent_id)
-    {
-        emit_bundle_fragments(
-            bus.as_ref(),
-            &context_bundle,
-            run_id,
-            agent_id,
-            AuditTrigger::ComposerRebuild,
-        );
-    }
     Ok(FrameAssemblyBuilder::new()
         .apply_lifecycle_activation(&activation, spec.inherited_executor_config)
         .with_context_bundle(context_bundle)
@@ -604,12 +588,12 @@ fn contribute_lifecycle_context(
         ));
     }
 
-    fragments.push(agentdash_spi::ContextFragment {
+    fragments.push(agentdash_platform_spi::ContextFragment {
         slot: "workflow_context".to_string(),
         label: "lifecycle_node_context".to_string(),
         order: 80,
-        strategy: agentdash_spi::MergeStrategy::Append,
-        scope: agentdash_spi::ContextFragment::default_scope(),
+        strategy: agentdash_platform_spi::MergeStrategy::Append,
+        scope: agentdash_platform_spi::ContextFragment::default_scope(),
         source: "lifecycle:activation".to_string(),
         content: format!("## Lifecycle Node\n{}", lifecycle_lines.join("\n")),
     });
@@ -620,12 +604,12 @@ fn contribute_lifecycle_context(
             crate::context::rendering::WorkflowInjectionMode::Declarative,
         )
     {
-        fragments.push(agentdash_spi::ContextFragment {
+        fragments.push(agentdash_platform_spi::ContextFragment {
             slot: "workflow_context".to_string(),
             label: "lifecycle_workflow_injection".to_string(),
             order: 83,
-            strategy: agentdash_spi::MergeStrategy::Append,
-            scope: agentdash_spi::ContextFragment::default_scope(),
+            strategy: agentdash_platform_spi::MergeStrategy::Append,
+            scope: agentdash_platform_spi::ContextFragment::default_scope(),
             source: "lifecycle:workflow_injection".to_string(),
             content,
         });
@@ -641,12 +625,12 @@ fn contribute_lifecycle_context(
     if !activation.kickoff_prompt.input_section.trim().is_empty() {
         delivery_parts.push(activation.kickoff_prompt.input_section.trim().to_string());
     }
-    fragments.push(agentdash_spi::ContextFragment {
+    fragments.push(agentdash_platform_spi::ContextFragment {
         slot: "workflow_context".to_string(),
         label: "lifecycle_delivery_contract".to_string(),
         order: 84,
-        strategy: agentdash_spi::MergeStrategy::Append,
-        scope: agentdash_spi::ContextFragment::default_scope(),
+        strategy: agentdash_platform_spi::MergeStrategy::Append,
+        scope: agentdash_platform_spi::ContextFragment::default_scope(),
         source: "lifecycle:delivery_contract".to_string(),
         content: delivery_parts.join("\n\n"),
     });
@@ -660,8 +644,8 @@ fn contribute_lifecycle_context(
 /// 该 fragment 会被 `preparation.rs::find_agent_identity_markdown` 拾取，
 /// 最终渲染进 Identity Frame 的 "## Agent Identity" section。
 fn inject_companion_role_fragment(prepared: &mut FrameAssemblyBuilder, child_session_id: &str) {
-    use agentdash_spi::context::bundle::SessionContextBundle;
-    use agentdash_spi::context::injection::{ContextFragment, MergeStrategy};
+    use agentdash_platform_spi::context::bundle::SessionContextBundle;
+    use agentdash_platform_spi::context::injection::{ContextFragment, MergeStrategy};
 
     let role_content = "\
 ## Agent Identity
@@ -707,7 +691,7 @@ fn compose_companion(spec: CompanionSpec<'_>) -> Result<FrameAssemblyBuilder, St
         .build())
 }
 
-fn dedupe_runtime_mcp_servers(servers: &mut Vec<agentdash_spi::RuntimeMcpServer>) {
+fn dedupe_runtime_mcp_servers(servers: &mut Vec<agentdash_platform_spi::RuntimeMcpServer>) {
     let mut seen = BTreeSet::<String>::new();
     servers.retain(|server| seen.insert(server.name.clone()));
 }
@@ -753,7 +737,7 @@ pub struct LifecycleNodeSpec<'a> {
 /// Companion compose 输入。
 pub struct CompanionSpec<'a> {
     pub parent_vfs: Option<&'a Vfs>,
-    pub parent_mcp_servers: &'a [agentdash_spi::RuntimeMcpServer],
+    pub parent_mcp_servers: &'a [agentdash_platform_spi::RuntimeMcpServer],
     /// 父 session 的结构化上下文 Bundle，companion 直接继承（按 slice_mode 过滤）。
     pub parent_context_bundle: Option<&'a SessionContextBundle>,
     pub slice_mode: CompanionSliceMode,
@@ -785,7 +769,7 @@ pub struct CompanionParentWorkflowSpec<'a> {
 
 pub(crate) struct CompanionParentFacts {
     pub(crate) parent_vfs: Option<Vfs>,
-    pub(crate) parent_mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
+    pub(crate) parent_mcp_servers: Vec<agentdash_platform_spi::RuntimeMcpServer>,
     pub(crate) parent_context_bundle: Option<SessionContextBundle>,
 }
 
@@ -811,6 +795,8 @@ async fn compose_companion_with_workflow(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     lifecycle_surface_projection: &dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
+    product_runtime_bindings:
+        &dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
     spec: CompanionWorkflowSpec<'_>,
 ) -> Result<FrameAssemblyBuilder, String> {
     use crate::companion::tools::build_companion_execution_slice;
@@ -874,8 +860,12 @@ async fn compose_companion_with_workflow(
         },
         platform_config,
     )?;
-    if let Some((address, message_stream)) =
-        super::resolve_runtime_surface_refs(repos, spec.child_session_id).await?
+    if let Some((address, message_stream)) = resolve_existing_runtime_surface_refs(
+        repos,
+        product_runtime_bindings,
+        spec.child_session_id,
+    )
+    .await?
     {
         let base_vfs = activation.lifecycle_vfs.clone();
         let node_projection = ports_lifecycle_surface::OrchestrationNodeProjectionInput {
@@ -904,7 +894,7 @@ async fn compose_companion_with_workflow(
                     .and_then(|context| context.preset_config.skill_asset_keys.clone())
                     .unwrap_or_default(),
                 builtin_skills:
-                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(vec![
+                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::Project(vec![
                         ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
                     ]),
                 node_evidence: Some(node_projection.evidence_ref()),
@@ -931,19 +921,19 @@ async fn compose_companion_with_workflow(
             crate::context::rendering::WorkflowInjectionMode::SummaryOnly,
         )
     {
-        let workflow_fragment = agentdash_spi::ContextFragment {
+        let workflow_fragment = agentdash_platform_spi::ContextFragment {
             slot: "workflow_context".to_string(),
             label: "companion_workflow_injection".to_string(),
             order: 83,
-            strategy: agentdash_spi::MergeStrategy::Append,
-            scope: agentdash_spi::ContextFragment::default_scope(),
+            strategy: agentdash_platform_spi::MergeStrategy::Append,
+            scope: agentdash_platform_spi::ContextFragment::default_scope(),
             source: "companion:workflow_injection".to_string(),
             content: workflow_content,
         };
         match merged_bundle.as_mut() {
             Some(bundle) => bundle.upsert_by_slot(workflow_fragment),
             None => {
-                let mut bundle = agentdash_spi::SessionContextBundle::new(
+                let mut bundle = agentdash_platform_spi::SessionContextBundle::new(
                     Uuid::new_v4(),
                     ContextBuildPhase::Companion.as_tag(),
                 );
@@ -972,6 +962,46 @@ async fn compose_companion_with_workflow(
         .with_optional_context_bundle(merged_bundle)
         .with_input(user_input)
         .build())
+}
+
+/// 仅为已经建立 binding/current frame 的 session 解析 lifecycle projection 坐标。
+///
+/// 首次 owner frame construction 直接携带 dispatch 坐标，不得调用此入口。
+async fn resolve_existing_runtime_surface_refs(
+    repos: &RepositorySet,
+    product_runtime_bindings:
+        &dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
+    runtime_thread_id: &str,
+) -> Result<
+    Option<(
+        agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress,
+        ports_lifecycle_surface::MessageStreamProjectionRef,
+    )>,
+    String,
+> {
+    let Some((_binding, agent, frame)) =
+        agentdash_application_lifecycle::resolve_current_frame_from_delivery_trace_ref(
+            runtime_thread_id,
+            product_runtime_bindings,
+            repos.lifecycle_agent_repo.as_ref(),
+            repos.agent_frame_repo.as_ref(),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((
+        agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress {
+            run_id: agent.run_id,
+            agent_id: agent.id,
+            frame_id: frame.id,
+        },
+        ports_lifecycle_surface::MessageStreamProjectionRef {
+            runtime_thread_id: runtime_thread_id.to_string(),
+            trace_kind: ports_lifecycle_surface::MessageStreamTraceKind::ManagedRuntimeThread,
+        },
+    )))
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1025,18 +1055,18 @@ mod tests {
         );
     }
 
-    fn bundle_with_slots(slots: &[&str]) -> agentdash_spi::SessionContextBundle {
-        let mut bundle = agentdash_spi::SessionContextBundle::new(
+    fn bundle_with_slots(slots: &[&str]) -> agentdash_platform_spi::SessionContextBundle {
+        let mut bundle = agentdash_platform_spi::SessionContextBundle::new(
             Uuid::new_v4(),
             ContextBuildPhase::StoryOwner.as_tag(),
         );
         for (idx, slot) in slots.iter().enumerate() {
-            bundle.upsert_by_slot(agentdash_spi::ContextFragment {
+            bundle.upsert_by_slot(agentdash_platform_spi::ContextFragment {
                 slot: (*slot).to_string(),
                 label: format!("label_{slot}"),
                 order: 10 + idx as i32,
-                strategy: agentdash_spi::MergeStrategy::Append,
-                scope: agentdash_spi::ContextFragment::default_scope(),
+                strategy: agentdash_platform_spi::MergeStrategy::Append,
+                scope: agentdash_platform_spi::ContextFragment::default_scope(),
                 source: "test".to_string(),
                 content: format!("body_{slot}"),
             });
@@ -1051,7 +1081,7 @@ mod tests {
             key: project_agent.id.to_string(),
             display_name: name.to_string(),
             description: String::new(),
-            executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            executor_config: agentdash_platform_spi::AgentConfig::new("PI_AGENT"),
             preset_config: AgentPresetConfig::default(),
             preset_name: Some(name.to_string()),
             source: "test".to_string(),
@@ -1069,7 +1099,9 @@ mod tests {
         assert!(validate_selected_agent_key_snapshot(&context, Some("planner")).is_err());
     }
 
-    fn slot_set(bundle: &agentdash_spi::SessionContextBundle) -> std::collections::HashSet<String> {
+    fn slot_set(
+        bundle: &agentdash_platform_spi::SessionContextBundle,
+    ) -> std::collections::HashSet<String> {
         bundle
             .bootstrap_fragments
             .iter()
@@ -1353,12 +1385,12 @@ mod tests {
             SessionContextConfig {
                 session_id: Uuid::new_v4(),
                 phase: ContextBuildPhase::LifecycleNode,
-                default_scope: agentdash_spi::ContextFragment::default_scope(),
+                default_scope: agentdash_platform_spi::ContextFragment::default_scope(),
             },
             vec![contribution],
         );
         let relevant_content: String = bundle
-            .filter_for(agentdash_spi::FragmentScope::RuntimeAgent)
+            .filter_for(agentdash_platform_spi::FragmentScope::RuntimeAgent)
             .filter(|f| f.slot == "workflow_context")
             .map(|f| f.content.clone())
             .collect::<Vec<_>>()
@@ -1372,7 +1404,7 @@ mod tests {
         assert!(!relevant_content.contains("workflow_management"));
         assert!(
             !bundle
-                .filter_for(agentdash_spi::FragmentScope::RuntimeAgent)
+                .filter_for(agentdash_platform_spi::FragmentScope::RuntimeAgent)
                 .any(|f| f.slot == "runtime_policy")
         );
     }
@@ -1384,7 +1416,7 @@ mod tests {
         #[test]
         fn system_routine_identity_shape() {
             // 固化 AuthIdentity::system_routine 产出形状（E1 契约）。
-            let id = agentdash_spi::platform::auth::AuthIdentity::system_routine("r-abc");
+            let id = agentdash_platform_spi::platform::auth::AuthIdentity::system_routine("r-abc");
             assert_eq!(id.user_id, "system:routine:r-abc");
             assert_eq!(id.subject, "system:routine:r-abc");
             assert_eq!(id.provider.as_deref(), Some("system.routine"));
@@ -1394,7 +1426,7 @@ mod tests {
             // auth_mode = Personal 避免匹配企业级 admin 策略
             assert!(matches!(
                 id.auth_mode,
-                agentdash_spi::platform::auth::AuthMode::Personal
+                agentdash_platform_spi::platform::auth::AuthMode::Personal
             ));
         }
 

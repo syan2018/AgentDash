@@ -1,17 +1,24 @@
-//! First-party adapter from AgentDash's provider-neutral Agent Core to the managed Runtime SPI.
+//! First-party adapter from Dash Agent to the Complete Agent service boundary.
 //!
-//! This crate owns lifecycle/context/surface translation. `agentdash-agent` remains a single-turn
-//! provider/tool loop and never imports Runtime, Integration, repository, or vendor vocabulary.
+//! This crate owns lifecycle/context/surface translation and materializes typed host callbacks.
+//! Dash Agent depends one-way on the pure Core; neither layer imports Runtime, Integration,
+//! repository, legacy driver, journal, or vendor protocol vocabulary.
 
-mod context;
-mod driver;
-mod hook;
-mod mapping;
-mod tool;
+mod accepted_context;
+mod bridge_execution;
+mod canonical_projection;
+mod core_callbacks;
+mod intrinsic_surface;
+mod service;
+mod tool_presentation;
 
-pub use driver::{
-    NativeAgentDriver, NativeAgentDriverFactory, NativeAgentRuntimeIntegration,
-    NativeAgentServiceConfig, NativeBridgeResolveError, NativeBridgeResolver,
-    NativeCredentialScope, native_agent_contribution, native_runtime_profile,
-    native_runtime_trust_manifest,
+pub use bridge_execution::{
+    BridgeDashCompactor, BridgeDashProvider, bridge_dash_execution_dependencies,
+};
+pub use core_callbacks::DashAgentCoreToolCallbacks;
+pub use service::{
+    DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
+    DashCompleteEffectRecord, DashCompleteRecordedReceipt, DashCompleteSourceMetadata,
+    DashCompleteSourceMutation, NativeCompleteAgentIntegration, dash_complete_agent_build_digest,
+    dash_complete_agent_observation, native_complete_agent_registration,
 };

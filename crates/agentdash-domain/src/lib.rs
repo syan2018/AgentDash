@@ -1,5 +1,6 @@
 pub mod agent;
-pub mod agent_run_mailbox;
+pub mod agent_input;
+pub mod agent_run_target;
 pub mod auth_session;
 pub mod backend;
 pub mod channel;
@@ -15,7 +16,6 @@ pub mod interaction;
 pub mod llm_provider;
 pub mod mcp_preset;
 pub mod operation;
-pub mod permission;
 pub mod project;
 pub mod project_vfs_mount;
 pub mod routine;

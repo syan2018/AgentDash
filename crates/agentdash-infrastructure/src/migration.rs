@@ -2,12 +2,9 @@ use agentdash_domain::common::error::DomainError;
 use sqlx::PgPool;
 
 const REQUIRED_POSTGRES_TABLES: &[&str] = &[
-    "agent_frame_transitions",
-    "agent_frames",
     "agent_lineages",
     "agent_procedures",
-    "agent_run_mailbox_messages",
-    "agent_run_mailbox_states",
+    "agent_run_lineages",
     "auth_sessions",
     "backend_execution_leases",
     "backend_workspace_inventory",
@@ -16,6 +13,19 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "group_memberships",
     "groups",
     "inline_fs_files",
+    "interaction_command_receipts",
+    "interaction_definition_lineage",
+    "interaction_definition_revisions",
+    "interaction_definitions",
+    "interaction_operation_effect_intents",
+    "interaction_events",
+    "interaction_instances",
+    "interaction_presentation_states",
+    "interaction_renderer_leases",
+    "interaction_runtime_bindings",
+    "interaction_source_bundles",
+    "interaction_source_files",
+    "interaction_state_revisions",
     "lifecycle_agents",
     "lifecycle_gates",
     "lifecycle_runs",
@@ -24,7 +34,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "llm_providers",
     "llm_provider_user_credentials",
     "mcp_presets",
-    "permission_grants",
     "project_agents",
     "project_backend_access",
     "project_extension_installations",
@@ -35,48 +44,55 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "routines",
     "runner_registration_tokens",
     "runtime_health",
-    "agent_runtime_thread",
-    "agent_runtime_binding",
-    "agent_runtime_source_coordinate",
-    "agent_runtime_operation",
-    "agent_runtime_event",
-    "agent_runtime_turn",
-    "agent_runtime_item",
-    "agent_runtime_interaction",
-    "agent_runtime_outbox",
-    "agent_runtime_quarantine",
-    "agent_runtime_hook_plan",
-    "agent_runtime_hook_run",
-    "agent_runtime_hook_effect",
-    "agent_runtime_tool_call",
-    "agent_runtime_service_instance",
-    "agent_runtime_service_instance_revision",
-    "agent_runtime_service_activation",
-    "agent_runtime_offer",
-    "agent_runtime_host_binding",
-    "agent_runtime_driver_lease",
-    "agent_runtime_driver_coordinate",
-    "agent_runtime_surface_snapshot",
-    "agent_run_runtime_binding",
-    "agent_context_checkpoint",
-    "agent_context_preparation",
-    "agent_context_candidate",
-    "agent_context_head",
-    "agent_context_activation",
-    "agent_context_activation_dispatch",
-    "agent_run_control_effects",
+    "agent_run_terminal_projection_head",
+    "agent_run_terminal_projection",
+    "agent_run_terminal_projection_change",
+    "dash_complete_source",
+    "dash_complete_effect",
     "settings",
     "skill_assets",
     "state_changes",
     "stories",
     "users",
-    "views",
     "workflow_graphs",
+    "workflow_executor_effects",
     "workspace_bindings",
     "workspaces",
 ];
 
 const RETIRED_POSTGRES_TABLES: &[&str] = &[
+    "agent_run_canvas_state",
+    "agent_run_canvas_runtime_observations",
+    "agent_run_canvas_interaction_snapshots",
+    "canvas_files",
+    "canvases",
+    "views",
+    "agent_run_control_effects",
+    "agent_run_terminal_projection_outbox",
+    "agent_run_terminal_control_correlation",
+    "gate_result_delivery_markers",
+    "workspace_module_presentation_head",
+    "workspace_module_presentation_intent",
+    "workspace_module_presentation_change",
+    "workspace_module_presentation_ack",
+    "workspace_module_presentation_outbox",
+    "dash_agent_session",
+    "agent_run_mailbox_messages",
+    "agent_run_mailbox_states",
+    "agent_run_product_command_receipts",
+    "agent_run_fork_saga",
+    "agent_run_fork_graph",
+    "companion_fresh_saga",
+    "companion_continuation_saga",
+    "workflow_agent_call_product_sagas",
+    "workflow_agent_call_product_effects",
+    "workflow_agent_call_product_graph_effects",
+    "agent_service_instance",
+    "agent_service_verification",
+    "agent_runtime_offer",
+    "agent_runtime_placement",
+    "agent_runtime_remote_binding",
+    "agent_run_runtime_binding",
     "agent_run_command_receipts",
     "agent_run_delivery_bindings",
     "runtime_session_compaction_requests",
@@ -88,6 +104,74 @@ const RETIRED_POSTGRES_TABLES: &[&str] = &[
     "runtime_session_compactions",
     "runtime_session_events",
     "runtime_sessions",
+    "agent_runtime_thread",
+    "agent_runtime_event",
+    "agent_runtime_terminal_application_effect_outbox",
+    "agent_runtime_turn",
+    "agent_runtime_item",
+    "agent_runtime_interaction",
+    "agent_runtime_quarantine",
+    "agent_runtime_hook_plan",
+    "agent_runtime_hook_run",
+    "agent_runtime_hook_effect",
+    "agent_runtime_tool_call",
+    "agent_runtime_service_instance",
+    "agent_runtime_service_instance_revision",
+    "agent_runtime_service_activation",
+    "agent_runtime_host_binding",
+    "agent_runtime_driver_lease",
+    "agent_runtime_driver_coordinate",
+    "agent_runtime_source_projection",
+    "agent_runtime_source_identity",
+    "agent_runtime_source_change",
+    "agent_runtime_projection",
+    "agent_runtime_thread_binding",
+    "agent_runtime_operation",
+    "agent_runtime_idempotency",
+    "agent_runtime_pending_command",
+    "agent_runtime_change",
+    "agent_runtime_outbox",
+    "agent_runtime_surface_snapshot",
+    "agent_runtime_product_change_delivery",
+    "agent_runtime_lifecycle_target",
+    "agent_runtime_lifecycle_effect",
+    "agent_runtime_binding",
+    "agent_runtime_source_coordinate",
+    "agent_runtime_callback_route",
+    "agent_runtime_callback_route_tombstone",
+    "agent_runtime_effect",
+    "agent_runtime_effect_attempt_history",
+    "agent_runtime_lease",
+    "agent_runtime_lease_epoch",
+    "agent_runtime_callback_reservation",
+    "agent_runtime_callback_outcome",
+    "agent_runtime_state_revision",
+    "agent_runtime_host_revision",
+    "agent_runtime_callback_revision",
+    "agent_run_product_runtime_command_claim",
+    "agent_run_product_runtime_recovery_saga",
+    "agent_run_product_mailbox_head",
+    "agent_run_product_mailbox_change",
+    "agent_run_product_mailbox_command_receipt",
+    "agent_frame_transitions",
+    "agent_frames",
+    "agent_run_product_runtime_binding",
+    "dash_agent_branch",
+    "dash_agent_history",
+    "dash_agent_command",
+    "dash_agent_effect",
+    "dash_agent_change",
+    "agent_run_runtime_thread_anchor",
+    "agent_run_runtime_binding_lineage",
+    "agent_run_runtime_recovery_intent",
+    "agent_context_checkpoint",
+    "agent_context_preparation",
+    "agent_context_candidate",
+    "agent_context_head",
+    "agent_context_activation",
+    "agent_context_activation_dispatch",
+    "agent_run_applied_resource_surface_snapshot",
+    "agent_run_applied_resource_surface_current",
 ];
 
 pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
@@ -101,7 +185,41 @@ pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
 
 pub async fn assert_postgres_schema_ready(pool: &PgPool) -> Result<(), DomainError> {
     assert_postgres_tables_ready(pool, REQUIRED_POSTGRES_TABLES).await?;
+    assert_postgres_columns_ready(pool, "lifecycle_gates", &["delivery", "updated_at"]).await?;
+    assert_postgres_columns_ready(pool, "lifecycle_agents", &["frames", "runtime_binding"]).await?;
     assert_postgres_tables_absent(pool, RETIRED_POSTGRES_TABLES).await
+}
+
+async fn assert_postgres_columns_ready(
+    pool: &PgPool,
+    table: &str,
+    columns: &[&str],
+) -> Result<(), DomainError> {
+    let present: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema='public' AND table_name=$1 AND column_name=ANY($2)",
+    )
+    .bind(table)
+    .bind(columns)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| {
+        DomainError::InvalidConfig(format!("schema column readiness 检查失败: {err}"))
+    })?;
+    let missing: Vec<&str> = columns
+        .iter()
+        .copied()
+        .filter(|column| !present.iter().any(|value| value == column))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(DomainError::InvalidConfig(format!(
+            "PostgreSQL schema 缺少 {table} final activation columns: {}",
+            missing.join(", ")
+        )))
+    }
 }
 
 pub async fn assert_postgres_tables_ready(

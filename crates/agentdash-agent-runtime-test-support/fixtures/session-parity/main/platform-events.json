@@ -1,0 +1,209 @@
+{
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "capture_method": "The pinned-main-capture feature extracts and executes the fixed Main TerminalOutput and PtyTerminalStateChanged production projections, the workspace-module ControlPlaneProjectionChanged production builder, and the complete production HookTrace envelope/disposition mapper. Source compatibility overlays only retarget the HookTrace input import to the pinned-compatible SPI types and wrap ControlPlaneProjectionChanged in Box::new for the current in-memory Rust representation; serialized protected-body content is unchanged.",
+    "source_producers": [
+      {
+        "path": "crates/agentdash-api/src/relay/ws_handler.rs",
+        "sha256": "bbc43e20680aa85853facbf27e298e2def10dc87a9c9e1f026f9c85151503fb4",
+        "git_blob_sha": "08a279de204a2af19d3b8d5a7fc3e5d01c0c671b"
+      },
+      {
+        "path": "crates/agentdash-workspace-module/src/workspace_module/surface.rs",
+        "sha256": "6f22eb9671788160a72a08e73b5636b5222fe2c2c6e7b9def75468f137a4031a",
+        "git_blob_sha": "4e4a863f7a0517d0eb2a1e2ba17cc1eec941d6b3"
+      },
+      {
+        "path": "crates/agentdash-spi/src/hooks/trace.rs",
+        "sha256": "3cecb368569b9cd73479d28acbd9e1fc0da5859b56272689e8ebe0b67ed258fb",
+        "git_blob_sha": "1e83f11206fb99aa8ac0c2ddaf5cb287c8b42083"
+      }
+    ],
+    "capture_harness_path": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+    "capture_test_function": "pinned_main_terminal_pty_projections_match_committed_fixture",
+    "capture_test_functions": [
+      "pinned_main_terminal_pty_projections_match_committed_fixture",
+      "pinned_main_workspace_module_control_projection_matches_committed_fixture",
+      "pinned_main_hook_trace_projection_matches_committed_fixture"
+    ],
+    "capture_build_path": "crates/agentdash-agent-runtime-test-support/build.rs",
+    "actual_capture_cases": [
+      "terminal_output_truncated",
+      "pty_lost_with_message",
+      "workspace_module_presented",
+      "hook_before_tool_deny",
+      "hook_before_tool_ask",
+      "hook_before_tool_rewrite",
+      "hook_before_tool_allow_ephemeral",
+      "hook_after_tool_effects",
+      "hook_after_tool_noop_dropped"
+    ]
+  },
+  "cases": {
+    "terminal_output_truncated": {
+      "type": "platform",
+      "payload": {
+        "kind": "terminal_output",
+        "data": {
+          "terminal_id": "terminal-1",
+          "data": "partial\n[terminal output truncated: omitted_bytes=17]\n"
+        }
+      }
+    },
+    "pty_lost_with_message": {
+      "type": "platform",
+      "payload": {
+        "kind": "pty_terminal_state_changed",
+        "data": {
+          "terminal_id": "terminal-1",
+          "state": "lost",
+          "message": "backend disconnected"
+        }
+      }
+    },
+    "hook_before_tool_deny": {
+      "type": "platform",
+      "payload": {
+        "kind": "hook_trace",
+        "data": {
+          "eventType": "hook:before_tool:deny",
+          "message": "Hook 阻止了当前工具调用",
+          "data": {
+            "trigger": "before_tool",
+            "decision": "deny",
+            "sequence": 7,
+            "revision": 3,
+            "severity": "error",
+            "tool_name": "shell",
+            "tool_call_id": "call-hook-1",
+            "matched_rule_keys": ["policy:deny-shell"],
+            "refresh_snapshot": false,
+            "effects_applied": false,
+            "block_reason": "shell denied",
+            "diagnostic_codes": ["tool_denied"],
+            "diagnostics": [{"code": "tool_denied", "message": "shell denied by policy"}],
+            "injections": []
+          }
+        }
+      }
+    },
+    "hook_before_tool_ask": {
+      "type": "platform",
+      "payload": {
+        "kind": "hook_trace",
+        "data": {
+          "eventType": "hook:before_tool:ask",
+          "message": "Hook 要求当前工具调用先经过审批",
+          "data": {
+            "trigger": "before_tool",
+            "decision": "ask",
+            "sequence": 7,
+            "revision": 3,
+            "severity": "warning",
+            "matched_rule_keys": [],
+            "refresh_snapshot": false,
+            "effects_applied": false,
+            "diagnostic_codes": [],
+            "diagnostics": [],
+            "injections": []
+          }
+        }
+      }
+    },
+    "hook_before_tool_rewrite": {
+      "type": "platform",
+      "payload": {
+        "kind": "hook_trace",
+        "data": {
+          "eventType": "hook:before_tool:rewrite",
+          "message": "Hook 改写了当前工具调用参数",
+          "data": {
+            "trigger": "before_tool",
+            "decision": "rewrite",
+            "sequence": 7,
+            "revision": 3,
+            "severity": "warning",
+            "matched_rule_keys": [],
+            "refresh_snapshot": false,
+            "effects_applied": false,
+            "diagnostic_codes": [],
+            "diagnostics": [],
+            "injections": []
+          }
+        }
+      }
+    },
+    "hook_before_tool_allow_ephemeral": {
+      "type": "platform",
+      "payload": {
+        "kind": "hook_trace",
+        "data": {
+          "eventType": "hook:before_tool:allow",
+          "message": "Hook 在 before_tool 阶段产生了 allow 决策",
+          "data": {
+            "trigger": "before_tool",
+            "decision": "allow",
+            "sequence": 7,
+            "revision": 3,
+            "severity": "info",
+            "matched_rule_keys": ["policy:observed"],
+            "refresh_snapshot": false,
+            "effects_applied": false,
+            "diagnostic_codes": [],
+            "diagnostics": [],
+            "injections": []
+          }
+        }
+      }
+    },
+    "hook_after_tool_effects": {
+      "type": "platform",
+      "payload": {
+        "kind": "hook_trace",
+        "data": {
+          "eventType": "hook:after_tool:effects_applied",
+          "message": "Hook 在 after_tool 阶段产生了 effects_applied 决策",
+          "data": {
+            "trigger": "after_tool",
+            "decision": "effects_applied",
+            "sequence": 7,
+            "revision": 3,
+            "severity": "info",
+            "matched_rule_keys": ["workflow:tool-effect"],
+            "refresh_snapshot": false,
+            "effects_applied": true,
+            "diagnostic_codes": [],
+            "diagnostics": [],
+            "injections": []
+          }
+        }
+      }
+    },
+    "hook_after_tool_noop_dropped": null,
+    "workspace_module_presented": {
+      "type": "platform",
+      "payload": {
+        "kind": "control_plane_projection_changed",
+        "data": {
+          "projection": "resource_surface",
+          "reason": "workspace_module_presented",
+          "run_id": "11111111-1111-1111-1111-111111111111",
+          "agent_id": "22222222-2222-2222-2222-222222222222",
+          "frame_id": "frame-control-0001",
+          "delivery_runtime_session_id": "presentation-session-control-0001",
+          "workspace_module_presentation": {
+            "module_id": "module-dashboard",
+            "view_key": "dashboard",
+            "renderer_kind": "canvas",
+            "presentation_uri": "agentdash://workspace-module/module-dashboard/dashboard",
+            "title": "Dashboard",
+            "payload": {
+              "blocks": [{"kind": "text", "text": "ready"}],
+              "revision": 7
+            }
+          }
+        }
+      }
+    }
+  }
+}

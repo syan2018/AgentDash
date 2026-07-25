@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"检查 R2-R8 与 AC3-AC11。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 fork/compaction/conformance tests。"}
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/research/current-runtime-fork-state-boundaries.md","reason":"核对所有当前 Fork 缺口均关闭。"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"检查 history/context/revision authority。"}

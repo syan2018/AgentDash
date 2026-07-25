@@ -638,6 +638,7 @@ function extensionRuntimeWithBackendFetchRoute(
 function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): WorkspaceData {
   return {
     projectId: "project-1",
+    workspaceModules: [],
     agentRunRuntimeTarget: {
       runId: "run-1",
       agentId: "agent-1",
@@ -672,7 +673,7 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
           extension_key: "protocol-demo",
           extension_id: "protocol-demo",
           action_key: "protocol-demo.greet",
-          kind: "runtime",
+          kind: "runtime_thread",
           description: "Greet",
           input_schema: true,
           output_schema: true,
@@ -697,7 +698,6 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
     executorSummary: null,
     runtimeSurface: runtimeSurface(),
     workspaceBackend: null,
-    hookRuntime: null,
     sessionCapabilities: null,
     ...overrides,
   };
@@ -706,7 +706,7 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
 function runtimeSurface(): NonNullable<WorkspaceData["runtimeSurface"]> {
   return {
     surface_ref: "surface-1",
-    source: { source_type: "session_runtime", session_id: "session-1" },
+    source: { source_type: "agent_run", run_id: "run-1", agent_id: "agent-1" },
     default_mount_id: "mount-1",
     mounts: [runtimeMount()],
   };

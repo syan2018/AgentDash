@@ -1,6 +1,5 @@
 use uuid::Uuid;
 
-use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
 use agentdash_application_ports::workflow_graph_planning as workflow_graph_planning_port;
 use agentdash_application_ports::workflow_graph_planning::WorkflowGraphPlanningPort;
 use agentdash_application_workflow::ApplicationWorkflowGraphPlanner;
@@ -9,9 +8,11 @@ use agentdash_application_workflow::orchestration::{
 };
 use agentdash_domain::workflow::LifecycleRunRepository;
 use agentdash_domain::workflow::{
-    ExecutionSource, LifecycleRun, LifecycleRunStartDispatchResult, LifecycleRunStartIntent,
-    OrchestrationBindingRefs, OrchestrationInstance, OrchestrationPlanSnapshot,
-    OrchestrationSourceRef, RunPolicy, WorkflowGraph, WorkflowGraphRef, WorkflowGraphRepository,
+    ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, BashExecExecutorSpec,
+    ExecutionSource, ExecutorSpec, FunctionActivityExecutorSpec, LifecycleRun,
+    LifecycleRunStartDispatchResult, LifecycleRunStartIntent, OrchestrationBindingRefs,
+    OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef, RunPolicy,
+    WorkflowGraph, WorkflowGraphRef, WorkflowGraphRepository,
 };
 
 use crate::lifecycle::WorkflowApplicationError;
@@ -108,12 +109,23 @@ impl<'a> RunOrchestrationStarter<'a> {
                 "RunPolicy::AppendGraph 需要 parent_run_id".to_string(),
             )),
             _ => {
-                let run = LifecycleRun::new_plain_for_user(
+                let mut run = LifecycleRun::new_plain_for_user(
                     plan.project_id,
                     plan.created_by_user_id
                         .as_deref()
                         .unwrap_or(LifecycleRun::SYSTEM_CREATED_BY_USER_ID),
                 );
+                if let Some(stable_run_id) = plan.stable_run_id {
+                    if let Some(existing) = self.run_repo.get_by_id(stable_run_id).await? {
+                        if existing.project_id != plan.project_id {
+                            return Err(WorkflowApplicationError::Conflict(format!(
+                                "stable LifecycleRun {stable_run_id} owner evidence drifted"
+                            )));
+                        }
+                        return Ok(existing);
+                    }
+                    run.id = stable_run_id;
+                }
                 self.run_repo.create(&run).await?;
                 Ok(run)
             }
@@ -141,13 +153,12 @@ impl<'a> RunOrchestrationStarter<'a> {
                     binding.orchestration_ref, binding.node_path
                 ))
             })?;
-        let lifecycle_identity =
-            lifecycle_surface_port::lifecycle_identity_from_orchestration(orchestration);
-        let activity = lifecycle_surface_port::activity_definition_from_plan_node(plan_node);
+        let lifecycle_key = lifecycle_key_from_orchestration(orchestration);
+        let activity = activity_definition_from_plan_node(plan_node);
 
         Ok(WorkflowAgentNodeRuntimeContext {
             run,
-            lifecycle_key: lifecycle_identity.key,
+            lifecycle_key,
             activity,
         })
     }
@@ -190,12 +201,100 @@ impl<'a> RunOrchestrationStarter<'a> {
                 "RunPolicy::AppendGraph 需要 parent_run_id".to_string(),
             )),
             _ => {
-                let run = create_lifecycle_run(plan);
+                if let Some(stable_run_id) = plan.stable_run_id
+                    && let Some(existing) = self.run_repo.get_by_id(stable_run_id).await?
+                {
+                    if existing.project_id != plan.project_id {
+                        return Err(WorkflowApplicationError::Conflict(format!(
+                            "stable LifecycleRun {stable_run_id} owner evidence drifted"
+                        )));
+                    }
+                    return Ok(existing);
+                }
+                let mut run = create_lifecycle_run(plan);
+                if let Some(stable_run_id) = plan.stable_run_id {
+                    run.id = stable_run_id;
+                }
                 self.run_repo.create(&run).await?;
                 Ok(run)
             }
         }
     }
+}
+
+fn activity_definition_from_plan_node(
+    plan_node: &agentdash_domain::workflow::PlanNode,
+) -> ActivityDefinition {
+    let executor = match &plan_node.executor {
+        Some(ExecutorSpec::AgentProcedure {
+            procedure,
+            agent_reuse_policy,
+            runtime_thread_policy,
+        }) => ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+            procedure_key: procedure
+                .procedure_key()
+                .unwrap_or("__inline_agent_procedure")
+                .to_string(),
+            agent_reuse_policy: *agent_reuse_policy,
+            runtime_thread_policy: *runtime_thread_policy,
+        }),
+        Some(ExecutorSpec::Function { spec }) => ActivityExecutorSpec::Function(spec.clone()),
+        Some(ExecutorSpec::Human { spec }) => ActivityExecutorSpec::Human(spec.clone()),
+        Some(ExecutorSpec::LocalEffect { .. })
+        | Some(ExecutorSpec::ExtensionAction { .. })
+        | None => ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::BashExec(
+            BashExecExecutorSpec {
+                command: "true".to_string(),
+                args: Vec::new(),
+                working_directory: None,
+            },
+        )),
+    };
+    ActivityDefinition {
+        key: plan_node.node_path.clone(),
+        description: plan_node
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("description"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .or_else(|| plan_node.label.clone())
+            .unwrap_or_default(),
+        executor,
+        input_ports: plan_node.input_ports.clone(),
+        output_ports: plan_node.output_ports.clone(),
+        completion_policy: plan_node.completion_policy.clone().unwrap_or_default(),
+        iteration_policy: plan_node.iteration_policy.clone().unwrap_or_default(),
+        join_policy: plan_node.join_policy.unwrap_or_default(),
+    }
+}
+
+fn lifecycle_key_from_orchestration(orchestration: &OrchestrationInstance) -> String {
+    orchestration
+        .plan_snapshot
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("source"))
+        .and_then(|source| source.get("key"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| match &orchestration.source_ref {
+            OrchestrationSourceRef::WorkflowGraph { graph_id, .. } => {
+                format!("workflow_graph:{graph_id}")
+            }
+            OrchestrationSourceRef::RunScriptArtifact { artifact_id, .. } => {
+                format!("run_script:{artifact_id}")
+            }
+            OrchestrationSourceRef::WorkflowScript { script_id, .. } => {
+                format!("workflow_script:{script_id}")
+            }
+            OrchestrationSourceRef::Inline { source_digest } => {
+                let digest = source_digest
+                    .strip_prefix("sha256:")
+                    .unwrap_or(source_digest);
+                format!("inline:{}", digest.get(..12).unwrap_or(digest))
+            }
+        })
 }
 
 fn create_lifecycle_run(plan: &DispatchPlan) -> LifecycleRun {

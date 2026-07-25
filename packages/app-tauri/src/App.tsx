@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import WebDashboardApp from 'app-web'
 import { Button, StatusScreen } from '@agentdash/ui'
 import { invoke } from '@tauri-apps/api/core'
@@ -27,28 +27,20 @@ declare global {
   }
 }
 
+const desktopRuntimeClient = createTauriLocalRuntimeClient()
+const desktopAppBridge = createTauriDesktopAppBridge()
+
+window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__ = desktopRuntimeClient
+window.__AGENTDASH_DESKTOP_BROWSE_DIRECTORY__ = tauriBrowseDirectory
+window.__AGENTDASH_DESKTOP_OPEN_EXTERNAL__ = (url: string) => invoke<void>('open_external_url', { url })
+window.__AGENTDASH_DESKTOP_APP__ = desktopAppBridge
+
 function App() {
-  const client = useMemo(() => createTauriLocalRuntimeClient(), [])
-  const desktopApp = useMemo(() => createTauriDesktopAppBridge(), [])
-
-  useEffect(() => {
-    window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__ = client
-    window.__AGENTDASH_DESKTOP_BROWSE_DIRECTORY__ = tauriBrowseDirectory
-    window.__AGENTDASH_DESKTOP_OPEN_EXTERNAL__ = (url: string) => invoke<void>('open_external_url', { url })
-    window.__AGENTDASH_DESKTOP_APP__ = desktopApp
-    return () => {
-      delete window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__
-      delete window.__AGENTDASH_DESKTOP_BROWSE_DIRECTORY__
-      delete window.__AGENTDASH_DESKTOP_OPEN_EXTERNAL__
-      delete window.__AGENTDASH_DESKTOP_APP__
-    }
-  }, [client, desktopApp])
-
   return (
     <div className="flex h-screen min-w-[960px] flex-col bg-background text-foreground">
       <DesktopTitlebar />
       <div className="min-h-0 flex-1">
-        <DashboardHost desktopApp={desktopApp} />
+        <DashboardHost desktopApp={desktopAppBridge} />
       </div>
     </div>
   )

@@ -1,5 +1,5 @@
-pub mod agent_run_runtime_surface;
 pub mod app_state;
+mod agent_run_runtime_surface;
 pub mod auth;
 pub mod bootstrap;
 pub mod context;
@@ -7,15 +7,12 @@ pub mod dto;
 pub mod integrations;
 pub mod mount_providers;
 pub mod oauth_flow;
-mod operation_runtime;
 mod project_projection_notification;
 pub mod relay;
 pub mod routes;
 pub mod rpc;
 pub mod runtime_bridge;
 pub mod stream;
-#[cfg(test)]
-mod vfs_access;
 pub mod vfs_materialization;
 mod vfs_surface_runtime;
 pub mod workspace_placement_runtime;

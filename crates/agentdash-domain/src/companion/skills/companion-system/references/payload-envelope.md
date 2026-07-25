@@ -89,7 +89,7 @@ Request message bodies use `payload.message`. `payload.prompt` is not part of th
   "source_text": "workflow(#{ body: [] })",
   "args": { "topic": "orchestration" },
   "ctx": { "workspace": "demo" },
-  "runtime_session_id": "optional-session-id"
+  "runtime_thread_id": "optional-thread-id"
 }
 ```
 

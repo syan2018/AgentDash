@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { CB } from "../bodies/cardBodyTokens";
+import { DisclosureChevron } from "../../../../components/ui/disclosure";
 import { JsonTree } from "../bodies/JsonTree";
 import type {
   AutoResumeSection,
@@ -148,8 +149,11 @@ function sectionHint(section: ContextFrameSection): string | null {
       return `+${added} −${removed}${mountChanged ? " ↻default" : ""}`;
     }
     case "tool_schema_delta": {
-      const count = section.added_tools.length;
-      return count > 0 ? `+${count}` : "no change";
+      const added = section.added_tools.length;
+      const removed = section.removed_tools.length;
+      const changed = section.changed_tools.length;
+      if (added + removed + changed === 0) return "no change";
+      return `+${added} −${removed}${changed > 0 ? ` ↻${changed}` : ""}`;
     }
     case "skill_delta": {
       const added = section.added_skills.length;
@@ -400,7 +404,7 @@ function EffectiveCapabilitiesBlock({ capabilities }: { capabilities: string[] }
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           当前生效能力 ({capabilities.length} 项)
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">{open ? "▲" : "▼"}</span>
+        <DisclosureChevron expanded={open} className="text-muted-foreground/40" />
       </button>
       {open && (
         <div className="max-h-48 overflow-auto border-t border-border/70 px-2.5 py-2">
@@ -440,6 +444,7 @@ function DeltaListItem({
   meta,
   hoverDesc,
   expandContent,
+  defaultExpanded = false,
 }: {
   symbol: string;
   name: string;
@@ -448,15 +453,17 @@ function DeltaListItem({
   meta?: string;
   hoverDesc?: string;
   expandContent?: React.ReactNode;
+  defaultExpanded?: boolean;
 }) {
   const clickable = expandContent != null;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultExpanded);
 
   return (
     <div className={`rounded-[6px] transition-colors hover:bg-secondary/40 ${open ? "bg-secondary/30" : ""}`}>
       <button
         type="button"
         onClick={clickable ? () => setOpen((v) => !v) : undefined}
+        aria-expanded={clickable ? open : undefined}
         className="flex w-full items-center gap-2 px-2 py-1 text-left"
       >
         <span className="shrink-0 w-3 select-none text-[10px] text-muted-foreground/70">{symbol}</span>
@@ -472,7 +479,9 @@ function DeltaListItem({
           </span>
         )}
         {meta && <span className={CB.meta}>{meta}</span>}
-        {clickable && <span className={CB.expandToggle}>{open ? "▲" : "▼"}</span>}
+        {clickable && (
+          <DisclosureChevron expanded={open} className={CB.expandToggle} />
+        )}
       </button>
       {hoverDesc && (
         <p
@@ -491,31 +500,51 @@ function DeltaListItem({
   );
 }
 
-function ToolSchemaDeltaBody({ section }: { section: ToolSchemaDeltaSection }) {
-  if (section.added_tools.length === 0) {
-    return <p className={CB.meta}>无新增工具 schema</p>;
+export function ToolSchemaDeltaBody({
+  section,
+  defaultExpandedTools = false,
+}: {
+  section: ToolSchemaDeltaSection;
+  defaultExpandedTools?: boolean;
+}) {
+  if (
+    section.added_tools.length
+      + section.removed_tools.length
+      + section.changed_tools.length
+    === 0
+  ) {
+    return <p className={CB.meta}>本次无工具变化</p>;
   }
+  const renderTools = (
+    tools: ToolSchemaDeltaSection["added_tools"],
+    symbol: string,
+  ) => tools.map((tool) => {
+    const fieldNames = schemaFieldNames(tool.parameters_schema);
+    const chips = [tool.capability_key, tool.source].filter(Boolean) as string[];
+    return (
+      <DeltaListItem
+        key={`${symbol}-${tool.name}`}
+        symbol={symbol}
+        name={tool.name}
+        chips={chips}
+        meta={fieldNames.length > 0 ? `${fieldNames.length} params` : undefined}
+        hoverDesc={tool.description || undefined}
+        defaultExpanded={defaultExpandedTools}
+        expandContent={
+          tool.parameters_schema != null ? (
+            <JsonTree data={tool.parameters_schema} defaultDepth={4} />
+          ) : undefined
+        }
+      />
+    );
+  });
   return (
     <div className={SCROLL_LIST}>
-      {section.added_tools.map((tool) => {
-        const fieldNames = schemaFieldNames(tool.parameters_schema);
-        const chips = [tool.capability_key, tool.source].filter(Boolean) as string[];
-        return (
-          <DeltaListItem
-            key={tool.name}
-            symbol="+"
-            name={tool.name}
-            chips={chips}
-            meta={fieldNames.length > 0 ? `${fieldNames.length} params` : undefined}
-            hoverDesc={tool.description || undefined}
-            expandContent={
-              tool.parameters_schema != null ? (
-                <JsonTree data={tool.parameters_schema} defaultDepth={3} />
-              ) : undefined
-            }
-          />
-        );
-      })}
+      {renderTools(section.added_tools, "+")}
+      {section.removed_tools.map((name) => (
+        <DeltaListItem key={`removed-${name}`} symbol="−" name={name} />
+      ))}
+      {renderTools(section.changed_tools, "↻")}
     </div>
   );
 }
@@ -692,7 +721,7 @@ function EffectiveCompanionAgentsBlock({
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           当前可用 companion ({agents.length} 项)
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">{open ? "▲" : "▼"}</span>
+        <DisclosureChevron expanded={open} className="text-muted-foreground/40" />
       </button>
       {open && (
         <div className="max-h-48 overflow-auto border-t border-border/70 px-2.5 py-2">
@@ -928,7 +957,7 @@ function CompactedUntilRefBlock({ value }: { value: unknown }) {
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           compacted_until_ref
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">{open ? "▲" : "▼"}</span>
+        <DisclosureChevron expanded={open} className="text-muted-foreground/40" />
       </button>
       {open && (
         <pre className="max-h-48 overflow-auto whitespace-pre-wrap border-t border-border/70 p-2 text-[11px] leading-relaxed text-muted-foreground">

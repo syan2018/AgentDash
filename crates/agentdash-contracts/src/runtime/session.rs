@@ -2,10 +2,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use agentdash_agent_protocol::BackboneEnvelope;
-use agentdash_agent_types::{MessageRef, ProjectionSourceRange};
-use agentdash_spi::session_persistence::PersistedSessionEvent;
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionEventResponse {
@@ -26,24 +22,8 @@ pub struct SessionEventResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub tool_call_id: Option<String>,
-    #[ts(type = "BackboneEnvelope")]
-    pub notification: BackboneEnvelope,
-}
-
-impl From<PersistedSessionEvent> for SessionEventResponse {
-    fn from(event: PersistedSessionEvent) -> Self {
-        Self {
-            session_id: event.session_id,
-            event_seq: event.event_seq,
-            occurred_at_ms: event.occurred_at_ms,
-            committed_at_ms: event.committed_at_ms,
-            session_update_type: event.session_update_type,
-            turn_id: event.turn_id,
-            entry_index: event.entry_index,
-            tool_call_id: event.tool_call_id,
-            notification: event.notification,
-        }
-    }
+    #[ts(type = "JsonValue")]
+    pub notification: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -63,8 +43,6 @@ pub enum SessionNdjsonEnvelope {
     Connected {
         #[ts(type = "number")]
         last_event_id: u64,
-        /// 进程级 ephemeral epoch：后端进程启动时确定一次。前端据此判定后端是否重启——
-        /// epoch 变化时重置 `lastEphemeralSeq`（先前 cursor 失效），同 epoch 重连则保留。
         #[ts(type = "number")]
         ephemeral_epoch: u64,
     },
@@ -90,15 +68,15 @@ impl SessionNdjsonEnvelope {
         }
     }
 
-    pub fn event(event: PersistedSessionEvent) -> Self {
+    pub fn event(event: SessionEventResponse) -> Self {
         Self::Event {
-            event: Box::new(event.into()),
+            event: Box::new(event),
         }
     }
 
-    pub fn ephemeral_event(event: PersistedSessionEvent) -> Self {
+    pub fn ephemeral_event(event: SessionEventResponse) -> Self {
         Self::EphemeralEvent {
-            event: Box::new(event.into()),
+            event: Box::new(event),
         }
     }
 
@@ -116,15 +94,6 @@ pub struct SessionProjectionSourceRangeResponse {
     pub start_event_seq: u64,
     #[ts(type = "number")]
     pub end_event_seq: u64,
-}
-
-impl From<ProjectionSourceRange> for SessionProjectionSourceRangeResponse {
-    fn from(range: ProjectionSourceRange) -> Self {
-        Self {
-            start_event_seq: range.start_event_seq,
-            end_event_seq: range.end_event_seq,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -290,15 +259,6 @@ pub struct SessionProjectionViewResponse {
 pub struct SessionMessageRefDto {
     pub turn_id: String,
     pub entry_index: u32,
-}
-
-impl From<MessageRef> for SessionMessageRefDto {
-    fn from(value: MessageRef) -> Self {
-        Self {
-            turn_id: value.turn_id,
-            entry_index: value.entry_index,
-        }
-    }
 }
 
 fn is_zero(value: &u64) -> bool {

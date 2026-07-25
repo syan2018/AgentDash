@@ -112,40 +112,6 @@ impl From<std::io::Error> for ApiError {
     }
 }
 
-impl From<agentdash_spi::session_persistence::SessionStoreError> for ApiError {
-    fn from(err: agentdash_spi::session_persistence::SessionStoreError) -> Self {
-        use agentdash_spi::session_persistence::SessionStoreError as E;
-        match err {
-            E::NotFound(message) => ApiError::NotFound(message),
-            E::InvalidInput(message) | E::InvalidData(message) => ApiError::BadRequest(message),
-            E::Database(err) => {
-                let context =
-                    DiagnosticErrorContext::new("api.error_map", "session_persistence_database");
-                diag_error!(
-                    Error,
-                    Subsystem::Api,
-                    context = &context,
-                    error = &err,
-                    "session persistence database error"
-                );
-                ApiError::Internal(String::from("内部数据库错误"))
-            }
-            E::Internal(err) => {
-                let context =
-                    DiagnosticErrorContext::new("api.error_map", "session_persistence_internal");
-                diag_error!(
-                    Error,
-                    Subsystem::Api,
-                    context = &context,
-                    error = &err,
-                    "session persistence internal error"
-                );
-                ApiError::Internal(String::from("内部会话持久化错误"))
-            }
-        }
-    }
-}
-
 impl From<agentdash_domain::DomainError> for ApiError {
     fn from(err: agentdash_domain::DomainError) -> Self {
         match &err {
@@ -185,27 +151,14 @@ impl From<agentdash_application::ApplicationError> for ApiError {
 impl From<agentdash_domain::interaction::InteractionError> for ApiError {
     fn from(err: agentdash_domain::interaction::InteractionError) -> Self {
         use agentdash_domain::interaction::InteractionError as E;
-        let message = err.to_string();
         match err {
-            E::NotFound { .. } => ApiError::NotFound(message),
+            E::NotFound { .. } => Self::NotFound(err.to_string()),
             E::DefinitionRevisionConflict { .. }
             | E::StateRevisionConflict { .. }
             | E::CommandIdempotencyConflict { .. }
-            | E::PersistenceConflict { .. } => ApiError::Conflict(message),
-            E::HumanOnlyCommand { .. } => ApiError::Forbidden(message),
-            E::Persistence { .. } | E::Serialization { .. } => ApiError::Internal(message),
-            E::InvalidField { .. }
-            | E::InvalidSourcePath { .. }
-            | E::MissingEntryFile { .. }
-            | E::InvalidDigest { .. }
-            | E::PatchLimitExceeded { .. }
-            | E::PatchPathDenied { .. }
-            | E::MissingPatchValue { .. }
-            | E::UnexpectedPatchValue { .. }
-            | E::StateSizeExceeded { .. }
-            | E::InvalidStatusTransition { .. }
-            | E::EffectNotReplaySafe
-            | E::InvalidOperationRef { .. } => ApiError::BadRequest(message),
+            | E::PersistenceConflict { .. } => Self::Conflict(err.to_string()),
+            E::Persistence { .. } | E::Serialization { .. } => Self::Internal(err.to_string()),
+            _ => Self::BadRequest(err.to_string()),
         }
     }
 }
@@ -213,19 +166,33 @@ impl From<agentdash_domain::interaction::InteractionError> for ApiError {
 impl From<agentdash_application::interaction::InteractionApplicationError> for ApiError {
     fn from(err: agentdash_application::interaction::InteractionApplicationError) -> Self {
         use agentdash_application::interaction::InteractionApplicationError as E;
-        let message = err.to_string();
         match err {
-            E::Domain(error) => ApiError::from(error),
-            E::InvalidCommand { .. } => ApiError::BadRequest(message),
-            E::ContractUnavailable { .. } => ApiError::ServiceUnavailable(message),
-            E::AccessDenied { .. } => ApiError::Forbidden(message),
+            E::Domain(error) => error.into(),
+            E::AccessDenied { reason } => Self::Forbidden(reason),
+            E::InvalidCommand { .. } => Self::BadRequest(err.to_string()),
+            E::ContractUnavailable { reason } => Self::ServiceUnavailable(reason),
         }
     }
 }
 
-impl From<agentdash_spi::ConnectorError> for ApiError {
-    fn from(err: agentdash_spi::ConnectorError) -> Self {
-        use agentdash_spi::ConnectorError as E;
+impl From<agentdash_application_operation_gateway::OperationExecutionError> for ApiError {
+    fn from(err: agentdash_application_operation_gateway::OperationExecutionError) -> Self {
+        use agentdash_application_operation_gateway::OperationExecutionErrorKind as K;
+        match err.kind() {
+            K::InvalidRequest | K::InvalidOutput => Self::BadRequest(err.to_string()),
+            K::AuthorityChanged => Self::Conflict(err.to_string()),
+            K::Denied => Self::Forbidden(err.to_string()),
+            K::Unavailable | K::Cancelled | K::DeadlineExceeded => {
+                Self::ServiceUnavailable(err.to_string())
+            }
+            K::ProviderFailed | K::ResultStoreFailed => Self::Internal(err.to_string()),
+        }
+    }
+}
+
+impl From<agentdash_platform_spi::PlatformRuntimeError> for ApiError {
+    fn from(err: agentdash_platform_spi::PlatformRuntimeError) -> Self {
+        use agentdash_platform_spi::PlatformRuntimeError as E;
         match err {
             E::InvalidConfig(message) => ApiError::BadRequest(message),
             E::ConnectionFailed(message) => ApiError::ServiceUnavailable(message),
@@ -346,23 +313,25 @@ impl From<agentdash_application_shared_library::ExternalMarketplaceLibraryError>
     }
 }
 
-impl From<agentdash_application_operation_gateway::OperationExecutionError> for ApiError {
-    fn from(err: agentdash_application_operation_gateway::OperationExecutionError) -> Self {
-        use agentdash_application_operation_gateway::OperationExecutionErrorKind;
+impl From<agentdash_application_extension_gateway::RuntimeInvocationError> for ApiError {
+    fn from(err: agentdash_application_extension_gateway::RuntimeInvocationError) -> Self {
+        use agentdash_application_extension_gateway::{
+            RuntimeInvocationError as E, RuntimeInvocationErrorKind,
+        };
 
         let message = err.to_string();
         match err.kind() {
-            OperationExecutionErrorKind::InvalidRequest => ApiError::BadRequest(message),
-            OperationExecutionErrorKind::AuthorityChanged => ApiError::Conflict(message),
-            OperationExecutionErrorKind::Denied => ApiError::Forbidden(message),
-            OperationExecutionErrorKind::Unavailable
-            | OperationExecutionErrorKind::DeadlineExceeded => {
+            RuntimeInvocationErrorKind::InvalidRequest => ApiError::BadRequest(message),
+            RuntimeInvocationErrorKind::CapabilityDenied => ApiError::Forbidden(message),
+            RuntimeInvocationErrorKind::Conflict => ApiError::Conflict(message),
+            RuntimeInvocationErrorKind::ProviderUnavailable => {
                 ApiError::ServiceUnavailable(message)
             }
-            OperationExecutionErrorKind::Cancelled => ApiError::Conflict(message),
-            OperationExecutionErrorKind::ProviderFailed
-            | OperationExecutionErrorKind::InvalidOutput
-            | OperationExecutionErrorKind::ResultStoreFailed => ApiError::Internal(message),
+            RuntimeInvocationErrorKind::ProviderFailed => match err {
+                E::ProviderFailed { message, .. } => ApiError::Internal(message),
+                _ => ApiError::Internal(message),
+            },
+            RuntimeInvocationErrorKind::Timeout => ApiError::ServiceUnavailable(message),
         }
     }
 }

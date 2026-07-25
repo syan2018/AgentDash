@@ -7,3 +7,4 @@ export function terminalUriForWaitingItem(item: ConversationWaitingItemView): st
   if (!terminalId) return null;
   return buildInteractiveTerminalUri(terminalId);
 }
+

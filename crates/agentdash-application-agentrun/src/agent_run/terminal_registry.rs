@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use chrono::Utc;
 use serde::Serialize;
 
@@ -39,12 +40,28 @@ pub struct TerminalOutputSnapshot<'a> {
     pub omitted_bytes: usize,
 }
 
+pub struct TerminalOutputChunkSnapshot<'a> {
+    pub seq: u64,
+    pub stream: &'a str,
+    pub data: &'a str,
+}
+
+pub struct TerminalOutputDeltaSnapshot<'a> {
+    pub terminal_id: &'a str,
+    pub chunks: &'a [TerminalOutputChunkSnapshot<'a>],
+    pub next_seq: u64,
+    pub truncated: bool,
+    pub omitted_bytes: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalState {
     pub terminal_id: String,
     pub run_id: String,
     pub agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_thread_id: Option<String>,
     pub backend_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mount_id: Option<String>,
@@ -53,6 +70,7 @@ pub struct TerminalState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability: Option<String>,
     pub state: String,
+    pub availability: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -78,6 +96,12 @@ pub struct TerminalOutputProjection {
     pub truncated: bool,
     pub omitted_bytes: usize,
     pub updated_at: i64,
+    #[serde(skip)]
+    stdout_tail: String,
+    #[serde(skip)]
+    stderr_tail: String,
+    #[serde(skip)]
+    pty_tail: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -126,6 +150,32 @@ impl AgentRunTerminalRegistry {
         cwd: Option<&str>,
         capability: Option<&str>,
     ) {
+        self.register_terminal_record(
+            run_id,
+            agent_id,
+            terminal_id,
+            backend_id,
+            process_id,
+            mount_id,
+            cwd,
+            capability,
+            None,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn register_terminal_record(
+        &self,
+        run_id: &str,
+        agent_id: &str,
+        terminal_id: &str,
+        backend_id: &str,
+        process_id: Option<u32>,
+        mount_id: Option<&str>,
+        cwd: Option<&str>,
+        capability: Option<&str>,
+        runtime_thread_id: Option<&str>,
+    ) {
         let key = AgentRunKey {
             run_id: run_id.to_string(),
             agent_id: agent_id.to_string(),
@@ -134,11 +184,13 @@ impl AgentRunTerminalRegistry {
             terminal_id: terminal_id.to_string(),
             run_id: run_id.to_string(),
             agent_id: agent_id.to_string(),
+            runtime_thread_id: runtime_thread_id.map(str::to_string),
             backend_id: backend_id.to_string(),
             mount_id: mount_id.map(str::to_string),
             cwd: cwd.map(str::to_string),
             capability: capability.map(str::to_string),
             state: "starting".to_string(),
+            availability: "online".to_string(),
             exit_code: None,
             process_id,
             created_at: Utc::now().timestamp_millis(),
@@ -151,6 +203,32 @@ impl AgentRunTerminalRegistry {
             .entry(key)
             .or_default()
             .insert(terminal_id.to_string(), state);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_runtime_terminal_with_metadata(
+        &self,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+        runtime_thread_id: &RuntimeThreadId,
+        terminal_id: &str,
+        backend_id: &str,
+        process_id: Option<u32>,
+        mount_id: Option<&str>,
+        cwd: Option<&str>,
+        capability: Option<&str>,
+    ) {
+        self.register_terminal_record(
+            &run_id.to_string(),
+            &agent_id.to_string(),
+            terminal_id,
+            backend_id,
+            process_id,
+            mount_id,
+            cwd,
+            capability,
+            Some(runtime_thread_id.as_str()),
+        );
     }
 
     /// Global lookup by terminal_id (terminal_id is globally unique).
@@ -183,6 +261,7 @@ impl AgentRunTerminalRegistry {
         for terminals in cache.values_mut() {
             if let Some(entry) = terminals.get_mut(terminal_id) {
                 entry.state = new_state.to_string();
+                entry.availability = "online".to_string();
                 entry.exit_code = exit_code;
                 if new_state == "exited" || new_state == "killed" || new_state == "lost" {
                     entry.exited_at = Some(Utc::now().timestamp_millis());
@@ -215,13 +294,89 @@ impl AgentRunTerminalRegistry {
         let mut cache = self.inner.write().unwrap();
         for terminals in cache.values_mut() {
             if let Some(entry) = terminals.get_mut(terminal_id) {
+                entry.availability = "online".to_string();
                 let mut projection = entry.output_projection.clone().unwrap_or_default();
-                projection.stdout_preview = preview_from_text(stdout, truncated);
-                projection.stderr_preview = preview_from_text(stderr, truncated);
-                projection.pty_preview = preview_from_text(pty, truncated);
-                projection.next_seq = next_seq.or(projection.next_seq);
+                let (stdout_tail, stdout_clipped) = bounded_raw_tail(stdout);
+                let (stderr_tail, stderr_clipped) = bounded_raw_tail(stderr);
+                let (pty_tail, pty_clipped) = bounded_raw_tail(pty);
+                projection.stdout_tail = stdout_tail;
+                projection.stderr_tail = stderr_tail;
+                projection.pty_tail = pty_tail;
+                projection.stdout_preview =
+                    preview_from_text(&projection.stdout_tail, truncated || stdout_clipped);
+                projection.stderr_preview =
+                    preview_from_text(&projection.stderr_tail, truncated || stderr_clipped);
+                projection.pty_preview =
+                    preview_from_text(&projection.pty_tail, truncated || pty_clipped);
+                projection.next_seq = match (projection.next_seq, next_seq) {
+                    (Some(current), Some(incoming)) => Some(current.max(incoming)),
+                    (current, incoming) => incoming.or(current),
+                };
                 projection.truncated = projection.truncated || truncated;
                 projection.omitted_bytes = projection.omitted_bytes.max(omitted_bytes);
+                projection.updated_at = Utc::now().timestamp_millis();
+                entry.output_projection = Some(projection);
+                return;
+            }
+        }
+    }
+
+    pub fn record_output_delta(&self, snapshot: TerminalOutputDeltaSnapshot<'_>) {
+        let mut cache = self.inner.write().unwrap();
+        for terminals in cache.values_mut() {
+            if let Some(entry) = terminals.get_mut(snapshot.terminal_id) {
+                entry.availability = "online".to_string();
+                let mut projection = entry.output_projection.clone().unwrap_or_default();
+                let mut watermark = projection.next_seq.unwrap_or_default();
+                let mut stdout_clipped = false;
+                let mut stderr_clipped = false;
+                let mut pty_clipped = false;
+                for chunk in snapshot.chunks {
+                    if chunk.seq < watermark {
+                        continue;
+                    }
+                    match chunk.stream {
+                        "stderr" => {
+                            let (tail, clipped) =
+                                append_bounded_raw_tail(&projection.stderr_tail, chunk.data);
+                            projection.stderr_tail = tail;
+                            stderr_clipped |= clipped;
+                        }
+                        "pty" => {
+                            let (tail, clipped) =
+                                append_bounded_raw_tail(&projection.pty_tail, chunk.data);
+                            projection.pty_tail = tail;
+                            pty_clipped |= clipped;
+                        }
+                        _ => {
+                            let (tail, clipped) =
+                                append_bounded_raw_tail(&projection.stdout_tail, chunk.data);
+                            projection.stdout_tail = tail;
+                            stdout_clipped |= clipped;
+                        }
+                    }
+                    watermark = watermark.max(chunk.seq.saturating_add(1));
+                }
+                projection.stdout_preview = preview_from_text(
+                    &projection.stdout_tail,
+                    projection.truncated || snapshot.truncated || stdout_clipped,
+                );
+                projection.stderr_preview = preview_from_text(
+                    &projection.stderr_tail,
+                    projection.truncated || snapshot.truncated || stderr_clipped,
+                );
+                projection.pty_preview = preview_from_text(
+                    &projection.pty_tail,
+                    projection.truncated || snapshot.truncated || pty_clipped,
+                );
+                projection.next_seq = Some(
+                    projection
+                        .next_seq
+                        .unwrap_or_default()
+                        .max(snapshot.next_seq),
+                );
+                projection.truncated = projection.truncated || snapshot.truncated;
+                projection.omitted_bytes = projection.omitted_bytes.max(snapshot.omitted_bytes);
                 projection.updated_at = Utc::now().timestamp_millis();
                 entry.output_projection = Some(projection);
                 return;
@@ -239,9 +394,14 @@ impl AgentRunTerminalRegistry {
         let mut cache = self.inner.write().unwrap();
         for terminals in cache.values_mut() {
             if let Some(entry) = terminals.get_mut(terminal_id) {
+                entry.availability = "online".to_string();
                 let mut projection = entry.output_projection.clone().unwrap_or_default();
-                projection.pty_preview =
-                    append_preview(projection.pty_preview.as_ref(), data, truncated);
+                let (pty_tail, clipped) = append_bounded_raw_tail(&projection.pty_tail, data);
+                projection.pty_tail = pty_tail;
+                projection.pty_preview = preview_from_text(
+                    &projection.pty_tail,
+                    projection.truncated || truncated || clipped,
+                );
                 projection.truncated = projection.truncated || truncated;
                 projection.omitted_bytes = projection.omitted_bytes.saturating_add(omitted_bytes);
                 projection.updated_at = Utc::now().timestamp_millis();
@@ -260,22 +420,22 @@ impl AgentRunTerminalRegistry {
         }
     }
 
-    /// Mark all terminals belonging to the given backend as Lost.
-    pub fn handle_backend_disconnect(&self, backend_id: &str) -> Vec<String> {
-        let mut lost_ids = Vec::new();
+    /// A transport disconnect only changes reachability. Process state is retained until a source
+    /// inventory proves that the owner epoch is unknown or no longer attributable.
+    pub fn mark_backend_offline(&self, backend_id: &str) -> Vec<String> {
+        let mut affected_ids = Vec::new();
         let mut cache = self.inner.write().unwrap();
         for terminals in cache.values_mut() {
             for entry in terminals.values_mut() {
                 if entry.backend_id == backend_id
                     && (entry.state == "running" || entry.state == "starting")
                 {
-                    entry.state = "lost".to_string();
-                    entry.exited_at = Some(Utc::now().timestamp_millis());
-                    lost_ids.push(entry.terminal_id.clone());
+                    entry.availability = "offline".to_string();
+                    affected_ids.push(entry.terminal_id.clone());
                 }
             }
         }
-        lost_ids
+        affected_ids
     }
 
     /// Register the binding between a runtime session and an AgentRun scope.
@@ -326,6 +486,9 @@ impl Default for TerminalOutputProjection {
             truncated: false,
             omitted_bytes: 0,
             updated_at: Utc::now().timestamp_millis(),
+            stdout_tail: String::new(),
+            stderr_tail: String::new(),
+            pty_tail: String::new(),
         }
     }
 }
@@ -343,27 +506,25 @@ fn preview_from_text(text: &str, upstream_truncated: bool) -> Option<TerminalOut
     })
 }
 
-fn append_preview(
-    previous: Option<&TerminalOutputPreview>,
-    data: &str,
-    upstream_truncated: bool,
-) -> Option<TerminalOutputPreview> {
-    if data.is_empty() && previous.is_none() {
-        return None;
+fn append_bounded_raw_tail(previous: &str, data: &str) -> (String, bool) {
+    if data.is_empty() {
+        return (previous.to_string(), false);
     }
-    let mut joined = previous
-        .map(|preview| preview.text.clone())
-        .unwrap_or_default();
-    joined.push_str(data);
-    let (bounded, clipped) = bounded_tail(&joined);
-    Some(TerminalOutputPreview {
-        bytes: bounded.len(),
-        text: bounded,
-        truncated: previous.is_some_and(|preview| preview.truncated)
-            || upstream_truncated
-            || clipped,
-        from: "tail".to_string(),
-    })
+    let mut combined = String::with_capacity(previous.len().saturating_add(data.len()));
+    combined.push_str(previous);
+    combined.push_str(data);
+    bounded_raw_tail(&combined)
+}
+
+fn bounded_raw_tail(text: &str) -> (String, bool) {
+    if text.len() <= TERMINAL_PREVIEW_MAX_BYTES {
+        return (text.to_string(), false);
+    }
+    let mut start = text.len().saturating_sub(TERMINAL_PREVIEW_MAX_BYTES);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    (text[start..].to_string(), true)
 }
 
 fn bounded_tail(text: &str) -> (String, bool) {
@@ -389,4 +550,36 @@ fn bounded_tail(text: &str) -> (String, bool) {
         start = idx;
     }
     (line_tail[start..].to_string(), true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_disconnect_only_changes_availability() {
+        let registry = AgentRunTerminalRegistry::default();
+        registry.register_terminal(
+            "00000000-0000-0000-0000-000000000001",
+            "00000000-0000-0000-0000-000000000002",
+            "terminal-1",
+            "backend-1",
+            Some(7),
+        );
+        registry.update_state("terminal-1", "running", None);
+
+        assert_eq!(
+            registry.mark_backend_offline("backend-1"),
+            vec!["terminal-1".to_owned()]
+        );
+        let disconnected = registry.get_terminal("terminal-1").expect("terminal");
+        assert_eq!(disconnected.state, "running");
+        assert_eq!(disconnected.availability, "offline");
+        assert_eq!(disconnected.exited_at, None);
+
+        registry.append_terminal_output("terminal-1", "still alive", false, 0);
+        let reconnected = registry.get_terminal("terminal-1").expect("terminal");
+        assert_eq!(reconnected.state, "running");
+        assert_eq!(reconnected.availability, "online");
+    }
 }

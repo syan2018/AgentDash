@@ -1,0 +1,726 @@
+{
+  "schema_version": 2,
+  "component": "w6_external_complete_agents",
+  "frozen_base": "fc26d3ff",
+  "component_base_commit": "7524755176a0d574323fbfcf8008d2d4c2196d18",
+  "wire_revision": {
+    "current_production": 3,
+    "complete_agent_target": 4,
+    "cutover_result": 4
+  },
+  "owned_registrations": [
+    {
+      "crate": "agentdash-integration-codex",
+      "type": "CodexCompleteAgentRegistration",
+      "service": "CodexCompleteAgentService",
+      "transport": "CodexProcessTransport",
+      "ready_boundary": "initialize_typed_response_then_initialized",
+      "authority": "codex_thread_store"
+    },
+    {
+      "crate": "agentdash-integration-remote-runtime",
+      "type": "RemoteCompleteAgentRegistration",
+      "service": "RemoteCompleteAgentService",
+      "endpoint": "RuntimeWireAgentServiceEndpoint",
+      "authority": "remote_complete_agent"
+    }
+  ],
+  "removed_owned_routes": [
+    "agentdash-integration-codex::CodexRuntimeIntegration",
+    "agentdash-integration-codex::codex_runtime_contribution",
+    "agentdash-integration-codex::CodexRuntimeDriverFactory",
+    "agentdash-integration-codex::RuntimeJournalFact mapping",
+    "agentdash-integration-remote-runtime::remote_runtime_contribution",
+    "agentdash-integration-remote-runtime::RemoteRuntimeDriverFactory",
+    "agentdash-integration-remote-runtime::RuntimeWireDriverEndpoint",
+    "agentdash-integration-remote-runtime::RuntimeWireHostPortRouter",
+    "agentdash-integration-remote-runtime::DriverContextActivation"
+  ],
+  "atomic_shared_hotspot_inputs": [
+    {
+      "id": "workspace_graph_and_lock",
+      "owner": "w8_hard_cut",
+      "paths": [
+        "Cargo.toml",
+        "Cargo.lock"
+      ],
+      "remove_symbols": [
+        "driver-era dependency edges from agentdash-integration-codex",
+        "driver-era dependency edges from agentdash-integration-remote-runtime",
+        "obsolete lock dependency edges after legacy crate and module deletion"
+      ],
+      "add_symbols": [
+        "agentdash-integration-codex -> agentdash-agent-service-api + codex-app-server-protocol + agentdash-process",
+        "agentdash-integration-remote-runtime -> agentdash-agent-service-api + agentdash-agent-runtime-wire",
+        "one regenerated Cargo.lock for the complete S5 crate graph"
+      ],
+      "prerequisites": [
+        "all W2/W6/W7 owner Cargo inputs are frozen",
+        "legacy crate consumer count is zero",
+        "no owner branch commits Cargo.lock independently"
+      ],
+      "gates": [
+        "cargo metadata reports one final dependency DAG",
+        "Cargo.lock changes only once in the combined S5 set"
+      ],
+      "build_commands": [
+        "cargo metadata --format-version 1 --locked",
+        "cargo check --workspace --all-targets --locked"
+      ]
+    },
+    {
+      "id": "runtime_wire_canonical_envelope",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-agent-runtime-wire/src/lib.rs",
+        "crates/agentdash-agent-runtime-wire/src/complete_agent.rs",
+        "crates/agentdash-agent-runtime-wire/Cargo.toml"
+      ],
+      "remove_symbols": [
+        "RUNTIME_WIRE_PROTOCOL_REVISION = 3",
+        "RuntimeWireDriverDescribeResult",
+        "RuntimeWireDriverBindResult",
+        "RuntimeWireDriverDispatchResult",
+        "RuntimeWireDriverInspectResult",
+        "RuntimeWireHostPortRequest",
+        "RuntimeWireHostPortResponse",
+        "RuntimeWireHostPortError",
+        "RuntimeWireNotification::JournalFact",
+        "DriverContextActivation and DriverContextCheckpointRequest re-exports",
+        "agentdash-integration-api dependency"
+      ],
+      "add_symbols": [
+        "RUNTIME_WIRE_PROTOCOL_REVISION = 4 as the only revision constant",
+        "RuntimeWireRequest::AgentService",
+        "RuntimeWireRequest::AgentHostCallback",
+        "RuntimeWireResponse::AgentService",
+        "RuntimeWireResponse::AgentHostCallback",
+        "RuntimeWireNotification::AgentChange",
+        "RuntimeWireAgentBindingTarget and complete service/callback roots"
+      ],
+      "prerequisites": [
+        "W1 service API revision is frozen",
+        "W6 Remote proxy and endpoint pass revision 4 conformance",
+        "Local and Cloud placement consumers are changed in the same S5 set"
+      ],
+      "gates": [
+        "one canonical revision constant equals 4",
+        "driver and HostPort variants have zero matches",
+        "no RuntimeJournalFact crosses Runtime Wire"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-agent-runtime-wire --locked",
+        "cargo clippy -p agentdash-agent-runtime-wire --all-targets --locked -- -D warnings"
+      ]
+    },
+    {
+      "id": "runtime_wire_generator",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-agent-runtime-wire/src/generate.rs"
+      ],
+      "remove_symbols": [
+        "MaterializedDriverSurface/AuthIdentity driver closure",
+        "RuntimeWireDriver* roots",
+        "RuntimeWireHostPort* roots",
+        "DriverContextActivation/DriverContextSurface/DriverTranscript roots"
+      ],
+      "add_symbols": [
+        "RuntimeWireAgentBindingTarget",
+        "RuntimeWireAgentServiceDescribeRequest",
+        "RuntimeWireAgentServiceRequest",
+        "RuntimeWireAgentServiceResponse",
+        "RuntimeWireAgentChangeNotification",
+        "RuntimeWireAgentHostCallbackRequest",
+        "RuntimeWireAgentHostCallbackResponse",
+        "the complete agent-service-api transitive type closure"
+      ],
+      "prerequisites": [
+        "final RuntimeWireEnvelope variants are frozen",
+        "canonical service API schema roots are available"
+      ],
+      "gates": [
+        "generator reports no unreachable owned type",
+        "generated imports have no dangling driver-era contract"
+      ],
+      "build_commands": [
+        "cargo run -p agentdash-agent-runtime-wire --bin generate_agent_runtime_wire -- --check"
+      ]
+    },
+    {
+      "id": "runtime_wire_canonical_artifacts",
+      "owner": "w8_hard_cut",
+      "paths": [
+        "schemas/agent-runtime-wire.schema.json",
+        "packages/app-web/src/generated/agent-runtime-wire.ts"
+      ],
+      "remove_symbols": [
+        "revision 3 schema",
+        "RuntimeWireDriver* generated declarations",
+        "RuntimeWireHostPort* generated declarations",
+        "DriverContextActivation and RuntimeJournalRecord references"
+      ],
+      "add_symbols": [
+        "revision 4 Complete Agent request/response/change/callback schema",
+        "RuntimeWireAgent* TypeScript declarations and service API dependency closure"
+      ],
+      "prerequisites": [
+        "runtime_wire_canonical_envelope",
+        "runtime_wire_generator",
+        "W7 canonical Runtime contract generator input"
+      ],
+      "gates": [
+        "generated schema and TypeScript match a clean regeneration",
+        "revision 3 and legacy driver declarations have zero matches"
+      ],
+      "build_commands": [
+        "cargo run -p agentdash-agent-runtime-wire --bin generate_agent_runtime_wire",
+        "cargo run -p agentdash-agent-runtime-wire --bin generate_agent_runtime_wire -- --check",
+        "pnpm contracts:check"
+      ]
+    },
+    {
+      "id": "integration_api_service_collection",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-integration-api/src/integration.rs",
+        "crates/agentdash-integration-api/src/agent_runtime.rs",
+        "crates/agentdash-integration-api/src/lib.rs",
+        "crates/agentdash-integration-api/Cargo.toml"
+      ],
+      "remove_symbols": [
+        "AgentDashIntegration::agent_runtime_drivers",
+        "AgentDashIntegration::agent_runtime_trust_manifests",
+        "AgentRuntimeDriverContribution",
+        "AgentRuntimeDriverFactory",
+        "RuntimeDriverHostPorts",
+        "DriverContextActivation and driver context/tool/hook broker contracts"
+      ],
+      "add_symbols": [
+        "Complete Agent registration collection backed only by agentdash-agent-service-api",
+        "duplicate service instance and descriptor fail-fast contract"
+      ],
+      "prerequisites": [
+        "Platform CompleteAgentHost durable registration shape is frozen",
+        "Native, Codex and Remote registration components are available"
+      ],
+      "gates": [
+        "integration-api has no agent-runtime-contract driver dependency",
+        "AgentDashIntegration exposes no driver-era method"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-integration-api --locked",
+        "cargo clippy -p agentdash-integration-api --all-targets --locked -- -D warnings"
+      ]
+    },
+    {
+      "id": "first_party_codex_registration",
+      "owner": "product_protocol_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-first-party-integrations/src/lib.rs"
+      ],
+      "remove_symbols": [
+        "CodexRuntimeIntegration",
+        "builtin.codex_runtime driver contribution",
+        "codex_runtime_is_a_functional_driver_contribution"
+      ],
+      "add_symbols": [
+        "Codex Complete Agent instance configuration consumed by API bootstrap",
+        "registration test that requires a ready initialize handshake"
+      ],
+      "prerequisites": [
+        "CodexCompleteAgentRegistration::spawn is async and ready-only",
+        "API bootstrap owns process lifetime and instance identity"
+      ],
+      "gates": [
+        "first-party integration exports no driver contribution",
+        "Codex is registered exactly once"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-first-party-integrations --locked"
+      ]
+    },
+    {
+      "id": "infrastructure_complete_agent_composition",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-infrastructure/src/agent_runtime_composition.rs"
+      ],
+      "remove_symbols": [
+        "AgentRuntimeCompositionInput.contributions",
+        "IntegrationDriverHost",
+        "RuntimeDriverHostPorts",
+        "RuntimeWirePlacementResolver driver input",
+        "remote_runtime_contribution",
+        "codex_runtime_contribution_with_launcher",
+        "codex_runtime_trust_manifest",
+        "driver journal/context HostPort composition"
+      ],
+      "add_symbols": [
+        "CompleteAgentHost production construction",
+        "CodexCompleteAgentRegistration::spawn(...).await before register_service",
+        "RemoteCompleteAgentRegistration::new",
+        "CompleteAgentHost::register_service",
+        "durable Complete Agent binding/effect/reconcile workers",
+        "AgentHostCallbacks route injection"
+      ],
+      "prerequisites": [
+        "final CompleteAgentHost repository port and PostgreSQL adapter exist",
+        "API Cloud placement resolver supplies revision 4 RuntimeWireAgentBindingTarget",
+        "Codex registration handshake passes before service visibility"
+      ],
+      "gates": [
+        "no IntegrationDriverHost is constructed",
+        "no remote_runtime_contribution or Codex driver contribution remains",
+        "Codex and Remote service instances each have one Host registration"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-infrastructure agent_runtime_composition --locked",
+        "cargo check -p agentdash-infrastructure --tests --locked"
+      ]
+    },
+    {
+      "id": "api_app_state_complete_agent_bootstrap",
+      "owner": "product_protocol_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-api/src/app_state.rs"
+      ],
+      "remove_symbols": [
+        "NativeAgentRuntimeCompositionInput.remote_definitions",
+        "NativeAgentRuntimeCompositionInput.remote_trust_manifests",
+        "NativeAgentRuntimeCompositionInput.remote_placements",
+        "CloudRuntimeWirePlacementResolver driver injection"
+      ],
+      "add_symbols": [
+        "Complete Agent registration inputs collected before production Host visibility",
+        "CloudCompleteAgentPlacementResolver for revision 4 targets",
+        "async Codex ready registration failure propagation"
+      ],
+      "prerequisites": [
+        "integration_api_service_collection",
+        "infrastructure_complete_agent_composition",
+        "api_relay_complete_agent_placement"
+      ],
+      "gates": [
+        "AppState construction fails if Codex initialize fails",
+        "AppState exposes no driver contribution collection"
+      ],
+      "build_commands": [
+        "cargo check -p agentdash-api --tests --locked",
+        "cargo test -p agentdash-api app_state --locked"
+      ]
+    },
+    {
+      "id": "api_relay_module_exports",
+      "owner": "product_protocol_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-api/src/relay/mod.rs"
+      ],
+      "remove_symbols": [
+        "CloudRuntimeWirePlacementResolver driver-era export"
+      ],
+      "add_symbols": [
+        "CloudCompleteAgentPlacementResolver revision 4 export"
+      ],
+      "prerequisites": [
+        "api_relay_complete_agent_placement"
+      ],
+      "gates": [
+        "relay module exports no driver placement resolver"
+      ],
+      "build_commands": [
+        "cargo check -p agentdash-api --tests --locked"
+      ]
+    },
+    {
+      "id": "api_relay_registry_identity",
+      "owner": "product_protocol_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-api/src/relay/registry.rs"
+      ],
+      "remove_symbols": [
+        "RuntimeWirePlacementRequest",
+        "driver generation/provenance route identity",
+        "driver-era CloudRuntimeWirePlacement route map"
+      ],
+      "add_symbols": [
+        "AgentServiceInstanceId + AgentBindingGeneration + host incarnation placement identity",
+        "revision 4 Complete Agent route map",
+        "retired epoch and disconnect acknowledgment preservation"
+      ],
+      "prerequisites": [
+        "Relay provenance uses service API identities",
+        "replacement generation/incarnation policy is frozen"
+      ],
+      "gates": [
+        "same provenance reconnect stays fenced after retirement",
+        "replacement generation opens a fresh stream with zero old-frame replay"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-api relay::registry --locked"
+      ]
+    },
+    {
+      "id": "api_relay_complete_agent_placement",
+      "owner": "product_protocol_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-api/src/relay/runtime_wire.rs"
+      ],
+      "remove_symbols": [
+        "RuntimeWirePlacementResolver trait implementation",
+        "RuntimeWirePlacementRequest driver coordinates",
+        "RUNTIME_WIRE_PROTOCOL_REVISION revision 3 use"
+      ],
+      "add_symbols": [
+        "Complete Agent placement resolver with RuntimeWireAgentBindingTarget",
+        "revision 4 open/frame/ack/disconnect route",
+        "RuntimeWirePlacement implementation retained as transport only"
+      ],
+      "prerequisites": [
+        "Relay runtime provenance is converted to service API identity",
+        "runtime_wire_canonical_envelope"
+      ],
+      "gates": [
+        "Cloud placement never creates a service definition or terminal state",
+        "disconnect waits for Remote Complete Agent acknowledgment"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-api relay::runtime_wire --locked"
+      ]
+    },
+    {
+      "id": "api_enterprise_remote_complete_agent_e2e",
+      "owner": "product_protocol_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-api/src/bootstrap/enterprise_remote_e2e.rs"
+      ],
+      "remove_symbols": [
+        "AgentRuntimeDriverContribution",
+        "RuntimeWireHostPortRouter",
+        "remote_runtime_contribution",
+        "agent_runtime_drivers",
+        "ContextActivationDispatch and ContextActivationRecovery assertions"
+      ],
+      "add_symbols": [
+        "RemoteCompleteAgentRegistration",
+        "RuntimeWireAgentServiceEndpoint",
+        "AgentHostCallbacks tool/hook roundtrip",
+        "snapshot/change gap reconcile and disconnect Lost assertions"
+      ],
+      "prerequisites": [
+        "API, Local and Relay revision 4 routes are active",
+        "production CompleteAgentHost PostgreSQL composition is active"
+      ],
+      "gates": [
+        "enterprise E2E exercises Complete Agent service frames only",
+        "three provider/tool continuations and replacement-generation reconnect pass",
+        "old generation replay count is zero"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-api enterprise_remote --locked"
+      ]
+    },
+    {
+      "id": "local_complete_agent_endpoint",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-local/src/handlers/runtime_wire.rs"
+      ],
+      "remove_symbols": [
+        "RuntimeDriverEndpointResolver",
+        "HostRuntimeDriverEndpointResolver",
+        "AgentRuntimeDriver",
+        "RuntimeWireDriverEndpoint",
+        "RuntimeWireHostPortRouter",
+        "IntegrationDriverHost"
+      ],
+      "add_symbols": [
+        "CompleteAgentEndpointResolver",
+        "CompleteAgentHost service resolution by instance and generation",
+        "RuntimeWireAgentServiceEndpoint",
+        "revision 4 request/response/change/callback outbound pump"
+      ],
+      "prerequisites": [
+        "Local Host advertises Complete Agent instance/generation/incarnation",
+        "runtime_wire_canonical_envelope",
+        "Relay revision 4 negotiation"
+      ],
+      "gates": [
+        "Managed Runtime requests are rejected at the Local endpoint",
+        "no legacy prompt or driver fallback exists",
+        "delayed AgentChange continues after request receipt"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-local handlers::runtime_wire --locked",
+        "cargo check -p agentdash-local --tests --locked"
+      ]
+    },
+    {
+      "id": "relay_runtime_wire_revision_4",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-relay/src/runtime_wire.rs",
+        "crates/agentdash-relay/src/protocol.rs"
+      ],
+      "remove_symbols": [
+        "RuntimeRelayProvenance driver_generation/runtime-contract service identity",
+        "RuntimeOfferAdvertisement driver profile",
+        "revision 3 negotiation"
+      ],
+      "add_symbols": [
+        "AgentServiceDefinitionId + AgentServiceInstanceId + AgentBindingGeneration provenance",
+        "revision 4 Complete Agent placement negotiation",
+        "ordered ack/replay/backpressure and disconnect barrier unchanged"
+      ],
+      "prerequisites": [
+        "service API identity types are canonical",
+        "Local/API placement inputs agree on revision 4 provenance"
+      ],
+      "gates": [
+        "Relay remains transport-only",
+        "duplicate/gap/backpressure/reconnect tests pass at revision 4",
+        "no driver profile or Runtime terminal vocabulary remains"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-relay runtime_wire --locked",
+        "cargo clippy -p agentdash-relay --all-targets --locked -- -D warnings"
+      ]
+    },
+    {
+      "id": "api_integration_complete_agent_collection",
+      "owner": "product_protocol_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-api/src/integrations.rs"
+      ],
+      "remove_symbols": [
+        "HostIntegrationRegistration.runtime_driver_contributions",
+        "AgentRuntimeDriverContribution and AgentRuntimeTrustManifest imports",
+        "AgentDashIntegration::agent_runtime_drivers collection",
+        "driver contribution factory-key and trust-manifest matching"
+      ],
+      "add_symbols": [
+        "Complete Agent service registration inputs from the frozen Integration API collection",
+        "service instance and descriptor duplicate fail-fast validation",
+        "Codex, Native and Remote registration inputs passed once to AppState bootstrap"
+      ],
+      "prerequisites": [
+        "integration_api_service_collection",
+        "first_party_codex_registration",
+        "Native and Remote activation registrations are frozen on the same S5 revision"
+      ],
+      "gates": [
+        "HostIntegrationRegistration contains no driver contribution or trust-manifest collection",
+        "API integration collection exposes each Complete Agent service instance exactly once",
+        "duplicate instance or descriptor identity fails before production Host registration"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-api integrations --locked",
+        "cargo check -p agentdash-api --tests --locked"
+      ]
+    },
+    {
+      "id": "api_remote_complete_agent_inventory",
+      "owner": "product_protocol_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-api/src/relay/runtime_inventory.rs"
+      ],
+      "remove_symbols": [
+        "IntegrationDriverHost inventory owner",
+        "AgentDashIntegration::agent_runtime_drivers definition lookup",
+        "RuntimeServiceInstanceId driver proxy activation",
+        "sourceDriverGeneration and driver profile activation vocabulary"
+      ],
+      "add_symbols": [
+        "CompleteAgentHost-backed remote service instance inventory",
+        "AgentServiceInstanceId + AgentBindingGeneration + host incarnation source identity",
+        "RemoteCompleteAgentRegistration placement input with service descriptor provenance"
+      ],
+      "prerequisites": [
+        "api_relay_complete_agent_placement",
+        "relay_runtime_wire_revision_4",
+        "CompleteAgentHost durable registration and binding repository are active"
+      ],
+      "gates": [
+        "remote inventory never constructs IntegrationDriverHost or driver proxy offers",
+        "withdraw and reconnect preserve Complete Agent instance/generation/incarnation identity",
+        "Relay advertisement cannot synthesize a service definition"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-api runtime_inventory --locked",
+        "cargo check -p agentdash-api --tests --locked"
+      ]
+    },
+    {
+      "id": "local_complete_agent_host_bootstrap",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-local/src/agent_runtime_host.rs"
+      ],
+      "remove_symbols": [
+        "AgentRuntimeDriverContribution inputs",
+        "IntegrationDriverHost construction",
+        "AgentDashIntegration::agent_runtime_drivers collection",
+        "RuntimeWireHostPortRouter",
+        "driver factory and credential-broker activation path"
+      ],
+      "add_symbols": [
+        "Local CompleteAgentHost construction",
+        "Complete Agent service registrations collected by stable instance identity",
+        "RuntimeWireAgentServiceEndpoint and AgentHostCallbacks route binding",
+        "local host incarnation and binding-generation endpoint resolution"
+      ],
+      "prerequisites": [
+        "integration_api_service_collection",
+        "local_complete_agent_endpoint",
+        "final CompleteAgentHost repository and registration contract are frozen"
+      ],
+      "gates": [
+        "Local host constructs no IntegrationDriverHost or RuntimeWireHostPortRouter",
+        "each Local Complete Agent registration is applied exactly once",
+        "stale generation or host incarnation cannot resolve an endpoint"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-local agent_runtime_host --locked",
+        "cargo check -p agentdash-local --tests --locked"
+      ]
+    },
+    {
+      "id": "local_runtime_complete_agent_inputs",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-local/src/runtime.rs"
+      ],
+      "remove_symbols": [
+        "LocalRuntimeConfig.runtime_driver_contributions",
+        "LocalRuntimeConfig::with_runtime_driver_contributions",
+        "AgentRuntimeDriverContribution transport into local host bootstrap"
+      ],
+      "add_symbols": [
+        "Complete Agent registration inputs using service-api identities",
+        "async ready registration propagation into Local CompleteAgentHost bootstrap"
+      ],
+      "prerequisites": [
+        "api_integration_complete_agent_collection",
+        "local_complete_agent_host_bootstrap",
+        "Codex registration ready handshake is mandatory"
+      ],
+      "gates": [
+        "LocalRuntimeConfig exposes no driver contribution field or builder",
+        "Local runtime startup fails before service visibility when a ready registration fails"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-local runtime --locked",
+        "cargo check -p agentdash-local --tests --locked"
+      ]
+    },
+    {
+      "id": "local_handler_complete_agent_exports",
+      "owner": "platform_runtime_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-local/src/handlers/mod.rs"
+      ],
+      "remove_symbols": [
+        "HostRuntimeDriverEndpointResolver re-export",
+        "RuntimeDriverEndpointResolver re-export",
+        "driver-era Runtime offer advertisement surface"
+      ],
+      "add_symbols": [
+        "CompleteAgentEndpointResolver re-export",
+        "RuntimeWireCommandHandler revision 4 Complete Agent surface",
+        "service-api based Complete Agent offer advertisement surface"
+      ],
+      "prerequisites": [
+        "local_complete_agent_endpoint",
+        "relay_runtime_wire_revision_4"
+      ],
+      "gates": [
+        "Local handlers export no AgentRuntimeDriver endpoint resolver",
+        "advertised offers use Complete Agent service identity and binding generation"
+      ],
+      "build_commands": [
+        "cargo test -p agentdash-local handlers::runtime_wire --locked",
+        "cargo check -p agentdash-local --tests --locked"
+      ]
+    },
+    {
+      "id": "generic_context_activation_removal",
+      "owner": "platform_runtime_product_protocol_and_w8_hard_cut",
+      "paths": [
+        "crates/agentdash-agent-runtime/**",
+        "crates/agentdash-agent-runtime-contract/**",
+        "crates/agentdash-agent-runtime-host/**",
+        "crates/agentdash-agent-runtime-wire/**",
+        "crates/agentdash-api/**",
+        "crates/agentdash-infrastructure/**",
+        "crates/agentdash-integration-api/**",
+        "crates/agentdash-integration-native-agent/**",
+        "packages/app-web/src/generated/**",
+        "schemas/**"
+      ],
+      "remove_symbols": [
+        "ContextActivationId",
+        "ContextActivationState",
+        "ContextActivationDispatch",
+        "ContextActivationRecovery",
+        "RuntimeWorkKind::ContextActivationDispatch",
+        "RuntimeWorkKind::ContextActivationRecovery",
+        "DriverContextActivation",
+        "context_activation persistence/repository/worker/schema/generated declarations"
+      ],
+      "add_symbols": [
+        "Complete Agent create/resume/fork/execute/read/changes/inspect as the only context lifecycle boundary",
+        "owner-native compaction observation and Runtime snapshot reconcile"
+      ],
+      "prerequisites": [
+        "Product callers use canonical Runtime snapshot/change",
+        "Complete Agent registrations are the only production route",
+        "W8 final migration removes agent_context_* tables"
+      ],
+      "gates": [
+        "ContextActivation, context_activation, ContextActivationDispatch, ContextActivationRecovery and DriverContextActivation return zero matches",
+        "dispatch and recovery workers contain no context-activation work kind"
+      ],
+      "build_commands": [
+        "rg -n \"ContextActivation|context_activation|ContextActivationDispatch|ContextActivationRecovery|DriverContextActivation\" Cargo.toml crates packages schemas",
+        "cargo test -p agentdash-agent-runtime --locked",
+        "cargo test -p agentdash-infrastructure runtime_recovery_context --locked",
+        "pnpm migration:guard"
+      ],
+      "expected_search_exit": 1
+    }
+  ],
+  "single_route_gates": [
+    {
+      "pattern": "AgentRuntimeDriver|RuntimeJournalFact|DriverContextActivation|agent_runtime_drivers|ContextActivation|context_activation",
+      "scope": "Cargo.toml crates packages schemas",
+      "expected_matches": 0
+    },
+    {
+      "pattern": "RUNTIME_WIRE_PROTOCOL_REVISION|RUNTIME_WIRE_COMPLETE_AGENT_TARGET_REVISION",
+      "scope": "production Runtime Wire composition",
+      "expected_unique_revision": 4
+    },
+    {
+      "behavior": "Codex registration is invisible until typed initialize response and initialized notification both succeed"
+    },
+    {
+      "behavior": "Codex and Remote production instances are registered exactly once in CompleteAgentHost"
+    },
+    {
+      "behavior": "Relay never synthesizes Agent service definition, lifecycle, history or terminal identity"
+    }
+  ],
+  "required_checks": [
+    "cargo test -p agentdash-integration-codex",
+    "cargo test -p agentdash-integration-remote-runtime",
+    "cargo test -p agentdash-agent-runtime-wire",
+    "cargo test -p agentdash-relay runtime_wire",
+    "cargo test -p agentdash-agent-runtime-host --test complete_agent_target",
+    "cargo test -p agentdash-local handlers::runtime_wire",
+    "cargo test -p agentdash-api enterprise_remote",
+    "cargo test -p agentdash-infrastructure agent_runtime_composition",
+    "cargo run -p agentdash-agent-runtime-wire --bin generate_agent_runtime_wire -- --check",
+    "pnpm contracts:check",
+    "pnpm migration:guard"
+  ]
+}

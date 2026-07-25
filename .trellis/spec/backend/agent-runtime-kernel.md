@@ -1,149 +1,210 @@
-# Managed Agent Runtime Kernel
+# In-Memory Agent Runtime Kernel
 
-本文定义`agentdash-agent-runtime`持久状态内核的可执行合同。Context/Compaction、Hook orchestration与PostgreSQL concrete adapter在后续章节扩展，但不得改变这里的operation、journal、projection、outbox与terminal原子性。
+## 1. Scope / Trigger
 
-## Scenario: Runtime mutation、driver event 与 durable cursor
+本规范适用于 Product command 到 Complete Agent 的协调、Agent snapshot normalize、live event
+broadcast、timeout/cancel 与 typed error mapping。修改 Runtime command、read adapter、stream
+或重连策略时必须复核。
 
-### 1. Scope / Trigger
+Runtime 的事务边界是一次进程内 handoff，不是 durable aggregate。跨重启事实由 Product 与
+concrete Agent 两端拥有。
 
-当实现Runtime command、Driver event ingestion、repository/unit-of-work adapter、journal projection、outbox、snapshot或event subscription时，适用本合同。Managed Runtime拥有状态转换；Infrastructure只原子保存`RuntimeCommit`，Driver Host只投递outbox并回送source event。
-
-### 2. Signatures
-
-Runtime-owned read与transaction ports：
+## 2. Signatures
 
 ```rust
-trait RuntimeRepository {
-    async fn load_thread(
+pub trait CompleteAgentService {
+    async fn execute(
         &self,
-        thread_id: &RuntimeThreadId,
-    ) -> Result<Option<RuntimeThreadState>, RuntimeStoreError>;
+        command: AgentCommandEnvelope,
+    ) -> Result<AgentCommandReceipt, AgentServiceError>;
 
-    async fn find_operation(
+    async fn read(
         &self,
-        operation_id: &RuntimeOperationId,
-    ) -> Result<Option<RuntimeOperationRecord>, RuntimeStoreError>;
+        query: AgentReadQuery,
+    ) -> Result<AgentSnapshot, AgentServiceError>;
 
-    async fn find_idempotency(
+    async fn live_events(
         &self,
-        thread_id: &RuntimeThreadId,
-        key: &IdempotencyKey,
-    ) -> Result<Option<RuntimeOperationRecord>, RuntimeStoreError>;
+        source: AgentSourceCoordinate,
+    ) -> Result<Box<dyn AgentLiveEventStream>, AgentServiceError>;
 
-    async fn events_after(
+    async fn inspect(
         &self,
-        thread_id: &RuntimeThreadId,
-        after: Option<EventSequence>,
-    ) -> Result<RuntimeEventBatch, RuntimeStoreError>;
-}
-
-trait RuntimeUnitOfWork {
-    async fn commit(&self, commit: RuntimeCommit) -> Result<(), RuntimeStoreError>;
-    async fn quarantine(
-        &self,
-        event: QuarantinedDriverEvent,
-    ) -> Result<(), RuntimeStoreError>;
+        identity: AgentEffectIdentity,
+    ) -> Result<AgentEffectInspection, AgentServiceError>;
 }
 ```
 
-完整write-set：
+```rust
+pub fn project_authoritative_agent_snapshot(
+    runtime_thread_id: RuntimeThreadId,
+    snapshot: AgentSnapshot,
+) -> Result<ManagedRuntimeSnapshot, AgentSnapshotProjectionError>;
+```
 
 ```rust
-struct RuntimeCommit {
-    expected_projection_revision: Option<RuntimeRevision>,
-    projection: RuntimeThreadState,
-    operation: Option<RuntimeOperationRecord>,
-    operation_terminals: Vec<(RuntimeOperationId, RuntimeOperationTerminal)>,
-    events: Vec<RuntimeEventEnvelope>,
-    outbox: Vec<RuntimeOutboxEntry>,
-    quarantine: Vec<QuarantinedDriverEvent>,
+pub struct AgentLiveEvent {
+    pub source: AgentSourceCoordinate,
+    pub sequence: AgentServiceU64,
+    pub record: CanonicalConversationRecord,
 }
 ```
 
-`expected_projection_revision=None`表示create-if-absent；`Some(revision)`表示事务内精确CAS。
+```rust
+pub struct AgentRunResolvedCompleteAgent {
+    pub service: Arc<dyn CompleteAgentService>,
+    pub binding_generation: AgentBindingGeneration,
+}
 
-### 3. Contracts
+pub trait AgentRunCompleteAgentResolverPort {
+    async fn resolve(
+        &self,
+        binding: &AgentRunProductRuntimeBinding,
+    ) -> Result<AgentRunResolvedCompleteAgent, String>;
+}
+```
 
-- mutation先在单个`RuntimeCommit`中持久化Operation acceptance、canonical projection、authoritative journal与outbox；commit成功后Driver Host才可执行side effect。
-- per-thread `OperationSequence`、`EventSequence`与`RuntimeRevision`单调分配；CAS loser不消费任何序号。
-- idempotency唯一域是`(RuntimeThreadId, IdempotencyKey)`；record持久化actor与完整typed command。只有operation ID、key、actor、command全部一致才返回duplicate receipt。
-- `RuntimeUnitOfWork::commit`必须在一个数据库事务内校验projection CAS和operation/idempotency唯一约束，并写入全部write-set。
-- authoritative event推进durable cursor；transient delta通过`RuntimeTransientEvents`传播，不进入durable cursor或projection revision。
-- `RuntimeEventBatch`携带`earliest_available`与`latest_available`；subscription区分future cursor和retention gap。
-- canonical/source坐标与binding generation在任何state transition前校验。stale generation只进入typed quarantine，不推进canonical state。
-- BindingLost、critical protocol violation与非法critical lifecycle在一个`RuntimeCommit`内持久事实、quarantine原事件，并将所有active Item、Interaction、Turn、Operation收敛为typed Lost/terminal。
-- Completed Item携带authoritative final content；Failed、Cancelled、Lost不伪造final content。
-- composition root提供真实Thread/Binding/source mapping；测试用defaults不成为production ID allocation或binding admission事实源。
+```ts
+interface ManagedRuntimeFeedConnection {
+  readonly ready: Promise<void>;
+  reload(): Promise<void>;
+  close(): void;
+}
+```
 
-### 4. Validation & Error Matrix
+Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt 与 command DTO，原因是
+它们是 API/adapter contract；它们不因此成为数据库事实。
 
-| 条件 | 必须结果 |
+## 3. Contracts
+
+- command 输入由 Product target、association、client command identity 和 payload 构成。
+  Runtime 解析当前 Host route，使用稳定 Agent effect identity 调用 concrete Agent。
+- Submit/Steer 的真实选择由 concrete Agent 当前 active turn 决定；Product 不根据缓存状态建立
+  pending branch。
+- command success 必须来自 concrete Agent receipt。Agent unavailable、unsupported、conflict
+  或 provider failure 以 typed error 返回当前请求。
+- post-dispatch response unknown 使用同一 effect identity 调用 `inspect`。`Applied/Accepted`
+  返回原 receipt；`NotApplied` 才能执行；`Unknown` 保持 typed pending/unavailable，不能自动
+  换 identity 重派。
+- `read` 每次从 Product association 定位 concrete Agent source，调用 Agent authoritative
+  read，再在内存中 normalize 为 Product/UI 所需 snapshot。
+- normalize 必须保留 concrete Agent 的 turn/item coordinate，并把
+  `conversation_history: Vec<CanonicalConversationRecord>` 原样交给 Product/UI。Runtime snapshot
+  不再维护 `turns/items/active_turn_id` 平行字段；需要 active/completed/item view 时使用
+  `CanonicalConversationView` 即时推导。
+- Product binding 是冷启动解析 Complete Agent 的最小完整输入。resolver 必须先用 binding 中的
+  immutable execution profile 与 AgentFrame 重建当前 Host route，再原子返回 service 与
+  binding generation；按裸 `service_instance_id` 直接查询进程内 catalog 无法恢复重启后的绑定。
+- 同步 Product command 响应透传 concrete Agent operation receipt 的真实状态。前端收到响应后
+  主动 `reload()` authoritative snapshot；live delta 继续负责执行中的低延迟展示，不承担终态
+  提交证明。
+- authoritative history 中没有 assistant item 的 terminal turn 仍是完整轮次。前端保留该
+  segment，并展示 `turn.error.message`；错误终态不因“没有可渲染文本”而被过滤。
+- `changes` 只有 concrete Agent 真正提供 ordered durable change tail 时才映射该 tail。
+  Snapshot-only Agent 通过重复 `read` 恢复，不由 Runtime 伪造 durable cursor。
+- live event 是 connection/process-local `CanonicalConversationRecord`。Runtime 只按 source-local
+  sequence broadcast；gap、Lagged、断连后丢弃 partial lane并重新读取 Agent snapshot。
+- Runtime 不持久化 operation、projection、journal、change、outbox、source identity map、
+  availability revision 或 surface snapshot。
+- Runtime 不比较 Product revision 与 derived Runtime projection revision。并发 gate 使用真实
+  typed coordinate，例如 effect identity、Agent turn、interaction、fork cutoff 或当前 Host route。
+- Runtime failure 不写 Product terminal 副本来“修正”Agent history。真实 execution terminal
+  由 concrete Agent source history恢复；Product-owned workflow/gate effect按自己的生命周期
+  观察并保存结果。
+
+## 4. Validation & Error Matrix
+
+| 条件 | 结果 |
 | --- | --- |
-| expected projection revision不匹配 | `ProjectionConflict`，Gateway映射`RevisionConflict`，write-set零落地 |
-| operation ID复用于不同请求 | `OperationConflictKind::OperationIdReused` |
-| 同Thread idempotency key换actor或command | `OperationConflictKind::IdempotencyKeyReused` |
-| 完全相同的operation ID/key/actor/command重试 | 返回原receipt且`duplicate=true`，不新增event/outbox |
-| store任一write stage失败 | projection/operation/idempotency/journal/outbox/quarantine均保持事务前状态 |
-| cursor高于latest durable sequence | `RuntimeSubscribeError::InvalidCursor` |
-| requested cursor早于retained prefix | `RuntimeSubscribeError::CursorGap { requested, earliest_available, latest_available }` |
-| snapshot请求非current revision且无历史snapshot | `RuntimeSnapshotError::RevisionUnavailable` |
-| stale binding/generation/source coordinate | typed quarantine，不推进revision/cursor |
-| Driver发送runtime-owned OperationAccepted | durable critical protocol violation + typed quarantine + active状态Lost收敛 |
-| terminal重复、parent改变、terminal后delta | typed transition violation；critical入口按同一事务收敛 |
+| target 没有 Product association | typed unavailable/not bound |
+| association 指向不可用 service/source | typed unavailable；Product shell 不受影响 |
+| Host 重启且 binding 指向尚未 materialize 的 Dash service | 从完整 binding 重建 route 后读取同一 source |
+| client command id 为空或 payload 无效 | side effect 前 invalid request |
+| 同 identity 不同 payload | concrete Agent typed idempotency conflict |
+| inspect = Applied/Accepted | 返回既有 receipt；不重复 side effect |
+| inspect = NotApplied | 执行同一 effect identity |
+| inspect = Unknown | typed pending/unavailable；不重派 |
+| live subscriber lagged | 断流或 typed retryable unavailable；重新 read |
+| live consumer 收到旧 provider telemetry shape | typed stream parse failure；不静默丢弃或本地补造 item |
+| Agent snapshot 无法 normalize | typed protocol error；不保存“修复后”副本 |
+| availability 在请求间变化 | 下一请求重新 resolve；不使用 generic revision gate |
+| command receipt 为 failed/interrupted/lost | API 返回真实状态；UI 重读 authoritative snapshot 并展示 terminal/error |
+| terminal turn 没有 assistant item | 保留 terminal-only segment，不显示无限等待 |
 
-### 5. Good/Base/Bad Cases
+## 5. Good / Base / Bad Cases
 
-- Good：Command在revision 7被接受，事务同时写operation、revision 8 projection、连续events与outbox；Driver worker只在commit后消费outbox。
-- Good：两个并发Command都声明expected revision 7，仅一条commit成功；失败方不占用operation/event sequence。
-- Base：客户端的after cursor仍在retained范围，返回durable tail；`include_transient`只追加当前非权威delta。
-- Bad：先写operation再尝试写projection/outbox；数据库中间失败会留下无法完成或错误重放的acceptance。
-- Bad：把actor放进idempotency namespace；攻击者或另一主体可换actor复用同一Thread key绕过冲突检查。
+- Good：Composer input 直接进入 Agent，返回 Agent receipt；同 client identity 重试命中同一
+  effect。
+- Good：进程重启后首次 snapshot/live/command 都以持久 Product binding 恢复 Host route，读取
+  concrete Agent 已保存的同一 source history。
+- Base：live delta 中断，UI 丢弃 partial lane，重新 read 后得到 Agent 已提交的完整 history。
+- Bad：先把 command 写进 Runtime outbox，再由 worker dispatch；这把同步 handoff 扩张成第二
+  workflow engine。
+- Bad：List 比较 persisted projection revision 与 binding revision；派生缓存过期不应改变
+  Product read 的合法性。
 
-### 6. Tests Required
+## 6. Tests Required
 
-- Interface test通过`AgentRuntimeGateway`验证acceptance、snapshot、events，不绕过public seam测试内部map。
-- 五个transaction failure stage分别断言projection、operation、idempotency、journal、outbox全部零部分落地。
-- 并发CAS测试断言唯一成功、连续operation/event sequence与projection/cursor一致。
-- idempotency测试覆盖exact duplicate、same key/different actor、same key/different command与operation ID复用。
-- Driver ingress测试覆盖stale generation、source mismatch、duplicate terminal、runtime-owned event与critical violation Lost收敛。
-- Cursor测试覆盖normal tail、future cursor、retention gap、空retained journal与transient不推进cursor。
-- PostgreSQL adapter落地时必须复用以上behavior suite并增加真实并发transaction/migration测试；in-memory通过不代表数据库原子性已证明。
+- command tests 覆盖 stable identity、same-payload replay、different-payload conflict、
+  unavailable 与 typed rejection。
+- inspection tests 覆盖 Applied/Accepted/NotApplied/Unknown 和 dispatch response lost。
+- read mapper tests 用 Agent snapshot 断言 history、terminal、interaction、compaction 与真实
+  diagnostic 不丢失。
+- live tests 覆盖 callback → stream、source-local order、Lagged、disconnect 和 read recovery。
+- canonical view tests 覆盖 active/completed turn 与 completed item 均从唯一 history 推导。
+- composition test 覆盖 Product input → Agent execute → live delta → Agent history →
+  reconnect read。
+- cold-start composition test 先清空 Host/catalog 进程态，再以既有 Product binding 读取
+  snapshot，断言同一 service/source 被重新 materialize 且 generation 来自新 Host route。
+- frontend feed test 覆盖同步 command 后 authoritative reload；turn segmentation 与静态渲染测试
+  覆盖无 assistant item 的 failed terminal 及其错误文本。
+- 负向源码搜索断言 Runtime repository、journal/outbox persistence、change worker 与
+  projection revision gate 不在 production composition。
 
-目标门禁：
-
-```powershell
-cargo test -p agentdash-agent-runtime
-cargo clippy -p agentdash-agent-runtime --all-targets -- -D warnings
-pnpm contracts:check
-```
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```rust
-repository.insert_operation(operation).await?;
-repository.append_events(events).await?;
-repository.save_projection(projection).await?;
-outbox.enqueue(command).await?;
-```
-
-这些调用即使逐个成功，也没有表达共享CAS与失败回滚合同。
-
-#### Correct
+## 7. Wrong vs Correct
 
 ```rust
-unit_of_work
-    .commit(RuntimeCommit {
-        expected_projection_revision: Some(expected),
-        projection,
-        operation: Some(operation),
-        operation_terminals,
-        events,
-        outbox,
-        quarantine,
-    })
-    .await?;
+// Wrong
+let accepted = runtime_repository.accept(command).await?;
+runtime_outbox.enqueue(accepted).await?;
+
+// Correct
+let effect = stable_agent_effect(&target, &client_command_id, &payload)?;
+dispatch_or_inspect_same_effect(complete_agent, effect, command).await
 ```
 
-所有状态变化共享一个事务入口，Infrastructure可以用同一CAS和唯一约束实现真实原子性。
+```rust
+// Wrong
+if cached_projection.revision != binding.expected_revision {
+    return Err(ProjectionDrift);
+}
+
+// Correct
+let snapshot = complete_agent.read(AgentReadQuery {
+    source: binding.agent.source,
+    at_revision: None,
+}).await?;
+project_authoritative_agent_snapshot(binding.runtime_thread_id, snapshot)
+```
+
+```rust
+// Wrong: cold Host 中 catalog 必然为空，后续恢复逻辑永远没有机会运行。
+let service = live_catalog.current(&binding.agent.service_instance_id).await?;
+let generation = ensure_product_binding_route(&binding).await?;
+
+// Correct: 完整 binding 先恢复 route，再一起返回 service 与 generation。
+let resolved = complete_agent_resolver.resolve(&binding).await?;
+resolved.service.read(AgentReadQuery {
+    source: binding.agent.source,
+    at_revision: None,
+}).await?;
+```
+
+```ts
+// Wrong: command HTTP 完成后继续等待某个不保证存在的 terminal live event。
+await submitComposerInput(request);
+
+// Correct: live 展示 partial，command 完成后以 authoritative read 收束终态。
+await submitComposerInput(request);
+await runtimeFeed.reload();
+```

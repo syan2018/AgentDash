@@ -7,7 +7,7 @@
 
 use std::collections::VecDeque;
 
-use agentdash_spi::platform::skill_source::{
+use agentdash_platform_spi::platform::skill_source::{
     RemoteSkillFetch, RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource,
     RemoteSkillSourceError,
 };

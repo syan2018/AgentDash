@@ -1,9 +1,16 @@
+mod complete_agent_admission;
 mod extension_runtime_impl;
 mod mcp_relay_impl;
 pub mod registry;
-mod runtime_inventory;
-mod runtime_wire;
+pub mod runtime_wire;
+mod terminal_projection;
+mod terminal_reconcile;
 pub mod ws_handler;
 
-pub use runtime_inventory::CloudRemoteRuntimeInventory;
-pub use runtime_wire::CloudRuntimeWirePlacementResolver;
+pub use complete_agent_admission::{
+    PinnedRuntimeWireDeploymentCatalog, RuntimeWireCompleteAgentAdmission,
+    RuntimeWireCompleteAgentAdmissionError, RuntimeWireCompleteAgentRecoveryObserver,
+    RuntimeWireCompleteAgentRecoveryRequest,
+};
+pub use terminal_projection::RelayAgentRunTerminalProjectionProducer;
+pub use terminal_reconcile::RelayAgentRunTerminalSourceReconcile;

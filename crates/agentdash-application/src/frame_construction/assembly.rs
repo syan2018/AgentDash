@@ -2,9 +2,11 @@ use std::collections::HashMap;
 
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
+use agentdash_platform_spi::{CapabilityState, SessionContextBundle, Vfs};
 
-use crate::agent_run::frame::{FrameContextBundleSummary, FrameSurfaceDraft};
+use crate::agent_run::frame::{
+    AgentContextSourceSnapshot, FrameContextBundleSummary, FrameSurfaceDraft,
+};
 #[cfg(test)]
 use crate::agent_run::runtime_capability::compose_vfs_with_overlay_and_directives;
 use crate::capability::CapabilityResolver;
@@ -36,7 +38,7 @@ pub(crate) struct FrameAssemblyBuilder {
     pub(super) capability_state: Option<CapabilityState>,
 
     // ── MCP 层 ──
-    pub(super) mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
+    pub(super) mcp_servers: Vec<agentdash_platform_spi::RuntimeMcpServer>,
 
     // ── 系统上下文层 ──
     pub(super) context_bundle: Option<SessionContextBundle>,
@@ -104,7 +106,7 @@ impl FrameAssemblyBuilder {
     /// 设置 MCP server 列表（覆盖）。
     pub(crate) fn with_mcp_servers(
         mut self,
-        servers: Vec<agentdash_spi::RuntimeMcpServer>,
+        servers: Vec<agentdash_platform_spi::RuntimeMcpServer>,
     ) -> Self {
         self.mcp_servers = servers;
         self
@@ -113,7 +115,7 @@ impl FrameAssemblyBuilder {
     /// 追加 MCP server 到列表。
     pub(super) fn append_mcp_servers(
         mut self,
-        servers: impl IntoIterator<Item = agentdash_spi::RuntimeMcpServer>,
+        servers: impl IntoIterator<Item = agentdash_platform_spi::RuntimeMcpServer>,
     ) -> Self {
         self.mcp_servers.extend(servers);
         self
@@ -197,7 +199,7 @@ impl FrameAssemblyBuilder {
     pub(super) fn apply_companion_slice(
         self,
         parent_vfs: Option<&Vfs>,
-        parent_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
+        parent_mcp_servers: &[agentdash_platform_spi::RuntimeMcpServer],
         parent_context_bundle: Option<&SessionContextBundle>,
         mode: CompanionSliceMode,
         executor_config: AgentConfig,
@@ -269,6 +271,10 @@ impl FrameAssemblyBuilder {
                 .context_bundle
                 .as_ref()
                 .map(FrameContextBundleSummary::from_bundle),
+            context_source_snapshot: self
+                .context_bundle
+                .as_ref()
+                .map(AgentContextSourceSnapshot::from_bundle),
             execution_profile: self.executor_config.clone(),
         }
     }

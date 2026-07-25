@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/prd.md","reason":"检查 R3、R8 与 AC4/AC11。"}
+{"file":".trellis/spec/backend/agent-runtime-surface-tool-broker.md","reason":"检查 Tool identity、permission、effect 与 route。"}
+{"file":".trellis/spec/backend/agent-runtime-hooks.md","reason":"检查逐 HookPoint semantic strength。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 behavior tests 与 false success。"}

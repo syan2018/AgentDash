@@ -36,7 +36,6 @@ export interface PresetFormState {
   model_id: string;
   agent_id: string;
   thinking_level: ThinkingLevel | "";
-  permission_policy: string;
   system_prompt: string;
   backend_requirement: AgentBackendRequirement;
   project_vfs_mount_exposure_grants: ProjectVfsMountExposureGrant[];
@@ -192,7 +191,6 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     model_id: String(cfg.model_id ?? ""),
     agent_id: String(cfg.agent_id ?? ""),
     thinking_level: isThinkingLevel(cfg.thinking_level) ? cfg.thinking_level : "",
-    permission_policy: String(cfg.permission_policy ?? ""),
     system_prompt: String(cfg.system_prompt ?? ""),
     backend_requirement: isAgentBackendRequirement(cfg.backend_requirement)
       ? cfg.backend_requirement
@@ -214,7 +212,6 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.model_id.trim()) config.model_id = form.model_id.trim();
   if (form.agent_id.trim()) config.agent_id = form.agent_id.trim();
   if (form.thinking_level) config.thinking_level = form.thinking_level;
-  if (form.permission_policy.trim()) config.permission_policy = form.permission_policy.trim();
   if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
   config.backend_requirement = form.backend_requirement;
   if (form.project_vfs_mount_exposure_grants.length > 0) {

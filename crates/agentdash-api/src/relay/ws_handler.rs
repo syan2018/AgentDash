@@ -9,6 +9,7 @@ use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 
+use agentdash_agent_runtime_wire::RuntimeWireAuthenticatedTransport;
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{BackendConfig, BackendRepository, RuntimeHealthOnlineUpdate};
 use agentdash_relay::*;
@@ -239,33 +240,26 @@ async fn handle_backend_connection(
         return;
     }
 
-    if let Err(error) = state
+    let mut runtime_wire_queues = match state
         .services
-        .agent_runtime_inventory
-        .validate_inventory(&payload.capabilities.agent_runtime_offers)
+        .runtime_wire_placements
+        .register_connection(&bid, format!("relay-ws-{}", uuid::Uuid::new_v4()))
+        .await
     {
-        let context = DiagnosticErrorContext::new("relay.ws.register", "agent_runtime_inventory")
-            .with_field("backend_id", &bid)
-            .with_field("request_id", &reg_id);
-        diag_error!(
-            Error,
-            Subsystem::Relay,
-            context = &context,
-            error = &error,
-            backend_id = %bid,
-            request_id = %reg_id,
-            "Agent Runtime offer inventory registration failed"
-        );
-        let _ = state.services.agent_runtime_inventory.withdraw(&bid).await;
-        state.services.backend_registry.unregister(&bid).await;
-        let _ = send_relay_error(
-            &mut ws_tx,
-            reg_id,
-            RelayError::runtime_error("Agent Runtime offer inventory is invalid"),
-        )
-        .await;
-        return;
-    }
+        Ok(queues) => queues,
+        Err(error) => {
+            diag!(
+                Warn,
+                Subsystem::Relay,
+                backend_id = %bid,
+                error = %error,
+                "Runtime Wire transport registration failed"
+            );
+            state.services.backend_registry.unregister(&bid).await;
+            return;
+        }
+    };
+    let runtime_wire_transport = runtime_wire_queues.transport.clone();
 
     let connected_at = chrono::Utc::now();
     if let Err(error) = state
@@ -294,7 +288,6 @@ async fn handle_backend_connection(
             request_id = %reg_id,
             "写入 runtime health 在线状态失败"
         );
-        let _ = state.services.agent_runtime_inventory.withdraw(&bid).await;
         state.services.backend_registry.unregister(&bid).await;
         let send_result = send_relay_error(
             &mut ws_tx,
@@ -343,21 +336,10 @@ async fn handle_backend_connection(
             message_kind = %relay_message_kind(&ack),
             "relay register ack send failed"
         );
-        let _ = state.services.agent_runtime_inventory.withdraw(&bid).await;
         state.services.backend_registry.unregister(&bid).await;
         notify_backend_runtime_changed(&state, &bid);
         return;
     }
-    state
-        .services
-        .agent_runtime_inventory
-        .mark_online(&bid)
-        .await;
-    spawn_runtime_inventory_sync(
-        state.clone(),
-        bid.clone(),
-        payload.capabilities.agent_runtime_offers.clone(),
-    );
     notify_backend_runtime_changed(&state, &bid);
 
     diag!(Info, Subsystem::Relay,
@@ -369,11 +351,51 @@ async fn handle_backend_connection(
 
     loop {
         tokio::select! {
+            biased;
+            control = runtime_wire_queues.control_rx.recv() => {
+                if let Some(control) = control
+                    && let Err(error) = send_relay(&mut ws_tx, &control).await {
+                        diag!(Warn, Subsystem::Relay,
+                            backend_id = %bid,
+                            error = %error,
+                            "Runtime Wire control frame send failed"
+                        );
+                        break;
+                    }
+            }
+            critical = runtime_wire_queues.critical_rx.recv() => {
+                if let Some(critical) = critical
+                    && let Err(error) = send_relay(&mut ws_tx, &critical).await {
+                        diag!(Warn, Subsystem::Relay,
+                            backend_id = %bid,
+                            error = %error,
+                            "Runtime Wire critical frame send failed"
+                        );
+                        break;
+                    }
+            }
             msg = ws_rx.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         match parse_relay_message_text(text.as_ref()) {
-                            Ok(relay_msg) => handle_backend_message(&state, &bid, relay_msg).await,
+                            Ok(relay_msg) => {
+                                match handle_runtime_wire_backend_message(
+                                    &state,
+                                    &runtime_wire_transport,
+                                    &relay_msg,
+                                ).await {
+                                    Ok(true) => {}
+                                    Ok(false) => handle_backend_message(&state, &bid, relay_msg).await,
+                                    Err(error) => {
+                                        diag!(Warn, Subsystem::Relay,
+                                            backend_id = %bid,
+                                            request_id = %relay_msg.id(),
+                                            error = %error,
+                                            "Runtime Wire inbound frame rejected"
+                                        );
+                                    }
+                                }
+                            }
                             Err(error) => {
                                 let context =
                                     DiagnosticErrorContext::new("relay.ws.message_loop", "deserialize")
@@ -499,18 +521,25 @@ async fn handle_backend_connection(
             );
         }
     }
-    if let Err(error) = state.services.agent_runtime_inventory.withdraw(&bid).await {
-        let context = DiagnosticErrorContext::new("relay.ws.disconnect", "runtime_offer_withdraw")
-            .with_field("backend_id", &bid);
-        diag_error!(
-            Warn,
-            Subsystem::Relay,
-            context = &context,
-            error = &error,
-            backend_id = %bid,
-            "Agent Runtime remote offers withdraw failed"
-        );
-    }
+    state
+        .services
+        .runtime_wire_complete_agents
+        .disconnect_backend(&bid)
+        .await
+        .unwrap_or_else(|error| {
+            diag!(
+                Warn,
+                Subsystem::Relay,
+                backend_id = %bid,
+                error = %error,
+                "清理 Remote Complete Agent placement selection 失败"
+            );
+        });
+    state
+        .services
+        .runtime_wire_placements
+        .disconnect_backend(&runtime_wire_transport, "relay websocket disconnected")
+        .await;
     state.services.backend_registry.unregister(&bid).await;
     if let Err(error) = state
         .repos
@@ -535,57 +564,156 @@ async fn handle_backend_connection(
     }
     notify_backend_runtime_changed(&state, &bid);
 
-    // 标记该后端名下的所有终端为 Lost 并推送 platform event
-    let lost_terminal_ids = state
+    // Transport loss changes availability only. Process loss requires a later source inventory
+    // result that explicitly reports Unknown or an unprovable owner fence.
+    match state
         .services
-        .terminal_registry
-        .handle_backend_disconnect(&bid);
-    if !lost_terminal_ids.is_empty() {
-        diag!(Info, Subsystem::Relay,
-
-            backend_id = %bid,
-            count = lost_terminal_ids.len(),
-            "后端断连，已标记终端为 Lost"
-        );
-    }
-}
-
-fn spawn_runtime_inventory_sync(
-    state: Arc<AppState>,
-    backend_id: String,
-    advertisements: Vec<agentdash_relay::RuntimeOfferAdvertisement>,
-) {
-    tokio::spawn(async move {
-        if let Err(error) = state
-            .services
-            .agent_runtime_inventory
-            .sync(&backend_id, &advertisements)
-            .await
-        {
+        .terminal_projection_producer
+        .mark_backend_offline(&bid)
+        .await
+    {
+        Ok(count) if count > 0 => {
+            diag!(Info, Subsystem::Relay,
+                backend_id = %bid,
+                count,
+                "后端断连，终端可用性已标记为 Offline，进程状态保持不变"
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
             let context =
-                DiagnosticErrorContext::new("relay.runtime_inventory", "activate_remote_offers")
-                    .with_field("backend_id", &backend_id);
+                DiagnosticErrorContext::new("relay.ws.disconnect", "terminal_projection_offline")
+                    .with_field("backend_id", &bid);
             diag_error!(
-                Error,
+                Warn,
                 Subsystem::Relay,
                 context = &context,
                 error = &error,
-                backend_id = %backend_id,
-                "Agent Runtime remote proxy activation failed"
+                backend_id = %bid,
+                "写入终端离线 Product 投影失败"
             );
         }
-    });
+    }
+}
+
+async fn handle_runtime_wire_backend_message(
+    state: &Arc<AppState>,
+    transport: &RuntimeWireAuthenticatedTransport,
+    message: &RelayMessage,
+) -> Result<bool, crate::relay::runtime_wire::CloudRuntimeWireError> {
+    match message {
+        RelayMessage::RuntimeWireOfferAdvertise { payload, .. } => {
+            let admission = state
+                .services
+                .runtime_wire_placements
+                .advertise(
+                    transport,
+                    (**payload).clone(),
+                    chrono::Utc::now().timestamp_millis(),
+                )
+                .await?;
+            if matches!(
+                admission,
+                crate::relay::runtime_wire::RuntimeWireAdvertisementAdmission::Accepted
+                    | crate::relay::runtime_wire::RuntimeWireAdvertisementAdmission::Replayed
+            ) {
+                let state = state.clone();
+                let transport = transport.clone();
+                let advertisement = (**payload).clone();
+                match state
+                    .services
+                    .runtime_wire_complete_agents
+                    .prepare(transport.clone(), advertisement.clone())
+                    .await
+                {
+                    Ok(Some(ticket)) => {
+                        tokio::spawn(async move {
+                            match state
+                                .services
+                                .runtime_wire_complete_agents
+                                .admit(ticket)
+                                .await
+                            {
+                                Ok(instance_id) => {
+                                    diag!(
+                                        Info,
+                                        Subsystem::Relay,
+                                        backend_id = %transport.backend_id,
+                                        endpoint_id = %advertisement.endpoint_id,
+                                        service_instance_id = %instance_id,
+                                        "Remote Complete Agent placement 已通过独立信任配置并注册"
+                                    );
+                                }
+                                Err(error) => {
+                                    diag!(
+                                        Warn,
+                                        Subsystem::Relay,
+                                        backend_id = %transport.backend_id,
+                                        endpoint_id = %advertisement.endpoint_id,
+                                        error = %error,
+                                        "Remote Complete Agent placement admission 失败"
+                                    );
+                                }
+                            }
+                        });
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        diag!(
+                            Warn,
+                            Subsystem::Relay,
+                            backend_id = %transport.backend_id,
+                            endpoint_id = %advertisement.endpoint_id,
+                            error = %error,
+                            "Remote Complete Agent placement 未通过独立信任配置"
+                        );
+                    }
+                }
+            }
+            Ok(true)
+        }
+        RelayMessage::RuntimeWireOfferWithdraw {
+            endpoint_id,
+            revision,
+            ..
+        } => {
+            state
+                .services
+                .runtime_wire_complete_agents
+                .withdraw(&transport.backend_id, endpoint_id, revision.0)
+                .await
+                .map_err(|error| {
+                    crate::relay::runtime_wire::CloudRuntimeWireError::CompleteAgentAdmission {
+                        reason: error.to_string(),
+                    }
+                })?;
+            state
+                .services
+                .runtime_wire_placements
+                .withdraw(transport, endpoint_id, *revision)
+                .await?;
+            Ok(true)
+        }
+        RelayMessage::RuntimeWirePlacementOpenAck { .. }
+        | RelayMessage::RuntimeWirePlacementOpenRejected { .. }
+        | RelayMessage::RuntimeWirePlacementFrame { .. }
+        | RelayMessage::RuntimeWirePlacementAck { .. }
+        | RelayMessage::RuntimeWirePlacementClosed { .. }
+        | RelayMessage::RuntimeWirePlacementLost { .. } => {
+            state
+                .services
+                .runtime_wire_placements
+                .route_backend_message(transport, message)
+                .await
+        }
+        RelayMessage::RuntimeWirePlacementOpen { .. } => {
+            Err(crate::relay::runtime_wire::CloudRuntimeWireError::StaleTransport)
+        }
+        _ => Ok(false),
+    }
 }
 
 async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: RelayMessage) {
-    if state
-        .services
-        .backend_registry
-        .handle_runtime_wire_message(backend_id, &msg)
-        .await
-    {
-        return;
-    }
     match &msg {
         RelayMessage::Pong { .. } => {
             diag!(Debug, Subsystem::Relay,
@@ -626,28 +754,6 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
         RelayMessage::EventCapabilitiesChanged { payload, .. } => {
             diag!(Info, Subsystem::Relay,
         backend_id = %backend_id, "收到能力变更通知");
-            if let Err(error) = state
-                .services
-                .agent_runtime_inventory
-                .validate_inventory(&payload.agent_runtime_offers)
-            {
-                let context = DiagnosticErrorContext::new(
-                    "relay.ws.handle_message",
-                    "agent_runtime_inventory",
-                )
-                .with_field("backend_id", backend_id)
-                .with_field("request_id", msg.id());
-                diag_error!(
-                    Warn,
-                    Subsystem::Relay,
-                    context = &context,
-                    error = &error,
-                    backend_id = %backend_id,
-                    request_id = %msg.id(),
-                    "Agent Runtime offer inventory update rejected"
-                );
-                return;
-            }
             state
                 .services
                 .backend_registry
@@ -680,11 +786,6 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     "更新 runtime health capabilities 失败"
                 );
             }
-            spawn_runtime_inventory_sync(
-                state.clone(),
-                backend_id.to_string(),
-                payload.agent_runtime_offers.clone(),
-            );
             notify_backend_runtime_changed(state, backend_id);
         }
         RelayMessage::EventToolShellOutput { payload, .. } => {
@@ -700,42 +801,42 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 );
             }
         }
-        RelayMessage::EventTerminalOutput { payload, .. } => {
+        RelayMessage::EventTerminalOutput { id, payload } => {
             let payload = payload
                 .clone()
                 .bounded(agentdash_relay::LIVE_OUTPUT_EVENT_MAX_BYTES);
             let terminal_id = &payload.terminal_id;
             diag!(Info, Subsystem::Relay,
-
                 backend_id = %backend_id,
                 terminal_id = %terminal_id,
-                data_len = payload.data.len(),
                 "收到终端输出事件"
             );
-            if state
+            if let Err(error) = state
                 .services
-                .terminal_registry
-                .get_terminal(terminal_id)
-                .is_none()
+                .terminal_projection_producer
+                .apply_output(backend_id, id, &payload)
+                .await
             {
-                diag!(Warn, Subsystem::Relay,
-
-                    operation = "relay.ws.handle_message",
-                    stage = "terminal_registry_lookup",
+                let context = DiagnosticErrorContext::new(
+                    "relay.ws.handle_message",
+                    "terminal_output_projection",
+                )
+                .with_field("backend_id", backend_id)
+                .with_field("terminal_id", terminal_id)
+                .with_field("request_id", id);
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &error,
                     backend_id = %backend_id,
                     terminal_id = %terminal_id,
-                    "终端输出事件到达但 terminal_registry 中未找到"
-                );
-            } else {
-                state.services.terminal_registry.append_terminal_output(
-                    terminal_id,
-                    &payload.data,
-                    payload.truncation.truncated,
-                    payload.truncation.omitted_bytes,
+                    request_id = %id,
+                    "写入终端输出 Product 投影失败"
                 );
             }
         }
-        RelayMessage::EventPtyTerminalStateChanged { payload, .. } => {
+        RelayMessage::EventPtyTerminalStateChanged { id, payload } => {
             diag!(Info, Subsystem::Relay,
 
                 backend_id = %backend_id,
@@ -743,17 +844,30 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 state = ?payload.state,
                 "收到 PTY 终端状态变更事件"
             );
-            let state_str = match payload.state {
-                agentdash_relay::PtyTerminalProcessState::Running => "running",
-                agentdash_relay::PtyTerminalProcessState::Exited => "exited",
-                agentdash_relay::PtyTerminalProcessState::Lost => "lost",
-                agentdash_relay::PtyTerminalProcessState::Killed => "killed",
-            };
-            state.services.terminal_registry.update_state(
-                &payload.terminal_id,
-                state_str,
-                payload.exit_code,
-            );
+            if let Err(error) = state
+                .services
+                .terminal_projection_producer
+                .apply_state(backend_id, id, payload)
+                .await
+            {
+                let context = DiagnosticErrorContext::new(
+                    "relay.ws.handle_message",
+                    "terminal_state_projection",
+                )
+                .with_field("backend_id", backend_id)
+                .with_field("terminal_id", &payload.terminal_id)
+                .with_field("request_id", id);
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &error,
+                    backend_id = %backend_id,
+                    terminal_id = %payload.terminal_id,
+                    request_id = %id,
+                    "写入终端状态 Product 投影失败"
+                );
+            }
         }
         RelayMessage::EventDiscoverOptionsPatch { .. } => {
             diag!(Debug, Subsystem::Relay,
@@ -780,9 +894,7 @@ fn notify_backend_runtime_changed(state: &AppState, backend_id: &str) {
 fn is_pending_response_message(msg: &RelayMessage) -> bool {
     matches!(
         msg,
-        RelayMessage::ResponsePrompt { .. }
-            | RelayMessage::ResponseCancel { .. }
-            | RelayMessage::ResponseDiscover { .. }
+        RelayMessage::ResponseDiscover { .. }
             | RelayMessage::ResponseWorkspaceDetect { .. }
             | RelayMessage::ResponseWorkspaceDetectGit { .. }
             | RelayMessage::ResponseWorkspaceDiscoverByIdentity { .. }
@@ -811,6 +923,7 @@ fn is_pending_response_message(msg: &RelayMessage) -> bool {
             | RelayMessage::ResponseTerminalInput { .. }
             | RelayMessage::ResponseTerminalResize { .. }
             | RelayMessage::ResponseTerminalKill { .. }
+            | RelayMessage::ResponseTerminalInventory { .. }
     )
 }
 
@@ -962,7 +1075,7 @@ impl IntoResponse for AuthResponseError {
 mod tests {
     use super::*;
     use agentdash_domain::backend::{
-        BackendShareScopeKind, BackendType, BackendVisibility, LocalBackendClaim, ViewConfig,
+        BackendShareScopeKind, BackendType, BackendVisibility, LocalBackendClaim,
     };
 
     enum MockTokenResult {
@@ -1021,14 +1134,6 @@ mod tests {
         }
 
         async fn remove_backend(&self, _id: &str) -> Result<(), DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn list_views(&self) -> Result<Vec<ViewConfig>, DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn save_view(&self, _view: &ViewConfig) -> Result<(), DomainError> {
             unreachable!("测试未使用");
         }
     }
@@ -1206,17 +1311,5 @@ mod tests {
         };
 
         assert!(!is_pending_response_message(&event));
-    }
-
-    #[test]
-    fn runtime_wire_messages_never_enter_generic_oneshot_routing() {
-        let message = RelayMessage::RuntimeWireAck {
-            id: "runtime-wire-ack".to_string(),
-            payload: agentdash_relay::RuntimeRelayAck {
-                stream_id: agentdash_relay::RuntimeRelayStreamId("stream-1".to_string()),
-                through_sequence: 3,
-            },
-        };
-        assert!(!is_pending_response_message(&message));
     }
 }

@@ -5,10 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+agentdash-agent-runtime-contract = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-application-operation-gateway = { workspace = true }
 agentdash-domain = { workspace = true }
-agentdash-spi = { workspace = true }
+agentdash-platform-spi = { workspace = true }
 async-trait = "0.1"
 chrono = { workspace = true }
 schemars = { workspace = true }
@@ -18,12 +19,11 @@ sha2 = "0.10"
 thiserror = { workspace = true }
 agentdash-diagnostics = { workspace = true }
 tracing = { workspace = true }
-tokio-util = { version = "0.7", features = ["rt"] }
 tokio = { workspace = true, features = ["sync"] }
+tokio-util = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-agentdash-agent-runtime-contract = { workspace = true }
 agentdash-infrastructure = { workspace = true }
 agentdash-test-support = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

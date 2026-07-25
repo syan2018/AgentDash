@@ -9,22 +9,21 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use serde::Deserialize;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::rpc::ApiError;
 use agentdash_application::extension_runtime::extension_runtime_projection_from_installations;
-use agentdash_application_operation_gateway::{OperationDescriptor, OperationPrincipal};
+use agentdash_application_operation_gateway::UserWorkshopOperationHost;
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
 };
 use agentdash_domain::interaction::{InteractionDefinitionStatus, InteractionOwner};
-use agentdash_domain::operation::{OperationOriginRef, OperationScopeRef};
 use agentdash_workspace_module::workspace_module::{
     WorkspaceModulePresentationError, build_workspace_module_presentation, build_workspace_modules,
 };
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Deserialize)]
 pub struct ProjectWorkspaceModulePath {
@@ -61,18 +60,7 @@ pub async fn get_project_workspace_modules(
     )
     .await?;
 
-    let installations = state
-        .repos
-        .project_extension_installation_repo
-        .list_enabled_by_project(project_id)
-        .await
-        .map_err(ApiError::from)?;
-    let projection = extension_runtime_projection_from_installations(installations)?;
-    let definitions =
-        load_visible_canvas_revisions(state.as_ref(), &current_user.user_id, project_id).await?;
-    let operations =
-        load_user_workshop_operations(state.as_ref(), &current_user, project_id).await?;
-    let modules = build_workspace_modules(&projection, &definitions, &operations);
+    let modules = load_project_workspace_modules(state.as_ref(), &current_user, project_id).await?;
     Ok(Json(modules))
 }
 
@@ -121,9 +109,9 @@ pub async fn present_workspace_module(
     Ok(Json(presentation))
 }
 
-async fn load_project_workspace_modules(
+pub(crate) async fn load_project_workspace_modules(
     state: &AppState,
-    current_user: &agentdash_spi::AuthIdentity,
+    current_user: &agentdash_platform_spi::AuthIdentity,
     project_id: Uuid,
 ) -> Result<Vec<WorkspaceModuleDescriptor>, ApiError> {
     let installations = state
@@ -133,64 +121,49 @@ async fn load_project_workspace_modules(
         .await
         .map_err(ApiError::from)?;
     let projection = extension_runtime_projection_from_installations(installations)?;
-    let definitions =
-        load_visible_canvas_revisions(state, &current_user.user_id, project_id).await?;
-    let operations = load_user_workshop_operations(state, current_user, project_id).await?;
-    Ok(build_workspace_modules(
-        &projection,
-        &definitions,
-        &operations,
-    ))
-}
-
-async fn load_user_workshop_operations(
-    state: &AppState,
-    current_user: &agentdash_spi::AuthIdentity,
-    project_id: Uuid,
-) -> Result<Vec<OperationDescriptor>, ApiError> {
-    let surface = state
-        .services
-        .operation_gateway
-        .surface_current(
-            &OperationPrincipal::authenticated_user(current_user.clone()),
-            &OperationScopeRef::Project { project_id },
-            &OperationOriginRef::UserWorkshop,
-            CancellationToken::new(),
-        )
-        .await
-        .map_err(ApiError::from)?;
-    Ok(surface.catalog.descriptors().into_iter().cloned().collect())
-}
-
-async fn load_visible_canvas_revisions(
-    state: &AppState,
-    current_user_id: &str,
-    project_id: Uuid,
-) -> Result<Vec<agentdash_domain::interaction::InteractionDefinitionRevision>, ApiError> {
     let definitions = state
         .repos
         .interaction_definition_repo
         .list_canvas_by_project(project_id)
-        .await
-        .map_err(ApiError::from)?;
+        .await?;
     let mut revisions = Vec::new();
     for definition in definitions {
-        if definition.status != InteractionDefinitionStatus::Active {
-            continue;
-        }
-        if matches!(&definition.owner, InteractionOwner::User(owner) if owner != current_user_id) {
+        let owner_visible = match &definition.owner {
+            InteractionOwner::Project(owner) => *owner == project_id,
+            InteractionOwner::User(owner) => owner == &current_user.user_id,
+        };
+        if definition.status != InteractionDefinitionStatus::Active || !owner_visible {
             continue;
         }
         let revision = state
             .repos
             .interaction_definition_repo
             .get_revision(definition.current_revision_id)
-            .await
-            .map_err(ApiError::from)?
+            .await?
             .ok_or_else(|| {
                 ApiError::Internal("InteractionDefinition current revision 缺失".to_string())
             })?;
         revisions.push(revision);
     }
-    Ok(revisions)
+    let host = UserWorkshopOperationHost::project(
+        state.services.operation_gateway.clone(),
+        current_user.clone(),
+        project_id,
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let surface = host
+        .discover(CancellationToken::new())
+        .await
+        .map_err(|error| ApiError::Forbidden(error.to_string()))?;
+    let operations = surface
+        .catalog
+        .descriptors()
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(build_workspace_modules(
+        &projection,
+        &revisions,
+        &operations,
+    ))
 }

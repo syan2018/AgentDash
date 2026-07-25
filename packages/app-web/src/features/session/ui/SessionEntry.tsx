@@ -4,10 +4,10 @@
  * 根据 BackboneEvent 类型渲染不同的 UI：
  * - agent_message_delta → SessionMessageCard (agent)
  * - reasoning_text_delta / reasoning_summary_delta → SessionMessageCard (thinking)
- * - item_started / item_updated / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
+ * - item_started / item_updated / item_completed → 按 AgentDashThreadItem discriminant 渲染
  * - turn_plan_updated → SessionPlanCard
  * - platform:
- *   - executor_session_bound / hook_trace / task_* / companion_* 等 → 系统事件卡片
+ *   - hook_trace / task_* / companion_* 等 → 系统事件卡片
  * - approval_request → 审批卡片
  * - error → 错误卡片
  * - token_usage_updated / turn_started / turn_completed → 静默
@@ -40,6 +40,7 @@ import type {
 } from "../model/types";
 import { ToolCallCardShell } from "./ToolCallCardShell";
 import { renderToolCallCard } from "./toolCardRegistry";
+import { DisclosureRow } from "../../../components/ui/disclosure";
 import { SessionMessageCard } from "./SessionMessageCard";
 import { SessionPlanCard } from "./SessionPlanCard";
 import { SessionTaskEventCard } from "./SessionTaskEventCard";
@@ -152,6 +153,24 @@ export function SingleEntry({
     case "item_updated":
     case "item_completed": {
       const threadItem = event.payload.item;
+      if (threadItem.type === "agentMessage") {
+        return (
+          <SessionMessageCard
+            type="agent"
+            content={threadItem.text}
+            isStreaming={event.type !== "item_completed"}
+          />
+        );
+      }
+      if (threadItem.type === "reasoning") {
+        return (
+          <SessionMessageCard
+            type="thinking"
+            content={[...threadItem.summary, ...threadItem.content].join("")}
+            isStreaming={event.type !== "item_completed"}
+          />
+        );
+      }
       const card = renderToolCallCard(threadItem, {
         sessionId: entry.sessionId,
         outputText: accumulatedText,
@@ -292,7 +311,7 @@ function SessionErrorCard({ notification }: { notification: ErrorNotification })
   );
 }
 
-function formatCodexErrorInfo(info: CodexErrorInfo | null): string | null {
+function formatCodexErrorInfo(info: CodexErrorInfo | null | undefined): string | null {
   if (info == null) return null;
   if (typeof info === "string") return info;
   if ("httpConnectionFailed" in info) {
@@ -322,7 +341,7 @@ function formatCodexErrorInfo(info: CodexErrorInfo | null): string | null {
   return null;
 }
 
-function formatHttpErrorInfo(kind: string, httpStatusCode: number | null): string {
+function formatHttpErrorInfo(kind: string, httpStatusCode: number | null | undefined): string {
   return httpStatusCode == null ? kind : `${kind}:HTTP ${httpStatusCode}`;
 }
 
@@ -382,15 +401,14 @@ function AggregatedToolGroupEntry({
 
   return (
     <div>
-      <button
-        type="button"
+      <DisclosureRow
+        expanded={expanded}
         onClick={() => setExpanded(!expanded)}
         className={ST.groupRow}
       >
-        <span className={ST.chevron}>{expanded ? "▼" : "▶"}</span>
         <span className={ST.badge}>TOOLS</span>
         <span className={ST.hint}>{summary}</span>
-      </button>
+      </DisclosureRow>
       {expanded && (
         <div className={ST.itemList}>
           {entries.map((entry) => (

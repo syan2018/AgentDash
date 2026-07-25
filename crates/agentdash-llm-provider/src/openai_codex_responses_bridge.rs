@@ -312,6 +312,11 @@ fn is_codex_usage_or_rate_limit_error(raw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider_bridge_test_support::{
+        SYSTEM_PROMPT, TOOL_DESCRIPTION, TOOL_NAME, USER_PROMPT,
+        assert_prompt_lanes_exclude_tool_metadata, bridge_request, serialized_body,
+        tool_parameters,
+    };
     use agentdash_agent::bridge::ProviderErrorKind;
     use agentdash_agent::types::{AgentMessage, ToolDefinition};
 
@@ -345,6 +350,25 @@ mod tests {
     }
 
     #[test]
+    fn codex_responses_wire_body_keeps_tool_contract_structured_and_prompt_lanes_clean() {
+        let body = serialized_body(build_request_body("gpt-5.5", &bridge_request()));
+
+        assert_eq!(body["instructions"], SYSTEM_PROMPT);
+        let input = body["input"].as_array().expect("input array");
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[0]["content"][0]["text"], USER_PROMPT);
+
+        let tool = &body["tools"][0];
+        assert_eq!(tool["name"], TOOL_NAME);
+        assert_eq!(tool["description"], TOOL_DESCRIPTION);
+        assert_eq!(tool["parameters"], tool_parameters());
+        assert_eq!(tool["strict"], false);
+
+        assert_prompt_lanes_exclude_tool_metadata(&[&body["instructions"], &body["input"]]);
+    }
+
+    #[test]
     fn builds_codex_body_with_instructions_not_system_input() {
         let body = build_request_body(
             "gpt-5.5",
@@ -352,6 +376,7 @@ mod tests {
                 system_prompt: Some("system".to_string()),
                 messages: vec![AgentMessage::user("hello")],
                 tools: vec![],
+                thinking_level: None,
             },
         );
         assert_eq!(body["instructions"], "system");
@@ -379,6 +404,7 @@ mod tests {
                         "additionalProperties": false
                     }),
                 }],
+                thinking_level: None,
             },
         );
 

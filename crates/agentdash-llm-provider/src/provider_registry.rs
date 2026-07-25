@@ -12,7 +12,7 @@ use agentdash_domain::llm_provider::{
     LlmProviderRepository, LlmSecretCodec, WireProtocol, provider_allows_empty_api_key,
     resolve_effective_credential,
 };
-use agentdash_spi::AuthIdentity;
+use agentdash_platform_spi::AuthIdentity;
 use futures::future::BoxFuture;
 use tokio::sync::RwLock;
 
@@ -33,6 +33,15 @@ pub struct ModelMeta {
     /// true = 来自 API 动态发现；false = 仅来自 models JSON 配置
     pub discovered: bool,
     pub source: ModelProfileSource,
+}
+
+/// Executable bridge and the exact catalog model selected for it.
+///
+/// Keeping these together prevents downstream runtimes from resolving the bridge from one
+/// catalog snapshot while independently guessing presentation/runtime metadata from another.
+pub struct ResolvedProviderBridge {
+    pub bridge: Arc<dyn LlmBridge>,
+    pub model: ModelMeta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -564,6 +573,27 @@ pub async fn resolve_effective_bridge_for_scope(
     provider_id: &str,
     model_id: Option<&str>,
 ) -> Result<Arc<dyn LlmBridge>, ProviderBridgeResolveError> {
+    Ok(resolve_effective_bridge_with_model_for_scope(
+        repo,
+        credential_repo,
+        secret_codec,
+        scope,
+        provider_id,
+        model_id,
+    )
+    .await?
+    .bridge)
+}
+
+/// Resolve the executable bridge and its exact model metadata from one catalog selection.
+pub async fn resolve_effective_bridge_with_model_for_scope(
+    repo: &dyn LlmProviderRepository,
+    credential_repo: Option<&dyn LlmProviderCredentialRepository>,
+    secret_codec: &dyn LlmSecretCodec,
+    scope: &ProviderCredentialScope,
+    provider_id: &str,
+    model_id: Option<&str>,
+) -> Result<ResolvedProviderBridge, ProviderBridgeResolveError> {
     let providers =
         repo.list_all()
             .await
@@ -603,7 +633,8 @@ pub async fn resolve_effective_bridge_for_scope(
             provider_id: provider_id.to_string(),
             reason,
         })?;
-    Ok(built.entry.create_bridge(&model.id))
+    let bridge = built.entry.create_bridge(&model.id);
+    Ok(ResolvedProviderBridge { bridge, model })
 }
 
 pub async fn build_effective_provider_profile(

@@ -563,3 +563,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 70: 收束 Workspace Module Execution Authority
+
+**Date**: 2026-07-27
+**Task**: 收束 Workspace Module Execution Authority
+**Branch**: `main`
+
+### Summary
+
+完成 WI-13：以 request-scoped ExecutionAuthority 统一 Workspace Module、OperationGateway、MCP、VFS 与 ToolBroker 权限事实，删除平行 Surface/adoption 接口，补齐 provider diagnostics、Skill、spec 与验证。父任务按用户要求保留在非归档区。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4f589308f` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

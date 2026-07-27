@@ -23,7 +23,6 @@ use agentdash_application_vfs::{
     AppliedVfsToolOutcome, AppliedVfsToolOwner, AppliedVfsToolPathScope, AppliedVfsToolRequest,
     AppliedVfsToolSurface,
 };
-use agentdash_contracts::workspace_module::WorkspaceModulePresentation;
 use agentdash_platform_spi::{
     PlatformMcpScope, ToolCluster, context_usage_kind,
     platform::tool_capability::{ToolSource, platform_tool_descriptors},
@@ -34,7 +33,6 @@ use uuid::Uuid;
 pub fn final_runtime_tool_catalog(
     vfs: Arc<AppliedVfsRuntimeToolService>,
     task: Arc<dyn RuntimeTaskToolService>,
-    workspace_module_present: Arc<dyn RuntimeToolExecutor>,
 ) -> Vec<Arc<dyn RuntimeToolExecutor>> {
     vec![
         Arc::new(MountsListRuntimeTool::new(vfs.clone())),
@@ -45,7 +43,6 @@ pub fn final_runtime_tool_catalog(
         Arc::new(ShellExecRuntimeTool::new(vfs)),
         Arc::new(RuntimeTaskReadTool::new(task.clone())),
         Arc::new(RuntimeTaskWriteTool::new(task)),
-        workspace_module_present,
     ]
 }
 
@@ -291,6 +288,24 @@ fn product_tool_definition(
             RuntimeToolPermission::ProductWrite,
             RuntimeToolEffect::ProductMutation,
         ),
+        ProductRuntimeToolKind::WorkspaceModulePresent => (
+            "workspace_module_present",
+            "Resolve and present a trusted Workspace Module view in the current AgentRun.",
+            RuntimeToolPermission::ProductWrite,
+            RuntimeToolEffect::ProductMutation,
+        ),
+        ProductRuntimeToolKind::OperationScriptPreflight => (
+            "operation_script_preflight",
+            "Validate and bind an ephemeral multi-Operation Rhai program to the current actor surface.",
+            RuntimeToolPermission::ProductRead,
+            RuntimeToolEffect::ReadOnly,
+        ),
+        ProductRuntimeToolKind::OperationScriptRun => (
+            "operation_script_run",
+            "Execute a preflighted ephemeral multi-Operation Rhai program through the canonical OperationGateway.",
+            RuntimeToolPermission::ProductWrite,
+            RuntimeToolEffect::ProductMutation,
+        ),
     }
 }
 
@@ -442,84 +457,6 @@ impl RuntimeToolExecutor for RuntimeTaskWriteTool {
             invocation,
         )
         .await
-    }
-}
-
-pub struct WorkspaceModulePresentRuntimeTool;
-
-impl WorkspaceModulePresentRuntimeTool {
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
-#[async_trait]
-impl RuntimeToolExecutor for WorkspaceModulePresentRuntimeTool {
-    fn definition(&self) -> RuntimeToolDefinition {
-        RuntimeToolDefinition {
-            name: AgentToolName::new("workspace_module_present").expect("static runtime tool name"),
-            description:
-                "Request presentation of a typed Workspace Module view in the current AgentRun."
-                    .to_owned(),
-            parameters_schema: serde_json::json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                    "module_id",
-                    "view_key",
-                    "renderer_kind",
-                    "presentation_uri",
-                    "title"
-                ],
-                "properties": {
-                    "module_id": {"type": "string", "minLength": 1},
-                    "view_key": {"type": "string", "minLength": 1},
-                    "renderer_kind": {"type": "string", "minLength": 1},
-                    "presentation_uri": {"type": "string", "minLength": 1},
-                    "title": {"type": "string"},
-                    "payload": {},
-                    "diagnostics": {}
-                }
-            }),
-            provenance: platform_tool_provenance("workspace_module_present"),
-            protocol_projector: ToolProtocolProjector::Dynamic,
-            permission: RuntimeToolPermission::ProductRead,
-            effect: RuntimeToolEffect::ReadOnly,
-        }
-    }
-
-    async fn execute(&self, invocation: RuntimeToolInvocation) -> AgentToolResult {
-        if !matches!(
-            invocation.grant.resources,
-            RuntimeToolResourceGrant::Product
-        ) {
-            return rejected(
-                "runtime_product_grant_required",
-                "Workspace Module presentation requires a typed Product execution grant",
-            );
-        }
-        let presentation: WorkspaceModulePresentation =
-            match serde_json::from_value(invocation.arguments) {
-                Ok(value) => value,
-                Err(error) => {
-                    return rejected(
-                        "invalid_workspace_module_presentation",
-                        format!("Workspace Module presentation arguments are invalid: {error}"),
-                    );
-                }
-            };
-        AgentToolResult::Completed {
-            output: serde_json::json!({
-                "content": [{
-                    "type": "text",
-                    "text": format!("Workspace Module `{}` presentation requested", presentation.title),
-                }],
-                "is_error": false,
-                "details": {
-                    "workspace_module_presentation": presentation,
-                },
-            }),
-        }
     }
 }
 
@@ -757,32 +694,6 @@ mod tests {
         }
     }
 
-    struct NoopWorkspaceModulePresentTool;
-
-    #[async_trait]
-    impl RuntimeToolExecutor for NoopWorkspaceModulePresentTool {
-        fn definition(&self) -> RuntimeToolDefinition {
-            RuntimeToolDefinition {
-                name: AgentToolName::new("workspace_module_present").expect("tool"),
-                description: "fixture".to_owned(),
-                parameters_schema: serde_json::json!({
-                    "type": "object",
-                    "owner": "workspace_module_present"
-                }),
-                provenance: platform_tool_provenance("workspace_module_present"),
-                protocol_projector: ToolProtocolProjector::Dynamic,
-                permission: RuntimeToolPermission::ProductWrite,
-                effect: RuntimeToolEffect::ProductMutation,
-            }
-        }
-
-        async fn execute(&self, _: RuntimeToolInvocation) -> AgentToolResult {
-            AgentToolResult::Completed {
-                output: Value::Null,
-            }
-        }
-    }
-
     struct NoopProductToolService {
         kind: ProductRuntimeToolKind,
     }
@@ -818,14 +729,13 @@ mod tests {
     }
 
     #[test]
-    fn final_runtime_catalog_defines_all_nine_platform_tools() {
+    fn final_runtime_catalog_defines_all_eight_base_platform_tools() {
         let vfs = Arc::new(AppliedVfsRuntimeToolService::new(
             Arc::new(VfsService::new(Arc::new(MountProviderRegistry::new()))),
             Arc::new(NoopTerminalRegistry),
         ));
         let task: Arc<dyn RuntimeTaskToolService> = Arc::new(NoopTaskService);
-        let executors =
-            final_runtime_tool_catalog(vfs, task, Arc::new(NoopWorkspaceModulePresentTool));
+        let executors = final_runtime_tool_catalog(vfs, task);
         assert_eq!(
             executors
                 .iter()
@@ -840,7 +750,6 @@ mod tests {
                 "shell_exec",
                 "task_read",
                 "task_write",
-                "workspace_module_present",
             ]
         );
         let definitions = executors
@@ -863,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn final_runtime_catalog_uses_all_nine_owner_parameter_schemas_exactly() {
+    fn final_runtime_catalog_uses_all_eight_owner_parameter_schemas_exactly() {
         let vfs = Arc::new(AppliedVfsRuntimeToolService::new(
             Arc::new(VfsService::new(Arc::new(MountProviderRegistry::new()))),
             Arc::new(NoopTerminalRegistry),
@@ -878,16 +787,12 @@ mod tests {
             AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::ShellExec),
             task.parameters_schema(RuntimeTaskToolKind::Read),
             task.parameters_schema(RuntimeTaskToolKind::Write),
-            NoopWorkspaceModulePresentTool
-                .definition()
-                .parameters_schema,
         ];
 
-        let actual =
-            final_runtime_tool_catalog(vfs, task, Arc::new(NoopWorkspaceModulePresentTool))
-                .into_iter()
-                .map(|executor| executor.definition().parameters_schema)
-                .collect::<Vec<_>>();
+        let actual = final_runtime_tool_catalog(vfs, task)
+            .into_iter()
+            .map(|executor| executor.definition().parameters_schema)
+            .collect::<Vec<_>>();
 
         assert_eq!(actual, expected);
         assert_eq!(actual[1]["properties"]["path"]["type"], "string");
@@ -907,6 +812,9 @@ mod tests {
             ProductRuntimeToolKind::WorkspaceModuleList,
             ProductRuntimeToolKind::WorkspaceModuleDescribe,
             ProductRuntimeToolKind::WorkspaceModuleInvoke,
+            ProductRuntimeToolKind::WorkspaceModulePresent,
+            ProductRuntimeToolKind::OperationScriptPreflight,
+            ProductRuntimeToolKind::OperationScriptRun,
         ]
         .into_iter()
         .map(|kind| {
@@ -930,6 +838,9 @@ mod tests {
                 "workspace_module_list",
                 "workspace_module_describe",
                 "workspace_module_invoke",
+                "workspace_module_present",
+                "operation_script_preflight",
+                "operation_script_run",
             ]
         );
         assert_eq!(
@@ -950,10 +861,20 @@ mod tests {
             definition.permission == RuntimeToolPermission::ProductRead
                 && definition.effect == RuntimeToolEffect::ReadOnly
         }));
-        assert!(definitions[6..].iter().all(|definition| {
+        assert!(definitions[6..8].iter().all(|definition| {
             definition.permission == RuntimeToolPermission::ProductWrite
                 && definition.effect == RuntimeToolEffect::ProductMutation
         }));
+        assert_eq!(
+            definitions[8].permission,
+            RuntimeToolPermission::ProductRead
+        );
+        assert_eq!(definitions[8].effect, RuntimeToolEffect::ReadOnly);
+        assert_eq!(
+            definitions[9].permission,
+            RuntimeToolPermission::ProductWrite
+        );
+        assert_eq!(definitions[9].effect, RuntimeToolEffect::ProductMutation);
     }
 
     #[tokio::test]

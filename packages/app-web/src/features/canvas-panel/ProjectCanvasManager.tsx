@@ -64,6 +64,7 @@ export function ProjectCanvasManager({ projectId, projectName }: ProjectCanvasMa
         source_bundle,
         initial_state: {},
         state_schema: { type: "object" },
+        agent_projection: { version: 1, allowed_state_paths: [] },
         command_definitions: [],
         component_bindings: [],
         resource_slots: [],

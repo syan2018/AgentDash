@@ -1,6 +1,6 @@
 # WI-11 Workspace Module Agent 能力最终收口
 
-Status: planned
+Status: completed
 
 Depends On: WI-03、WI-07、PR #95 最终 Runtime 接线
 
@@ -161,27 +161,27 @@ resolve current module surface
 
 ## Exit Criteria
 
-- [ ] `agentdash-workspace-module` 的描述、依赖和公开模块与 projection-only 职责一致。
-- [ ] 未挂载的旧 Workspace Module runtime tool provider 被删除；仍有效的可信 presentation 行为迁入
+- [x] `agentdash-workspace-module` 的描述、依赖和公开模块与 projection-only 职责一致。
+- [x] 未挂载的旧 Workspace Module runtime tool provider 被删除；仍有效的可信 presentation 行为迁入
       唯一生产路径。
-- [ ] list/describe/invoke/present 的 schema、Skill 与实际生产工具一致。
-- [ ] Agent 无法提交 renderer、URI、title、attachment 或 diagnostics authority。
-- [ ] Agent 可以从 Workspace Module descriptors 选择至少两个 exact Operations，通过同一个
+- [x] list/describe/invoke/present 的 schema、Skill 与实际生产工具一致。
+- [x] Agent 无法提交 renderer、URI、title、attachment 或 diagnostics authority。
+- [x] Agent 可以从 Workspace Module descriptors 选择至少两个 exact Operations，通过同一个
       OperationScript preflight/run 完成组合、结果处理和 call evidence 返回。
-- [ ] `InteractionDefinitionRevision` 具备显式 V1 Agent projection contract；Agent 只能观察
+- [x] `InteractionDefinitionRevision` 具备显式 V1 Agent projection contract；Agent 只能观察
       allowlisted state，projection 携带 instance/state revision 且不能充当写入授权。
-- [ ] AgentRun 可以发现当前已授权 attachment 对应的 `interaction:{instance_id}` runtime module，
+- [x] AgentRun 可以发现当前已授权 attachment 对应的 `interaction:{instance_id}` runtime module，
       describe 获得 pinned command Operations 与 Agent state projection，并能按 expected revision
       提交 direct command；human-only command 不进入 Agent operation surface。
-- [ ] Component event 可以按 tagged contract 触发 platform command、single Operation 或
+- [x] Component event 可以按 tagged contract 触发 platform command、single Operation 或
       OperationScript；Canvas 保存的 `.rhai`/inline source 可经 host 调用同一 UserWorkshop
       OperationScript engine，iframe 不执行脚本或持有 authority。
-- [ ] capability/readiness 撤销、descriptor/token drift、schema 错误、timeout/cancel 和 partial
+- [x] capability/readiness 撤销、descriptor/token drift、schema 错误、timeout/cancel 和 partial
       side effect 均在正确层失败。
-- [ ] Extension runtime action、protocol method、backend service 均只通过 canonical Operation 暴露；
+- [x] Extension runtime action、protocol method、backend service 均只通过 canonical Operation 暴露；
       没有新增第二套 dispatch 或编排事实源。
-- [ ] 即时 OperationScript 与 durable Workflow 的边界进入 Skill 和相关 specs。
-- [ ] Rust contracts、generated TypeScript、frontend live presentation consumer 与 specs 同步。
+- [x] 即时 OperationScript 与 durable Workflow 的边界进入 Skill 和相关 specs。
+- [x] Rust contracts、generated TypeScript、frontend live presentation consumer 与 specs 同步。
 
 ## Validation
 
@@ -204,4 +204,11 @@ resolve current module surface
 ## Progress
 
 - 2026-07-27：从 `origin/codex/workspace-duplex-interaction-planning` 恢复父任务到非归档区。
-- 2026-07-27：基于 PR #95 合入后的生产代码复核建立本 WI；尚未进入实现。
+- 2026-07-27：基于 PR #95 合入后的生产代码复核建立本 WI。
+- 2026-07-27：补齐 Agent `operation_script_preflight/run`、可信 presentation、显式 Agent state
+  projection、attachment-scoped `interaction:*` runtime module、component tagged target 与
+  SourceBundle `.rhai`/inline host execution。
+- 2026-07-27：删除未挂载旧 provider，收敛 projection crate 依赖，更新 embedded Skill、Trellis
+  specs、数据库 migration、generated TypeScript 与 Canvas frontend event path。
+- 2026-07-27：通过受影响 Rust crates check/test target、Workspace Module/Agent projection/tool
+  focused tests、app-web typecheck、contracts check、migration guard 与 `git diff --check`。

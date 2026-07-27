@@ -295,64 +295,72 @@ companion_request(target="sub", payload.agent_key="<CompanionAgentEntry.name>", 
 
 ## Workspace Module Agent Surface
 
-Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `workspace_module` capability 暴露。Canvas 仍保留自己的 domain、repository、VFS provider 与 panel runtime；`workspace_module` 只承担 Agent-facing lifecycle、operation schema、invoke routing 和 presentation facade。
+Workspace Module 是当前 Agent actor 可见的 Extension、Canvas definition 与 Interaction runtime
+投影。它不拥有 execution 或 state；OperationGateway 和 Interaction service 分别保持唯一权威。
 
 ### 1. Scope / Trigger
 
-- Trigger: Canvas 的创建、绑定和展示入口收束到 workspace module，避免 Agent 同时学习 `canvas` 与 `workspace_module` 两套工具面。
-- Scope: capability catalog、ToolCluster 映射、默认 session plan、tool provider 注入、ProjectAgent capability directive roundtrip。
+- `workspace_module` ToolCluster 开放时，Frame tool plan 同时暴露 module discovery、single invoke、
+  trusted presentation 与 OperationScript preflight/run。
+- Product tool adapter 每次从 RuntimeThread binding、immutable AgentFrame revision、applied resource
+  surface 和 current Operation surface 解析事实。
 
 ### 2. Signatures
 
-- `workspace_module_operate(operation="canvas.create" | "canvas.attach" | "canvas.copy", input={...})`
 - `workspace_module_list()`
 - `workspace_module_describe(module_id: string)`
-- `workspace_module_invoke(module_id: string, operation_key: string, input: object)`
-- `workspace_module_present(module_id: string, view_key: string)`
+- `workspace_module_invoke(operation_ref: ExactOperationRef, input?: JsonValue)`
+- `workspace_module_present(module_id: string, view_key?: string, payload?: JsonValue)`
+- `operation_script_preflight(source, requested_operations, input?, language?, host_api_version?, limits?)`
+- `operation_script_run(source, requested_operations, token, input?, language?, host_api_version?, limits?)`
 
 ### 3. Contracts
 
-- `workspace_module` 是 Canvas Agent 操作的 well-known capability key。
-- 默认 Agent 工具面包含 `workspace_module_operate/list/describe/invoke/present`。
-- 已创建 Canvas 表达为 `canvas:{canvas_mount_id}` module。
-- Canvas binding 表达为实例 operation：`operation_key="canvas.bind_data"`；绑定落在当前 AgentRun 的 Canvas mount metadata overlay，不写回 Canvas 源对象；结果在 Canvas runtime 与 `{canvas_mount_id}` mount 中投影为 `bindings/<alias>.<ext>` 只读生成文件，扩展名来自显式 `content_type` 或 `source_uri` 推断。
-- Canvas render diagnostics 表达为实例 operation：`operation_key="canvas.inspect"`；调用只读取 AgentRun→Canvas 引用上的 latest runtime observation，不写入模型历史。
-- Canvas interaction diagnostics 表达为实例 operation：`operation_key="canvas.get_interaction_state"`；调用只读取 Canvas source 显式上报的 latest interaction snapshot，不写入模型历史。
-- Canvas presentation 表达为 UI entry：`presentation_uri="canvas://{canvas_mount_id}"`。
-- Canvas 编辑 mount 表达为 VFS URI：`{canvas_mount_id}://...`。
-- Extension runtime action operation 由 `RuntimeGateway::surface_for_actor(actor, context)` 的 concrete action descriptor 投影，原因是 action schema、permission policy 与 actor/context support 必须和 Gateway invoke 使用同一事实源。
-- Extension runtime projection 在 WorkspaceModule 聚合中只提供 installation/module ownership、UI tab、protocol channel 和权限摘要事实，原因是 Project 安装投影描述资产，不描述当前 session actor 的可执行 action surface。
-- `WorkspaceModuleOperation.readiness` 表达 operation 调用就绪诊断，独立于 module visibility 与 renderer loadability，原因是缺少 Gateway、channel transport、runtime backend anchor 或 action catalog entry 时，`list` / `describe` / `present` 仍需要保留可见 module 与 UI entry。
-- ProjectAgent preset 中保存的 `canvas` capability directive 只作为 forward migration 输入；运行态普通 Agent capability 不再以 `canvas` 作为主入口。
+- `canvas:{definition_id}` 是 authoring definition；`canvas://{definition_id}` 是 preview。
+- `interaction:{instance_id}` 只由当前 AgentRun 的 active attachment 生成；
+  `interaction://{instance_id}` 是 shared runtime view。
+- runtime module describe 返回 pinned definition/revision、state revision、direct command Operations
+  与 definition-owned V1 Agent state projection。projection 只包含 allowlisted JSON Pointer 值。
+- `ext:{extension_key}` 投影 installation UI 与 actor-visible canonical Operations；runtime action、
+  protocol method、backend service 不建立第二套 dispatch。
+- describe 返回 exact OperationRef、schema、visibility、readiness、effect、replay、permission 和
+  provenance；invoke 不接受 module id 或 operation key 拼接。
+- present 的 renderer、URI、title、diagnostics 和 Interaction attachment 全由服务端从 current
+  module surface 构造。
+- OperationScript program 显式列出 describe 得到的 exact OperationRefs。preflight token 绑定
+  source/input/limits/current descriptors/principal/scope/authority；run 和 nested calls 继续重新准入。
+- Component event binding 是 platform command、single Operation 或 OperationScript tagged target；
+  `.rhai` source 必须来自 pinned SourceBundle，iframe 只提交 schema-valid payload。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 语义 |
 | --- | --- |
-| `kind` 不支持 | tool validation error |
 | `module_id` 不在当前 session 可见 module projection | NotFound / Forbidden |
-| `operation_key` 不在 describe 返回的 operations 中 | BadRequest |
-| Canvas bind input 不满足 operation schema | BadRequest |
-| Canvas runtime observation 尚未上报 | `canvas.inspect` 返回 `observation=null` |
-| Canvas interaction snapshot 尚未上报 | `canvas.get_interaction_state` 返回 `snapshot=null` |
-| Extension runtime action 不在当前 Gateway catalog | operation readiness 为 `runtime_action_unavailable` |
-| RuntimeGateway / channel transport / runtime backend anchor 缺失 | operation readiness 携带对应结构化诊断，module 可见性不因此改变 |
+| OperationRef 不在 current actor surface | rejected |
 | `view_key` 不在 describe 返回的 UI entries 中 | NotFound |
-| `presentation_uri` 不是 renderer 可打开 URI | backend contract/test failure |
+| Agent 提交 renderer/URI/title/diagnostics | schema validation error |
+| attachment detached 或 capability allowlist 撤销 | `interaction:*` 不再投影 |
+| Agent projection path 在 current state 缺失 | projection failure，不暴露完整 state |
+| token 过期或 descriptor/authority/limits 漂移 | preflight/run plan rejection |
+| nested call 部分成功后失败 | 返回 call evidence、partial 与 outcome_unknown |
 
 ### 5. Reference Cases
 
-- Operate flow: `workspace_module_operate(operation="canvas.create")` 返回 `canvas:{canvas_mount_id}`，随后 `workspace_module_describe` 能看到 `canvas.bind_data` 与 `preview` UI entry。
-- Copy flow: `workspace_module_operate(operation="canvas.copy")` 从只读 shared Canvas materialize 新 personal Canvas module，返回的新 descriptor 恢复 source edit operations。
-- Diagnostic flow: `workspace_module_describe` 返回 `canvas.inspect` 与 `canvas.get_interaction_state`，Agent 通过 `workspace_module_invoke` 读取 latest Canvas runtime facts。
-- Existing Canvas flow: 已存在 Canvas 通过 `workspace_module_list -> describe -> present` 打开。
-- Capability catalog: Canvas authoring 归入 workspace module capability，原因是同一 Canvas 实例的 lifecycle、operation 与 presentation 需要共享一条 discoverable module path。
+- Single call：`list -> describe -> invoke(exact ref)`。
+- Shared runtime：present Canvas 后重新 list/describe `interaction:{instance_id}`，读取 allowlisted
+  projection 并用 `expected_state_revision` 提交 direct command。
+- Immediate composition：describe 多个 module，preflight/run 一个使用至少两个 exact refs 的 Rhai
+  program。
+- Durable orchestration：需要 retry、recovery、human gate 或跨会话状态时进入 Workflow。
 
 ### 6. Tests Required
 
-- Capability catalog test asserts `workspace_module` contains operate/list/describe/invoke/present.
-- Provider/tool-plan test asserts default session tool surface uses workspace module tools for Canvas workflows.
-- Migration guard asserts persisted ProjectAgent `canvas` directives become `workspace_module`.
+- Capability catalog test asserts WorkspaceModule cluster 包含 list/describe/invoke/present 和
+  OperationScript preflight/run。
+- Product tool test覆盖可信 present 参数、exact ref、token 与 current surface re-admission。
+- Interaction test覆盖 attachment visibility、pinned revision、state revision 与 secret isolation。
+- Component event test覆盖三类 target、payload schema、`.rhai` source 和不自动写 state。
 - Policy test asserts tool-level filtering still gates each `workspace_module_*` tool via `CapabilityState.tool_policy`.
 
 ### 7. Wrong vs Correct
@@ -360,18 +368,17 @@ Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `wo
 #### Wrong
 
 ```text
-top-level Canvas capability + separate workspace module capability for the same asset
+Agent submits module_id + operation_key, renderer URI, or full Interaction state
 ```
 
 #### Correct
 
 ```text
-workspace_module_operate(operation="canvas.create")
-workspace_module_describe(module_id="canvas:{canvas_mount_id}")
-workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.bind_data", input={...})
-workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.inspect", input={})
-workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.get_interaction_state", input={})
-workspace_module_present(module_id="canvas:{canvas_mount_id}", view_key="preview")
+workspace_module_describe(module_id="canvas:{definition_id}")
+workspace_module_invoke(operation_ref=<exact describe result>, input={...})
+workspace_module_present(module_id="canvas:{definition_id}", view_key="preview")
+operation_script_preflight(source=..., requested_operations=[<exact refs>])
+operation_script_run(source=..., requested_operations=[<same refs>], token=<preflight token>)
 ```
 
 ## Task Runtime Tool Surface

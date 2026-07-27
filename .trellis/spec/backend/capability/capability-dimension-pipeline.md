@@ -188,15 +188,17 @@ let output = provider.discover_from_vfs(context, files).await;
 
 ## Canvas Workspace Module Runtime Projection
 
-`workspace_module_operate(operation="canvas.create" | "canvas.attach" | "canvas.copy")`执行Canvas平台层materialize/权限行为，并把Canvas mount写入AgentRun当前frame的canonical VFS。Workspace Module list/describe/invoke/present都从同一VFS mount即时派生`canvas:{canvas_mount_id}`，因此同一轮可立即发现并操作该实例。
+Workspace Module projection 从 immutable AgentFrame 的 module visibility、applied Project resource
+surface、current OperationGateway catalog 和 Interaction attachments 共同生成。`canvas:{definition_id}`
+表达 authoring definition；`interaction:{instance_id}` 只在当前 AgentRun 具有 active attachment 时
+出现，并携带 pinned revision、state revision 与 allowlisted Agent state projection。
 
-同一Canvas mount同时提供Workspace Module实例身份和`{canvas_mount_id}://...`文件面；`canvas-system`作为lifecycle-projected SkillAsset进入同一AgentRun skill baseline。ProjectAgent preset只保留长期授权策略，不复制当前Canvas集合。
+ProjectAgent preset 只保留长期 module allowlist。动态 `interaction:*` module 继承其 source
+`canvas:{definition_id}` 的 visibility，但 attachment 仍是额外必要条件；Frame 不复制 instance state。
 
-Canvas runtime observation 与 interaction snapshot 不是 capability transition。它们由
-AgentRun→Canvas 引用上的 Canvas owner facts提供，Agent 通过 `canvas.inspect` /
-`canvas.get_interaction_state` operation查询latest facts；查询不修改frame revision，也不把状态
-自动写入模型历史。Canvas source通过 `window.agentdash.agent.submit(...)` 发起显式用户动作时，
-后端把请求转换为 canonical Agent input并同步交接给目标 AgentRun。
+Workspace Module tools 和 OperationScript tools 都属于同一 `workspace_module` ToolCluster。
+list/describe/invoke/present 与 preflight/run 每次使用 Product binding 和 current surface；tool
+availability 由 Frame tool policy 控制，业务 adapter 不修改 capability revision。
 
 ## Registry Ordering
 

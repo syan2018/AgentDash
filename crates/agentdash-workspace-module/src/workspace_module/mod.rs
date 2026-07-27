@@ -2,14 +2,14 @@ use agentdash_application_operation_gateway::{
     OperationActorKind, OperationDescriptor, OperationReadiness,
 };
 use agentdash_contracts::workspace_module::{
-    WorkspaceModuleDescriptor, WorkspaceModuleKind, WorkspaceModuleOperation,
-    WorkspaceModuleOperationEffect, WorkspaceModuleOperationProvenance,
+    WorkspaceModuleAgentStateProjection, WorkspaceModuleDescriptor, WorkspaceModuleKind,
+    WorkspaceModuleOperation, WorkspaceModuleOperationEffect, WorkspaceModuleOperationProvenance,
     WorkspaceModuleOperationReadiness, WorkspaceModuleOperationRef,
     WorkspaceModuleOperationReplayPolicy, WorkspaceModuleOperationVisibility,
     WorkspaceModulePresentation, WorkspaceModuleStatus, WorkspaceModuleSummary,
     WorkspaceModuleUiEntry,
 };
-use agentdash_domain::interaction::InteractionDefinitionRevision;
+use agentdash_domain::interaction::{InteractionDefinitionRevision, InteractionInstance};
 use agentdash_domain::operation::{OperationEffect, OperationReplayPolicy};
 use thiserror::Error;
 
@@ -17,6 +17,7 @@ use crate::extension_runtime::ExtensionRuntimeProjection;
 
 pub const MODULE_ID_EXTENSION_PREFIX: &str = "ext:";
 pub const MODULE_ID_CANVAS_PREFIX: &str = "canvas:";
+pub const MODULE_ID_INTERACTION_PREFIX: &str = "interaction:";
 
 pub fn build_workspace_modules(
     extensions: &ExtensionRuntimeProjection,
@@ -74,6 +75,7 @@ fn build_canvas_definition_module(
         }],
         operations,
         runtime_backing: Some(format!("interaction_definition:{}", revision.revision_id)),
+        agent_state_projection: None,
     }
 }
 
@@ -148,9 +150,60 @@ fn build_extension_modules(
                 ui_entries,
                 operations,
                 runtime_backing: Some(format!("extension_runtime:{extension_key}")),
+                agent_state_projection: None,
             }
         })
         .collect()
+}
+
+pub fn build_interaction_runtime_module(
+    instance: &InteractionInstance,
+    revision: &InteractionDefinitionRevision,
+    operation_catalog: &[OperationDescriptor],
+) -> Result<WorkspaceModuleDescriptor, agentdash_domain::interaction::InteractionError> {
+    let definition_id = revision.definition_id.to_string();
+    let provider_key = format!("{definition_id}.{}", revision.revision_id);
+    let operations = operation_catalog
+        .iter()
+        .filter(|operation| {
+            operation.operation_ref.provider.namespace == "interaction"
+                && operation.operation_ref.provider.provider_key == provider_key
+        })
+        .map(extension_operation)
+        .collect::<Vec<_>>();
+    let projection = revision.agent_projection.project(&instance.state)?;
+    Ok(WorkspaceModuleDescriptor {
+        summary: WorkspaceModuleSummary {
+            module_id: format!("{MODULE_ID_INTERACTION_PREFIX}{}", instance.id),
+            kind: WorkspaceModuleKind::Interaction,
+            title: revision.title.clone(),
+            description: revision.description.clone(),
+            source: instance.id.to_string(),
+            ui_summary: Some("1 runtime view".to_string()),
+            operation_summary: operations
+                .iter()
+                .map(|operation| operation.operation_key.clone())
+                .collect(),
+            permission_summary: Vec::new(),
+            status: WorkspaceModuleStatus::ready(),
+        },
+        ui_entries: vec![WorkspaceModuleUiEntry {
+            view_key: "runtime".to_string(),
+            renderer_kind: "canvas".to_string(),
+            presentation_uri: Some(format!("interaction://{}", instance.id)),
+            uri_scheme: None,
+            title: revision.title.clone(),
+        }],
+        operations,
+        runtime_backing: Some(format!("interaction_instance:{}", instance.id)),
+        agent_state_projection: Some(WorkspaceModuleAgentStateProjection {
+            instance_id: instance.id.to_string(),
+            definition_id: instance.definition_id.to_string(),
+            definition_revision_id: instance.definition_revision_id.to_string(),
+            state_revision: instance.state_revision,
+            values: projection,
+        }),
+    })
 }
 
 fn extension_operation(operation: &OperationDescriptor) -> WorkspaceModuleOperation {
@@ -261,4 +314,59 @@ pub fn build_workspace_module_presentation(
         payload,
         diagnostics,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::interaction::{
+        InteractionAgentProjection, InteractionOwner, InteractionRetention, SourceBundle,
+        SourceFile, SourceSandboxConfig,
+    };
+    use uuid::Uuid;
+
+    #[test]
+    fn interaction_runtime_module_projects_only_allowlisted_state() {
+        let project_id = Uuid::new_v4();
+        let mut revision = InteractionDefinitionRevision::new_canvas_v1(
+            Uuid::new_v4(),
+            1,
+            project_id,
+            InteractionOwner::Project(project_id),
+            "Runtime",
+            "",
+            SourceBundle::new(
+                "index.html",
+                vec![SourceFile::new("index.html", "<main />", None).expect("file")],
+                SourceSandboxConfig::default(),
+            )
+            .expect("bundle"),
+            serde_json::json!({"public": {"value": 1}, "secret": "hidden"}),
+            serde_json::json!({"type": "object"}),
+            "user-1",
+        )
+        .expect("revision");
+        revision.agent_projection = InteractionAgentProjection {
+            version: 1,
+            allowed_state_paths: vec!["/public/value".into()],
+        };
+        let instance = InteractionInstance::new_v1(
+            InteractionOwner::Project(project_id),
+            revision.definition_id,
+            revision.revision_id,
+            revision.initial_state.clone(),
+            InteractionRetention { retain_until: None },
+        )
+        .expect("instance");
+
+        let module =
+            build_interaction_runtime_module(&instance, &revision, &[]).expect("runtime module");
+        let projection = module.agent_state_projection.expect("projection");
+        assert_eq!(
+            module.summary.module_id,
+            format!("interaction:{}", instance.id)
+        );
+        assert_eq!(projection.values["/public/value"], serde_json::json!(1));
+        assert_eq!(projection.values.len(), 1);
+    }
 }

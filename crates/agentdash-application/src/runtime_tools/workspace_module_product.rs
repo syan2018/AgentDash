@@ -15,14 +15,19 @@ use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModuleOperationRef,
 };
 use agentdash_domain::interaction::{
-    InteractionDefinitionRepository, InteractionDefinitionRevision, InteractionDefinitionStatus,
-    InteractionOwner,
+    AttachmentCapabilityProjection, AttachmentSubject, InteractionAttachment,
+    InteractionAttachmentRole, InteractionDefinitionRepository, InteractionDefinitionRevision,
+    InteractionDefinitionStatus, InteractionError, InteractionInstance,
+    InteractionInstanceRepository, InteractionInstanceStatus, InteractionOwner,
+    InteractionRetention,
 };
 use agentdash_domain::operation::{OperationOriginRef, OperationRef, OperationScopeRef};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_workspace_module::extension_runtime::extension_runtime_projection_from_installations;
-use agentdash_workspace_module::workspace_module::build_workspace_modules;
+use agentdash_workspace_module::workspace_module::{
+    build_interaction_runtime_module, build_workspace_module_presentation, build_workspace_modules,
+};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -40,6 +45,20 @@ struct WorkspaceModuleInvokeArguments {
     operation_ref: WorkspaceModuleOperationRef,
     #[serde(default)]
     input: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceModulePresentArguments {
+    module_id: String,
+    #[serde(default = "default_view_key")]
+    view_key: String,
+    #[serde(default)]
+    payload: Option<Value>,
+}
+
+fn default_view_key() -> String {
+    "preview".to_owned()
 }
 
 pub fn workspace_module_runtime_tool_schema(kind: ProductRuntimeToolKind) -> Value {
@@ -85,6 +104,23 @@ pub fn workspace_module_runtime_tool_schema(kind: ProductRuntimeToolKind) -> Val
             "required": ["operation_ref"],
             "additionalProperties": false
         }),
+        ProductRuntimeToolKind::WorkspaceModulePresent => json!({
+            "type": "object",
+            "properties": {
+                "module_id": {
+                    "type": "string",
+                    "description": "Stable module id returned by workspace_module_list."
+                },
+                "view_key": {
+                    "type": "string",
+                    "default": "preview",
+                    "description": "Visible view key returned by workspace_module_describe."
+                },
+                "payload": {}
+            },
+            "required": ["module_id"],
+            "additionalProperties": false
+        }),
         _ => json!({
             "type": "object",
             "properties": {},
@@ -100,6 +136,7 @@ pub struct WorkspaceModuleRuntimeToolDeps {
     pub frames: Arc<dyn AgentFrameRepository>,
     pub installations: Arc<dyn ProjectExtensionInstallationRepository>,
     pub definitions: Arc<dyn InteractionDefinitionRepository>,
+    pub instances: Arc<dyn InteractionInstanceRepository>,
     pub operation_gateway: Arc<OperationGateway>,
 }
 
@@ -116,8 +153,9 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                 ProductRuntimeToolKind::WorkspaceModuleList
                     | ProductRuntimeToolKind::WorkspaceModuleDescribe
                     | ProductRuntimeToolKind::WorkspaceModuleInvoke
+                    | ProductRuntimeToolKind::WorkspaceModulePresent
             ),
-            "Workspace Module Product service only supports list, describe and invoke"
+            "Workspace Module Product service only supports list, describe, invoke and present"
         );
         Self { kind, deps }
     }
@@ -260,17 +298,41 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                 )
             })?;
         let definitions = self.project_definitions(surface.project_id).await?;
-        let modules = build_workspace_modules(&extensions, &definitions, &operations)
+        let mut modules = build_workspace_modules(&extensions, &definitions, &operations);
+        let runtime_modules = self
+            .project_interaction_runtime_modules(
+                &target,
+                request.context.target.project_id,
+                &operations,
+            )
+            .await?;
+        let runtime_module_sources = runtime_modules
+            .iter()
+            .filter_map(|module| {
+                module.agent_state_projection.as_ref().map(|projection| {
+                    (
+                        module.summary.module_id.clone(),
+                        format!("canvas:{}", projection.definition_id),
+                    )
+                })
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        modules.extend(runtime_modules);
+        let modules = modules
             .into_iter()
             .filter(|module| {
                 capability
                     .workspace_module
                     .allows(&module.summary.module_id)
+                    || runtime_module_sources
+                        .get(&module.summary.module_id)
+                        .is_some_and(|source| capability.workspace_module.allows(source))
             })
             .collect();
 
         Ok(ResolvedWorkspaceModuleSurface {
             modules,
+            definitions,
             principal,
             scope,
         })
@@ -318,6 +380,84 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             revisions.push(revision);
         }
         Ok(revisions)
+    }
+
+    async fn project_interaction_runtime_modules(
+        &self,
+        target: &agentdash_domain::agent_run_target::AgentRunTarget,
+        project_id: uuid::Uuid,
+        operations: &[agentdash_application_operation_gateway::OperationDescriptor],
+    ) -> Result<Vec<WorkspaceModuleDescriptor>, ProductRuntimeToolOutcome> {
+        let owner = InteractionOwner::Project(project_id);
+        let instances = self
+            .deps
+            .instances
+            .list_by_owner(&owner)
+            .await
+            .map_err(|error| failed("workspace_module_instance_query_failed", error.to_string()))?;
+        let subject = AttachmentSubject::AgentRun {
+            run_id: target.run_id,
+            agent_id: target.agent_id,
+        };
+        let mut modules = Vec::new();
+        for instance in instances
+            .into_iter()
+            .filter(|instance| instance.status == InteractionInstanceStatus::Open)
+        {
+            let attached = self
+                .deps
+                .instances
+                .list_attachments(instance.id)
+                .await
+                .map_err(|error| {
+                    failed(
+                        "workspace_module_attachment_query_failed",
+                        error.to_string(),
+                    )
+                })?
+                .into_iter()
+                .any(|attachment| {
+                    attachment.detached_at.is_none() && attachment.subject == subject
+                });
+            if !attached {
+                continue;
+            }
+            let revision = self
+                .deps
+                .definitions
+                .get_revision(instance.definition_revision_id)
+                .await
+                .map_err(|error| {
+                    failed(
+                        "workspace_module_interaction_query_failed",
+                        error.to_string(),
+                    )
+                })?
+                .ok_or_else(|| {
+                    failed(
+                        "workspace_module_interaction_revision_missing",
+                        "Interaction instance pinned definition revision is missing",
+                    )
+                })?;
+            if revision.definition_id != instance.definition_id || revision.project_id != project_id
+            {
+                return Err(rejected(
+                    "workspace_module_interaction_identity_mismatch",
+                    "Interaction instance does not belong to the authorized Product surface",
+                ));
+            }
+            modules.push(
+                build_interaction_runtime_module(&instance, &revision, operations).map_err(
+                    |error| {
+                        failed(
+                            "workspace_module_agent_projection_failed",
+                            error.to_string(),
+                        )
+                    },
+                )?,
+            );
+        }
+        Ok(modules)
     }
 
     async fn execute_list(&self, request: ProductRuntimeToolRequest) -> ProductRuntimeToolOutcome {
@@ -435,6 +575,207 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             Err(error) => failed("workspace_module_operation_failed", error.to_string()),
         }
     }
+
+    async fn execute_present(
+        &self,
+        request: ProductRuntimeToolRequest,
+    ) -> ProductRuntimeToolOutcome {
+        let arguments: WorkspaceModulePresentArguments =
+            match serde_json::from_value(request.arguments.clone()) {
+                Ok(arguments) => arguments,
+                Err(error) => {
+                    return rejected(
+                        "workspace_module_invalid_arguments",
+                        format!("invalid workspace_module_present arguments: {error}"),
+                    );
+                }
+            };
+        let surface = match self.resolve_surface(&request).await {
+            Ok(surface) => surface,
+            Err(outcome) => return outcome,
+        };
+        let Some(module) = surface
+            .modules
+            .iter()
+            .find(|module| module.summary.module_id == arguments.module_id)
+        else {
+            return rejected(
+                "workspace_module_not_found",
+                format!("workspace module is not visible: {}", arguments.module_id),
+            );
+        };
+
+        let mut diagnostics = None;
+        let mut interaction_instance_id = None;
+        if let Some(definition_id) = arguments
+            .module_id
+            .strip_prefix("canvas:")
+            .and_then(|value| uuid::Uuid::parse_str(value).ok())
+        {
+            let Some(definition) = surface
+                .definitions
+                .iter()
+                .find(|revision| revision.definition_id == definition_id)
+            else {
+                return rejected(
+                    "workspace_module_definition_not_visible",
+                    "Canvas definition revision is not visible in the current actor surface",
+                );
+            };
+            let target = match self.attach_canvas_presentation(&request, definition).await {
+                Ok(target) => target,
+                Err(outcome) => return outcome,
+            };
+            interaction_instance_id = Some(target.instance_id);
+            diagnostics = Some(json!({
+                "definition_uri": format!("canvas://{definition_id}"),
+                "instance_id": target.instance_id,
+                "attachment_id": target.attachment_id
+            }));
+        }
+        let mut presentation = match build_workspace_module_presentation(
+            module,
+            arguments.view_key.trim(),
+            arguments.payload,
+            diagnostics,
+        ) {
+            Ok(presentation) => presentation,
+            Err(error) => {
+                return rejected("workspace_module_presentation_invalid", error.to_string());
+            }
+        };
+        if let Some(instance_id) = interaction_instance_id {
+            presentation.presentation_uri = format!("interaction://{instance_id}");
+        }
+        completed(json!({
+            "content": [{
+                "type": "text",
+                "text": format!(
+                    "Workspace Module `{}` presentation requested",
+                    presentation.title
+                )
+            }],
+            "is_error": false,
+            "details": {
+                "workspace_module_presentation": presentation
+            }
+        }))
+    }
+
+    async fn attach_canvas_presentation(
+        &self,
+        request: &ProductRuntimeToolRequest,
+        revision: &InteractionDefinitionRevision,
+    ) -> Result<WorkspaceModulePresentationTarget, ProductRuntimeToolOutcome> {
+        let definition = self
+            .deps
+            .definitions
+            .get(revision.definition_id)
+            .await
+            .map_err(|error| {
+                failed(
+                    "workspace_module_definition_query_failed",
+                    error.to_string(),
+                )
+            })?
+            .ok_or_else(|| {
+                rejected(
+                    "workspace_module_definition_not_found",
+                    "Canvas InteractionDefinition does not exist",
+                )
+            })?;
+        if definition.current_revision_id != revision.revision_id
+            || definition.project_id != request.context.target.project_id
+        {
+            return Err(rejected(
+                "workspace_module_definition_revision_mismatch",
+                "Canvas definition revision does not belong to the authorized Product surface",
+            ));
+        }
+        let owner = InteractionOwner::Project(request.context.target.project_id);
+        let instance = match self
+            .deps
+            .instances
+            .list_by_owner(&owner)
+            .await
+            .map_err(|error| failed("workspace_module_instance_query_failed", error.to_string()))?
+            .into_iter()
+            .find(|instance| {
+                instance.status == InteractionInstanceStatus::Open
+                    && instance.definition_revision_id == revision.revision_id
+            }) {
+            Some(instance) => instance,
+            None => {
+                let instance = InteractionInstance::new_v1(
+                    owner,
+                    revision.definition_id,
+                    revision.revision_id,
+                    revision.initial_state.clone(),
+                    InteractionRetention { retain_until: None },
+                )
+                .map_err(|error| failed("workspace_module_instance_invalid", error.to_string()))?;
+                self.deps
+                    .instances
+                    .create(&instance)
+                    .await
+                    .map_err(|error| {
+                        failed("workspace_module_instance_create_failed", error.to_string())
+                    })?;
+                instance
+            }
+        };
+        let subject = AttachmentSubject::AgentRun {
+            run_id: request.context.target.run_id,
+            agent_id: request.context.target.agent_id,
+        };
+        let existing = self
+            .deps
+            .instances
+            .list_attachments(instance.id)
+            .await
+            .map_err(|error| {
+                failed(
+                    "workspace_module_attachment_query_failed",
+                    error.to_string(),
+                )
+            })?
+            .into_iter()
+            .find(|attachment| attachment.detached_at.is_none() && attachment.subject == subject);
+        let attachment_id = if let Some(existing) = existing {
+            existing.id
+        } else {
+            let attachment = InteractionAttachment {
+                id: uuid::Uuid::new_v4(),
+                instance_id: instance.id,
+                subject,
+                role: InteractionAttachmentRole::Renderer,
+                capabilities: AttachmentCapabilityProjection::for_role(
+                    InteractionAttachmentRole::Renderer,
+                ),
+                created_at: chrono::Utc::now(),
+                detached_at: None,
+            };
+            attachment.validate().map_err(|error| {
+                failed("workspace_module_attachment_invalid", error.to_string())
+            })?;
+            self.deps
+                .instances
+                .attach(&attachment)
+                .await
+                .map_err(|error| match error {
+                    InteractionError::PersistenceConflict { .. } => rejected(
+                        "workspace_module_attachment_conflict",
+                        "AgentRun already has an active attachment for this Interaction",
+                    ),
+                    _ => failed("workspace_module_attachment_failed", error.to_string()),
+                })?;
+            attachment.id
+        };
+        Ok(WorkspaceModulePresentationTarget {
+            instance_id: instance.id,
+            attachment_id,
+        })
+    }
 }
 
 #[async_trait]
@@ -452,6 +793,7 @@ impl ProductRuntimeToolService for ApplicationWorkspaceModuleRuntimeToolService 
             ProductRuntimeToolKind::WorkspaceModuleList => self.execute_list(request).await,
             ProductRuntimeToolKind::WorkspaceModuleDescribe => self.execute_describe(request).await,
             ProductRuntimeToolKind::WorkspaceModuleInvoke => self.execute_invoke(request).await,
+            ProductRuntimeToolKind::WorkspaceModulePresent => self.execute_present(request).await,
             _ => failed(
                 "workspace_module_tool_kind_invalid",
                 "unsupported Workspace Module Product tool kind",
@@ -462,8 +804,14 @@ impl ProductRuntimeToolService for ApplicationWorkspaceModuleRuntimeToolService 
 
 struct ResolvedWorkspaceModuleSurface {
     modules: Vec<WorkspaceModuleDescriptor>,
+    definitions: Vec<InteractionDefinitionRevision>,
     principal: OperationPrincipal,
     scope: OperationScopeRef,
+}
+
+struct WorkspaceModulePresentationTarget {
+    instance_id: uuid::Uuid,
+    attachment_id: uuid::Uuid,
 }
 
 fn completed(output: Value) -> ProductRuntimeToolOutcome {

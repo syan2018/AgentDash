@@ -916,27 +916,13 @@ dependencies = [
 name = "agentdash-workspace-module"
 version = "0.1.0"
 dependencies = [
- "agentdash-agent-runtime-contract",
- "agentdash-application-extension-gateway",
  "agentdash-application-operation-gateway",
- "agentdash-application-ports",
- "agentdash-application-vfs",
  "agentdash-contracts",
- "agentdash-diagnostics",
  "agentdash-domain",
- "agentdash-platform-spi",
- "agentdash-test-support",
  "async-trait",
- "chrono",
- "regex",
- "schemars 1.2.1",
- "serde",
  "serde_json",
- "sha2",
  "thiserror 2.0.18",
  "tokio",
- "tokio-util",
- "tracing",
  "uuid",
 ]
 

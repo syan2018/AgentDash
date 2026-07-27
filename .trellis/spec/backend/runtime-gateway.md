@@ -51,8 +51,11 @@ pub struct PlatformToolBinding {
 - binding registry 保存 runtime name、capability provenance 与 captured AgentRun coordinates。
 - MCP/Extension bridge 通过 `AgentRunRuntimeBindingRepository` 把 `(run_id, agent_id)` 解析为
   `RuntimeThreadId`；Operation core 不读取 Runtime 类型。
-- `operation_script` 只有顶层 Runtime ToolCall Item；nested call 使用
+- `operation_script_preflight/run` 只有顶层 Runtime ToolCall Item；nested call 使用
   `GatewayOperationScriptExecutor` 重新进入 canonical admission，并继承父 tool call trace。
+- Agent-facing program 只提交 source/input/limits/exact requested OperationRefs；descriptor digest、
+  effect/replay、principal、scope、authority revision 和 granted capabilities 都由服务端 current
+  surface 重建。
 - applied tool-set revision 与 binding generation 仍由 Tool Broker 校验；业务 tool adapter 不复制这套状态机。
 
 ### 4. Validation & Error Matrix
@@ -77,7 +80,8 @@ pub struct PlatformToolBinding {
 - capability provenance 与 tool path mapping。
 - stale binding/generation/tool-set、cancel 与 timeout。
 - MCP RuntimeThread resolution、exact OperationRef 与 nested re-admission。
-- Interaction presentation attachment 使用 exact run/agent 双坐标。
+- Interaction presentation attachment 使用 exact run/agent 双坐标；Agent 不提交 renderer、URI、
+  title 或 attachment identity。
 
 ### 7. Wrong vs Correct
 

@@ -1,7 +1,7 @@
 # Implement · Workspace Module 通用双工交互系统
 
 父任务的 V1 主体实现与 WI-00 至 WI-10 已完成。PR #95 合入后的复核发现 Workspace Module
-生产接线与原始 Agent-facing 合同仍有漂移，因此父任务重新进入 planning，并以 WI-11 完成最终收口。
+生产接线与原始 Agent-facing 合同的漂移已通过 WI-11 完成最终收口；父任务暂留非归档区供验收。
 
 ## 1. 工作项追踪
 

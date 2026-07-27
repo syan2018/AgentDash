@@ -3,6 +3,8 @@
 
 import type { JsonValue } from "./common-contracts";
 
+export type WorkspaceModuleAgentStateProjection = { instance_id: string, definition_id: string, definition_revision_id: string, state_revision: bigint, values: { [key in string]?: JsonValue }, };
+
 /**
  * `describe` 返回的完整 descriptor。
  */
@@ -10,12 +12,12 @@ export type WorkspaceModuleDescriptor = { summary: WorkspaceModuleSummary, ui_en
 /**
  * 引用底层 runtime surface（如 extension_runtime / canvas mount）。
  */
-runtime_backing?: string | null, };
+runtime_backing?: string | null, agent_state_projection?: WorkspaceModuleAgentStateProjection, };
 
 /**
  * Module 的来源类别。
  */
-export type WorkspaceModuleKind = "extension" | "canvas" | "builtin";
+export type WorkspaceModuleKind = "extension" | "canvas" | "interaction" | "builtin";
 
 /**
  * 单个 operation（extension action / protocol method / host canvas / builtin 同构呈现）。

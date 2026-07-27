@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   commitCanvas,
   createInteractionInstance,
-  executeInteractionCommand,
+  executeInteractionComponentEvent,
   fetchCanvas,
   fetchInteractionInstance,
 } from "../../services/canvas";
@@ -219,16 +219,19 @@ function BoundComponent({ projectId, instance, binding, components, onInstanceCh
       theme="light"
       locale="zh-CN"
       onEvent={async (eventType, payload) => {
-        const eventBinding = binding.event_commands.find((item) => item.event_type === eventType);
+        const eventBinding = binding.event_bindings.find((item) => item.event_type === eventType);
         if (!eventBinding) throw new Error(`未绑定 component event: ${eventType}`);
-        const result = await executeInteractionCommand(instance.instance.instance_id, {
+        const result = await executeInteractionComponentEvent(instance.instance.instance_id, {
           command_id: crypto.randomUUID(),
-          command_key: eventBinding.command_key,
+          binding_key: binding.binding_key,
+          event_type: eventType,
           payload: payload as JsonValue,
           expected_state_revision: instance.instance.state_revision,
         });
-        onInstanceChange({ ...instance, instance: result.instance });
-        return { state_revision: result.instance.state_revision, duplicate: result.duplicate };
+        if (result.instance) {
+          onInstanceChange({ ...instance, instance: result.instance });
+        }
+        return result.outcome;
       }}
     />
   );

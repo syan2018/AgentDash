@@ -40,7 +40,7 @@ trait RuntimeToolExecutionAuthorityPort {
   permission/effect/resource enforcement。两者消费 authority，不持有独立权限状态。
 - `ExecutionAuthority::operation_authority_grant()` 是 Agent actor Operation revision 与
   capabilities 的唯一投影；Workspace Module discovery、Gateway direct invoke 与
-  OperationScript preflight/run 不得另算 authority revision。
+  OperationScript 内部 preflight/run 不得另算 authority revision。
 - `ActorOperationSurface` 在 Gateway 内按 actor visibility 与 granted capabilities 过滤；
   Workspace Module、OperationScript 和其他 host 直接消费该结果，不各自复制可见性规则。
 - 每个 `RuntimeToolDefinition` 必须声明 typed authorization policy。Broker authorizer 先校验

@@ -5,7 +5,7 @@ use agentdash_application_operation_gateway::{
 };
 use agentdash_application_ports::operation_script::{
     OPERATION_SCRIPT_HOST_API_V1, OperationScriptEngine, OperationScriptError,
-    OperationScriptLimits, OperationScriptPreflightToken, RHAI_V1_DIALECT,
+    OperationScriptLimits, RHAI_V1_DIALECT,
 };
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
@@ -31,8 +31,6 @@ struct OperationScriptArguments {
     requested_operations: Vec<WorkspaceModuleOperationRef>,
     #[serde(default)]
     limits: OperationScriptLimits,
-    #[serde(default)]
-    token: Option<OperationScriptPreflightToken>,
 }
 
 fn default_language() -> String {
@@ -43,8 +41,8 @@ fn default_host_api_version() -> u16 {
     OPERATION_SCRIPT_HOST_API_V1
 }
 
-pub fn operation_script_runtime_tool_schema(kind: ProductRuntimeToolKind) -> Value {
-    let mut properties = serde_json::Map::from_iter([
+pub fn operation_script_runtime_tool_schema() -> Value {
+    let properties = serde_json::Map::from_iter([
         (
             "language".to_owned(),
             json!({
@@ -113,36 +111,10 @@ pub fn operation_script_runtime_tool_schema(kind: ProductRuntimeToolKind) -> Val
             }),
         ),
     ]);
-    let mut required = vec!["source", "requested_operations"];
-    if kind == ProductRuntimeToolKind::OperationScriptRun {
-        properties.insert(
-            "token".to_owned(),
-            json!({
-                "type": "object",
-                "description": "Unmodified token returned by operation_script_preflight.",
-                "properties": {
-                    "plan_id": {"type": "string", "format": "uuid"},
-                    "binding_digest": {"type": "string"},
-                    "issued_at": {"type": "string", "format": "date-time"},
-                    "expires_at": {"type": "string", "format": "date-time"},
-                    "signature": {"type": "string"}
-                },
-                "required": [
-                    "plan_id",
-                    "binding_digest",
-                    "issued_at",
-                    "expires_at",
-                    "signature"
-                ],
-                "additionalProperties": false
-            }),
-        );
-        required.push("token");
-    }
     json!({
         "type": "object",
         "properties": properties,
-        "required": required,
+        "required": ["source", "requested_operations"],
         "additionalProperties": false
     })
 }
@@ -167,27 +139,13 @@ fn operation_ref_schema() -> Value {
 }
 
 pub struct ApplicationOperationScriptRuntimeToolService {
-    kind: ProductRuntimeToolKind,
     gateway: Arc<OperationGateway>,
     engine: Arc<dyn OperationScriptEngine>,
 }
 
 impl ApplicationOperationScriptRuntimeToolService {
-    pub fn new(
-        kind: ProductRuntimeToolKind,
-        gateway: Arc<OperationGateway>,
-        engine: Arc<dyn OperationScriptEngine>,
-    ) -> Self {
-        assert!(matches!(
-            kind,
-            ProductRuntimeToolKind::OperationScriptPreflight
-                | ProductRuntimeToolKind::OperationScriptRun
-        ));
-        Self {
-            kind,
-            gateway,
-            engine,
-        }
+    pub fn new(gateway: Arc<OperationGateway>, engine: Arc<dyn OperationScriptEngine>) -> Self {
+        Self { gateway, engine }
     }
 
     async fn execute_inner(
@@ -232,24 +190,15 @@ impl ApplicationOperationScriptRuntimeToolService {
         )
         .map_err(|error| failed("operation_script_host_binding_failed", error.to_string()))?
         .operation_script(self.engine.clone());
-        let result = match self.kind {
-            ProductRuntimeToolKind::OperationScriptPreflight => host
-                .preflight(program, CancellationToken::new())
-                .await
-                .and_then(serialize_result),
-            ProductRuntimeToolKind::OperationScriptRun => {
-                let token = arguments.token.ok_or_else(|| {
-                    rejected(
-                        "operation_script_token_required",
-                        "operation_script_run requires the preflight token",
-                    )
-                })?;
-                host.run(program, token, CancellationToken::new())
-                    .await
-                    .and_then(serialize_result)
-            }
-            _ => unreachable!("constructor restricts OperationScript tool kinds"),
-        };
+        let cancel = CancellationToken::new();
+        let preflight = host
+            .preflight(program.clone(), cancel.clone())
+            .await
+            .map_err(map_script_error)?;
+        let result = host
+            .run(program, preflight.token, cancel)
+            .await
+            .and_then(serialize_result);
         result.map_err(map_script_error)
     }
 }
@@ -263,11 +212,11 @@ fn serialize_result<T: serde::Serialize>(result: T) -> Result<Value, OperationSc
 #[async_trait]
 impl ProductRuntimeToolService for ApplicationOperationScriptRuntimeToolService {
     fn kind(&self) -> ProductRuntimeToolKind {
-        self.kind
+        ProductRuntimeToolKind::OperationScript
     }
 
     fn parameters_schema(&self) -> Value {
-        operation_script_runtime_tool_schema(self.kind)
+        operation_script_runtime_tool_schema()
     }
 
     async fn execute(&self, request: ProductRuntimeToolRequest) -> ProductRuntimeToolOutcome {
@@ -343,27 +292,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn run_schema_requires_preflight_token_and_exact_operation_refs() {
-        let preflight =
-            operation_script_runtime_tool_schema(ProductRuntimeToolKind::OperationScriptPreflight);
-        let run = operation_script_runtime_tool_schema(ProductRuntimeToolKind::OperationScriptRun);
+    fn schema_hides_internal_preflight_token_and_requires_exact_operation_refs() {
+        let schema = operation_script_runtime_tool_schema();
 
         assert!(
-            !preflight["required"]
-                .as_array()
-                .expect("required")
-                .iter()
-                .any(|field| field == "token")
+            !schema["properties"]
+                .as_object()
+                .expect("properties")
+                .contains_key("token")
         );
         assert!(
-            run["required"]
+            schema["required"]
                 .as_array()
                 .expect("required")
                 .iter()
-                .any(|field| field == "token")
+                .any(|field| field == "requested_operations")
         );
         assert_eq!(
-            run["properties"]["requested_operations"]["items"]["additionalProperties"],
+            schema["properties"]["requested_operations"]["items"]["additionalProperties"],
             false
         );
     }

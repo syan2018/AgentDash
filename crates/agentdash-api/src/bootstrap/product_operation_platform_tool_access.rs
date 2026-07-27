@@ -247,7 +247,7 @@ mod tests {
         }));
         for control in [
             "workspace_module_invoke",
-            "operation_script_run",
+            "operation_script",
             "complete_lifecycle_node",
             "companion_request",
             "wait",

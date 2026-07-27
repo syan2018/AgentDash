@@ -701,7 +701,6 @@ fn runtime_tool_name(kind: ProductRuntimeToolKind) -> &'static str {
         ProductRuntimeToolKind::WorkspaceModuleDescribe => "workspace_module_describe",
         ProductRuntimeToolKind::WorkspaceModuleInvoke => "workspace_module_invoke",
         ProductRuntimeToolKind::WorkspaceModulePresent => "workspace_module_present",
-        ProductRuntimeToolKind::OperationScriptPreflight => "operation_script_preflight",
-        ProductRuntimeToolKind::OperationScriptRun => "operation_script_run",
+        ProductRuntimeToolKind::OperationScript => "operation_script",
     }
 }

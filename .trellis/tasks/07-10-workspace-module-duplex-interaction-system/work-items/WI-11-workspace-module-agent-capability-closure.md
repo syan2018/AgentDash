@@ -16,7 +16,7 @@ PR #95 合入后，Workspace Module 的主体方向已经是 projection-only，�
 - 旧的服务端 descriptor lookup、Canvas Interaction attachment 和 canonical presentation 构造仍留在
   未挂载的 `bootstrap/operation_runtime_tools.rs`，不参与编译或生产接线。
 - OperationScript engine、UserWorkshop API 和 Workflow caller 已存在，但 Agent runtime 没有
-  preflight/run 入口；Agent 只能连续执行多个单次 `workspace_module_invoke`，无法使用原始需求中的
+  组合入口；Agent 只能连续执行多个单次 `workspace_module_invoke`，无法使用原始需求中的
   有界组合、筛选、聚合、structured concurrency 和 call evidence。
 - `InteractionDefinitionRevision` 尚未实现原设计中的显式 `agent_projection`，无法以 definition
   contract 限定 Agent 可观察的 canonical state；当前 Agent-facing Operation 只覆盖 command。
@@ -60,13 +60,14 @@ workspace_module_list
 
 ### 3. Agent OperationScript composition
 
-- 暴露 Agent-facing `operation_script_preflight` 与 `operation_script_run`，复用 WI-03 的
-  `OperationScriptEngine`、preflight token、limits、result ref 和 Gateway nested executor。
+- 暴露单一 Agent-facing `operation_script`，复用 WI-03 的 `OperationScriptEngine`、内部 preflight
+  token、limits、result ref 和 Gateway nested executor；服务端在同一 tool request 内完成
+  preflight 与 run，token 不进入 Agent 上下文。
 - Agent 从一个或多个 `workspace_module_describe` 结果选择完整 OperationRefs；服务端必须重新从当前
   actor surface 解析 descriptor、digest、effect、replay policy、authority revision 与 granted
   capabilities，不能信任 Agent 提交的 manifest 元数据。
-- preflight token继续绑定 dialect/host API、source、input、allowed descriptors、limits、
-  principal/scope 和 expiry；run 与每个 nested call 都重新 admission。
+- engine preflight token继续绑定 dialect/host API、source、input、allowed descriptors、limits、
+  principal/scope 和 expiry；内部 run 与每个 nested call 都重新 admission。
 - 即时组合失败返回 bounded diagnostic、partial/outcome-unknown 与 call evidence；需要 durable
   retry、human gate、recovery 或跨会话状态的编排必须进入 Workflow。
 
@@ -135,7 +136,8 @@ resolve current module surface
 - list/describe/invoke/present 的准确参数和推荐顺序。
 - panel-only、agent-and-panel、readiness、effect、replay policy、schema、permission、provenance 的含义。
 - 单次 invoke、OperationScript 即时组合和 Workflow durable orchestration 的选择边界。
-- allowed OperationRefs 必须来自 describe，但 preflight/run 仍以服务端 current surface 为准。
+- allowed OperationRefs 必须来自 describe，但 `operation_script` 的内部 preflight/run 仍以服务端
+  current surface 为准。
 - surface 变化后重新 describe，不缓存或重建 exact ref/presentation。
 
 ## Write Set
@@ -168,8 +170,8 @@ resolve current module surface
       唯一生产路径。
 - [x] list/describe/invoke/present 的 schema、Skill 与实际生产工具一致。
 - [x] Agent 无法提交 renderer、URI、title、attachment 或 diagnostics authority。
-- [x] Agent 可以从 Workspace Module descriptors 选择至少两个 exact Operations，通过同一个
-      OperationScript preflight/run 完成组合、结果处理和 call evidence 返回。
+- [x] Agent 可以从 Workspace Module descriptors 选择至少两个 exact Operations，通过单一
+      `operation_script` 工具完成组合、结果处理和 call evidence 返回。
 - [x] `InteractionDefinitionRevision` 具备显式 V1 Agent projection contract；Agent 只能观察
       allowlisted state，projection 携带 instance/state revision 且不能充当写入授权。
 - [x] AgentRun 可以发现当前已授权 attachment 对应的 `interaction:{instance_id}` runtime module，
@@ -188,7 +190,7 @@ resolve current module surface
 ## Validation
 
 - Workspace Module projection、Product runtime tool 和 Native Agent tool projection focused tests。
-- OperationScript Agent caller 的 preflight token、双 Operation、parallel limit、cancel/timeout、
+- OperationScript Agent caller 的内部 preflight/run、双 Operation、parallel limit、cancel/timeout、
   descriptor drift、partial evidence tests。
 - Canvas definition presentation、Interaction attachment、Extension webview presentation 与 stale
   descriptor rejection tests。
@@ -207,7 +209,7 @@ resolve current module surface
 
 - 2026-07-27：从 `origin/codex/workspace-duplex-interaction-planning` 恢复父任务到非归档区。
 - 2026-07-27：基于 PR #95 合入后的生产代码复核建立本 WI。
-- 2026-07-27：补齐 Agent `operation_script_preflight/run`、可信 presentation、显式 Agent state
+- 2026-07-27：补齐 Agent OperationScript 组合入口、可信 presentation、显式 Agent state
   projection、attachment-scoped `interaction:*` runtime module、component tagged target 与
   SourceBundle `.rhai`/inline host execution。
 - 2026-07-27：删除未挂载旧 provider，更新 embedded Skill、Trellis specs、generated TypeScript 与
@@ -219,3 +221,5 @@ resolve current module surface
 - 2026-07-27：按 Skill 渐进披露合同重写 `workspace-module-system`：description 同时覆盖能力与
   Canvas/Interaction/Extension、单次调用、UI presentation 和即时组合触发场景；正文收束为
   list/describe/invoke/present/OperationScript 的可执行决策与 exact 参数示例。
+- 2026-07-27：Agent 工具面收敛为单一 `operation_script`；服务端内部继续执行 engine
+  preflight/run 并保留 token/TOCTOU 校验，模型只提交一次完整 program 并接收最终执行结果。

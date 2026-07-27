@@ -1221,8 +1221,7 @@ mod tests {
             "workspace_module_describe",
             "workspace_module_invoke",
             "workspace_module_present",
-            "operation_script_preflight",
-            "operation_script_run",
+            "operation_script",
         ] {
             let grant = authorizer
                 .authorize(request(tool))
@@ -1244,7 +1243,7 @@ mod tests {
         }));
 
         let error = authorizer
-            .authorize(request("operation_script_preflight"))
+            .authorize(request("operation_script"))
             .await
             .expect_err("Product resource policy must not bypass capability admission");
 
@@ -1401,7 +1400,10 @@ mod tests {
         arguments: serde_json::Value,
     ) -> RuntimeToolAuthorizationRequest {
         let (permission, effect) = match tool {
-            "task_write" | "workspace_module_present" => (
+            "task_write"
+            | "workspace_module_invoke"
+            | "workspace_module_present"
+            | "operation_script" => (
                 RuntimeToolPermission::ProductWrite,
                 RuntimeToolEffect::ProductMutation,
             ),
@@ -1437,8 +1439,7 @@ mod tests {
                         | "workspace_module_describe"
                         | "workspace_module_invoke"
                         | "workspace_module_present"
-                        | "operation_script_preflight"
-                        | "operation_script_run" => "workspace_module",
+                        | "operation_script" => "workspace_module",
                         "complete_lifecycle_node" => "workflow",
                         "companion_request" | "companion_respond" | "wait" => "collaboration",
                         tool if tool.starts_with("mcp_") => "mcp:agentdash-workflow-tools",

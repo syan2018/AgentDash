@@ -17,8 +17,7 @@ pub enum ProductRuntimeToolKind {
     WorkspaceModuleDescribe,
     WorkspaceModuleInvoke,
     WorkspaceModulePresent,
-    OperationScriptPreflight,
-    OperationScriptRun,
+    OperationScript,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

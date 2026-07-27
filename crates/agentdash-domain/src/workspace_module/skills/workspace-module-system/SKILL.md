@@ -14,7 +14,7 @@ the server and OperationGateway enforce current state, permission, placement, ex
 - Discover available capabilities: call `workspace_module_list`, then `workspace_module_describe`.
 - Invoke one capability: call `workspace_module_invoke`.
 - Open a module UI: call `workspace_module_present`.
-- Combine bounded immediate calls: call `operation_script_preflight`, then `operation_script_run`.
+- Combine bounded immediate calls: call `operation_script`.
 - Use Workflow instead when work requires durable retry, recovery, human gates, cross-session state,
   or a durable multi-step lifecycle.
 
@@ -102,8 +102,8 @@ the canonical presentation returned by the server.
 
 ## Compose immediate Operations
 
-Use `operation_script_preflight` and `operation_script_run` only for bounded, ephemeral
-composition. Copy every structured `requested_operations` entry from current describe results.
+Use `operation_script` only for bounded, ephemeral composition. Copy every structured
+`requested_operations` entry from current describe results.
 
 Address an allowed Operation inside Rhai with:
 
@@ -130,17 +130,14 @@ ops.invoke_all([
 ])
 ```
 
-1. Send `source`, `input`, exact `requested_operations`, and optional limits to
-   `operation_script_preflight`.
-2. Send the identical program fields plus the unmodified returned `token` to
-   `operation_script_run`.
-3. Inspect the returned value, per-call evidence, `partial`, and `outcome_unknown`.
-4. Re-describe and preflight again when the actor surface or descriptor changes.
+1. Send `source`, `input`, exact `requested_operations`, and optional limits to `operation_script`.
+2. Inspect the returned value, per-call evidence, `partial`, and `outcome_unknown`.
+3. Re-describe and run the script again when the actor surface or descriptor changes.
 
-Do not treat a preflight token as execution authority. Expect the server to re-admit the run and
-every nested Operation. Do not assume OperationScript commits Interaction state; use an admitted
-Interaction command for state changes.
+The server validates and binds the complete program before execution, then re-admits the run and
+every nested Operation against current authority. Do not assume OperationScript commits Interaction
+state; use an admitted Interaction command for state changes.
 
-If preflight/run returns a provider unavailable code, treat the requested catalog facet as
+If `operation_script` returns a provider unavailable code, treat the requested catalog facet as
 temporarily unresolved. Re-run list/describe after the authority or provider becomes ready; do not
 replace the exact OperationRef with a guessed value.

@@ -12,7 +12,7 @@ describe、OperationScript allowed manifest 和 nested admission。
 
 直接让 OperationGateway 调用任意 Runtime executor 会把 catalog、Product authorization、applied
 surface 与 callback delivery evidence揉进 application execution core，并可能递归暴露
-`workspace_module_*`、`operation_script_*` 等控制工具。
+`workspace_module_*`、`operation_script` 等控制工具。
 
 ## Target Contract
 
@@ -29,7 +29,7 @@ explicit Operation exposure registry
   actor visibility、capability、schema 和 provenance。
 - V1 只暴露 `mounts_list`、`fs_read`、`fs_glob`、`fs_grep`、`fs_apply_patch`、`shell_exec`、
   `task_read`、`task_write`。
-- `workspace_module_*`、`operation_script_*`、lifecycle、companion、wait 等控制工具不进入
+- `workspace_module_*`、`operation_script`、lifecycle、companion、wait 等控制工具不进入
   exposure registry。
 - OperationGateway 只依赖窄 `PlatformToolOperationAccess` seam，不依赖 Broker、Runtime executor
   或 Complete Agent callback DTO。
@@ -55,8 +55,8 @@ explicit Operation exposure registry
 ## Exit Criteria
 
 - [x] 八个 V1 原生工具具有 exact `platform:*` OperationRef 和完整 descriptor。
-- [x] Agent 可从 `builtin:*` describe 取得这些 refs，并与其他 module Operation 一起通过
-      OperationScript preflight/run 组合。
+- [x] Agent 可从 `builtin:*` describe 取得这些 refs，并与其他 module Operation 一起通过单一
+      `operation_script` 工具组合。
 - [x] direct invoke 与 OperationScript nested invoke 都重新进入 OperationGateway 与
       PlatformToolBroker authorization。
 - [x] 未显式暴露的 Runtime/control tool 不会因 catalog 注册而成为 Operation。

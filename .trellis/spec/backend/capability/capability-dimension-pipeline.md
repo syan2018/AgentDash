@@ -196,8 +196,8 @@ surface、current OperationGateway catalog 和 Interaction attachments 共同生
 ProjectAgent preset 只保留长期 module allowlist。动态 `interaction:*` module 继承其 source
 `canvas:{definition_id}` 的 visibility，但 attachment 仍是额外必要条件；Frame 不复制 instance state。
 
-Workspace Module tools 和 OperationScript tools 都属于同一 `workspace_module` ToolCluster。
-list/describe/invoke/present 与 preflight/run 每次使用 Product binding 和 current surface；tool
+Workspace Module tools 和单一 `operation_script` tool 都属于同一 `workspace_module` ToolCluster。
+list/describe/invoke/present 与 OperationScript 每次使用 Product binding 和 current surface；tool
 availability 由 Frame tool policy 控制，业务 adapter 不修改 capability revision。
 
 ## Registry Ordering

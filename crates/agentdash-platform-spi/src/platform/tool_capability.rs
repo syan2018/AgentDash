@@ -126,8 +126,7 @@ pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] = &[
     "workspace_module_describe",
     "workspace_module_invoke",
     "workspace_module_present",
-    "operation_script_preflight",
-    "operation_script_run",
+    "operation_script",
 ];
 
 /// 返回 ToolCluster 下属的全部工具名。
@@ -366,16 +365,9 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             CAP_WORKSPACE_MODULE,
         ),
         ToolDescriptor::platform(
-            "operation_script_preflight",
-            "Preflight OperationScript",
-            "把有界 Rhai program 与当前 actor 的 exact Operation surface 绑定并签发短期 token",
-            ToolCluster::WorkspaceModule,
-            CAP_WORKSPACE_MODULE,
-        ),
-        ToolDescriptor::platform(
-            "operation_script_run",
-            "Run OperationScript",
-            "使用 preflight token 通过 canonical OperationGateway 执行即时多 Operation 组合",
+            "operation_script",
+            "Execute OperationScript",
+            "将有界 Rhai program 绑定到当前 actor 的 exact Operation surface，并通过 canonical OperationGateway 执行即时多 Operation 组合",
             ToolCluster::WorkspaceModule,
             CAP_WORKSPACE_MODULE,
         ),

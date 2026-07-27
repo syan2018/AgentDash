@@ -271,7 +271,7 @@ mod tests {
             "task_write",
         ];
         assert!(!exposed.contains(&"workspace_module_invoke"));
-        assert!(!exposed.contains(&"operation_script_run"));
+        assert!(!exposed.contains(&"operation_script"));
         assert!(!exposed.contains(&"complete_lifecycle_node"));
     }
 }

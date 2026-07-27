@@ -393,16 +393,9 @@ impl AppState {
                     ProductRuntimeToolKind::WorkspaceModulePresent,
                 ),
             ));
-        let operation_script_preflight_runtime_tool =
-            Arc::new(DeferredProductRuntimeToolService::new(
-                ProductRuntimeToolKind::OperationScriptPreflight,
-                operation_script_runtime_tool_schema(
-                    ProductRuntimeToolKind::OperationScriptPreflight,
-                ),
-            ));
-        let operation_script_run_runtime_tool = Arc::new(DeferredProductRuntimeToolService::new(
-            ProductRuntimeToolKind::OperationScriptRun,
-            operation_script_runtime_tool_schema(ProductRuntimeToolKind::OperationScriptRun),
+        let operation_script_runtime_tool = Arc::new(DeferredProductRuntimeToolService::new(
+            ProductRuntimeToolKind::OperationScript,
+            operation_script_runtime_tool_schema(),
         ));
         let applied_vfs_tools = Arc::new(
             AppliedVfsRuntimeToolService::new(vfs_service.clone(), shell_terminal_registry.clone())
@@ -421,8 +414,7 @@ impl AppState {
             workspace_module_describe_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_invoke_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_present_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
-            operation_script_preflight_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
-            operation_script_run_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
+            operation_script_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
         ]));
         let runtime_tool_authorizer = Arc::new(ProductRuntimeToolAuthorizer::new(Arc::new(
             ApplicationRuntimeToolExecutionAuthority {
@@ -691,16 +683,8 @@ impl AppState {
             )
             .map_err(|error| anyhow::anyhow!(error.to_string()))?,
         );
-        operation_script_preflight_runtime_tool
+        operation_script_runtime_tool
             .install(Arc::new(ApplicationOperationScriptRuntimeToolService::new(
-                ProductRuntimeToolKind::OperationScriptPreflight,
-                operation_gateway.clone(),
-                operation_script_engine.clone(),
-            )))
-            .map_err(anyhow::Error::msg)?;
-        operation_script_run_runtime_tool
-            .install(Arc::new(ApplicationOperationScriptRuntimeToolService::new(
-                ProductRuntimeToolKind::OperationScriptRun,
                 operation_gateway.clone(),
                 operation_script_engine.clone(),
             )))

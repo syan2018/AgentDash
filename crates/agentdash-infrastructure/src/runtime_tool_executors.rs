@@ -295,15 +295,9 @@ fn product_tool_definition(
             RuntimeToolPermission::ProductWrite,
             RuntimeToolEffect::ProductMutation,
         ),
-        ProductRuntimeToolKind::OperationScriptPreflight => (
-            "operation_script_preflight",
-            "Validate and bind an ephemeral multi-Operation Rhai program to the current actor surface.",
-            RuntimeToolPermission::ProductRead,
-            RuntimeToolEffect::ReadOnly,
-        ),
-        ProductRuntimeToolKind::OperationScriptRun => (
-            "operation_script_run",
-            "Execute a preflighted ephemeral multi-Operation Rhai program through the canonical OperationGateway.",
+        ProductRuntimeToolKind::OperationScript => (
+            "operation_script",
+            "Validate and execute an ephemeral multi-Operation Rhai program through the canonical OperationGateway.",
             RuntimeToolPermission::ProductWrite,
             RuntimeToolEffect::ProductMutation,
         ),
@@ -821,8 +815,7 @@ mod tests {
             ProductRuntimeToolKind::WorkspaceModuleDescribe,
             ProductRuntimeToolKind::WorkspaceModuleInvoke,
             ProductRuntimeToolKind::WorkspaceModulePresent,
-            ProductRuntimeToolKind::OperationScriptPreflight,
-            ProductRuntimeToolKind::OperationScriptRun,
+            ProductRuntimeToolKind::OperationScript,
         ]
         .into_iter()
         .map(|kind| {
@@ -847,8 +840,7 @@ mod tests {
                 "workspace_module_describe",
                 "workspace_module_invoke",
                 "workspace_module_present",
-                "operation_script_preflight",
-                "operation_script_run",
+                "operation_script",
             ]
         );
         assert_eq!(
@@ -875,14 +867,9 @@ mod tests {
         }));
         assert_eq!(
             definitions[8].permission,
-            RuntimeToolPermission::ProductRead
-        );
-        assert_eq!(definitions[8].effect, RuntimeToolEffect::ReadOnly);
-        assert_eq!(
-            definitions[9].permission,
             RuntimeToolPermission::ProductWrite
         );
-        assert_eq!(definitions[9].effect, RuntimeToolEffect::ProductMutation);
+        assert_eq!(definitions[8].effect, RuntimeToolEffect::ProductMutation);
         assert!(definitions.iter().all(|definition| {
             definition.authorization_policy == RuntimeToolAuthorizationPolicy::Product
         }));

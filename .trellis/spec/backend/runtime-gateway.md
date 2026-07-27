@@ -60,7 +60,8 @@ pub struct PlatformToolBinding {
   `anyOf`、`minimum`、`maximum` 执行真实输入校验，`description` 可存在于任意 schema 节点、
   必须是字符串且不参与 admission，原因是原生工具的可见参数合同和执行准入需要保持同源，同时
   参数说明需要无损进入 Agent discovery。
-- `operation_script_preflight/run` 只有顶层 Runtime ToolCall Item；nested call 使用
+- `operation_script` 只有一个顶层 Runtime ToolCall Item；服务端内部顺序执行 engine preflight/run，
+  nested call 使用
   `GatewayOperationScriptExecutor` 重新进入 canonical admission，并继承父 tool call trace。
 - Agent-facing program 只提交 source/input/limits/exact requested OperationRefs；descriptor digest、
   effect/replay、principal、scope、authority revision 和 granted capabilities 都由服务端 current

@@ -1234,8 +1234,7 @@ fn static_tool_enabled(capability_state: &CapabilityState, name: &str) -> bool {
         | "workspace_module_describe"
         | "workspace_module_invoke"
         | "workspace_module_present"
-        | "operation_script_preflight"
-        | "operation_script_run" => ToolCluster::WorkspaceModule,
+        | "operation_script" => ToolCluster::WorkspaceModule,
         "companion_request" | "companion_respond" => ToolCluster::Collaboration,
         "complete_lifecycle_node" => ToolCluster::Workflow,
         "wait" => ToolCluster::Collaboration,

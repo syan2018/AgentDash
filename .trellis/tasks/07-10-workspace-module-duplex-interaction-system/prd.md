@@ -51,7 +51,7 @@ Canvas、Extension panel/component 和 Interaction renderer 不以 AgentRun、Ag
   replay、capability、readiness、provenance 和 dispatch identity。
 - R3：把 RuntimeGateway invocation 正交拆为 principal、scope、origin、execution placement 与 trace correlation；browser 不提交 Session、Backend、workspace root 或预组装 capability。
 - R4：在 RuntimeGateway 内建立 direct invocation 与 OperationScript nested invoke 共用的 `OperationExecutionCore`，统一 schema/capability admission、output validation、cancellation、trace、audit 和 result ref。
-- R5：提供 `operation_script_preflight` 与 `operation_script_run`：编译/校验 `rhai_v1` source、解析 allowed Operation manifest、产出绑定完整 execution plan 的短期 token，并由 async executor 执行同步脚本语义。
+- R5：Agent 通过单一 `operation_script` 工具提交完整程序；服务端内部编译/校验 `rhai_v1` source、解析 allowed Operation manifest、签发绑定完整 execution plan 的短期 token，并立即由 async executor 执行同步脚本语义。UserWorkshop/Workflow 等非 Agent caller 可继续使用 engine 的显式 preflight/run 合同。
 - R6：OperationScript 支持普通 Rhai 分支、循环、数组/map/filter 与 JSON result shaping；Operation 调用通过 execution-scoped `ops.invoke()`/`ops.invoke_all()`，受 worker admission、timeout、Rhai sandbox limits、最大调用数、并行上限和 output size 限制。
 - R7：OperationScript 不调用 LLM、不创建 AgentRun、不包含 human gate、不后台运行、不自动 retry/rollback、不承担跨会话恢复。已完成副作用不伪装成自动回滚；失败返回 bounded diagnostic、trace 与已执行 call evidence。
 - R8：建立 standalone UserWorkshop runtime surface；Canvas、Extension panel/component 与 Interaction renderer 在没有 AgentRun/AgentFrame/RuntimeSession 时发现并调用授权 Operation/OperationScript。
@@ -66,7 +66,7 @@ Canvas、Extension panel/component 和 Interaction renderer 不以 AgentRun、Ag
 - R17：先完成 RuntimeGateway、Session、Capability、VFS、Frontend 与 cross-layer architecture/spec gate，再修改生产代码；目标规范与 Session-bound 旧规范不能并行生效。
 - R18：所有落实步骤、依赖、write set、检查证据和最终残留清扫由父任务 `work-items/` 跟踪。
 - R19：冻结稳定 public identity：`canvas:{definition_id}` / `canvas://{definition_id}` 表达 authoring/preview，`interaction:{instance_id}` / `interaction://{instance_id}` 表达共享 runtime；VFS mount、attachment、presentation 和 renderer lease 不复用这些对象的生命周期。
-- R20：OperationScript preflight token 绑定 dialect/host API、source、input、allowed Operation descriptor/effect manifest、limits、principal/scope 和 expiry；V1 禁止递归脚本调用，result ref 继承 caller owner/scope/capability/TTL。
+- R20：OperationScript engine 的内部 preflight token 绑定 dialect/host API、source、input、allowed Operation descriptor/effect manifest、limits、principal/scope 和 expiry；Agent tool 不接收或返回 token。V1 禁止递归脚本调用，result ref 继承 caller owner/scope/capability/TTL。
 - R21：OperationScript evaluator 在有界专用 worker pool 中运行，使用 execution-scoped `ops` capability object 连接 async OperationExecutionCore；`ops.invoke` 隐式等待，`ops.invoke_all` 有界并行，progress/cancellation/deadline 同时中止纯脚本循环与 nested invocation。
 - R22：Interaction command transaction 原子写入 command idempotency、event、state revision 和可选 `OperationEffectIntent`。只有 descriptor 声明 replay-safe/idempotent 的单 Operation 可进入该 outbox；任意 OperationScript 和多步 effect 使用即时结果或 Workflow。
 - R23：完整保留并迁移 Canvas CRUD、publish/copy/unpublish、lineage、VFS source changeset、data/resource binding、Extension promotion、Workspace Module module/presentation 与 effective access 行为，不把旧字段机械复制成新事实源。
@@ -82,7 +82,7 @@ Canvas、Extension panel/component 和 Interaction renderer 不以 AgentRun、Ag
 - [x] 每个 nested Operation 调用都重新 admission；未声明/撤销 capability、schema 错误、readiness 变化和 caller cancellation 能在调用点阻断。
 - [x] OperationScript 没有独立持久化 asset/job/step records；Canvas 保存脚本时只把 source 当作 definition/source 文件。
 - [x] OperationScript executor 对调用方是 async；Rhai V1 使用 `ops.invoke` 隐式等待与 `ops.invoke_all` structured concurrency，worker exhaustion、CPU loop cancellation、nested cancellation 和 timeout 均可验证。
-- [x] preflight/run token 对 source/input/manifest/limits/principal/scope/dialect version 的任一不匹配都会失败；脚本不能递归调用 OperationScript。
+- [x] engine preflight/run token 对 source/input/manifest/limits/principal/scope/dialect version 的任一不匹配都会失败；Agent 单工具在一次服务端调用内完成两阶段校验与执行，且脚本不能递归调用 OperationScript。
 - [x] Canvas 的资产、definition revision、runtime instance、Agent attachment、presentation 和 renderer lease 不再被视为同一对象。
 - [x] Human/Agent 共享单一 canonical state；command actor policy 只有 direct/human-only，不存在 Interaction proposal lifecycle。
 - [x] Interaction state transition 由平台服务端拥有；Extension 只能贡献 Component + Operation，不能直接运行 canonical reducer。

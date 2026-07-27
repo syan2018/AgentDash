@@ -143,7 +143,7 @@ Surface 解析与局部状态漂移由 WI-13 统一收束。
   actor-visible module 与可信 presentation，不再为没有独立 authority/port 的 projection 保留 crate。
 - 让 `list/describe/invoke/present` 统一消费当前 RuntimeThread Product binding、immutable AgentFrame、applied resource surface 与 actor-specific Operation catalog。
 - `workspace_module_present` 只接受 `module_id`、`view_key` 和可选 payload；renderer、URI、title、Interaction attachment 与 diagnostics 由服务端根据当前 descriptor/definition 解析，不接受 Agent 自行构造可信 presentation。
-- 保持 `workspace_module_invoke` 只调用一个 exact OperationRef；补齐 Agent-facing `operation_script_preflight/run`，其 allowed Operation manifest 来自当前 Workspace Module describe 结果并由服务端重新解析、绑定和 admission。
+- 保持 `workspace_module_invoke` 只调用一个 exact OperationRef；Agent-facing 只暴露单一 `operation_script`，由服务端内部完成 engine preflight/run，其 allowed Operation manifest 来自当前 Workspace Module describe 结果并被重新解析、绑定和 admission。
 - 为 `InteractionDefinitionRevision` 补齐显式 V1 Agent state projection contract；只投影 allowlisted
   state，并在 AgentRun attachment surface 暴露 `interaction:{instance_id}` runtime module、pinned
   command Operations 与 state revision。

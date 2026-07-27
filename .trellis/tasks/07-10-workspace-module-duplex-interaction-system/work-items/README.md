@@ -17,7 +17,7 @@ Parent task: `.trellis/tasks/07-10-workspace-module-duplex-interaction-system`
 | WI-00 | `WI-00-architecture-contract-gate.md` | done | 已确认产品决策 | canonical Operation、Interaction V1、Rhai 与 Extension 最终合同已进入 specs |
 | WI-01 | `WI-01-runtime-gateway-operation-core.md` | done | WI-00 | exact provider catalog、可信 envelope、统一 execution core 与 MCP/Extension/Interaction provider |
 | WI-02 | `WI-02-user-workshop-canvas-standalone.md` | done | WI-01 | Project-scoped OperationWorkshop、standalone Canvas/Extension host 与 server-resolved authority |
-| WI-03 | `WI-03-operation-script.md` | done | WI-01 | bounded async Rhai、preflight/run、Agent/UserWorkshop/Workflow callers 与 scoped result ref |
+| WI-03 | `WI-03-operation-script.md` | done | WI-01 | bounded async Rhai engine preflight/run、各 caller 与 scoped result ref |
 | WI-04 | `WI-04-interaction-domain.md` | done | WI-00 | immutable revision、Instance、CAS command/event、presentation/lease、attachment 与 effect admission |
 | WI-05 | `WI-05-canvas-interaction-migration.md` | done | WI-02、WI-04 | 0062 migration、旧 Canvas 删除、Interaction frontend、exact Extension promotion |
 | WI-06 | `WI-06-extension-component-runtime.md` | done | WI-02、WI-04、Channel WI-01 | Component ABI、隔离 host、exact artifact 与 canonical Operation bridge |
@@ -25,7 +25,7 @@ Parent task: `.trellis/tasks/07-10-workspace-module-duplex-interaction-system`
 | WI-08 | `WI-08-workflow-channel-integration.md` | done | WI-03、WI-04、WI-06、Channel ref/admission | Workflow OperationScript node 与 Channel typed attention/admission 完成 |
 | WI-09 | `WI-09-runtime-session-cleanup.md` | done | WI-02、WI-05、WI-06、AgentRun adapter | Session-bound action gateway 删除，RuntimeSession 仅保留 delivery/trace evidence |
 | WI-10 | `WI-10-integration-spec-verification.md` | done | WI-01 至 WI-09 | targeted/full gates、规范收敛、残留扫描与仓库既有失败分类完成 |
-| WI-11 | `WI-11-workspace-module-agent-capability-closure.md` | completed | WI-03、WI-07、PR #95 最终 Runtime 接线 | 收口 projection 边界、可信 presentation、Agent OperationScript 组合入口、Skill 与死代码/规范漂移 |
+| WI-11 | `WI-11-workspace-module-agent-capability-closure.md` | completed | WI-03、WI-07、PR #95 最终 Runtime 接线 | 收口 projection 边界、可信 presentation、单一 Agent OperationScript 入口、Skill 与死代码/规范漂移 |
 | WI-12 | `WI-12-native-platform-tool-operation-composition.md` | done | WI-01、WI-03、WI-11 | 显式暴露原生 VFS/Process/Task Operations，经 PlatformToolBroker 统一授权与执行 |
 | WI-13 | `WI-13-execution-authority-convergence.md` | done | WI-11、WI-12、Agent Runtime 已接受 Surface revision 合同 | 以单一 ExecutionAuthority 统一 runtime tool、Operation、Workspace Module 与 typed unavailable 投影 |
 

@@ -4,10 +4,10 @@ use std::{
 };
 
 use agentdash_agent_runtime::{
-    RuntimeTaskExecutionScope, RuntimeTaskGrantedOperation, RuntimeToolDefinition,
-    RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation, RuntimeToolPermission,
-    RuntimeToolProvenance, RuntimeToolResourceGrant, RuntimeVfsGrantedOperation,
-    RuntimeVfsPathGrant, ToolProtocolProjector,
+    RuntimeTaskExecutionScope, RuntimeTaskGrantedOperation, RuntimeToolAuthorizationPolicy,
+    RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation,
+    RuntimeToolPermission, RuntimeToolProvenance, RuntimeToolResourceGrant,
+    RuntimeVfsGrantedOperation, RuntimeVfsPathGrant, ToolProtocolProjector,
 };
 use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
 use agentdash_application_agentrun::runtime_task_tools::{
@@ -182,6 +182,7 @@ impl RuntimeToolExecutor for ProductCommandRuntimeTool {
             protocol_projector: ToolProtocolProjector::Dynamic,
             permission,
             effect,
+            authorization_policy: RuntimeToolAuthorizationPolicy::Product,
         }
     }
 
@@ -310,7 +311,7 @@ fn product_tool_definition(
 }
 
 macro_rules! vfs_executor {
-    ($name:ident, $tool_name:literal, $kind:expr, $description:literal, $projector:expr, $permission:expr, $effect:expr) => {
+    ($name:ident, $tool_name:literal, $kind:expr, $description:literal, $projector:expr, $permission:expr, $effect:expr, $authorization_policy:expr) => {
         pub struct $name {
             service: Arc<AppliedVfsRuntimeToolService>,
         }
@@ -332,6 +333,7 @@ macro_rules! vfs_executor {
                     protocol_projector: $projector,
                     permission: $permission,
                     effect: $effect,
+                    authorization_policy: $authorization_policy,
                 }
             }
 
@@ -349,7 +351,8 @@ vfs_executor!(
     "List VFS mounts granted by the applied AgentRun resource surface.",
     ToolProtocolProjector::Dynamic,
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly
+    RuntimeToolEffect::ReadOnly,
+    RuntimeToolAuthorizationPolicy::VfsMountCatalog
 );
 vfs_executor!(
     FsReadRuntimeTool,
@@ -358,7 +361,8 @@ vfs_executor!(
     "Read a file through the applied AgentRun VFS surface.",
     ToolProtocolProjector::FsRead,
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly
+    RuntimeToolEffect::ReadOnly,
+    RuntimeToolAuthorizationPolicy::VfsRead
 );
 vfs_executor!(
     FsGlobRuntimeTool,
@@ -367,7 +371,8 @@ vfs_executor!(
     "List files matching a glob through the applied AgentRun VFS surface.",
     ToolProtocolProjector::FsGlob,
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly
+    RuntimeToolEffect::ReadOnly,
+    RuntimeToolAuthorizationPolicy::VfsGlob
 );
 vfs_executor!(
     FsGrepRuntimeTool,
@@ -376,7 +381,8 @@ vfs_executor!(
     "Search file contents through the applied AgentRun VFS surface.",
     ToolProtocolProjector::FsGrep,
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly
+    RuntimeToolEffect::ReadOnly,
+    RuntimeToolAuthorizationPolicy::VfsGrep
 );
 vfs_executor!(
     FsApplyPatchRuntimeTool,
@@ -385,7 +391,8 @@ vfs_executor!(
     "Apply a patch through the applied AgentRun VFS surface.",
     ToolProtocolProjector::FileChange,
     RuntimeToolPermission::VfsWrite,
-    RuntimeToolEffect::VfsMutation
+    RuntimeToolEffect::VfsMutation,
+    RuntimeToolAuthorizationPolicy::VfsApplyPatch
 );
 vfs_executor!(
     ShellExecRuntimeTool,
@@ -394,7 +401,8 @@ vfs_executor!(
     "Execute or continue a shell command through the applied AgentRun VFS surface.",
     ToolProtocolProjector::Command,
     RuntimeToolPermission::ProcessExecute,
-    RuntimeToolEffect::LocalProcess
+    RuntimeToolEffect::LocalProcess,
+    RuntimeToolAuthorizationPolicy::VfsShell
 );
 
 pub struct RuntimeTaskReadTool {
@@ -428,6 +436,7 @@ impl RuntimeToolExecutor for RuntimeTaskReadTool {
             protocol_projector: ToolProtocolProjector::Dynamic,
             permission: RuntimeToolPermission::ProductRead,
             effect: RuntimeToolEffect::ReadOnly,
+            authorization_policy: RuntimeToolAuthorizationPolicy::TaskRead,
         }
     }
 
@@ -447,6 +456,7 @@ impl RuntimeToolExecutor for RuntimeTaskWriteTool {
             protocol_projector: ToolProtocolProjector::Dynamic,
             permission: RuntimeToolPermission::ProductWrite,
             effect: RuntimeToolEffect::ProductMutation,
+            authorization_policy: RuntimeToolAuthorizationPolicy::TaskWrite,
         }
     }
 
@@ -873,6 +883,9 @@ mod tests {
             RuntimeToolPermission::ProductWrite
         );
         assert_eq!(definitions[9].effect, RuntimeToolEffect::ProductMutation);
+        assert!(definitions.iter().all(|definition| {
+            definition.authorization_policy == RuntimeToolAuthorizationPolicy::Product
+        }));
     }
 
     #[tokio::test]

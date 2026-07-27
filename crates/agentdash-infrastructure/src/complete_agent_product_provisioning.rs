@@ -1681,6 +1681,8 @@ mod tests {
                 parameters_schema: serde_json::json!({"type": "object"}),
                 permission: agentdash_agent_runtime::RuntimeToolPermission::ProductRead,
                 effect: agentdash_agent_runtime::RuntimeToolEffect::ReadOnly,
+                authorization_policy:
+                    agentdash_agent_runtime::RuntimeToolAuthorizationPolicy::Product,
             }],
             &CapabilityState::default(),
             true,

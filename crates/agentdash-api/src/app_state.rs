@@ -255,6 +255,7 @@ impl RuntimeToolExecutionAuthorityPort for ApplicationRuntimeToolExecutionAuthor
             .map_err(|error| format!("{}: {error}", error.code()))?;
         Ok(RuntimeToolExecutionAuthority {
             runtime_thread_id: binding.runtime_thread_id().clone(),
+            capabilities: binding.operation_authority_grant().capabilities,
             surface: binding.applied_resource_projection().ok_or_else(|| {
                 "ExecutionAuthority principal is not an AgentRun Agent".to_string()
             })?,

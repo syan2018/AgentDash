@@ -280,26 +280,39 @@ impl ProductRuntimeToolService for ApplicationOperationScriptRuntimeToolService 
 
 fn map_script_error(error: OperationScriptError) -> ProductRuntimeToolOutcome {
     let code = match &error {
-        OperationScriptError::InvalidRequest { .. } => "operation_script_invalid_request",
-        OperationScriptError::InvalidPlan { .. } => "operation_script_invalid_plan",
-        OperationScriptError::TokenExpired => "operation_script_token_expired",
-        OperationScriptError::OperationDenied { .. } => "operation_script_operation_denied",
-        OperationScriptError::Compile { .. } => "operation_script_compile_failed",
-        OperationScriptError::CapacityExceeded => "operation_script_capacity_exceeded",
-        OperationScriptError::Cancelled => "operation_script_cancelled",
-        OperationScriptError::DeadlineExceeded => "operation_script_deadline_exceeded",
-        OperationScriptError::ExecutionInterrupted { .. } => "operation_script_interrupted",
-        OperationScriptError::Runtime { .. } => "operation_script_runtime_failed",
-        OperationScriptError::CallLimitExceeded { .. } => "operation_script_call_limit_exceeded",
+        OperationScriptError::InvalidRequest { .. } => {
+            "operation_script_invalid_request".to_string()
+        }
+        OperationScriptError::InvalidPlan { .. } => "operation_script_invalid_plan".to_string(),
+        OperationScriptError::TokenExpired => "operation_script_token_expired".to_string(),
+        OperationScriptError::OperationDenied { .. } => {
+            "operation_script_operation_denied".to_string()
+        }
+        OperationScriptError::SurfaceUnavailable { code, .. } => code.clone(),
+        OperationScriptError::Compile { .. } => "operation_script_compile_failed".to_string(),
+        OperationScriptError::CapacityExceeded => "operation_script_capacity_exceeded".to_string(),
+        OperationScriptError::Cancelled => "operation_script_cancelled".to_string(),
+        OperationScriptError::DeadlineExceeded => "operation_script_deadline_exceeded".to_string(),
+        OperationScriptError::ExecutionInterrupted { .. } => {
+            "operation_script_interrupted".to_string()
+        }
+        OperationScriptError::Runtime { .. } => "operation_script_runtime_failed".to_string(),
+        OperationScriptError::CallLimitExceeded { .. } => {
+            "operation_script_call_limit_exceeded".to_string()
+        }
         OperationScriptError::ParallelLimitExceeded { .. } => {
-            "operation_script_parallel_limit_exceeded"
+            "operation_script_parallel_limit_exceeded".to_string()
         }
         OperationScriptError::OutputLimitExceeded { .. } => {
-            "operation_script_output_limit_exceeded"
+            "operation_script_output_limit_exceeded".to_string()
         }
-        OperationScriptError::NestedOperation { .. } => "operation_script_nested_operation_failed",
-        OperationScriptError::ExecutionFailed { .. } => "operation_script_execution_failed",
-        OperationScriptError::Internal { .. } => "operation_script_internal",
+        OperationScriptError::NestedOperation { .. } => {
+            "operation_script_nested_operation_failed".to_string()
+        }
+        OperationScriptError::ExecutionFailed { .. } => {
+            "operation_script_execution_failed".to_string()
+        }
+        OperationScriptError::Internal { .. } => "operation_script_internal".to_string(),
     };
     match error {
         OperationScriptError::InvalidRequest { .. }

@@ -8,6 +8,7 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunProductRuntimeBindingRepository, AppliedVfsMount, AppliedVfsOperation,
     ProductAgentSurfaceFacts,
 };
+use agentdash_application_operation_gateway::OperationAuthorityGrant;
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::operation::OperationPrincipalRef;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
@@ -96,7 +97,7 @@ impl ExecutionAuthority {
         &self.evidence
     }
 
-    pub fn operation_capabilities(&self) -> BTreeSet<String> {
+    fn operation_capabilities(&self) -> BTreeSet<String> {
         let mut capabilities = self.capability_state.capability_keys();
         capabilities.extend(
             self.capability_state
@@ -106,6 +107,16 @@ impl ExecutionAuthority {
                 .map(|server| format!("mcp:{}", server.name)),
         );
         capabilities
+    }
+
+    pub fn operation_authority_grant(&self) -> OperationAuthorityGrant {
+        let mut capabilities = self.operation_capabilities();
+        capabilities.insert("operation.invoke".to_string());
+        capabilities.insert("agent.operation.invoke".to_string());
+        OperationAuthorityGrant {
+            authority_revision: self.revision_token(),
+            capabilities,
+        }
     }
 
     pub fn revision_token(&self) -> String {
@@ -677,10 +688,17 @@ mod tests {
 
         assert_eq!(resolved.revision(), 1);
         assert_eq!(resolved.project_id(), project_id);
+        let operation_authority = resolved.operation_authority_grant();
         assert_eq!(
-            resolved.operation_capabilities(),
+            operation_authority.authority_revision,
+            resolved.revision_token()
+        );
+        assert_eq!(
+            operation_authority.capabilities,
             BTreeSet::from([
+                "agent.operation.invoke".to_string(),
                 "file_read".to_string(),
+                "operation.invoke".to_string(),
                 "task".to_string(),
                 "workspace_module".to_string(),
             ])

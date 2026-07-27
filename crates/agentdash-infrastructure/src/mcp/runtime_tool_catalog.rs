@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use agentdash_agent_runtime::{
-    RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation,
-    RuntimeToolPermission, RuntimeToolProvenance, ToolProtocolProjector,
+    RuntimeToolAuthorizationPolicy, RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolExecutor,
+    RuntimeToolInvocation, RuntimeToolPermission, RuntimeToolProvenance, ToolProtocolProjector,
 };
 use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
 use agentdash_platform_spi::{
@@ -300,6 +300,7 @@ fn runtime_definition(
         },
         permission: RuntimeToolPermission::ProductWrite,
         effect: RuntimeToolEffect::ProductMutation,
+        authorization_policy: RuntimeToolAuthorizationPolicy::Product,
     })
 }
 

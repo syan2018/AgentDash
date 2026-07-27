@@ -692,6 +692,7 @@ fn error_code(error: &OperationScriptError) -> String {
         OperationScriptError::Cancelled => "cancelled".into(),
         OperationScriptError::DeadlineExceeded => "deadline_exceeded".into(),
         OperationScriptError::OperationDenied { .. } => "operation_denied".into(),
+        OperationScriptError::SurfaceUnavailable { code, .. } => code.clone(),
         OperationScriptError::CallLimitExceeded { .. } => "call_limit_exceeded".into(),
         _ => "operation_failed".into(),
     }

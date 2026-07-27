@@ -140,3 +140,7 @@ ops.invoke_all([
 Do not treat a preflight token as execution authority. Expect the server to re-admit the run and
 every nested Operation. Do not assume OperationScript commits Interaction state; use an admitted
 Interaction command for state changes.
+
+If preflight/run returns a provider unavailable code, treat the requested catalog facet as
+temporarily unresolved. Re-run list/describe after the authority or provider becomes ready; do not
+replace the exact OperationRef with a guessed value.

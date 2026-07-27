@@ -843,27 +843,19 @@ impl agentdash_application_operation_gateway::OperationAuthorityResolver
                         missing: vec!["agent_run.project_scope".to_string()],
                     });
                 }
-                facts.push(format!(
-                    "execution-authority:{}:{}:{}",
-                    authority.revision(),
-                    authority.digest(),
-                    authority.evidence().binding_digest(),
-                ));
-                capabilities.extend(authority.operation_capabilities());
+                let mut operation_authority = authority.operation_authority_grant();
                 for installation in self.enabled_installations(authority.project_id()).await? {
                     if authority
                         .capability_state()
                         .workspace_module
                         .allows(&format!("ext:{}", installation.extension_key))
                     {
-                        capabilities.insert(format!("extension:{}", installation.extension_key));
-                        facts.push(format!(
-                            "extension:{}:{}:{}",
-                            installation.id, installation.enabled, installation.updated_at
-                        ));
+                        operation_authority
+                            .capabilities
+                            .insert(format!("extension:{}", installation.extension_key));
                     }
                 }
-                capabilities.insert("agent.operation.invoke".to_string());
+                return Ok(operation_authority);
             }
             OperationPrincipalRef::ExtensionInstallation { installation_id } => {
                 let project_id =

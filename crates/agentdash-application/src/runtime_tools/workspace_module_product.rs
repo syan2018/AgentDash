@@ -9,8 +9,8 @@ use crate::workspace_module::{
     project_workspace_module_visibility,
 };
 use agentdash_application_operation_gateway::{
-    OperationAuthorityGrant, OperationGateway, OperationInvocationCommand, OperationPrincipal,
-    OperationSurfaceDiagnostic, OperationTraceContext,
+    OperationGateway, OperationInvocationCommand, OperationPrincipal, OperationSurfaceDiagnostic,
+    OperationTraceContext,
 };
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
@@ -209,16 +209,16 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                     error.to_string(),
                 )
             })?;
-        let mut granted_capabilities = agent_run_surface.operation_capabilities();
-        granted_capabilities.insert("operation.invoke".to_string());
-        granted_capabilities.insert("agent.operation.invoke".to_string());
+        let mut operation_authority = agent_run_surface.operation_authority_grant();
         for installation in &installations {
             if agent_run_surface
                 .capability_state()
                 .workspace_module
                 .allows(&format!("ext:{}", installation.extension_key))
             {
-                granted_capabilities.insert(format!("extension:{}", installation.extension_key));
+                operation_authority
+                    .capabilities
+                    .insert(format!("extension:{}", installation.extension_key));
             }
         }
         let operation_surface = self
@@ -228,10 +228,7 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                 &principal,
                 &scope,
                 &OperationOriginRef::AgentTool,
-                OperationAuthorityGrant {
-                    authority_revision: agent_run_surface.revision_token(),
-                    capabilities: granted_capabilities,
-                },
+                operation_authority,
                 CancellationToken::new(),
             )
             .await
@@ -246,14 +243,6 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             .catalog
             .descriptors()
             .into_iter()
-            .filter(|descriptor| {
-                descriptor
-                    .actor_visibility
-                    .contains(&agentdash_application_operation_gateway::OperationActorKind::Agent)
-                    && descriptor
-                        .required_capabilities
-                        .is_subset(&operation_surface.granted_capabilities)
-            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -807,7 +796,7 @@ fn reject_required_provider_failures(
     surface: &ExecutionAuthority,
     diagnostics: &[OperationSurfaceDiagnostic],
 ) -> Result<(), ProductRuntimeToolOutcome> {
-    let capabilities = surface.operation_capabilities();
+    let capabilities = surface.operation_authority_grant().capabilities;
     let native_operations_required = ["file_read", "file_write", "shell_execute", "task"]
         .iter()
         .any(|capability| capabilities.contains(*capability));

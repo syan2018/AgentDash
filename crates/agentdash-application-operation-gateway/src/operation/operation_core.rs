@@ -219,6 +219,7 @@ impl OperationExecutionCore {
                 current: current_surface.authority_revision,
             });
         }
+        validate_capabilities(&descriptor, &current_surface.granted_capabilities)?;
         let current_descriptor = current_surface
             .catalog
             .get(&request.operation_ref)
@@ -231,7 +232,6 @@ impl OperationExecutionCore {
             });
         }
         validate_actor_visibility(current_descriptor, &request.principal)?;
-        validate_capabilities(current_descriptor, &current_surface.granted_capabilities)?;
         self.audit(request, OperationAuditStage::Admitted, None)
             .await;
 

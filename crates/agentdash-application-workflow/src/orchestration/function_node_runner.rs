@@ -372,6 +372,9 @@ fn script_error_detail(error: &OperationScriptError) -> (String, bool, Option<Va
             false,
             None,
         ),
+        OperationScriptError::SurfaceUnavailable { code, message } => {
+            (code.clone(), true, Some(json!({ "message": message })))
+        }
         OperationScriptError::ExecutionFailed {
             calls,
             partial,

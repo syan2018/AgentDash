@@ -2,10 +2,11 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use agentdash_agent_runtime::{
     RuntimeTaskExecutionGrant, RuntimeTaskExecutionScope, RuntimeTaskGrantedOperation,
-    RuntimeToolAppliedSurfaceEvidence, RuntimeToolAuthorizationGrant, RuntimeToolAuthorizationPort,
-    RuntimeToolAuthorizationRequest, RuntimeToolBrokerError, RuntimeToolProductTarget,
-    RuntimeToolProvenanceEvidence, RuntimeToolResourceGrant, RuntimeVfsExecutionGrant,
-    RuntimeVfsGrantedOperation, RuntimeVfsMountGrant, RuntimeVfsPathGrant,
+    RuntimeToolAppliedSurfaceEvidence, RuntimeToolAuthorizationGrant,
+    RuntimeToolAuthorizationPolicy, RuntimeToolAuthorizationPort, RuntimeToolAuthorizationRequest,
+    RuntimeToolBrokerError, RuntimeToolProductTarget, RuntimeToolProvenanceEvidence,
+    RuntimeToolResourceGrant, RuntimeVfsExecutionGrant, RuntimeVfsGrantedOperation,
+    RuntimeVfsMountGrant, RuntimeVfsPathGrant,
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_agentrun::agent_run::{
@@ -19,6 +20,7 @@ use uuid::Uuid;
 #[derive(Clone, Debug)]
 pub struct RuntimeToolExecutionAuthority {
     pub runtime_thread_id: RuntimeThreadId,
+    pub capabilities: BTreeSet<String>,
     pub surface: AgentRunAppliedResourceSurface,
 }
 
@@ -57,12 +59,13 @@ impl RuntimeToolAuthorizationPort for ProductRuntimeToolAuthorizer {
                 "execution authority belongs to another runtime thread",
             ));
         }
-        authorize_surface(authority.surface, request)
+        authorize_surface(authority.surface, &authority.capabilities, request)
     }
 }
 
 fn authorize_surface(
     surface: agentdash_application_agentrun::agent_run::AgentRunAppliedResourceSurface,
+    capabilities: &BTreeSet<String>,
     request: RuntimeToolAuthorizationRequest,
 ) -> Result<RuntimeToolAuthorizationGrant, RuntimeToolBrokerError> {
     if surface.agent_surface_revision != request.context.applied_surface_revision.0 {
@@ -71,49 +74,50 @@ fn authorize_surface(
             "Product authority does not attest the callback applied surface revision",
         ));
     }
-    let resources = match request.definition.name.as_str() {
-        "mounts_list" => vfs_grant(&surface, AppliedVfsOperation::List, &[], true)?,
-        "fs_read" => vfs_grant(
+    if !capabilities.contains(&request.definition.provenance.capability_key) {
+        return Err(denied(
+            "missing_runtime_tool_capability",
+            format!(
+                "execution authority does not grant capability `{}`",
+                request.definition.provenance.capability_key
+            ),
+        ));
+    }
+    let resources = match request.definition.authorization_policy {
+        RuntimeToolAuthorizationPolicy::Product => RuntimeToolResourceGrant::Product,
+        RuntimeToolAuthorizationPolicy::VfsMountCatalog => {
+            vfs_grant(&surface, AppliedVfsOperation::List, &[], true)?
+        }
+        RuntimeToolAuthorizationPolicy::VfsRead => vfs_grant(
             &surface,
             AppliedVfsOperation::Read,
             &[path_argument(&surface, &request.arguments, "path", false)?],
             false,
         )?,
-        "fs_glob" => vfs_grant(
+        RuntimeToolAuthorizationPolicy::VfsGlob => vfs_grant(
             &surface,
             AppliedVfsOperation::List,
             &[path_argument(&surface, &request.arguments, "path", true)?],
             false,
         )?,
-        "fs_grep" => vfs_grant(
+        RuntimeToolAuthorizationPolicy::VfsGrep => vfs_grant(
             &surface,
             AppliedVfsOperation::Search,
             &[path_argument(&surface, &request.arguments, "path", true)?],
             false,
         )?,
-        "fs_apply_patch" => vfs_grant(
+        RuntimeToolAuthorizationPolicy::VfsApplyPatch => vfs_grant(
             &surface,
             AppliedVfsOperation::Write,
             &patch_paths(&request.arguments)?,
             false,
         )?,
-        "shell_exec" => shell_vfs_grant(&surface, &request.arguments)?,
-        "task_read" => task_grant(&surface, AppliedTaskOperation::Read, &request.arguments)?,
-        "task_write" => task_grant(&surface, AppliedTaskOperation::Write, &request.arguments)?,
-        "wait"
-        | "complete_lifecycle_node"
-        | "companion_request"
-        | "companion_respond"
-        | "workspace_module_list"
-        | "workspace_module_describe"
-        | "workspace_module_invoke"
-        | "workspace_module_present" => RuntimeToolResourceGrant::Product,
-        name if name.starts_with("mcp_") => RuntimeToolResourceGrant::Product,
-        _ => {
-            return Err(denied(
-                "unsupported_runtime_tool_policy",
-                "no Product authorization policy is registered for this runtime tool",
-            ));
+        RuntimeToolAuthorizationPolicy::VfsShell => shell_vfs_grant(&surface, &request.arguments)?,
+        RuntimeToolAuthorizationPolicy::TaskRead => {
+            task_grant(&surface, AppliedTaskOperation::Read, &request.arguments)?
+        }
+        RuntimeToolAuthorizationPolicy::TaskWrite => {
+            task_grant(&surface, AppliedTaskOperation::Write, &request.arguments)?
         }
     };
     Ok(RuntimeToolAuthorizationGrant {
@@ -712,11 +716,25 @@ mod tests {
                         }
                         Ok(RuntimeToolExecutionAuthority {
                             runtime_thread_id: binding.binding.runtime_thread_id,
+                            capabilities: all_test_capabilities(),
                             surface,
                         })
                     })
             });
         ProductRuntimeToolAuthorizer::new(Arc::new(AuthorityFixture { value }))
+    }
+
+    fn all_test_capabilities() -> BTreeSet<String> {
+        BTreeSet::from([
+            "collaboration".to_string(),
+            "file_read".to_string(),
+            "file_write".to_string(),
+            "mcp:agentdash-workflow-tools".to_string(),
+            "shell_execute".to_string(),
+            "task".to_string(),
+            "workflow".to_string(),
+            "workspace_module".to_string(),
+        ])
     }
 
     #[tokio::test]
@@ -1184,6 +1202,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_product_runtime_tool_uses_the_product_resource_policy() {
+        let binding = binding();
+        let authorizer = test_authorizer(
+            Arc::new(BindingFixture {
+                value: Some(binding.clone()),
+            }),
+            Arc::new(SurfaceFixture {
+                value: Ok(snapshot(
+                    binding.binding.target.clone(),
+                    binding.binding_digest,
+                )),
+            }),
+        );
+
+        for tool in [
+            "workspace_module_list",
+            "workspace_module_describe",
+            "workspace_module_invoke",
+            "workspace_module_present",
+            "operation_script_preflight",
+            "operation_script_run",
+        ] {
+            let grant = authorizer
+                .authorize(request(tool))
+                .await
+                .unwrap_or_else(|error| panic!("{tool} must use Product authorization: {error}"));
+            assert_eq!(grant.resources, RuntimeToolResourceGrant::Product);
+        }
+    }
+
+    #[tokio::test]
+    async fn product_policy_still_requires_the_definition_capability() {
+        let binding = binding();
+        let authorizer = ProductRuntimeToolAuthorizer::new(Arc::new(AuthorityFixture {
+            value: Ok(RuntimeToolExecutionAuthority {
+                runtime_thread_id: binding.binding.runtime_thread_id.clone(),
+                capabilities: BTreeSet::new(),
+                surface: snapshot(binding.binding.target, binding.binding_digest),
+            }),
+        }));
+
+        let error = authorizer
+            .authorize(request("operation_script_preflight"))
+            .await
+            .expect_err("Product resource policy must not bypass capability admission");
+
+        assert!(matches!(
+            error,
+            RuntimeToolBrokerError::AuthorizationDenied { code, .. }
+                if code == "missing_runtime_tool_capability"
+        ));
+    }
+
+    #[tokio::test]
     async fn dynamic_mcp_tool_uses_the_same_committed_product_authority() {
         let binding = binding();
         let authorizer = test_authorizer(
@@ -1356,7 +1428,23 @@ mod tests {
                 description: tool.to_owned(),
                 parameters_schema: serde_json::json!({}),
                 provenance: agentdash_agent_runtime::RuntimeToolProvenance {
-                    capability_key: "test".to_owned(),
+                    capability_key: match tool {
+                        "mounts_list" | "fs_read" | "fs_glob" | "fs_grep" => "file_read",
+                        "fs_apply_patch" => "file_write",
+                        "shell_exec" => "shell_execute",
+                        "task_read" | "task_write" => "task",
+                        "workspace_module_list"
+                        | "workspace_module_describe"
+                        | "workspace_module_invoke"
+                        | "workspace_module_present"
+                        | "operation_script_preflight"
+                        | "operation_script_run" => "workspace_module",
+                        "complete_lifecycle_node" => "workflow",
+                        "companion_request" | "companion_respond" | "wait" => "collaboration",
+                        tool if tool.starts_with("mcp_") => "mcp:agentdash-workflow-tools",
+                        _ => "test",
+                    }
+                    .to_owned(),
                     source: "test".to_owned(),
                     tool_path: format!("test::{tool}"),
                     context_usage_kind: "system_tools".to_owned(),
@@ -1364,6 +1452,17 @@ mod tests {
                 protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 permission,
                 effect,
+                authorization_policy: match tool {
+                    "mounts_list" => RuntimeToolAuthorizationPolicy::VfsMountCatalog,
+                    "fs_read" => RuntimeToolAuthorizationPolicy::VfsRead,
+                    "fs_glob" => RuntimeToolAuthorizationPolicy::VfsGlob,
+                    "fs_grep" => RuntimeToolAuthorizationPolicy::VfsGrep,
+                    "fs_apply_patch" => RuntimeToolAuthorizationPolicy::VfsApplyPatch,
+                    "shell_exec" => RuntimeToolAuthorizationPolicy::VfsShell,
+                    "task_read" => RuntimeToolAuthorizationPolicy::TaskRead,
+                    "task_write" => RuntimeToolAuthorizationPolicy::TaskWrite,
+                    _ => RuntimeToolAuthorizationPolicy::Product,
+                },
             },
             arguments,
         }

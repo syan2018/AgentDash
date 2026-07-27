@@ -332,7 +332,10 @@ fn script_error(
 ) -> ApiError {
     use agentdash_application_ports::operation_script::OperationScriptError;
     match error {
-        OperationScriptError::CapacityExceeded => ApiError::ServiceUnavailable(error.to_string()),
+        OperationScriptError::CapacityExceeded
+        | OperationScriptError::SurfaceUnavailable { .. } => {
+            ApiError::ServiceUnavailable(error.to_string())
+        }
         OperationScriptError::TokenExpired | OperationScriptError::InvalidPlan { .. } => {
             ApiError::Conflict(error.to_string())
         }

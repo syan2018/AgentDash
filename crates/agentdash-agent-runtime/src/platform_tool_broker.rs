@@ -30,6 +30,20 @@ pub enum RuntimeToolPermission {
     ProcessExecute,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeToolAuthorizationPolicy {
+    Product,
+    VfsMountCatalog,
+    VfsRead,
+    VfsGlob,
+    VfsGrep,
+    VfsApplyPatch,
+    VfsShell,
+    TaskRead,
+    TaskWrite,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeToolProvenance {
     pub capability_key: String,
@@ -47,6 +61,7 @@ pub struct RuntimeToolDefinition {
     pub protocol_projector: agentdash_agent_protocol::ToolProtocolProjector,
     pub permission: RuntimeToolPermission,
     pub effect: RuntimeToolEffect,
+    pub authorization_policy: RuntimeToolAuthorizationPolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -434,6 +449,7 @@ mod tests {
                 protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 permission: RuntimeToolPermission::VfsRead,
                 effect: RuntimeToolEffect::ReadOnly,
+                authorization_policy: RuntimeToolAuthorizationPolicy::VfsMountCatalog,
             }
         }
 
@@ -464,6 +480,7 @@ mod tests {
                 },
                 permission: RuntimeToolPermission::ProductWrite,
                 effect: RuntimeToolEffect::ProductMutation,
+                authorization_policy: RuntimeToolAuthorizationPolicy::Product,
             }
         }
 

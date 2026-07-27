@@ -65,6 +65,13 @@ pub struct PlatformToolBinding {
 - Agent-facing program 只提交 source/input/limits/exact requested OperationRefs；descriptor digest、
   effect/replay、principal、scope、authority revision 和 granted capabilities 都由服务端 current
   surface 重建。
+- AgentRun 的 authority revision 只由 `ExecutionAuthority::operation_authority_grant()` 生成；
+  dynamic Platform/MCP/Extension provider、Workspace Module 与执行 core 使用同一个值，不对同一
+  facts 集合另行 hash。
+- Gateway 生成 actor surface 时统一应用 actor visibility 与 required capabilities。provider
+  discovery 失败可以在宽表面中隔离为 diagnostic；当 exact invoke 或 OperationScript preflight
+  请求属于该 provider 的 Operation 时，必须恢复 typed unavailable，而不是误报 OperationRef
+  不存在。
 - applied tool-set revision 与 binding generation 仍由 Tool Broker 校验；业务 tool adapter 不复制这套状态机。
 - Complete Agent callback delivery evidence 只存在于 callback path；server-side nested Operation
   invocation 只携带 RuntimeThread、current applied surface revision、trace/idempotency/deadline，
@@ -78,6 +85,7 @@ pub struct PlatformToolBinding {
 | gateway/engine handle 未装配 | surface/tool execution 返回 unavailable |
 | binding 或 tool-set revision 过期 | Tool Broker 返回 stale |
 | OperationRef 不在当前 actor surface | invalid arguments |
+| requested Operation 所属 dynamic provider unavailable | 保留 provider unavailable code |
 | nested authority/readiness 变化 | 当前 nested call 重新准入并拒绝 |
 | cancel/deadline | 传播到 gateway/engine，记录 terminal error |
 

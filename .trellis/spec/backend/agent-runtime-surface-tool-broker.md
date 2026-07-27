@@ -38,6 +38,14 @@ trait RuntimeToolExecutionAuthorityPort {
   Operations 和 `builtin:*` modules。
 - OperationGateway 持有 catalog/effect/replay/execution core；ToolBroker 持有每次调用的
   permission/effect/resource enforcement。两者消费 authority，不持有独立权限状态。
+- `ExecutionAuthority::operation_authority_grant()` 是 Agent actor Operation revision 与
+  capabilities 的唯一投影；Workspace Module discovery、Gateway direct invoke 与
+  OperationScript preflight/run 不得另算 authority revision。
+- `ActorOperationSurface` 在 Gateway 内按 actor visibility 与 granted capabilities 过滤；
+  Workspace Module、OperationScript 和其他 host 直接消费该结果，不各自复制可见性规则。
+- 每个 `RuntimeToolDefinition` 必须声明 typed authorization policy。Broker authorizer 先校验
+  definition capability 存在于同一次 ExecutionAuthority，再按 policy 生成 Product/VFS/Task
+  resource grant；新增工具不依赖按名称维护的授权白名单。
 - Complete Agent provision/rebind 继续生成 desired/offer/bound/applied 协议证据；成功后的 Product
   binding commit 决定 current authority，不增加独立 adoption port 或状态机。
 
@@ -49,6 +57,7 @@ trait RuntimeToolExecutionAuthorityPort {
 | binding frame 与持久化 revision 不一致 | `execution_authority_frame_binding_mismatch` |
 | binding/frame/applied digest 或 provenance 不一致 | `execution_authority_evidence_mismatch` |
 | provider discovery 失败 | `surface_diagnostics[{provider,code,message}]` |
+| exact invoke/preflight 命中失败 provider | 返回该 provider 的 typed unavailable，不降级为 Operation 不存在 |
 | 原生 capability 已授予但 platform provider 不可用 | Workspace Module typed unavailable |
 | surface projection 期间 authority revision 改变 | `stale_execution_authority` |
 
@@ -66,7 +75,11 @@ trait RuntimeToolExecutionAuthorityPort {
 - Resolver test 断言 digest/provenance mismatch 整体拒绝。
 - Capability test 断言 cluster-backed capability 进入 canonical capability keys。
 - Operation test 断言 dynamic provider failure 返回结构化 diagnostic。
+- Operation test 断言 actor surface 排除 authority 未授予的 descriptor，且 exact invoke 保留
+  provider unavailable code。
 - ToolBroker test 只注入一次解析完成的 authority projection，并断言 grant evidence 同源。
+- Runtime tool policy test 枚举 Workspace Module 与 OperationScript 工具，断言 Product policy
+  完整注册，并断言 Product policy 不能绕过 definition capability。
 
 ### 7. Wrong vs Correct
 

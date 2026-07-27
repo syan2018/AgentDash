@@ -219,6 +219,8 @@ pub enum OperationScriptError {
     Runtime { diagnostic: String },
     #[error("OperationScript 未允许 Operation: {operation_key}")]
     OperationDenied { operation_key: String },
+    #[error("OperationScript actor surface 不可用 ({code}): {message}")]
+    SurfaceUnavailable { code: String, message: String },
     #[error("OperationScript Operation 调用数超限: {maximum}")]
     CallLimitExceeded { maximum: usize },
     #[error("OperationScript 并行调用数超限: {maximum}")]

@@ -190,7 +190,8 @@ fn platform_tool_operation(definition: RuntimeToolDefinition) -> Option<Platform
 #[cfg(test)]
 mod tests {
     use agentdash_agent_runtime::{
-        RuntimeToolEffect, RuntimeToolPermission, RuntimeToolProvenance, ToolProtocolProjector,
+        RuntimeToolAuthorizationPolicy, RuntimeToolEffect, RuntimeToolPermission,
+        RuntimeToolProvenance, ToolProtocolProjector,
     };
     use agentdash_application::task::tools::{
         task_read_parameters_schema, task_write_parameters_schema,
@@ -214,6 +215,17 @@ mod tests {
             protocol_projector: ToolProtocolProjector::Dynamic,
             permission: RuntimeToolPermission::ProductRead,
             effect: RuntimeToolEffect::ReadOnly,
+            authorization_policy: match name {
+                "mounts_list" => RuntimeToolAuthorizationPolicy::VfsMountCatalog,
+                "fs_read" => RuntimeToolAuthorizationPolicy::VfsRead,
+                "fs_glob" => RuntimeToolAuthorizationPolicy::VfsGlob,
+                "fs_grep" => RuntimeToolAuthorizationPolicy::VfsGrep,
+                "fs_apply_patch" => RuntimeToolAuthorizationPolicy::VfsApplyPatch,
+                "shell_exec" => RuntimeToolAuthorizationPolicy::VfsShell,
+                "task_read" => RuntimeToolAuthorizationPolicy::TaskRead,
+                "task_write" => RuntimeToolAuthorizationPolicy::TaskWrite,
+                _ => RuntimeToolAuthorizationPolicy::Product,
+            },
         }
     }
 

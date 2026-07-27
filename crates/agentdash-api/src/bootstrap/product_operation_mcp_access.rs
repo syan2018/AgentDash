@@ -6,38 +6,33 @@ use agentdash_agent_runtime::{
     RuntimeToolResourceGrant, ToolProtocolProjector,
 };
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentEffectIdentity, AgentProfileDigest, AgentSurfaceDigest,
-    AgentSurfaceRevision, AgentToolResult, AgentTurnId,
+    AgentEffectIdentity, AgentSurfaceRevision, AgentToolResult, AgentTurnId,
+};
+use agentdash_application::execution_authority::{
+    ExecutionAuthority, ExecutionAuthorityRequest, ExecutionAuthorityResolver,
 };
 use agentdash_application_agentrun::agent_run::frame::runtime_backend_anchor_from_vfs;
-use agentdash_application_agentrun::agent_run::{
-    AgentFrameSurfaceExt, AgentRunProductRuntimeBinding, AgentRunProductRuntimeBindingRepository,
-};
 use agentdash_application_operation_gateway::{
     OperationAuthorizationScope, OperationExecutionError, OperationMcpAccess, OperationMcpTool,
     OperationPlacement, OperationPrincipal, OperationPrincipalRef,
 };
-use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_infrastructure::mcp::{RuntimeDynamicToolCatalog, RuntimeMcpToolCatalogRequest};
 use agentdash_platform_spi::{RelayMcpCallContext, RuntimeMcpServer, RuntimeVfsAccessPolicy};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 pub struct ProductRuntimeMcpOperationAccess {
-    bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
-    frames: Arc<dyn AgentFrameRepository>,
+    execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
     catalog: Arc<dyn RuntimeDynamicToolCatalog>,
 }
 
 impl ProductRuntimeMcpOperationAccess {
     pub fn new(
-        bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
-        frames: Arc<dyn AgentFrameRepository>,
+        execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
         catalog: Arc<dyn RuntimeDynamicToolCatalog>,
     ) -> Self {
         Self {
-            bindings,
-            frames,
+            execution_authorities,
             catalog,
         }
     }
@@ -64,47 +59,44 @@ impl ProductRuntimeMcpOperationAccess {
             agent_id: *agent_id,
         };
         let binding = self
-            .bindings
-            .load_product_binding(&target)
+            .execution_authorities
+            .resolve(ExecutionAuthorityRequest::for_target(target))
             .await
-            .map_err(OperationExecutionError::provider_failed)?
-            .ok_or_else(|| OperationExecutionError::NotReady {
-                code: "mcp_product_binding_missing".to_string(),
-                message: "AgentRun Product runtime binding 不存在".to_string(),
+            .map_err(|error| OperationExecutionError::NotReady {
+                code: error.code().to_string(),
+                message: error.to_string(),
             })?;
-        let frame = self
-            .frames
-            .get(binding.launch_frame.frame_id)
-            .await
-            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
-            .ok_or_else(|| OperationExecutionError::NotReady {
-                code: "mcp_agent_frame_missing".to_string(),
-                message: "Product binding 对应 AgentFrame 不存在".to_string(),
-            })?;
-        let capability_state =
-            frame
-                .typed_capability_state()
-                .ok_or_else(|| OperationExecutionError::NotReady {
-                    code: "mcp_capability_surface_missing".to_string(),
-                    message: "AgentFrame 没有 typed capability surface".to_string(),
-                })?;
-        let servers = frame.typed_mcp_servers();
-        let vfs = frame.typed_vfs();
-        let relay_context = vfs
-            .as_ref()
-            .map(|vfs| {
-                let backend_anchor =
-                    runtime_backend_anchor_from_vfs(vfs, Some("operation_gateway_mcp".to_string()))
-                        .map_err(|error| {
-                            OperationExecutionError::provider_failed(error.to_string())
-                        })?;
+        if agentdash_application_operation_gateway::scope_project_id(&scope.scope_ref)
+            != Some(binding.project_id())
+        {
+            return Err(OperationExecutionError::CapabilitiesDenied {
+                missing: vec!["agent_run.project_scope".to_string()],
+            });
+        }
+        if !scope.authority_revision.is_empty()
+            && scope.authority_revision != binding.revision_token()
+        {
+            return Err(OperationExecutionError::NotReady {
+                code: "stale_execution_authority".to_string(),
+                message: "Operation surface authority changed during projection".to_string(),
+            });
+        }
+        let servers = binding.mcp_servers().to_vec();
+        let vfs = binding.resources().vfs(binding.project_id());
+        let relay_context = (!vfs.mounts.is_empty())
+            .then(|| {
+                let backend_anchor = runtime_backend_anchor_from_vfs(
+                    &vfs,
+                    Some("operation_gateway_mcp".to_string()),
+                )
+                .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?;
                 Ok(RelayMcpCallContext {
-                    session_id: binding.runtime_thread_id.to_string(),
+                    session_id: binding.runtime_thread_id().to_string(),
                     turn_id: None,
                     tool_call_id: None,
                     backend_anchor,
                     vfs: Some(vfs.clone()),
-                    vfs_access_policy: Some(RuntimeVfsAccessPolicy::whole_mounts_from_vfs(vfs)),
+                    vfs_access_policy: Some(RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs)),
                     identity: None,
                 })
             })
@@ -117,7 +109,7 @@ impl ProductRuntimeMcpOperationAccess {
             .catalog
             .resolve(RuntimeMcpToolCatalogRequest {
                 servers: servers.clone(),
-                capability_state,
+                capability_state: binding.capability_state().clone(),
                 relay_context,
             })
             .await
@@ -132,7 +124,7 @@ impl ProductRuntimeMcpOperationAccess {
 }
 
 struct ResolvedMcpSurface {
-    binding: AgentRunProductRuntimeBinding,
+    binding: ExecutionAuthority,
     servers: Vec<RuntimeMcpServer>,
     executors: Vec<Arc<dyn agentdash_agent_runtime::RuntimeToolExecutor>>,
     relay_backend_id: Option<String>,
@@ -228,33 +220,26 @@ impl OperationMcpAccess for ProductRuntimeMcpOperationAccess {
             }
         })?;
         let definition = executor.definition();
-        let revision = surface.binding.launch_frame.revision.max(1);
-        let surface_digest = format!(
-            "agent-frame:{}:{}",
-            surface.binding.launch_frame.frame_id, revision
-        );
+        let revision = surface.binding.revision().max(1);
+        let surface_digest = surface.binding.digest().to_string();
+        let resources = surface.binding.resources();
+        let evidence = surface.binding.evidence();
+        let target = surface.binding.agent_run_target().ok_or_else(|| {
+            OperationExecutionError::CapabilitiesDenied {
+                missing: vec!["platform_tool.agent_run_principal".to_string()],
+            }
+        })?;
         let invocation = RuntimeToolInvocation {
             context: RuntimeToolResolvedContext {
-                runtime_thread_id: surface.binding.runtime_thread_id.clone(),
-                binding_generation: AgentBindingGeneration(1),
-                source: surface.binding.agent.source.clone(),
-                service_instance_id: surface.binding.agent.service_instance_id.clone(),
-                profile_digest: AgentProfileDigest::new(
-                    surface.binding.execution_profile_digest.clone(),
-                )
-                .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
-                bound_surface_revision: AgentSurfaceRevision(revision),
-                bound_surface_digest: AgentSurfaceDigest::new(surface_digest.clone())
-                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
+                runtime_thread_id: surface.binding.runtime_thread_id().clone(),
+                host_binding_generation: None,
                 applied_surface_revision: AgentSurfaceRevision(revision),
-                applied_surface_digest: AgentSurfaceDigest::new(surface_digest.clone())
-                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
                 turn_id: AgentTurnId::new("operation-gateway")
                     .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
                 item_id: None,
                 effect_id: AgentEffectIdentity::new(uuid::Uuid::new_v4().to_string())
                     .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
-                callback_idempotency_key: uuid::Uuid::new_v4().to_string(),
+                invocation_id: uuid::Uuid::new_v4().to_string(),
                 deadline_at_ms: chrono::Utc::now().timestamp_millis().max(0) as u64 + 30_000,
             },
             tool: definition.name.clone(),
@@ -263,31 +248,24 @@ impl OperationMcpAccess for ProductRuntimeMcpOperationAccess {
                 permission: definition.permission,
                 effect: definition.effect,
                 target: RuntimeToolProductTarget {
-                    project_id: agentdash_application_operation_gateway::scope_project_id(
-                        &scope.scope_ref,
-                    )
-                    .expect("project scope checked")
-                    .to_string(),
-                    run_id: surface.binding.target.run_id.to_string(),
-                    agent_id: surface.binding.target.agent_id.to_string(),
+                    project_id: surface.binding.project_id().to_string(),
+                    run_id: target.run_id.to_string(),
+                    agent_id: target.agent_id.to_string(),
                 },
                 applied_surface: RuntimeToolAppliedSurfaceEvidence {
                     agent_surface_revision: revision,
                     agent_surface_digest: surface_digest.clone(),
-                    vfs_digest: surface_digest.clone(),
+                    vfs_digest: resources.vfs_digest().to_string(),
                     vfs_provenance: RuntimeToolProvenanceEvidence {
-                        source_kind: "agent_frame".to_string(),
-                        source_id: surface.binding.launch_frame.frame_id.to_string(),
-                        source_revision: revision,
-                        projection_revision: revision,
-                        captured_at_ms: chrono::Utc::now().timestamp_millis().max(0) as u64,
+                        source_kind: evidence.source_kind().to_string(),
+                        source_id: evidence.source_id().to_string(),
+                        source_revision: evidence.source_revision(),
+                        projection_revision: evidence.projection_revision(),
+                        captured_at_ms: evidence.captured_at_ms(),
                     },
-                    task_digest: surface_digest,
-                    product_binding_digest: surface
-                        .binding
-                        .calculated_digest()
-                        .map_err(OperationExecutionError::provider_failed)?,
-                    host_binding_generation: 1,
+                    task_digest: resources.task_digest().to_string(),
+                    product_binding_digest: evidence.binding_digest().to_string(),
+                    host_binding_generation: None,
                 },
                 resources: RuntimeToolResourceGrant::Product,
             },

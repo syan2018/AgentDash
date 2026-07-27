@@ -67,6 +67,10 @@ impl InteractionOperationProvider {
 
 #[async_trait]
 impl DynamicOperationProvider for InteractionOperationProvider {
+    fn surface_source(&self) -> &'static str {
+        "interaction"
+    }
+
     fn owns_provider(&self, provider: &OperationProviderRef) -> bool {
         provider.namespace == INTERACTION_OPERATION_NAMESPACE
     }

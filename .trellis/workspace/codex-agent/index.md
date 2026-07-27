@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 69
-- **Last Active**: 2026-07-24
+- **Total Sessions**: 71
+- **Last Active**: 2026-07-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~565 | Active |
+| `journal-2.md` | ~631 | Active |
 | `journal-1.md` | ~1971 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 71 | 2026-07-27 | 修复原生 Operation Schema 兼容性 | `d8e434744` | `main` |
+| 70 | 2026-07-27 | 收束 Workspace Module Execution Authority | `4f589308f` | `main` |
 | 69 | 2026-07-24 | 数据库表收束与迁移基线压缩 | `108ae5633` | `codex/agent-runtime-final-convergence-plan` |
 | 68 | 2026-07-23 | 收复ContextFrame模型输入单一权威 | `aae0ba165` | `codex/agent-runtime-final-convergence-plan` |
 | 67 | 2026-07-21 | 收敛 Agent Runtime 持久化权威 | `4e0d90e7e`, `8931a3dc5`, `8b3234b9f`, `9d0e7d7cc`, `ff923b9ec`, `64983279e`, `5abb0e34e`, `cef35ce46`, `279a16fe7`, `24bf539be`, `56e0ec6de`, `9952756ae`, `21ab42055`, `ea04a568e`, `30397c2be`, `6e4f54a2e`, `43dcb31f1`, `d1c34c834`, `4fc73e14d`, `28fa2f0d6`, `ec104c6bd`, `171811bf9`, `328e0f315`, `7078fb072`, `0affa2ce8`, `bd397e441` | `codex/agent-runtime-final-convergence-plan` |

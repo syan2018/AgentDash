@@ -1,4 +1,6 @@
-use agentdash_application_agentrun::agent_run::runtime_capability::project_capability_state_from_frame;
+use agentdash_application::execution_authority::{
+    ExecutionAuthorityRequest, ExecutionAuthorityResolveError,
+};
 use agentdash_application_agentrun::agent_run::{
     self as app_agent_run, workspace as app_workspace,
 };
@@ -33,6 +35,22 @@ pub(crate) async fn load(
     agent: LifecycleAgent,
     current_user: &agentdash_platform_spi::AuthIdentity,
 ) -> Result<AgentRunWorkspaceView, ApiError> {
+    let target = agentdash_domain::agent_run_target::AgentRunTarget {
+        run_id: run.id,
+        agent_id: agent.id,
+    };
+    let execution_authority = match state
+        .services
+        .execution_authorities
+        .resolve(ExecutionAuthorityRequest::for_target(target))
+        .await
+    {
+        Ok(authority) => Some(authority),
+        Err(ExecutionAuthorityResolveError::BindingMissing) => None,
+        Err(error) => {
+            return Err(ApiError::Conflict(format!("{}: {error}", error.code())));
+        }
+    };
     let runtime_projection = ApiVfsSurfaceRuntimeProjection::new(
         state.services.backend_registry.clone(),
         state.services.mount_provider_registry.clone(),
@@ -40,7 +58,6 @@ pub(crate) async fn load(
     let service = app_workspace::AgentRunWorkspaceQueryService::new(
         app_workspace::AgentRunWorkspaceQueryDeps {
             product_projection: state.services.agent_run_product_projection.as_ref(),
-            applied_resource_surfaces: state.services.agent_run_product_resource_surfaces.as_ref(),
             agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
             project_agent_repo: state.repos.project_agent_repo.as_ref(),
             lifecycle_subject_association_repo: state
@@ -57,31 +74,20 @@ pub(crate) async fn load(
             run,
             agent,
             viewer_user_id: Some(current_user.user_id.clone()),
+            execution_authority_vfs: execution_authority
+                .as_ref()
+                .map(|authority| authority.resources().vfs(authority.project_id())),
         })
         .await
         .map_err(ApiError::from)?;
-    let workspace_modules = match snapshot.frame_runtime.as_ref() {
-        Some(frame_runtime) => {
-            let frame_id = Uuid::parse_str(&frame_runtime.frame_ref.frame_id).map_err(|_| {
-                ApiError::Internal(format!(
-                    "AgentRun workspace frame id is invalid: {}",
-                    frame_runtime.frame_ref.frame_id
-                ))
-            })?;
-            let frame = state
-                .repos
-                .agent_frame_repo
-                .get(frame_id)
-                .await?
-                .ok_or_else(|| {
-                    ApiError::NotFound(format!("AgentFrame `{frame_id}` does not exist"))
-                })?;
-            let capability_state = project_capability_state_from_frame(&frame);
+    let workspace_modules = match execution_authority.as_ref() {
+        Some(authority) => {
             load_project_workspace_modules(state, current_user, snapshot.run.project_id)
                 .await?
                 .into_iter()
                 .filter(|module| {
-                    capability_state
+                    authority
+                        .capability_state()
                         .workspace_module
                         .allows(&module.summary.module_id)
                 })

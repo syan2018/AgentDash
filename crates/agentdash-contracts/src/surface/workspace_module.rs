@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
 pub use agentdash_agent_protocol::WorkspaceModulePresentation;
@@ -20,6 +21,7 @@ pub use agentdash_agent_protocol::WorkspaceModulePresentation;
 pub enum WorkspaceModuleKind {
     Extension,
     Canvas,
+    Interaction,
     Builtin,
 }
 
@@ -58,12 +60,13 @@ impl WorkspaceModuleStatus {
 /// `list` 返回的摘要——不含完整 schema。
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct WorkspaceModuleSummary {
-    /// 稳定 id：`ext:{extension_key}` / `canvas:{definition_id}` / `builtin:{key}`。
+    /// 稳定 id：`ext:{extension_key}` / `canvas:{definition_id}` /
+    /// `interaction:{instance_id}` / `builtin:{key}`。
     pub module_id: String,
     pub kind: WorkspaceModuleKind,
     pub title: String,
     pub description: String,
-    /// extension_key / canvas mount / builtin key。
+    /// extension_key / definition_id / instance_id / builtin key。
     pub source: String,
     /// 有几个 UI entry 的简述（无则 None）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -201,6 +204,18 @@ pub struct WorkspaceModuleDescriptor {
     /// 引用底层 runtime surface（如 extension_runtime / canvas mount）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_backing: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_state_projection: Option<WorkspaceModuleAgentStateProjection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+pub struct WorkspaceModuleAgentStateProjection {
+    pub instance_id: String,
+    pub definition_id: String,
+    pub definition_revision_id: String,
+    pub state_revision: u64,
+    pub values: BTreeMap<String, Value>,
 }
 
 /// 用户或 Agent 请求展示某个 workspace module UI entry。

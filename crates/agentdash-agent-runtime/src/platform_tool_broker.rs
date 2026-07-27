@@ -2,9 +2,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentEffectIdentity, AgentItemId, AgentProfileDigest,
-    AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceDigest, AgentSurfaceRevision,
-    AgentToolName, AgentToolResult, AgentTurnId,
+    AgentBindingGeneration, AgentEffectIdentity, AgentItemId, AgentSurfaceRevision, AgentToolName,
+    AgentToolResult, AgentTurnId,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -31,6 +30,20 @@ pub enum RuntimeToolPermission {
     ProcessExecute,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeToolAuthorizationPolicy {
+    Product,
+    VfsMountCatalog,
+    VfsRead,
+    VfsGlob,
+    VfsGrep,
+    VfsApplyPatch,
+    VfsShell,
+    TaskRead,
+    TaskWrite,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeToolProvenance {
     pub capability_key: String,
@@ -48,23 +61,20 @@ pub struct RuntimeToolDefinition {
     pub protocol_projector: agentdash_agent_protocol::ToolProtocolProjector,
     pub permission: RuntimeToolPermission,
     pub effect: RuntimeToolEffect,
+    pub authorization_policy: RuntimeToolAuthorizationPolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeToolResolvedContext {
     pub runtime_thread_id: RuntimeThreadId,
-    pub binding_generation: AgentBindingGeneration,
-    pub source: AgentSourceCoordinate,
-    pub service_instance_id: AgentServiceInstanceId,
-    pub profile_digest: AgentProfileDigest,
-    pub bound_surface_revision: AgentSurfaceRevision,
-    pub bound_surface_digest: AgentSurfaceDigest,
+    /// Complete Agent callback delivery evidence when the invocation originated from a callback.
+    /// Server-side nested invocations do not fabricate a Host binding generation.
+    pub host_binding_generation: Option<AgentBindingGeneration>,
     pub applied_surface_revision: AgentSurfaceRevision,
-    pub applied_surface_digest: AgentSurfaceDigest,
     pub turn_id: AgentTurnId,
     pub item_id: Option<AgentItemId>,
     pub effect_id: AgentEffectIdentity,
-    pub callback_idempotency_key: String,
+    pub invocation_id: String,
     pub deadline_at_ms: u64,
 }
 
@@ -99,7 +109,7 @@ pub struct RuntimeToolAppliedSurfaceEvidence {
     pub vfs_provenance: RuntimeToolProvenanceEvidence,
     pub task_digest: String,
     pub product_binding_digest: String,
-    pub host_binding_generation: u64,
+    pub host_binding_generation: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -393,7 +403,7 @@ mod tests {
                     vfs_provenance: provenance(),
                     task_digest: "task-test".into(),
                     product_binding_digest: "binding-test".into(),
-                    host_binding_generation: 1,
+                    host_binding_generation: Some(1),
                 },
                 resources: RuntimeToolResourceGrant::Vfs(RuntimeVfsExecutionGrant {
                     default_mount_id: None,
@@ -439,6 +449,7 @@ mod tests {
                 protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 permission: RuntimeToolPermission::VfsRead,
                 effect: RuntimeToolEffect::ReadOnly,
+                authorization_policy: RuntimeToolAuthorizationPolicy::VfsMountCatalog,
             }
         }
 
@@ -469,6 +480,7 @@ mod tests {
                 },
                 permission: RuntimeToolPermission::ProductWrite,
                 effect: RuntimeToolEffect::ProductMutation,
+                authorization_policy: RuntimeToolAuthorizationPolicy::Product,
             }
         }
 
@@ -608,18 +620,12 @@ mod tests {
     fn resolved_context() -> RuntimeToolResolvedContext {
         RuntimeToolResolvedContext {
             runtime_thread_id: RuntimeThreadId::new("thread-test").unwrap(),
-            binding_generation: AgentBindingGeneration(1),
-            source: AgentSourceCoordinate::new("source-test").unwrap(),
-            service_instance_id: AgentServiceInstanceId::new("service-test").unwrap(),
-            profile_digest: AgentProfileDigest::new("profile-test").unwrap(),
-            bound_surface_revision: AgentSurfaceRevision(1),
-            bound_surface_digest: AgentSurfaceDigest::new("bound-test").unwrap(),
+            host_binding_generation: Some(AgentBindingGeneration(1)),
             applied_surface_revision: AgentSurfaceRevision(1),
-            applied_surface_digest: AgentSurfaceDigest::new("applied-test").unwrap(),
             turn_id: AgentTurnId::new("turn-test").unwrap(),
             item_id: Some(AgentItemId::new("item-test").unwrap()),
             effect_id: AgentEffectIdentity::new("effect-test").unwrap(),
-            callback_idempotency_key: "callback-test".to_owned(),
+            invocation_id: "callback-test".to_owned(),
             deadline_at_ms: u64::MAX,
         }
     }

@@ -10,6 +10,7 @@ pub mod channel;
 pub mod companion;
 pub mod context;
 pub mod error;
+pub mod execution_authority;
 pub mod extension_management;
 pub mod extension_package;
 pub mod extension_runtime;
@@ -40,6 +41,7 @@ pub mod skill_asset;
 pub mod story;
 pub mod task;
 pub mod wait_activity;
+pub mod workspace_module;
 pub mod vfs {
     pub use agentdash_application_vfs::*;
 }

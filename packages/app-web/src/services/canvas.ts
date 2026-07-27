@@ -8,6 +8,8 @@ import type {
   DistributeCanvasDefinitionRequest,
   InteractionCommandRequestDto,
   InteractionCommandResponseDto,
+  InteractionComponentEventRequestDto,
+  InteractionComponentEventResponseDto,
   InteractionInstanceDto,
   InteractionInstanceViewDto,
   InteractionSourceBundleDto,
@@ -96,6 +98,16 @@ export async function executeInteractionCommand(
 ) {
   return api.post<InteractionCommandResponseDto>(
     `/interaction-instances/${encodeURIComponent(instanceId)}/commands`, input,
+  );
+}
+
+export async function executeInteractionComponentEvent(
+  instanceId: string,
+  input: InteractionComponentEventRequestDto,
+) {
+  return api.post<InteractionComponentEventResponseDto>(
+    `/interaction-instances/${encodeURIComponent(instanceId)}/component-events`,
+    input,
   );
 }
 

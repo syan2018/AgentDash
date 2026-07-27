@@ -13,7 +13,7 @@ fn validate_schema_definition_at(schema: &Value, path: &str) -> Result<(), Strin
     match schema {
         Value::Bool(_) => return Ok(()),
         Value::Object(object) => {
-            const ALLOWED_KEYS: [&str; 7] = [
+            const VALIDATION_KEYS: [&str; 10] = [
                 "type",
                 "required",
                 "properties",
@@ -21,17 +21,43 @@ fn validate_schema_definition_at(schema: &Value, path: &str) -> Result<(), Strin
                 "items",
                 "enum",
                 "const",
+                "minimum",
+                "maximum",
+                "anyOf",
             ];
-            if let Some(key) = object
-                .keys()
-                .find(|key| !ALLOWED_KEYS.contains(&key.as_str()))
-            {
+            const ANNOTATION_KEYS: [&str; 1] = ["description"];
+            if let Some(key) = object.keys().find(|key| {
+                !VALIDATION_KEYS.contains(&key.as_str()) && !ANNOTATION_KEYS.contains(&key.as_str())
+            }) {
                 return Err(format!(
                     "{path}.{key} 不属于 Gateway 支持的 JSON Schema 子集"
                 ));
             }
         }
         _ => return Err(format!("{path} 必须是对象或布尔值")),
+    }
+
+    if schema
+        .get("description")
+        .is_some_and(|value| !value.is_string())
+    {
+        return Err(format!("{path}.description 必须是字符串"));
+    }
+
+    for keyword in ["minimum", "maximum"] {
+        if schema.get(keyword).is_some_and(|value| !value.is_number()) {
+            return Err(format!("{path}.{keyword} 必须是数字"));
+        }
+    }
+
+    if let Some(any_of) = schema.get("anyOf") {
+        let branches = any_of
+            .as_array()
+            .filter(|branches| !branches.is_empty())
+            .ok_or_else(|| format!("{path}.anyOf 必须是非空 schema 数组"))?;
+        for (index, branch) in branches.iter().enumerate() {
+            validate_schema_definition_at(branch, &format!("{path}.anyOf[{index}]"))?;
+        }
     }
 
     if let Some(type_schema) = schema.get("type") {
@@ -110,6 +136,8 @@ fn validate_schema_value(schema: &Value, value: &Value, path: &str) -> Result<()
     validate_const(schema, value, path)?;
     validate_enum(schema, value, path)?;
     validate_type(schema, value, path)?;
+    validate_number_bounds(schema, value, path)?;
+    validate_any_of(schema, value, path)?;
 
     if let Some(object) = value.as_object() {
         validate_required(schema, object, path)?;
@@ -122,6 +150,37 @@ fn validate_schema_value(schema: &Value, value: &Value, path: &str) -> Result<()
     }
 
     Ok(())
+}
+
+fn validate_number_bounds(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+    let Some(value) = value.as_f64() else {
+        return Ok(());
+    };
+    if let Some(minimum) = schema.get("minimum").and_then(Value::as_f64)
+        && value < minimum
+    {
+        return Err(format!("{path} 必须大于或等于 minimum {minimum}"));
+    }
+    if let Some(maximum) = schema.get("maximum").and_then(Value::as_f64)
+        && value > maximum
+    {
+        return Err(format!("{path} 必须小于或等于 maximum {maximum}"));
+    }
+    Ok(())
+}
+
+fn validate_any_of(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+    let Some(branches) = schema.get("anyOf").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    if branches
+        .iter()
+        .any(|branch| validate_schema_value(branch, value, path).is_ok())
+    {
+        Ok(())
+    } else {
+        Err(format!("{path} 不匹配 anyOf 中的任何 schema"))
+    }
 }
 
 fn validate_const(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
@@ -266,7 +325,7 @@ fn json_value_matches_type(value: &Value, expected: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::{validate_json_schema_definition, validate_json_schema_subset};
 
@@ -292,6 +351,9 @@ mod tests {
     fn rejects_unsupported_or_malformed_schema_definitions() {
         assert!(validate_json_schema_definition(&json!({ "oneOf": [] })).is_err());
         assert!(validate_json_schema_definition(&json!({ "type": "timestamp" })).is_err());
+        assert!(validate_json_schema_definition(&json!({ "description": true })).is_err());
+        assert!(validate_json_schema_definition(&json!({ "minimum": "zero" })).is_err());
+        assert!(validate_json_schema_definition(&json!({ "anyOf": [] })).is_err());
         assert!(
             validate_json_schema_definition(&json!({
                 "type": "object",
@@ -299,5 +361,52 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn accepts_description_annotations_on_nested_properties() {
+        let schema = json!({
+            "type": "object",
+            "required": ["patch"],
+            "properties": {
+                "patch": {
+                    "type": "string",
+                    "description": "The patch text in Codex apply_patch format."
+                }
+            },
+            "additionalProperties": false
+        });
+
+        assert!(validate_json_schema_definition(&schema).is_ok());
+        assert!(
+            validate_json_schema_subset(&schema, &json!({ "patch": "*** Begin Patch" })).is_ok()
+        );
+    }
+
+    #[test]
+    fn validates_numeric_bounds_and_any_of_branches() {
+        let schema = json!({
+            "anyOf": [
+                {
+                    "type": "object",
+                    "required": ["offset"],
+                    "properties": {
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 10
+                        }
+                    }
+                },
+                { "type": "null" }
+            ]
+        });
+
+        assert!(validate_json_schema_subset(&schema, &json!({ "offset": 0 })).is_ok());
+        assert!(validate_json_schema_subset(&schema, &json!({ "offset": 10 })).is_ok());
+        assert!(validate_json_schema_subset(&schema, &Value::Null).is_ok());
+        assert!(validate_json_schema_subset(&schema, &json!({ "offset": -1 })).is_err());
+        assert!(validate_json_schema_subset(&schema, &json!({ "offset": 11 })).is_err());
+        assert!(validate_json_schema_subset(&schema, &json!("invalid")).is_err());
     }
 }

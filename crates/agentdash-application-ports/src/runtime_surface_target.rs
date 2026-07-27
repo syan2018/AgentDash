@@ -1,6 +1,5 @@
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_platform_spi::hooks::HookControlTarget;
-use async_trait::async_trait;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,25 +25,4 @@ impl AgentFrameHookRuntimeTarget {
     pub fn frame_id(&self) -> Uuid {
         self.control_target.frame_id
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum RuntimeSurfaceAdoptionError {
-    #[error(
-        "runtime surface adoption target not found: frame_id={frame_id}, runtime_thread_id={runtime_thread_id}"
-    )]
-    MissingTarget {
-        frame_id: Uuid,
-        runtime_thread_id: RuntimeThreadId,
-    },
-    #[error("runtime surface adoption failed: {message}")]
-    Failed { message: String },
-}
-
-#[async_trait]
-pub trait RuntimeSurfaceAdoptionPort: Send + Sync {
-    async fn adopt_runtime_surface(
-        &self,
-        target: AgentFrameRuntimeTarget,
-    ) -> Result<(), RuntimeSurfaceAdoptionError>;
 }

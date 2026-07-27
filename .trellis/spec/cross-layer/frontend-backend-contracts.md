@@ -194,6 +194,15 @@ AgentRunCommandReceipt {
 - `workspace_module_presentation_requested` 是独立的 typed Backbone 产品事件。journal
   持久化它是为了审计与 feed 展示；命令式打开只消费 live 边界后的请求，原因是“曾请求展示”
   不等于“当前观察者仍应被强制切换界面”。
+- Agent 调用 `workspace_module_present` 时只提交 `module_id + view_key + payload`；后端根据 current
+  descriptor 构造 renderer、URI、title 与 Interaction attachment，前端只消费
+  `details.workspace_module_presentation`。
+- `interaction:{instance_id}` descriptor 的 `agent_state_projection` 是 pinned definition 中
+  allowlisted JSON Pointer 值，并携带 definition/state revision；它是只读观察结果，不替代 command
+  的 `expected_state_revision`。
+- iframe component event 只向 `/interaction-instances/{instance_id}/component-events` 提交
+  binding/event/payload/idempotency 坐标。后端从 pinned definition 解析 platform command、single
+  Operation 或 OperationScript target，原因是浏览器不能拥有 execution authority。
 - `ControlPlaneProjectionChanged` 只表达投影失效，`reason` 只决定需要重新查询哪些 read
   model。展示请求不嵌入 projection change，避免同一个事件同时承担状态同步和 UI 命令。
 - Agent-facing operation 只来自 generated operation catalog。panel-only action 不自动成为 Agent tool。

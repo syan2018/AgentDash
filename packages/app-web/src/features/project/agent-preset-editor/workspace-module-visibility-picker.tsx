@@ -8,6 +8,7 @@ import { CapabilityPicker } from "./capability-picker";
 const KIND_LABEL: Record<WorkspaceModuleKind, string> = {
   extension: "extension",
   canvas: "canvas",
+  interaction: "interaction",
   builtin: "builtin",
 };
 

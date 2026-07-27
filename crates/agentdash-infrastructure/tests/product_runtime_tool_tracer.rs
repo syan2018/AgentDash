@@ -27,7 +27,7 @@ use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
     ProductRuntimeToolService,
 };
-use agentdash_infrastructure::{WorkspaceModulePresentRuntimeTool, product_runtime_tool_catalog};
+use agentdash_infrastructure::product_runtime_tool_catalog;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -73,7 +73,7 @@ impl RuntimeToolAuthorizationPort for ProductGrantAuthorizer {
                 vfs_provenance: provenance.clone(),
                 task_digest: "task-digest".to_owned(),
                 product_binding_digest: "product-binding-digest".to_owned(),
-                host_binding_generation: 1,
+                host_binding_generation: Some(1),
             },
             resources: RuntimeToolResourceGrant::Product,
         })
@@ -229,13 +229,16 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
     let invoke_service = Arc::new(RecordingProductToolService::new(
         ProductRuntimeToolKind::WorkspaceModuleInvoke,
     ));
+    let present_service = Arc::new(RecordingProductToolService::new(
+        ProductRuntimeToolKind::WorkspaceModulePresent,
+    ));
     let services: Vec<Arc<dyn ProductRuntimeToolService>> = vec![
         list_service.clone(),
         describe_service.clone(),
         invoke_service.clone(),
+        present_service.clone(),
     ];
-    let mut executors = product_runtime_tool_catalog(services);
-    executors.push(Arc::new(WorkspaceModulePresentRuntimeTool::new()));
+    let executors = product_runtime_tool_catalog(services);
     let broker = Arc::new(
         PlatformToolBroker::new(executors, product_authorizer())
             .expect("final Product tool broker"),
@@ -263,8 +266,8 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
     assert_workspace_definition(
         &definitions,
         "workspace_module_present",
-        RuntimeToolPermission::ProductRead,
-        RuntimeToolEffect::ReadOnly,
+        RuntimeToolPermission::ProductWrite,
+        RuntimeToolEffect::ProductMutation,
     );
 
     let handler = RuntimePlatformToolHandler::new(broker);
@@ -315,9 +318,7 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
                 json!({
                     "module_id": "canvas:tracer",
                     "view_key": "default",
-                    "renderer_kind": "canvas",
-                    "presentation_uri": "canvas://tracer",
-                    "title": "Tracer",
+                    "payload": {"source": "tracer"}
                 }),
             ),
         })
@@ -326,14 +327,14 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
     let AgentToolResult::Completed { output } = presentation else {
         panic!("Workspace presentation must complete");
     };
-    assert_eq!(
-        output["details"]["workspace_module_presentation"]["presentation_uri"],
-        "canvas://tracer"
-    );
+    assert_eq!(output["arguments"]["module_id"], "canvas:tracer");
+    assert!(output["arguments"].get("renderer_kind").is_none());
+    assert!(output["arguments"].get("presentation_uri").is_none());
 
     assert_eq!(list_service.calls.load(Ordering::SeqCst), 1);
     assert_eq!(describe_service.calls.load(Ordering::SeqCst), 1);
     assert_eq!(invoke_service.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(present_service.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         invoke_service.requests.lock().await[0].context.effect_id,
         "workspace-invoke-effect"
@@ -699,5 +700,7 @@ fn runtime_tool_name(kind: ProductRuntimeToolKind) -> &'static str {
         ProductRuntimeToolKind::WorkspaceModuleList => "workspace_module_list",
         ProductRuntimeToolKind::WorkspaceModuleDescribe => "workspace_module_describe",
         ProductRuntimeToolKind::WorkspaceModuleInvoke => "workspace_module_invoke",
+        ProductRuntimeToolKind::WorkspaceModulePresent => "workspace_module_present",
+        ProductRuntimeToolKind::OperationScript => "operation_script",
     }
 }

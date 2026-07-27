@@ -25,6 +25,9 @@ use agentdash_application::companion::{
     ApplicationWorkflowScriptPreflightAdapter, CompanionRuntimeToolServiceDeps,
 };
 use agentdash_application::context::VfsDiscoveryRegistry;
+use agentdash_application::execution_authority::{
+    ExecutionAuthorityResolver, ProductExecutionAuthorityResolver,
+};
 use agentdash_application::frame_construction::{
     AgentRunProjectOwnerFrameConstructionAdapter, AgentRunProjectOwnerFrameConstructionDeps,
 };
@@ -38,6 +41,9 @@ use agentdash_application::project_agent_run_start::{
 };
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
+use agentdash_application::runtime_tools::operation_script_product::{
+    ApplicationOperationScriptRuntimeToolService, operation_script_runtime_tool_schema,
+};
 use agentdash_application::runtime_tools::workspace_module_product::{
     ApplicationWorkspaceModuleRuntimeToolService, WorkspaceModuleRuntimeToolDeps,
     workspace_module_runtime_tool_schema,
@@ -88,8 +94,8 @@ use agentdash_infrastructure::{
     PostgresAgentRunTerminalProjectionStore, PostgresWorkflowExecutorEffectRepository,
     PostgresWorkflowRecoveryRepository, ProcessShellTerminalRegistry,
     ProductCompleteAgentHookHandler, ProductRuntimeToolAuthorizer,
-    ProductionCompleteAgentServiceSelector, WorkspaceModulePresentRuntimeTool,
-    final_runtime_tool_catalog, product_runtime_tool_catalog,
+    ProductionCompleteAgentServiceSelector, RuntimeToolExecutionAuthority,
+    RuntimeToolExecutionAuthorityPort, final_runtime_tool_catalog, product_runtime_tool_catalog,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, AuthMode, CompleteAgentContributionError, MarketplaceSourceProvider,
@@ -175,7 +181,7 @@ pub struct ServiceSet {
     pub complete_agent_callbacks: Arc<dyn AgentHostCallbacks>,
     pub agent_run_product_projection: Arc<dyn AgentRunProductProjectionQueryPort>,
     pub agent_run_product_projection_composition: Arc<AgentRunProductProjectionComposition>,
-    pub agent_run_product_resource_surfaces: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
+    pub execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
     pub agent_run_product_runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
     pub agent_run_product_commands: Arc<AgentRunProductCommandFacade>,
     pub agent_run_product_launch: Arc<AgentRunProductLaunchService>,
@@ -226,6 +232,35 @@ pub struct AppConfig {
 
 pub struct SecretSet {
     pub llm_provider_secret: Arc<dyn LlmSecretCodec>,
+}
+
+struct ApplicationRuntimeToolExecutionAuthority {
+    execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
+}
+
+#[async_trait::async_trait]
+impl RuntimeToolExecutionAuthorityPort for ApplicationRuntimeToolExecutionAuthority {
+    async fn execution_authority(
+        &self,
+        runtime_thread_id: &agentdash_agent_runtime_contract::RuntimeThreadId,
+    ) -> Result<RuntimeToolExecutionAuthority, String> {
+        let binding = self
+            .execution_authorities
+            .resolve(
+                agentdash_application::execution_authority::ExecutionAuthorityRequest::for_runtime_thread(
+                    runtime_thread_id.clone(),
+                ),
+            )
+            .await
+            .map_err(|error| format!("{}: {error}", error.code()))?;
+        Ok(RuntimeToolExecutionAuthority {
+            runtime_thread_id: binding.runtime_thread_id().clone(),
+            capabilities: binding.operation_authority_grant().capabilities,
+            surface: binding.applied_resource_projection().ok_or_else(|| {
+                "ExecutionAuthority principal is not an AgentRun Agent".to_string()
+            })?,
+        })
+    }
 }
 
 pub struct AppState {
@@ -304,10 +339,16 @@ impl AppState {
                 )),
                 product_facts,
             ));
+        let execution_authorities: Arc<dyn ExecutionAuthorityResolver> =
+            Arc::new(ProductExecutionAuthorityResolver::new(
+                runtime_product_bindings.clone(),
+                repos.agent_frame_repo.clone(),
+                product_resource_surfaces.clone(),
+            ));
         let vfs_surface_resolver = Arc::new(VfsSurfaceResolver::new(VfsSurfaceResolverDeps {
             repos: repos.clone(),
             vfs_service: vfs_service.clone(),
-            applied_resource_surfaces: product_resource_surfaces.clone(),
+            execution_authorities: execution_authorities.clone(),
         }));
         let shell_terminal_registry = Arc::new(ProcessShellTerminalRegistry::default());
         let wait_activity_service = Arc::new(WaitActivityService::from_repositories(
@@ -345,20 +386,25 @@ impl AppState {
                 ProductRuntimeToolKind::WorkspaceModuleInvoke,
                 workspace_module_runtime_tool_schema(ProductRuntimeToolKind::WorkspaceModuleInvoke),
             ));
+        let workspace_module_present_runtime_tool =
+            Arc::new(DeferredProductRuntimeToolService::new(
+                ProductRuntimeToolKind::WorkspaceModulePresent,
+                workspace_module_runtime_tool_schema(
+                    ProductRuntimeToolKind::WorkspaceModulePresent,
+                ),
+            ));
+        let operation_script_runtime_tool = Arc::new(DeferredProductRuntimeToolService::new(
+            ProductRuntimeToolKind::OperationScript,
+            operation_script_runtime_tool_schema(),
+        ));
         let applied_vfs_tools = Arc::new(
             AppliedVfsRuntimeToolService::new(vfs_service.clone(), shell_terminal_registry.clone())
                 .with_materialization(Some(vfs_materialization_service))
                 .with_shell_output_registry(Some(shell_output_registry.clone())),
         );
         let runtime_task_tools = Arc::new(ApplicationRuntimeTaskToolService::new(repos.clone()));
-        let workspace_module_present_tool: Arc<dyn RuntimeToolExecutor> =
-            Arc::new(WorkspaceModulePresentRuntimeTool::new());
         let mut runtime_tool_catalog: Vec<Arc<dyn RuntimeToolExecutor>> =
-            final_runtime_tool_catalog(
-                applied_vfs_tools,
-                runtime_task_tools,
-                workspace_module_present_tool,
-            );
+            final_runtime_tool_catalog(applied_vfs_tools, runtime_task_tools);
         runtime_tool_catalog.extend(product_runtime_tool_catalog(vec![
             wait_activity_service.clone() as Arc<dyn ProductRuntimeToolService>,
             lifecycle_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
@@ -367,11 +413,14 @@ impl AppState {
             workspace_module_list_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_describe_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_invoke_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
+            workspace_module_present_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
+            operation_script_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
         ]));
-        let runtime_tool_authorizer = Arc::new(ProductRuntimeToolAuthorizer::new(
-            runtime_product_bindings.clone(),
-            product_resource_surfaces.clone(),
-        ));
+        let runtime_tool_authorizer = Arc::new(ProductRuntimeToolAuthorizer::new(Arc::new(
+            ApplicationRuntimeToolExecutionAuthority {
+                execution_authorities: execution_authorities.clone(),
+            },
+        )));
         let runtime_tool_broker = Arc::new(
             PlatformToolBroker::new(runtime_tool_catalog, runtime_tool_authorizer)
                 .map_err(anyhow::Error::msg)?,
@@ -600,15 +649,20 @@ impl AppState {
             crate::bootstrap::runtime_gateway::SharedOperationGatewayHandle::default();
         let operation_mcp_access = Arc::new(
             crate::bootstrap::product_operation_mcp_access::ProductRuntimeMcpOperationAccess::new(
-                runtime_product_bindings.clone(),
-                repos.agent_frame_repo.clone(),
+                execution_authorities.clone(),
                 dynamic_runtime_tools,
             ),
         );
         let operation_gateway = crate::bootstrap::runtime_gateway::build_operation_gateway(
             mcp_probe_relay,
             operation_mcp_access,
-            runtime_product_bindings.clone(),
+            execution_authorities.clone(),
+            Arc::new(
+                crate::bootstrap::product_operation_platform_tool_access::ProductPlatformToolOperationAccess::new(
+                    execution_authorities.clone(),
+                    runtime_tool_broker.clone(),
+                ),
+            ),
             repos.clone(),
             backend_registry.clone(),
             setup_action_transport,
@@ -629,6 +683,12 @@ impl AppState {
             )
             .map_err(|error| anyhow::anyhow!(error.to_string()))?,
         );
+        operation_script_runtime_tool
+            .install(Arc::new(ApplicationOperationScriptRuntimeToolService::new(
+                operation_gateway.clone(),
+                operation_script_engine.clone(),
+            )))
+            .map_err(anyhow::Error::msg)?;
         let workflow_operation_script_caller =
             agentdash_application_workflow::SharedWorkflowOperationScriptCaller::default();
         workflow_operation_script_caller
@@ -644,11 +704,10 @@ impl AppState {
             backend_registry.clone(),
         ));
         let workspace_module_runtime_tool_deps = WorkspaceModuleRuntimeToolDeps {
-            runtime_bindings: runtime_product_bindings.clone(),
-            applied_surfaces: product_resource_surfaces.clone(),
-            frames: repos.agent_frame_repo.clone(),
+            execution_authorities: execution_authorities.clone(),
             installations: repos.project_extension_installation_repo.clone(),
             definitions: repos.interaction_definition_repo.clone(),
+            instances: repos.interaction_instance_repo.clone(),
             operation_gateway: operation_gateway.clone(),
         };
         workspace_module_list_runtime_tool
@@ -666,6 +725,12 @@ impl AppState {
         workspace_module_invoke_runtime_tool
             .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
                 ProductRuntimeToolKind::WorkspaceModuleInvoke,
+                workspace_module_runtime_tool_deps.clone(),
+            )))
+            .map_err(anyhow::Error::msg)?;
+        workspace_module_present_runtime_tool
+            .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
+                ProductRuntimeToolKind::WorkspaceModulePresent,
                 workspace_module_runtime_tool_deps.clone(),
             )))
             .map_err(anyhow::Error::msg)?;
@@ -767,7 +832,7 @@ impl AppState {
                 complete_agent_selections,
                 agent_run_product_projection: product.gateway.clone(),
                 agent_run_product_projection_composition: product.clone(),
-                agent_run_product_resource_surfaces: product_resource_surfaces,
+                execution_authorities,
                 agent_run_product_runtime_bindings: product.runtime_bindings.clone(),
                 agent_run_product_commands: product_commands,
                 agent_run_product_launch: product_launch,

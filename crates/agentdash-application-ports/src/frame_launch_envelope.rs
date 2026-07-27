@@ -224,7 +224,7 @@ pub trait AcceptedLaunchCommitPort: Send + Sync {
 pub trait AcceptedLaunchHookRuntimeSync: Send + Sync {
     async fn sync_accepted_launch_hook_runtime(
         &self,
-        target: crate::runtime_surface_adoption::AgentFrameRuntimeTarget,
+        target: crate::runtime_surface_target::AgentFrameRuntimeTarget,
         turn_id: &str,
     ) -> Result<(), agentdash_platform_spi::PlatformRuntimeError>;
 }

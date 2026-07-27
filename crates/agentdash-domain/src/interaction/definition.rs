@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
 use crate::operation::OperationRef;
@@ -93,6 +94,85 @@ pub struct InteractionOperationEffectDefinition {
     pub operation_ref: OperationRef,
 }
 
+pub const AGENT_STATE_PROJECTION_V1: u16 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractionAgentProjection {
+    pub version: u16,
+    pub allowed_state_paths: Vec<String>,
+}
+
+impl Default for InteractionAgentProjection {
+    fn default() -> Self {
+        Self {
+            version: AGENT_STATE_PROJECTION_V1,
+            allowed_state_paths: Vec::new(),
+        }
+    }
+}
+
+impl InteractionAgentProjection {
+    pub fn validate(&self) -> InteractionResult<()> {
+        if self.version != AGENT_STATE_PROJECTION_V1 {
+            return Err(InteractionError::InvalidField {
+                field: "agent_projection.version",
+                reason: "只支持 V1 Agent state projection",
+            });
+        }
+        let mut unique = HashSet::new();
+        for path in &self.allowed_state_paths {
+            if !valid_json_pointer(path) {
+                return Err(InteractionError::InvalidField {
+                    field: "agent_projection.allowed_state_paths",
+                    reason: "必须是非根 canonical JSON Pointer",
+                });
+            }
+            if !unique.insert(path) {
+                return Err(InteractionError::InvalidField {
+                    field: "agent_projection.allowed_state_paths",
+                    reason: "JSON Pointer 必须唯一",
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn project(&self, state: &Value) -> InteractionResult<BTreeMap<String, Value>> {
+        self.validate()?;
+        self.allowed_state_paths
+            .iter()
+            .map(|path| {
+                state
+                    .pointer(path)
+                    .cloned()
+                    .map(|value| (path.clone(), value))
+                    .ok_or_else(|| InteractionError::InvalidField {
+                        field: "agent_projection.allowed_state_paths",
+                        reason: "JSON Pointer 在 current state 中不存在",
+                    })
+            })
+            .collect()
+    }
+}
+
+fn valid_json_pointer(path: &str) -> bool {
+    !path.is_empty()
+        && path.starts_with('/')
+        && path.split('/').skip(1).all(|token| {
+            let bytes = token.as_bytes();
+            let mut index = 0;
+            while index < bytes.len() {
+                if bytes[index] == b'~'
+                    && (index + 1 >= bytes.len() || !matches!(bytes[index + 1], b'0' | b'1'))
+                {
+                    return false;
+                }
+                index += if bytes[index] == b'~' { 2 } else { 1 };
+            }
+            true
+        })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ComponentBinding {
     pub binding_key: String,
@@ -100,14 +180,38 @@ pub struct ComponentBinding {
     pub component_abi_version: u16,
     pub props: Value,
     #[serde(default)]
-    pub event_commands: Vec<ComponentEventCommandBinding>,
+    pub event_bindings: Vec<ComponentEventBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ComponentEventCommandBinding {
+pub struct ComponentEventBinding {
     pub event_type: String,
     pub payload_schema: Value,
-    pub command_key: String,
+    pub target: ComponentEventTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ComponentEventTarget {
+    PlatformCommand {
+        command_key: String,
+    },
+    Operation {
+        operation_ref: OperationRef,
+    },
+    OperationScript {
+        language: String,
+        host_api_version: u16,
+        source: ComponentOperationScriptSource,
+        requested_operations: Vec<OperationRef>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ComponentOperationScriptSource {
+    Inline { source: String },
+    SourceFile { path: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,6 +272,7 @@ pub struct InteractionDefinitionRevision {
     pub source_bundle: SourceBundle,
     pub initial_state: Value,
     pub state_schema: Value,
+    pub agent_projection: InteractionAgentProjection,
     #[serde(default)]
     pub command_definitions: Vec<InteractionCommandDefinition>,
     #[serde(default)]
@@ -207,6 +312,7 @@ impl InteractionDefinitionRevision {
             source_bundle,
             initial_state,
             state_schema,
+            agent_projection: InteractionAgentProjection::default(),
             command_definitions: Vec::new(),
             component_bindings: Vec::new(),
             resource_slots: Vec::new(),
@@ -242,6 +348,7 @@ impl InteractionDefinitionRevision {
         require_non_empty("definition_revision.title", &self.title)?;
         require_non_empty("definition_revision.created_by", &self.created_by)?;
         self.source_bundle.verify_digest()?;
+        self.agent_projection.validate()?;
         validate_unique_keys(
             "command_definitions.command_key",
             self.command_definitions
@@ -298,19 +405,76 @@ impl InteractionDefinitionRevision {
             validate_unique_keys(
                 "component_bindings.event_type",
                 component
-                    .event_commands
+                    .event_bindings
                     .iter()
                     .map(|event| event.event_type.as_str()),
             )?;
-            if component
-                .event_commands
-                .iter()
-                .any(|event| !command_keys.contains(event.command_key.as_str()))
-            {
-                return Err(InteractionError::InvalidField {
-                    field: "component_bindings.command_key",
-                    reason: "event 必须引用同 revision 内存在的 command",
-                });
+            for event in &component.event_bindings {
+                match &event.target {
+                    ComponentEventTarget::PlatformCommand { command_key }
+                        if !command_keys.contains(command_key.as_str()) =>
+                    {
+                        return Err(InteractionError::InvalidField {
+                            field: "component_bindings.target.command_key",
+                            reason: "event 必须引用同 revision 内存在的 command",
+                        });
+                    }
+                    ComponentEventTarget::Operation { operation_ref } => {
+                        operation_ref.validate().map_err(|error| {
+                            InteractionError::InvalidOperationRef {
+                                reason: error.to_string(),
+                            }
+                        })?;
+                    }
+                    ComponentEventTarget::OperationScript {
+                        language,
+                        host_api_version,
+                        source,
+                        requested_operations,
+                    } => {
+                        if language != "rhai_v1"
+                            || *host_api_version != 1
+                            || requested_operations.is_empty()
+                        {
+                            return Err(InteractionError::InvalidField {
+                                field: "component_bindings.target.operation_script",
+                                reason: "必须声明 rhai_v1、host API V1 与至少一个 exact OperationRef",
+                            });
+                        }
+                        for operation_ref in requested_operations {
+                            operation_ref.validate().map_err(|error| {
+                                InteractionError::InvalidOperationRef {
+                                    reason: error.to_string(),
+                                }
+                            })?;
+                        }
+                        match source {
+                            ComponentOperationScriptSource::Inline { source }
+                                if source.trim().is_empty() =>
+                            {
+                                return Err(InteractionError::InvalidField {
+                                    field: "component_bindings.target.operation_script.source",
+                                    reason: "inline Rhai source 不能为空",
+                                });
+                            }
+                            ComponentOperationScriptSource::SourceFile { path }
+                                if !path.ends_with(".rhai")
+                                    || !self
+                                        .source_bundle
+                                        .files
+                                        .iter()
+                                        .any(|file| file.path == *path) =>
+                            {
+                                return Err(InteractionError::InvalidField {
+                                    field: "component_bindings.target.operation_script.source_file",
+                                    reason: "必须引用当前 immutable SourceBundle 中的 .rhai 文件",
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         if let Some(lineage) = &self.lineage {
@@ -585,5 +749,91 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn agent_projection_exposes_only_allowlisted_state_paths() {
+        let projection = InteractionAgentProjection {
+            version: AGENT_STATE_PROJECTION_V1,
+            allowed_state_paths: vec!["/board/title".into(), "/items/0/id".into()],
+        };
+        let projected = projection
+            .project(&serde_json::json!({
+                "board": {"title": "Sprint", "secret": "hidden"},
+                "items": [{"id": "item-1", "token": "hidden"}]
+            }))
+            .expect("projection");
+
+        assert_eq!(projected["/board/title"], serde_json::json!("Sprint"));
+        assert_eq!(projected["/items/0/id"], serde_json::json!("item-1"));
+        assert_eq!(projected.len(), 2);
+    }
+
+    #[test]
+    fn agent_projection_rejects_root_and_invalid_escape() {
+        for path in ["", "/secret~2token"] {
+            let projection = InteractionAgentProjection {
+                version: AGENT_STATE_PROJECTION_V1,
+                allowed_state_paths: vec![path.into()],
+            };
+            assert!(projection.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn component_operation_script_source_must_be_pinned_rhai() {
+        let project_id = Uuid::new_v4();
+        let mut revision = InteractionDefinitionRevision::new_canvas_v1(
+            Uuid::new_v4(),
+            1,
+            project_id,
+            InteractionOwner::Project(project_id),
+            "Scripted",
+            "",
+            SourceBundle::new(
+                "src/main.tsx",
+                vec![
+                    SourceFile::new("src/main.tsx", "export {};", None).expect("source"),
+                    SourceFile::new("actions/load.rhai", "return input;", None).expect("script"),
+                ],
+                SourceSandboxConfig::default(),
+            )
+            .expect("bundle"),
+            serde_json::json!({}),
+            serde_json::json!({"type": "object"}),
+            "user-1",
+        )
+        .expect("revision");
+        let operation_ref =
+            OperationRef::new("extension", "metrics", "load", 1).expect("operation ref");
+        revision.component_bindings.push(ComponentBinding {
+            binding_key: "metrics".into(),
+            component_ref: "metrics-card".into(),
+            component_abi_version: 1,
+            props: serde_json::json!({}),
+            event_bindings: vec![ComponentEventBinding {
+                event_type: "refresh".into(),
+                payload_schema: serde_json::json!({"type": "object"}),
+                target: ComponentEventTarget::OperationScript {
+                    language: "rhai_v1".into(),
+                    host_api_version: 1,
+                    source: ComponentOperationScriptSource::SourceFile {
+                        path: "actions/load.rhai".into(),
+                    },
+                    requested_operations: vec![operation_ref],
+                },
+            }],
+        });
+        assert!(revision.validate().is_ok());
+
+        let ComponentEventTarget::OperationScript { source, .. } =
+            &mut revision.component_bindings[0].event_bindings[0].target
+        else {
+            panic!("script target");
+        };
+        *source = ComponentOperationScriptSource::SourceFile {
+            path: "actions/missing.rhai".into(),
+        };
+        assert!(revision.validate().is_err());
     }
 }

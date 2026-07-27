@@ -19,7 +19,6 @@ agentdash-application-skill = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-application-workflow = { workspace = true }
 agentdash-application-shared-library = { workspace = true }
-agentdash-workspace-module = { workspace = true }
 agentdash-contracts = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-relay = { workspace = true }

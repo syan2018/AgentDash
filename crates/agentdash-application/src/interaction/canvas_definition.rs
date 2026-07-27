@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use agentdash_domain::interaction::{
     ComponentBinding, DefinitionLineage, DefinitionLineageKind, DefinitionRevisionCommit,
-    InteractionCommandDefinition, InteractionDefinition, InteractionDefinitionAccess,
-    InteractionDefinitionRepository, InteractionDefinitionRevision, InteractionDefinitionStatus,
-    InteractionError, InteractionOwner, ResourceSlotDefinition, SourceBundle,
-    SourceBundleChangeset,
+    InteractionAgentProjection, InteractionCommandDefinition, InteractionDefinition,
+    InteractionDefinitionAccess, InteractionDefinitionRepository, InteractionDefinitionRevision,
+    InteractionDefinitionStatus, InteractionError, InteractionOwner, ResourceSlotDefinition,
+    SourceBundle, SourceBundleChangeset,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -53,6 +53,7 @@ pub struct CreateCanvasDefinitionInput {
     pub source_bundle: SourceBundle,
     pub initial_state: Value,
     pub state_schema: Value,
+    pub agent_projection: InteractionAgentProjection,
     pub command_definitions: Vec<InteractionCommandDefinition>,
     pub component_bindings: Vec<ComponentBinding>,
     pub resource_slots: Vec<ResourceSlotDefinition>,
@@ -68,6 +69,7 @@ pub struct CommitCanvasDefinitionInput {
     pub command_definitions: Option<Vec<InteractionCommandDefinition>>,
     pub component_bindings: Option<Vec<ComponentBinding>>,
     pub resource_slots: Option<Vec<ResourceSlotDefinition>>,
+    pub agent_projection: Option<InteractionAgentProjection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +129,7 @@ impl CanvasDefinitionService {
         revision.command_definitions = input.command_definitions;
         revision.component_bindings = input.component_bindings;
         revision.resource_slots = input.resource_slots;
+        revision.agent_projection = input.agent_projection;
         revision.validate()?;
         let (definition, revision) = revision.into_initial_definition()?;
         self.definitions.create(&definition, &revision).await?;
@@ -224,12 +227,16 @@ impl CanvasDefinitionService {
         revision.resource_slots = input
             .resource_slots
             .unwrap_or_else(|| current.resource_slots.clone());
+        revision.agent_projection = input
+            .agent_projection
+            .unwrap_or_else(|| current.agent_projection.clone());
         if revision.source_bundle.digest == current.source_bundle.digest
             && revision.title == current.title
             && revision.description == current.description
             && revision.command_definitions == current.command_definitions
             && revision.component_bindings == current.component_bindings
             && revision.resource_slots == current.resource_slots
+            && revision.agent_projection == current.agent_projection
         {
             return Err(InteractionApplicationError::InvalidCommand {
                 field: "definition_changeset",

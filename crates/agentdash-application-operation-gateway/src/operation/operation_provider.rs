@@ -43,6 +43,8 @@ pub trait OperationProvider: Send + Sync {
 /// facts (for example MCP servers and Project Extension installations).
 #[async_trait]
 pub trait DynamicOperationProvider: Send + Sync {
+    fn surface_source(&self) -> &'static str;
+
     fn owns_provider(&self, provider: &OperationProviderRef) -> bool;
 
     async fn discover(

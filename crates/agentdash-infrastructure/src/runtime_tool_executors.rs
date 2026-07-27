@@ -4,10 +4,10 @@ use std::{
 };
 
 use agentdash_agent_runtime::{
-    RuntimeTaskExecutionScope, RuntimeTaskGrantedOperation, RuntimeToolDefinition,
-    RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation, RuntimeToolPermission,
-    RuntimeToolProvenance, RuntimeToolResourceGrant, RuntimeVfsGrantedOperation,
-    RuntimeVfsPathGrant, ToolProtocolProjector,
+    RuntimeTaskExecutionScope, RuntimeTaskGrantedOperation, RuntimeToolAuthorizationPolicy,
+    RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation,
+    RuntimeToolPermission, RuntimeToolProvenance, RuntimeToolResourceGrant,
+    RuntimeVfsGrantedOperation, RuntimeVfsPathGrant, ToolProtocolProjector,
 };
 use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
 use agentdash_application_agentrun::runtime_task_tools::{
@@ -23,7 +23,6 @@ use agentdash_application_vfs::{
     AppliedVfsToolOutcome, AppliedVfsToolOwner, AppliedVfsToolPathScope, AppliedVfsToolRequest,
     AppliedVfsToolSurface,
 };
-use agentdash_contracts::workspace_module::WorkspaceModulePresentation;
 use agentdash_platform_spi::{
     PlatformMcpScope, ToolCluster, context_usage_kind,
     platform::tool_capability::{ToolSource, platform_tool_descriptors},
@@ -34,7 +33,6 @@ use uuid::Uuid;
 pub fn final_runtime_tool_catalog(
     vfs: Arc<AppliedVfsRuntimeToolService>,
     task: Arc<dyn RuntimeTaskToolService>,
-    workspace_module_present: Arc<dyn RuntimeToolExecutor>,
 ) -> Vec<Arc<dyn RuntimeToolExecutor>> {
     vec![
         Arc::new(MountsListRuntimeTool::new(vfs.clone())),
@@ -45,7 +43,6 @@ pub fn final_runtime_tool_catalog(
         Arc::new(ShellExecRuntimeTool::new(vfs)),
         Arc::new(RuntimeTaskReadTool::new(task.clone())),
         Arc::new(RuntimeTaskWriteTool::new(task)),
-        workspace_module_present,
     ]
 }
 
@@ -185,6 +182,7 @@ impl RuntimeToolExecutor for ProductCommandRuntimeTool {
             protocol_projector: ToolProtocolProjector::Dynamic,
             permission,
             effect,
+            authorization_policy: RuntimeToolAuthorizationPolicy::Product,
         }
     }
 
@@ -221,7 +219,7 @@ impl RuntimeToolExecutor for ProductCommandRuntimeTool {
                 turn_id: invocation.context.turn_id.to_string(),
                 item_id: invocation.context.item_id.map(|value| value.to_string()),
                 effect_id: invocation.context.effect_id.to_string(),
-                invocation_id: invocation.context.callback_idempotency_key,
+                invocation_id: invocation.context.invocation_id,
                 deadline_at_ms: invocation.context.deadline_at_ms,
             },
             arguments: invocation.arguments,
@@ -291,11 +289,23 @@ fn product_tool_definition(
             RuntimeToolPermission::ProductWrite,
             RuntimeToolEffect::ProductMutation,
         ),
+        ProductRuntimeToolKind::WorkspaceModulePresent => (
+            "workspace_module_present",
+            "Resolve and present a trusted Workspace Module view in the current AgentRun.",
+            RuntimeToolPermission::ProductWrite,
+            RuntimeToolEffect::ProductMutation,
+        ),
+        ProductRuntimeToolKind::OperationScript => (
+            "operation_script",
+            "Validate and execute an ephemeral multi-Operation Rhai program through the canonical OperationGateway.",
+            RuntimeToolPermission::ProductWrite,
+            RuntimeToolEffect::ProductMutation,
+        ),
     }
 }
 
 macro_rules! vfs_executor {
-    ($name:ident, $tool_name:literal, $kind:expr, $description:literal, $projector:expr, $permission:expr, $effect:expr) => {
+    ($name:ident, $tool_name:literal, $kind:expr, $description:literal, $projector:expr, $permission:expr, $effect:expr, $authorization_policy:expr) => {
         pub struct $name {
             service: Arc<AppliedVfsRuntimeToolService>,
         }
@@ -317,6 +327,7 @@ macro_rules! vfs_executor {
                     protocol_projector: $projector,
                     permission: $permission,
                     effect: $effect,
+                    authorization_policy: $authorization_policy,
                 }
             }
 
@@ -334,7 +345,8 @@ vfs_executor!(
     "List VFS mounts granted by the applied AgentRun resource surface.",
     ToolProtocolProjector::Dynamic,
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly
+    RuntimeToolEffect::ReadOnly,
+    RuntimeToolAuthorizationPolicy::VfsMountCatalog
 );
 vfs_executor!(
     FsReadRuntimeTool,
@@ -343,7 +355,8 @@ vfs_executor!(
     "Read a file through the applied AgentRun VFS surface.",
     ToolProtocolProjector::FsRead,
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly
+    RuntimeToolEffect::ReadOnly,
+    RuntimeToolAuthorizationPolicy::VfsRead
 );
 vfs_executor!(
     FsGlobRuntimeTool,
@@ -352,7 +365,8 @@ vfs_executor!(
     "List files matching a glob through the applied AgentRun VFS surface.",
     ToolProtocolProjector::FsGlob,
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly
+    RuntimeToolEffect::ReadOnly,
+    RuntimeToolAuthorizationPolicy::VfsGlob
 );
 vfs_executor!(
     FsGrepRuntimeTool,
@@ -361,7 +375,8 @@ vfs_executor!(
     "Search file contents through the applied AgentRun VFS surface.",
     ToolProtocolProjector::FsGrep,
     RuntimeToolPermission::VfsRead,
-    RuntimeToolEffect::ReadOnly
+    RuntimeToolEffect::ReadOnly,
+    RuntimeToolAuthorizationPolicy::VfsGrep
 );
 vfs_executor!(
     FsApplyPatchRuntimeTool,
@@ -370,7 +385,8 @@ vfs_executor!(
     "Apply a patch through the applied AgentRun VFS surface.",
     ToolProtocolProjector::FileChange,
     RuntimeToolPermission::VfsWrite,
-    RuntimeToolEffect::VfsMutation
+    RuntimeToolEffect::VfsMutation,
+    RuntimeToolAuthorizationPolicy::VfsApplyPatch
 );
 vfs_executor!(
     ShellExecRuntimeTool,
@@ -379,7 +395,8 @@ vfs_executor!(
     "Execute or continue a shell command through the applied AgentRun VFS surface.",
     ToolProtocolProjector::Command,
     RuntimeToolPermission::ProcessExecute,
-    RuntimeToolEffect::LocalProcess
+    RuntimeToolEffect::LocalProcess,
+    RuntimeToolAuthorizationPolicy::VfsShell
 );
 
 pub struct RuntimeTaskReadTool {
@@ -413,6 +430,7 @@ impl RuntimeToolExecutor for RuntimeTaskReadTool {
             protocol_projector: ToolProtocolProjector::Dynamic,
             permission: RuntimeToolPermission::ProductRead,
             effect: RuntimeToolEffect::ReadOnly,
+            authorization_policy: RuntimeToolAuthorizationPolicy::TaskRead,
         }
     }
 
@@ -432,6 +450,7 @@ impl RuntimeToolExecutor for RuntimeTaskWriteTool {
             protocol_projector: ToolProtocolProjector::Dynamic,
             permission: RuntimeToolPermission::ProductWrite,
             effect: RuntimeToolEffect::ProductMutation,
+            authorization_policy: RuntimeToolAuthorizationPolicy::TaskWrite,
         }
     }
 
@@ -442,84 +461,6 @@ impl RuntimeToolExecutor for RuntimeTaskWriteTool {
             invocation,
         )
         .await
-    }
-}
-
-pub struct WorkspaceModulePresentRuntimeTool;
-
-impl WorkspaceModulePresentRuntimeTool {
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
-#[async_trait]
-impl RuntimeToolExecutor for WorkspaceModulePresentRuntimeTool {
-    fn definition(&self) -> RuntimeToolDefinition {
-        RuntimeToolDefinition {
-            name: AgentToolName::new("workspace_module_present").expect("static runtime tool name"),
-            description:
-                "Request presentation of a typed Workspace Module view in the current AgentRun."
-                    .to_owned(),
-            parameters_schema: serde_json::json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                    "module_id",
-                    "view_key",
-                    "renderer_kind",
-                    "presentation_uri",
-                    "title"
-                ],
-                "properties": {
-                    "module_id": {"type": "string", "minLength": 1},
-                    "view_key": {"type": "string", "minLength": 1},
-                    "renderer_kind": {"type": "string", "minLength": 1},
-                    "presentation_uri": {"type": "string", "minLength": 1},
-                    "title": {"type": "string"},
-                    "payload": {},
-                    "diagnostics": {}
-                }
-            }),
-            provenance: platform_tool_provenance("workspace_module_present"),
-            protocol_projector: ToolProtocolProjector::Dynamic,
-            permission: RuntimeToolPermission::ProductRead,
-            effect: RuntimeToolEffect::ReadOnly,
-        }
-    }
-
-    async fn execute(&self, invocation: RuntimeToolInvocation) -> AgentToolResult {
-        if !matches!(
-            invocation.grant.resources,
-            RuntimeToolResourceGrant::Product
-        ) {
-            return rejected(
-                "runtime_product_grant_required",
-                "Workspace Module presentation requires a typed Product execution grant",
-            );
-        }
-        let presentation: WorkspaceModulePresentation =
-            match serde_json::from_value(invocation.arguments) {
-                Ok(value) => value,
-                Err(error) => {
-                    return rejected(
-                        "invalid_workspace_module_presentation",
-                        format!("Workspace Module presentation arguments are invalid: {error}"),
-                    );
-                }
-            };
-        AgentToolResult::Completed {
-            output: serde_json::json!({
-                "content": [{
-                    "type": "text",
-                    "text": format!("Workspace Module `{}` presentation requested", presentation.title),
-                }],
-                "is_error": false,
-                "details": {
-                    "workspace_module_presentation": presentation,
-                },
-            }),
-        }
     }
 }
 
@@ -586,7 +527,7 @@ async fn execute_vfs(
                 run_id,
                 agent_id,
                 runtime_thread_id: invocation.context.runtime_thread_id.to_string(),
-                invocation_id: invocation.context.callback_idempotency_key,
+                invocation_id: invocation.context.invocation_id,
             },
         })
         .await
@@ -709,9 +650,7 @@ mod tests {
     };
     use agentdash_agent_runtime_contract::RuntimeThreadId;
     use agentdash_agent_service_api::{
-        AgentBindingGeneration, AgentEffectIdentity, AgentItemId, AgentProfileDigest,
-        AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceDigest, AgentSurfaceRevision,
-        AgentTurnId,
+        AgentBindingGeneration, AgentEffectIdentity, AgentItemId, AgentSurfaceRevision, AgentTurnId,
     };
     use serde_json::Value;
 
@@ -757,32 +696,6 @@ mod tests {
         }
     }
 
-    struct NoopWorkspaceModulePresentTool;
-
-    #[async_trait]
-    impl RuntimeToolExecutor for NoopWorkspaceModulePresentTool {
-        fn definition(&self) -> RuntimeToolDefinition {
-            RuntimeToolDefinition {
-                name: AgentToolName::new("workspace_module_present").expect("tool"),
-                description: "fixture".to_owned(),
-                parameters_schema: serde_json::json!({
-                    "type": "object",
-                    "owner": "workspace_module_present"
-                }),
-                provenance: platform_tool_provenance("workspace_module_present"),
-                protocol_projector: ToolProtocolProjector::Dynamic,
-                permission: RuntimeToolPermission::ProductWrite,
-                effect: RuntimeToolEffect::ProductMutation,
-            }
-        }
-
-        async fn execute(&self, _: RuntimeToolInvocation) -> AgentToolResult {
-            AgentToolResult::Completed {
-                output: Value::Null,
-            }
-        }
-    }
-
     struct NoopProductToolService {
         kind: ProductRuntimeToolKind,
     }
@@ -818,14 +731,13 @@ mod tests {
     }
 
     #[test]
-    fn final_runtime_catalog_defines_all_nine_platform_tools() {
+    fn final_runtime_catalog_defines_all_eight_base_platform_tools() {
         let vfs = Arc::new(AppliedVfsRuntimeToolService::new(
             Arc::new(VfsService::new(Arc::new(MountProviderRegistry::new()))),
             Arc::new(NoopTerminalRegistry),
         ));
         let task: Arc<dyn RuntimeTaskToolService> = Arc::new(NoopTaskService);
-        let executors =
-            final_runtime_tool_catalog(vfs, task, Arc::new(NoopWorkspaceModulePresentTool));
+        let executors = final_runtime_tool_catalog(vfs, task);
         assert_eq!(
             executors
                 .iter()
@@ -840,7 +752,6 @@ mod tests {
                 "shell_exec",
                 "task_read",
                 "task_write",
-                "workspace_module_present",
             ]
         );
         let definitions = executors
@@ -863,7 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn final_runtime_catalog_uses_all_nine_owner_parameter_schemas_exactly() {
+    fn final_runtime_catalog_uses_all_eight_owner_parameter_schemas_exactly() {
         let vfs = Arc::new(AppliedVfsRuntimeToolService::new(
             Arc::new(VfsService::new(Arc::new(MountProviderRegistry::new()))),
             Arc::new(NoopTerminalRegistry),
@@ -878,16 +789,12 @@ mod tests {
             AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::ShellExec),
             task.parameters_schema(RuntimeTaskToolKind::Read),
             task.parameters_schema(RuntimeTaskToolKind::Write),
-            NoopWorkspaceModulePresentTool
-                .definition()
-                .parameters_schema,
         ];
 
-        let actual =
-            final_runtime_tool_catalog(vfs, task, Arc::new(NoopWorkspaceModulePresentTool))
-                .into_iter()
-                .map(|executor| executor.definition().parameters_schema)
-                .collect::<Vec<_>>();
+        let actual = final_runtime_tool_catalog(vfs, task)
+            .into_iter()
+            .map(|executor| executor.definition().parameters_schema)
+            .collect::<Vec<_>>();
 
         assert_eq!(actual, expected);
         assert_eq!(actual[1]["properties"]["path"]["type"], "string");
@@ -907,6 +814,8 @@ mod tests {
             ProductRuntimeToolKind::WorkspaceModuleList,
             ProductRuntimeToolKind::WorkspaceModuleDescribe,
             ProductRuntimeToolKind::WorkspaceModuleInvoke,
+            ProductRuntimeToolKind::WorkspaceModulePresent,
+            ProductRuntimeToolKind::OperationScript,
         ]
         .into_iter()
         .map(|kind| {
@@ -930,6 +839,8 @@ mod tests {
                 "workspace_module_list",
                 "workspace_module_describe",
                 "workspace_module_invoke",
+                "workspace_module_present",
+                "operation_script",
             ]
         );
         assert_eq!(
@@ -950,9 +861,17 @@ mod tests {
             definition.permission == RuntimeToolPermission::ProductRead
                 && definition.effect == RuntimeToolEffect::ReadOnly
         }));
-        assert!(definitions[6..].iter().all(|definition| {
+        assert!(definitions[6..8].iter().all(|definition| {
             definition.permission == RuntimeToolPermission::ProductWrite
                 && definition.effect == RuntimeToolEffect::ProductMutation
+        }));
+        assert_eq!(
+            definitions[8].permission,
+            RuntimeToolPermission::ProductWrite
+        );
+        assert_eq!(definitions[8].effect, RuntimeToolEffect::ProductMutation);
+        assert!(definitions.iter().all(|definition| {
+            definition.authorization_policy == RuntimeToolAuthorizationPolicy::Product
         }));
     }
 
@@ -1008,18 +927,12 @@ mod tests {
     fn product_runtime_context() -> RuntimeToolResolvedContext {
         RuntimeToolResolvedContext {
             runtime_thread_id: RuntimeThreadId::new("runtime-thread").expect("thread"),
-            binding_generation: AgentBindingGeneration(1),
-            source: AgentSourceCoordinate::new("source").expect("source"),
-            service_instance_id: AgentServiceInstanceId::new("service").expect("service"),
-            profile_digest: AgentProfileDigest::new("profile").expect("profile"),
-            bound_surface_revision: AgentSurfaceRevision(1),
-            bound_surface_digest: AgentSurfaceDigest::new("bound").expect("bound"),
+            host_binding_generation: Some(AgentBindingGeneration(1)),
             applied_surface_revision: AgentSurfaceRevision(1),
-            applied_surface_digest: AgentSurfaceDigest::new("applied").expect("applied"),
             turn_id: AgentTurnId::new("turn").expect("turn"),
             item_id: Some(AgentItemId::new("item").expect("item")),
             effect_id: AgentEffectIdentity::new("effect").expect("effect"),
-            callback_idempotency_key: "callback".to_owned(),
+            invocation_id: "callback".to_owned(),
             deadline_at_ms: u64::MAX,
         }
     }
@@ -1051,7 +964,7 @@ mod tests {
                 vfs_provenance: provenance.clone(),
                 task_digest: "task".to_owned(),
                 product_binding_digest: "binding".to_owned(),
-                host_binding_generation: 1,
+                host_binding_generation: Some(1),
             },
             resources: RuntimeToolResourceGrant::Product,
         }

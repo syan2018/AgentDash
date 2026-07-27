@@ -102,42 +102,6 @@ impl PostgresAgentRunProductRuntimeBindingRepository {
         Ok(receipt)
     }
 
-    pub async fn load_committed_tool_binding(
-        &self,
-        runtime_thread_id: &RuntimeThreadId,
-    ) -> Result<Option<crate::CommittedRuntimeToolProductBinding>, String> {
-        let row = sqlx::query(
-            "SELECT id,run_id,runtime_binding
-             FROM lifecycle_agents
-             WHERE runtime_binding ->> 'runtime_thread_id'=$1",
-        )
-        .bind(runtime_thread_id.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(string_db_error)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let target = AgentRunTarget {
-            run_id: Uuid::parse_str(
-                &row.try_get::<String, _>("run_id")
-                    .map_err(string_db_error)?,
-            )
-            .map_err(|error| error.to_string())?,
-            agent_id: Uuid::parse_str(&row.try_get::<String, _>("id").map_err(string_db_error)?)
-                .map_err(|error| error.to_string())?,
-        };
-        let binding = map_product_binding_document(
-            target,
-            row.try_get("runtime_binding").map_err(string_db_error)?,
-        )?;
-        let binding_digest = binding.committed_receipt()?.binding_digest;
-        Ok(Some(crate::CommittedRuntimeToolProductBinding {
-            binding,
-            binding_digest,
-        }))
-    }
-
     pub async fn load_product_binding_by_runtime_thread(
         &self,
         runtime_thread_id: &RuntimeThreadId,
@@ -1021,17 +985,16 @@ mod product_binding_persistence_tests {
         assert_eq!(replayed_receipt, committed_receipt);
         let restarted = PostgresAgentRunProductRuntimeBindingRepository::new(pool);
         let committed = restarted
-            .load_committed_tool_binding(&product_binding.runtime_thread_id)
+            .load_product_binding_by_runtime_thread(&product_binding.runtime_thread_id)
             .await
             .expect("query after restart")
             .expect("committed binding");
-        assert_eq!(committed.binding_digest, binding_digest);
         assert_eq!(
-            committed.binding.calculated_digest().unwrap(),
+            committed.calculated_digest().unwrap(),
             binding_digest,
             "Product binding must remain canonical"
         );
-        assert_eq!(committed.binding, product_binding);
+        assert_eq!(committed, product_binding);
     }
 
     async fn activation_test_pool() -> (PgPool, Option<crate::postgres_runtime::PostgresRuntime>) {

@@ -2,6 +2,7 @@ pub mod auth;
 pub mod background_workers;
 pub mod extension_gateway;
 pub mod product_operation_mcp_access;
+pub mod product_operation_platform_tool_access;
 pub mod relay;
 pub mod repositories;
 pub mod runtime_gateway;

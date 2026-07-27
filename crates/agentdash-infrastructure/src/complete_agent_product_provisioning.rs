@@ -1233,7 +1233,8 @@ fn static_tool_enabled(capability_state: &CapabilityState, name: &str) -> bool {
         "workspace_module_list"
         | "workspace_module_describe"
         | "workspace_module_invoke"
-        | "workspace_module_present" => ToolCluster::WorkspaceModule,
+        | "workspace_module_present"
+        | "operation_script" => ToolCluster::WorkspaceModule,
         "companion_request" | "companion_respond" => ToolCluster::Collaboration,
         "complete_lifecycle_node" => ToolCluster::Workflow,
         "wait" => ToolCluster::Collaboration,
@@ -1679,6 +1680,8 @@ mod tests {
                 parameters_schema: serde_json::json!({"type": "object"}),
                 permission: agentdash_agent_runtime::RuntimeToolPermission::ProductRead,
                 effect: agentdash_agent_runtime::RuntimeToolEffect::ReadOnly,
+                authorization_policy:
+                    agentdash_agent_runtime::RuntimeToolAuthorizationPolicy::Product,
             }],
             &CapabilityState::default(),
             true,

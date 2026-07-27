@@ -90,6 +90,7 @@ pub struct CanvasDefinitionDto {
     pub source_bundle: InteractionSourceBundleDto,
     pub initial_state: Value,
     pub state_schema: Value,
+    pub agent_projection: InteractionAgentProjectionDto,
     #[serde(default)]
     pub command_definitions: Vec<InteractionCommandDefinitionDto>,
     #[serde(default)]
@@ -121,6 +122,7 @@ pub struct CreateCanvasDefinitionRequest {
     pub initial_state: Value,
     #[serde(default)]
     pub state_schema: Value,
+    pub agent_projection: InteractionAgentProjectionDto,
     #[serde(default)]
     pub command_definitions: Vec<InteractionCommandDefinitionDto>,
     #[serde(default)]
@@ -167,6 +169,15 @@ pub struct CommitCanvasDefinitionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resource_slots: Option<Vec<InteractionResourceSlotDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_projection: Option<InteractionAgentProjectionDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct InteractionAgentProjectionDto {
+    pub version: u16,
+    pub allowed_state_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
@@ -206,7 +217,31 @@ pub struct InteractionCommandDefinitionDto {
 pub struct InteractionComponentEventBindingDto {
     pub event_type: String,
     pub payload_schema: Value,
-    pub command_key: String,
+    pub target: InteractionComponentEventTargetDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InteractionComponentEventTargetDto {
+    PlatformCommand {
+        command_key: String,
+    },
+    Operation {
+        operation_ref: InteractionOperationRefDto,
+    },
+    OperationScript {
+        language: String,
+        host_api_version: u16,
+        source: InteractionOperationScriptSourceDto,
+        requested_operations: Vec<InteractionOperationRefDto>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InteractionOperationScriptSourceDto {
+    Inline { source: String },
+    SourceFile { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -216,7 +251,7 @@ pub struct InteractionComponentBindingDto {
     pub component_abi_version: u16,
     pub props: Value,
     #[serde(default)]
-    pub event_commands: Vec<InteractionComponentEventBindingDto>,
+    pub event_bindings: Vec<InteractionComponentEventBindingDto>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
@@ -355,6 +390,23 @@ pub struct InteractionCommandResponseDto {
     pub event_id: String,
     pub event_sequence: u64,
     pub duplicate: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionComponentEventRequestDto {
+    pub command_id: String,
+    pub binding_key: String,
+    pub event_type: String,
+    pub payload: Value,
+    pub expected_state_revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionComponentEventResponseDto {
+    pub outcome: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub instance: Option<InteractionInstanceDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

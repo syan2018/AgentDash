@@ -221,20 +221,25 @@ impl BoundOperationScriptHost {
         ),
         OperationScriptError,
     > {
-        let surface =
-            self.host
-                .discover(cancel)
-                .await
-                .map_err(|error| OperationScriptError::Internal {
-                    code: gateway_script_error_code(&error),
-                })?;
+        let surface = self
+            .host
+            .discover(cancel)
+            .await
+            .map_err(operation_script_surface_error)?;
         let mut allowed_operations = Vec::with_capacity(program.requested_operations.len());
         for operation_ref in &program.requested_operations {
-            let descriptor = surface.catalog.get(operation_ref).ok_or_else(|| {
-                OperationScriptError::OperationDenied {
-                    operation_key: operation_key(operation_ref),
-                }
-            })?;
+            let descriptor = self
+                .host
+                .gateway
+                .require_surface_operation(&surface, operation_ref)
+                .map_err(|error| match error {
+                    OperationExecutionError::OperationUnavailable { .. } => {
+                        OperationScriptError::OperationDenied {
+                            operation_key: operation_key(operation_ref),
+                        }
+                    }
+                    _ => operation_script_surface_error(error),
+                })?;
             let encoded =
                 serde_json::to_vec(descriptor).map_err(|_| OperationScriptError::Internal {
                     code: "descriptor_serialization_failed",
@@ -284,6 +289,20 @@ fn gateway_script_error_code(error: &OperationExecutionError) -> &'static str {
         super::OperationExecutionErrorKind::Cancelled => "surface_cancelled",
         super::OperationExecutionErrorKind::DeadlineExceeded => "surface_deadline_exceeded",
         _ => "surface_unavailable",
+    }
+}
+
+fn operation_script_surface_error(error: OperationExecutionError) -> OperationScriptError {
+    match error {
+        OperationExecutionError::Cancelled => OperationScriptError::Cancelled,
+        OperationExecutionError::DeadlineExceeded => OperationScriptError::DeadlineExceeded,
+        OperationExecutionError::NotReady { code, message } => {
+            OperationScriptError::SurfaceUnavailable { code, message }
+        }
+        error => OperationScriptError::SurfaceUnavailable {
+            code: gateway_script_error_code(&error).to_string(),
+            message: error.to_string(),
+        },
     }
 }
 
@@ -551,5 +570,19 @@ mod tests {
         );
         assert!(host.principal().user_identity().is_none());
         assert_eq!(host.origin(), &OperationOriginRef::AgentTool);
+    }
+
+    #[test]
+    fn operation_script_preserves_typed_surface_unavailability() {
+        let error = operation_script_surface_error(OperationExecutionError::NotReady {
+            code: "stale_execution_authority".to_string(),
+            message: "authority changed".to_string(),
+        });
+
+        assert!(matches!(
+            error,
+            OperationScriptError::SurfaceUnavailable { code, message }
+                if code == "stale_execution_authority" && message == "authority changed"
+        ));
     }
 }

@@ -126,6 +126,7 @@ pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] = &[
     "workspace_module_describe",
     "workspace_module_invoke",
     "workspace_module_present",
+    "operation_script",
 ];
 
 /// 返回 ToolCluster 下属的全部工具名。
@@ -363,6 +364,13 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             ToolCluster::WorkspaceModule,
             CAP_WORKSPACE_MODULE,
         ),
+        ToolDescriptor::platform(
+            "operation_script",
+            "Execute OperationScript",
+            "将有界 Rhai program 绑定到当前 actor 的 exact Operation surface，并通过 canonical OperationGateway 执行即时多 Operation 组合",
+            ToolCluster::WorkspaceModule,
+            CAP_WORKSPACE_MODULE,
+        ),
         // ── Platform MCP: Relay scope (capability=relay_management) ──
         ToolDescriptor::platform_mcp(
             "list_projects",
@@ -519,6 +527,22 @@ pub fn platform_tools_for_capability(key: &str) -> Vec<ToolDescriptor> {
 /// 别名自动展开。非 well-known key 返回空 vec。
 pub fn capability_to_tool_clusters(cap: &ToolCapability) -> Vec<ToolCluster> {
     capability_to_tool_clusters_by_key(cap.key())
+}
+
+/// 返回 ToolCluster 对应的 canonical platform capability key。
+///
+/// Cluster 是 capability 的 runtime tool projection；反向映射让只携带 cluster 的已接受旧
+/// surface 也能在统一 authority 中恢复同一 capability identity。
+pub fn tool_cluster_capability_key(cluster: ToolCluster) -> &'static str {
+    match cluster {
+        ToolCluster::Read => CAP_FILE_READ,
+        ToolCluster::Write => CAP_FILE_WRITE,
+        ToolCluster::Execute => CAP_SHELL_EXECUTE,
+        ToolCluster::WorkspaceModule => CAP_WORKSPACE_MODULE,
+        ToolCluster::Workflow => CAP_WORKFLOW,
+        ToolCluster::Collaboration => CAP_COLLABORATION,
+        ToolCluster::Task => CAP_TASK,
+    }
 }
 
 fn capability_to_tool_clusters_by_key(key: &str) -> Vec<ToolCluster> {

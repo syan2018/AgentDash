@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
-use agentdash_application_agentrun::agent_run::{
-    AgentRunAppliedResourceSurface, AgentRunProductRuntimeBindingRepository, AppliedVfsMount,
-    AppliedVfsOperation,
+use agentdash_application::execution_authority::{
+    ExecutionAuthorityRequest, ExecutionResourceGrants,
 };
 use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorSource};
 use agentdash_integration_api::AuthIdentity;
-use agentdash_platform_spi::{Mount, MountCapability, Vfs};
+use agentdash_platform_spi::Vfs;
 use uuid::Uuid;
 
 use crate::app_state::AppState;
@@ -34,7 +33,7 @@ pub(crate) async fn resolve_current_runtime_surface_with_backend_for_agent_run_f
     run_id: &str,
     agent_id: &str,
     permission: ProjectPermission,
-    purpose: RuntimeSurfaceQueryPurpose,
+    _purpose: RuntimeSurfaceQueryPurpose,
     subject: &str,
 ) -> Result<ApiAgentRunCurrentRuntimeSurfaceWithBackend, ApiError> {
     let target = AgentRunTarget {
@@ -62,62 +61,44 @@ pub(crate) async fn resolve_current_runtime_surface_with_backend_for_agent_run_f
     load_project_with_permission(state.as_ref(), current_user, run.project_id, permission).await?;
     let binding = state
         .services
-        .agent_run_product_runtime_bindings
-        .load_product_binding(&target)
+        .execution_authorities
+        .resolve(ExecutionAuthorityRequest::for_target(target.clone()))
         .await
-        .map_err(ApiError::Internal)?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "{} 缺少 Product RuntimeThread binding: run={}, agent={}",
-                purpose.component, target.run_id, target.agent_id
-            ))
-        })?;
-    let applied = load_applied_surface(state, &target).await?;
-    if applied.project_id != run.project_id {
+        .map_err(|error| ApiError::Conflict(format!("{}: {error}", error.code())))?;
+    let authority = &binding;
+    if authority.project_id() != run.project_id {
         return Err(ApiError::Conflict(format!(
-            "{subject} Project 与 Product applied resource surface 不一致"
+            "{subject} Project 与 ExecutionAuthority 不一致"
         )));
     }
-    let mount = selected_backend_mount(&applied)?;
+    let mount = selected_backend_mount(authority.resources())?;
     let anchor = RuntimeBackendAnchor::new(
         mount.backend_id.clone(),
         RuntimeBackendAnchorSource::RestoredAgentRun,
     )
     .map_err(|error| ApiError::Conflict(error.to_string()))?
-    .with_workspace_id(applied.workspace_id)
+    .with_workspace_id(authority.resources().workspace_id())
     .with_root_ref(Some(mount.root_ref.clone()))
     .with_source_detail(Some(format!(
         "product-applied-resource-surface:{}:{}",
         target.run_id, target.agent_id
     )));
     Ok(ApiAgentRunCurrentRuntimeSurfaceWithBackend {
-        project_id: applied.project_id,
-        runtime_thread_id: binding.runtime_thread_id.to_string(),
+        project_id: authority.project_id(),
+        runtime_thread_id: binding.runtime_thread_id().to_string(),
         surface: ApiCurrentRuntimeSurface {
-            vfs: applied_vfs(&applied),
+            vfs: authority.resources().vfs(authority.project_id()),
         },
         runtime_backend_anchor: anchor,
     })
 }
 
-async fn load_applied_surface(
-    state: &AppState,
-    target: &AgentRunTarget,
-) -> Result<AgentRunAppliedResourceSurface, ApiError> {
-    state
-        .services
-        .agent_run_product_resource_surfaces
-        .applied_resource_surface(target)
-        .await
-        .map_err(|error| ApiError::Conflict(error.to_string()))
-}
-
 fn selected_backend_mount(
-    surface: &AgentRunAppliedResourceSurface,
-) -> Result<&AppliedVfsMount, ApiError> {
-    if let Some(default_mount_id) = surface.default_mount_id.as_deref() {
-        return surface
-            .vfs_mounts
+    resources: &ExecutionResourceGrants,
+) -> Result<&agentdash_application_agentrun::agent_run::AppliedVfsMount, ApiError> {
+    if let Some(default_mount_id) = resources.default_mount_id() {
+        return resources
+            .vfs_mounts()
             .iter()
             .find(|mount| mount.mount_id == default_mount_id)
             .ok_or_else(|| {
@@ -126,7 +107,7 @@ fn selected_backend_mount(
                 ))
             });
     }
-    match surface.vfs_mounts.as_slice() {
+    match resources.vfs_mounts() {
         [mount] => Ok(mount),
         [] => Err(ApiError::Conflict(
             "Product applied resource surface 没有可用 VFS mount".to_string(),
@@ -135,44 +116,6 @@ fn selected_backend_mount(
             "Product applied resource surface 有多个 mount 但没有 canonical default mount"
                 .to_string(),
         )),
-    }
-}
-
-fn applied_vfs(surface: &AgentRunAppliedResourceSurface) -> Vfs {
-    Vfs {
-        mounts: surface
-            .vfs_mounts
-            .iter()
-            .cloned()
-            .map(applied_mount)
-            .collect(),
-        default_mount_id: surface.default_mount_id.clone(),
-        source_project_id: Some(surface.project_id.to_string()),
-        source_story_id: None,
-        links: Vec::new(),
-    }
-}
-
-fn applied_mount(mount: AppliedVfsMount) -> Mount {
-    Mount {
-        id: mount.mount_id,
-        provider: mount.provider,
-        backend_id: mount.backend_id,
-        root_ref: mount.root_ref,
-        capabilities: mount
-            .capabilities
-            .into_iter()
-            .map(|operation| match operation {
-                AppliedVfsOperation::Read => MountCapability::Read,
-                AppliedVfsOperation::List => MountCapability::List,
-                AppliedVfsOperation::Search => MountCapability::Search,
-                AppliedVfsOperation::Write => MountCapability::Write,
-                AppliedVfsOperation::Exec => MountCapability::Exec,
-            })
-            .collect(),
-        default_write: mount.default_write,
-        display_name: mount.display_name,
-        metadata: mount.metadata,
     }
 }
 

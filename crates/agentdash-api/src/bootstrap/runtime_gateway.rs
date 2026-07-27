@@ -3,6 +3,9 @@ use std::sync::Arc;
 use agentdash_application::backend::{
     McpProbeBackendTarget, McpProbeBackendTargetResolutionError, resolve_mcp_probe_backend_target,
 };
+use agentdash_application::execution_authority::{
+    ExecutionAuthorityRequest, ExecutionAuthorityResolver,
+};
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::workspace::WorkspaceDetectionError;
 use agentdash_application_operation_gateway::{
@@ -11,11 +14,12 @@ use agentdash_application_operation_gateway::{
     ExtensionOperationRuntimeContext, InteractionCommandOperation, InteractionOperationAccess,
     InteractionOperationProvider, McpOperationProvider, McpProbeSetupPort, McpProbeTarget,
     McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput, OperationGateway,
-    SetupOperationAccessPort, SetupOperationAuthorityResolver, SetupOperationProvider,
-    TracingOperationAuditSink, WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput,
-    WorkspaceBrowseDirectoryOutput, WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput,
-    WorkspaceDetectGitOutput, WorkspaceDetectGitSetupPort, WorkspaceDetectInput,
-    WorkspaceDetectOutput, WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
+    PlatformToolOperationAccess, PlatformToolOperationProvider, SetupOperationAccessPort,
+    SetupOperationAuthorityResolver, SetupOperationProvider, TracingOperationAuditSink,
+    WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
+    WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
+    WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectOutput,
+    WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
     WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
@@ -48,9 +52,8 @@ impl SharedOperationGatewayHandle {
 pub(crate) fn build_operation_gateway(
     mcp_probe_relay: Arc<dyn agentdash_platform_spi::McpRelayProvider>,
     operation_mcp_access: Arc<dyn agentdash_application_operation_gateway::OperationMcpAccess>,
-    runtime_bindings: Arc<
-        dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
-    >,
+    execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
+    platform_tool_access: Arc<dyn PlatformToolOperationAccess>,
     repos: RepositorySet,
     backend_registry: Arc<BackendRegistry>,
     setup_action_transport: Arc<
@@ -82,14 +85,15 @@ pub(crate) fn build_operation_gateway(
     )));
     let surface_authority: Arc<
         dyn agentdash_application_operation_gateway::OperationAuthorityResolver,
-    > = Arc::new(ApplicationSurfaceOperationAuthority {
+    > = Arc::new(ApplicationOperationAuthority {
         repos: repos.clone(),
+        execution_authorities: execution_authorities.clone(),
     });
     let extension_provider = Arc::new(ExtensionOperationProvider::new(
         repos.project_extension_installation_repo.clone(),
         Arc::new(ApplicationExtensionOperationContext {
             repos: repos.clone(),
-            runtime_bindings,
+            execution_authorities,
         }),
         backend_registry.clone(),
         backend_registry.clone(),
@@ -101,6 +105,7 @@ pub(crate) fn build_operation_gateway(
             gateway_handle,
         },
     )));
+    let platform_tool_provider = Arc::new(PlatformToolOperationProvider::new(platform_tool_access));
     OperationGateway::try_new(
         Arc::new(CompositeOperationAuthorityResolver::new(
             setup_authority,
@@ -113,6 +118,7 @@ pub(crate) fn build_operation_gateway(
         [
             Arc::new(McpOperationProvider::new(operation_mcp_access))
                 as Arc<dyn agentdash_application_operation_gateway::DynamicOperationProvider>,
+            platform_tool_provider,
             extension_provider,
             interaction_provider,
         ],
@@ -496,36 +502,14 @@ struct ApplicationSetupOperationAccess {
     repos: RepositorySet,
 }
 
-struct ApplicationSurfaceOperationAuthority {
+struct ApplicationOperationAuthority {
     repos: RepositorySet,
+    execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
 }
 
 struct ApplicationExtensionOperationContext {
     repos: RepositorySet,
-    runtime_bindings:
-        Arc<dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository>,
-}
-
-async fn request_project_id(
-    repos: &RepositorySet,
-    run_id: uuid::Uuid,
-) -> Result<uuid::Uuid, agentdash_application_operation_gateway::OperationExecutionError> {
-    repos
-        .lifecycle_run_repo
-        .get_by_id(run_id)
-        .await
-        .map_err(|error| {
-            agentdash_application_operation_gateway::OperationExecutionError::provider_failed(
-                error.to_string(),
-            )
-        })?
-        .map(|run| run.project_id)
-        .ok_or_else(
-            || agentdash_application_operation_gateway::OperationExecutionError::NotReady {
-                code: "agent_run_missing".to_string(),
-                message: format!("LifecycleRun 不存在: {run_id}"),
-            },
-        )
+    execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
 }
 
 #[async_trait]
@@ -542,7 +526,6 @@ impl agentdash_application_operation_gateway::ExtensionOperationContextPort
         ExtensionOperationRuntimeContext,
         agentdash_application_operation_gateway::OperationExecutionError,
     > {
-        use agentdash_application_agentrun::agent_run::AgentFrameSurfaceExt;
         use agentdash_application_operation_gateway::{
             OperationExecutionError, OperationPrincipalRef, OperationScopeRef,
         };
@@ -559,36 +542,14 @@ impl agentdash_application_operation_gateway::ExtensionOperationContextPort
                 agent_id: *agent_id,
             };
             let binding = self
-                .runtime_bindings
-                .load_product_binding(&target)
+                .execution_authorities
+                .resolve(ExecutionAuthorityRequest::for_target(target))
                 .await
                 .map_err(|error| OperationExecutionError::NotReady {
-                    code: "agent_extension_binding_unavailable".to_string(),
-                    message: error,
-                })?
-                .ok_or_else(|| OperationExecutionError::NotReady {
-                    code: "agent_extension_binding_missing".to_string(),
-                    message: "AgentRun Product runtime binding 不存在".to_string(),
-                })?;
-            let frame = self
-                .repos
-                .agent_frame_repo
-                .get(binding.launch_frame.frame_id)
-                .await
-                .map_err(|error| OperationExecutionError::NotReady {
-                    code: "agent_extension_surface_unavailable".to_string(),
+                    code: error.code().to_string(),
                     message: error.to_string(),
-                })?
-                .ok_or_else(|| OperationExecutionError::NotReady {
-                    code: "agent_extension_surface_missing".to_string(),
-                    message: "AgentRun Product launch AgentFrame 不存在".to_string(),
                 })?;
-            let vfs = frame
-                .typed_vfs()
-                .ok_or_else(|| OperationExecutionError::NotReady {
-                    code: "agent_extension_vfs_missing".to_string(),
-                    message: "AgentRun Product launch AgentFrame 没有 VFS surface".to_string(),
-                })?;
+            let vfs = binding.resources().vfs(binding.project_id());
             let mount = vfs
                 .default_mount()
                 .filter(|mount| mount.provider == "relay_fs")
@@ -598,14 +559,22 @@ impl agentdash_application_operation_gateway::ExtensionOperationContextPort
                     message: "AgentRun current surface 缺少 relay workspace mount".to_string(),
                 })?;
             if agentdash_application_operation_gateway::scope_project_id(&scope.scope_ref)
-                != Some(request_project_id(&self.repos, *run_id).await?)
+                != Some(binding.project_id())
             {
                 return Err(OperationExecutionError::CapabilitiesDenied {
                     missing: vec!["agent_run.project_scope".to_string()],
                 });
             }
+            if !scope.authority_revision.is_empty()
+                && scope.authority_revision != binding.revision_token()
+            {
+                return Err(OperationExecutionError::NotReady {
+                    code: "stale_execution_authority".to_string(),
+                    message: "Operation surface authority changed during projection".to_string(),
+                });
+            }
             return Ok(ExtensionOperationRuntimeContext {
-                project_id: request_project_id(&self.repos, *run_id).await?,
+                project_id: binding.project_id(),
                 backend_id: Some(mount.backend_id.clone()),
                 workspace: Some(
                     agentdash_application_ports::extension_runtime::ExtensionInvocationWorkspacePayload {
@@ -698,7 +667,7 @@ impl agentdash_application_operation_gateway::ExtensionOperationContextPort
 
 #[async_trait]
 impl agentdash_application_operation_gateway::OperationAuthorityResolver
-    for ApplicationSurfaceOperationAuthority
+    for ApplicationOperationAuthority
 {
     async fn resolve(
         &self,
@@ -848,27 +817,21 @@ impl agentdash_application_operation_gateway::OperationAuthorityResolver
                 facts.push(format!("user:{user_id}"));
             }
             OperationPrincipalRef::AgentRunAgent { run_id, agent_id } => {
-                let run = self
-                    .repos
-                    .lifecycle_run_repo
-                    .get_by_id(*run_id)
+                let binding = self
+                    .execution_authorities
+                    .resolve(ExecutionAuthorityRequest::for_target(
+                        agentdash_domain::agent_run_target::AgentRunTarget {
+                            run_id: *run_id,
+                            agent_id: *agent_id,
+                        },
+                    ))
                     .await
-                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
-                    .ok_or_else(|| OperationExecutionError::NotReady {
-                        code: "agent_run_missing".to_string(),
-                        message: format!("AgentRun 不存在: {run_id}"),
+                    .map_err(|error| OperationExecutionError::NotReady {
+                        code: error.code().to_string(),
+                        message: error.to_string(),
                     })?;
-                let agent = self
-                    .repos
-                    .lifecycle_agent_repo
-                    .get(*agent_id)
-                    .await
-                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
-                    .filter(|agent| agent.run_id == run.id && agent.project_id == run.project_id)
-                    .ok_or_else(|| OperationExecutionError::CapabilitiesDenied {
-                        missing: vec!["agent_run.membership".to_string()],
-                    })?;
-                if agent.project_id
+                let authority = &binding;
+                if authority.project_id()
                     != agentdash_application_operation_gateway::scope_project_id(&scope.scope_ref)
                         .ok_or_else(|| {
                         OperationExecutionError::invalid_request(
@@ -880,51 +843,19 @@ impl agentdash_application_operation_gateway::OperationAuthorityResolver
                         missing: vec!["agent_run.project_scope".to_string()],
                     });
                 }
-                let frame = self
-                    .repos
-                    .agent_frame_repo
-                    .get_latest(*agent_id)
-                    .await
-                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
-                    .ok_or_else(|| OperationExecutionError::NotReady {
-                        code: "agent_frame_missing".to_string(),
-                        message: format!("Agent current frame 不存在: {agent_id}"),
-                    })?;
-                facts.push(format!(
-                    "agent:{run_id}:{agent_id}:{}:{}",
-                    frame.id, frame.revision
-                ));
-                if let Some(capability_value) = frame.surface_document().capability_state {
-                    let capability_state = serde_json::from_value::<
-                        agentdash_platform_spi::CapabilityState,
-                    >(capability_value)
-                    .map_err(|error| OperationExecutionError::NotReady {
-                        code: "agent_capability_invalid".to_string(),
-                        message: error.to_string(),
-                    })?;
-                    capabilities.extend(capability_state.capability_keys());
-                    capabilities.extend(
-                        capability_state
-                            .tool
-                            .mcp_servers
-                            .iter()
-                            .map(|server| format!("mcp:{}", server.name)),
-                    );
-                    for installation in self.enabled_installations(run.project_id).await? {
-                        if capability_state
-                            .workspace_module
-                            .allows(&format!("ext:{}", installation.extension_key))
-                        {
-                            capabilities
-                                .insert(format!("extension:{}", installation.extension_key));
-                            facts.push(format!(
-                                "extension:{}:{}:{}",
-                                installation.id, installation.enabled, installation.updated_at
-                            ));
-                        }
+                let mut operation_authority = authority.operation_authority_grant();
+                for installation in self.enabled_installations(authority.project_id()).await? {
+                    if authority
+                        .capability_state()
+                        .workspace_module
+                        .allows(&format!("ext:{}", installation.extension_key))
+                    {
+                        operation_authority
+                            .capabilities
+                            .insert(format!("extension:{}", installation.extension_key));
                     }
                 }
-                capabilities.insert("agent.operation.invoke".to_string());
+                return Ok(operation_authority);
             }
             OperationPrincipalRef::ExtensionInstallation { installation_id } => {
                 let project_id =
@@ -956,7 +887,7 @@ impl agentdash_application_operation_gateway::OperationAuthorityResolver
     }
 }
 
-impl ApplicationSurfaceOperationAuthority {
+impl ApplicationOperationAuthority {
     async fn enabled_installations(
         &self,
         project_id: uuid::Uuid,

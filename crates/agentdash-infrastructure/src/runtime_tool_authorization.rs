@@ -2,61 +2,43 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use agentdash_agent_runtime::{
     RuntimeTaskExecutionGrant, RuntimeTaskExecutionScope, RuntimeTaskGrantedOperation,
-    RuntimeToolAppliedSurfaceEvidence, RuntimeToolAuthorizationGrant, RuntimeToolAuthorizationPort,
-    RuntimeToolAuthorizationRequest, RuntimeToolBrokerError, RuntimeToolProductTarget,
-    RuntimeToolProvenanceEvidence, RuntimeToolResourceGrant, RuntimeVfsExecutionGrant,
-    RuntimeVfsGrantedOperation, RuntimeVfsMountGrant, RuntimeVfsPathGrant,
+    RuntimeToolAppliedSurfaceEvidence, RuntimeToolAuthorizationGrant,
+    RuntimeToolAuthorizationPolicy, RuntimeToolAuthorizationPort, RuntimeToolAuthorizationRequest,
+    RuntimeToolBrokerError, RuntimeToolProductTarget, RuntimeToolProvenanceEvidence,
+    RuntimeToolResourceGrant, RuntimeVfsExecutionGrant, RuntimeVfsGrantedOperation,
+    RuntimeVfsMountGrant, RuntimeVfsPathGrant,
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunAppliedResourceSurfaceQueryError, AgentRunAppliedResourceSurfaceQueryPort,
-    AgentRunProductRuntimeBinding, AppliedTaskOperation, AppliedTaskScope, AppliedVfsOperation,
+    AgentRunAppliedResourceSurface, AppliedTaskOperation, AppliedTaskScope, AppliedVfsOperation,
     AppliedVfsPathScope,
 };
 use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
 
-/// Runtime tool authorization only consumes an immutable Product activation record.
-///
-/// The PostgreSQL repository and its transaction semantics are intentionally supplied by the
-/// Product projection composition owner. Keeping this DTO beside the adapter prevents the Runtime
-/// tool surface from assuming a migration or concrete persistence layout.
 #[derive(Clone, Debug)]
-pub struct CommittedRuntimeToolProductBinding {
-    pub binding: AgentRunProductRuntimeBinding,
-    pub binding_digest: String,
+pub struct RuntimeToolExecutionAuthority {
+    pub runtime_thread_id: RuntimeThreadId,
+    pub capabilities: BTreeSet<String>,
+    pub surface: AgentRunAppliedResourceSurface,
 }
 
 pub struct ProductRuntimeToolAuthorizer {
-    bindings: Arc<dyn RuntimeToolProductBindingQueryPort>,
-    surfaces: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
+    authorities: Arc<dyn RuntimeToolExecutionAuthorityPort>,
 }
 
 #[async_trait]
-pub trait RuntimeToolProductBindingQueryPort: Send + Sync {
-    async fn binding_and_digest(
+pub trait RuntimeToolExecutionAuthorityPort: Send + Sync {
+    async fn execution_authority(
         &self,
         runtime_thread_id: &RuntimeThreadId,
-    ) -> Result<Option<CommittedRuntimeToolProductBinding>, String>;
-}
-
-#[async_trait]
-impl RuntimeToolProductBindingQueryPort for crate::PostgresAgentRunProductRuntimeBindingRepository {
-    async fn binding_and_digest(
-        &self,
-        runtime_thread_id: &RuntimeThreadId,
-    ) -> Result<Option<CommittedRuntimeToolProductBinding>, String> {
-        self.load_committed_tool_binding(runtime_thread_id).await
-    }
+    ) -> Result<RuntimeToolExecutionAuthority, String>;
 }
 
 impl ProductRuntimeToolAuthorizer {
-    pub fn new(
-        bindings: Arc<dyn RuntimeToolProductBindingQueryPort>,
-        surfaces: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
-    ) -> Self {
-        Self { bindings, surfaces }
+    pub fn new(authorities: Arc<dyn RuntimeToolExecutionAuthorityPort>) -> Self {
+        Self { authorities }
     }
 }
 
@@ -66,38 +48,24 @@ impl RuntimeToolAuthorizationPort for ProductRuntimeToolAuthorizer {
         &self,
         request: RuntimeToolAuthorizationRequest,
     ) -> Result<RuntimeToolAuthorizationGrant, RuntimeToolBrokerError> {
-        let binding = self
-            .bindings
-            .binding_and_digest(&request.context.runtime_thread_id)
+        let authority = self
+            .authorities
+            .execution_authority(&request.context.runtime_thread_id)
             .await
-            .map_err(|message| denied("product_binding_query_failed", message))?
-            .ok_or_else(|| {
-                denied(
-                    "missing_product_binding",
-                    "runtime thread has no committed Product target binding",
-                )
-            })?;
-        ensure_current_binding(&binding.binding, &request)?;
-        let surface = self
-            .surfaces
-            .applied_resource_surface_at(
-                &binding.binding.target,
-                request.context.applied_surface_revision.0,
-            )
-            .await
-            .map_err(map_surface_query_error)?;
-        if surface.product_binding_digest != binding.binding_digest {
+            .map_err(|message| denied("execution_authority_unavailable", message))?;
+        if authority.runtime_thread_id != request.context.runtime_thread_id {
             return Err(denied(
-                "stale_product_binding",
-                "Product resource authority does not attest the committed Product binding digest",
+                "stale_execution_authority",
+                "execution authority belongs to another runtime thread",
             ));
         }
-        authorize_surface(surface, request)
+        authorize_surface(authority.surface, &authority.capabilities, request)
     }
 }
 
 fn authorize_surface(
     surface: agentdash_application_agentrun::agent_run::AgentRunAppliedResourceSurface,
+    capabilities: &BTreeSet<String>,
     request: RuntimeToolAuthorizationRequest,
 ) -> Result<RuntimeToolAuthorizationGrant, RuntimeToolBrokerError> {
     if surface.agent_surface_revision != request.context.applied_surface_revision.0 {
@@ -106,49 +74,50 @@ fn authorize_surface(
             "Product authority does not attest the callback applied surface revision",
         ));
     }
-    let resources = match request.definition.name.as_str() {
-        "mounts_list" => vfs_grant(&surface, AppliedVfsOperation::List, &[], true)?,
-        "fs_read" => vfs_grant(
+    if !capabilities.contains(&request.definition.provenance.capability_key) {
+        return Err(denied(
+            "missing_runtime_tool_capability",
+            format!(
+                "execution authority does not grant capability `{}`",
+                request.definition.provenance.capability_key
+            ),
+        ));
+    }
+    let resources = match request.definition.authorization_policy {
+        RuntimeToolAuthorizationPolicy::Product => RuntimeToolResourceGrant::Product,
+        RuntimeToolAuthorizationPolicy::VfsMountCatalog => {
+            vfs_grant(&surface, AppliedVfsOperation::List, &[], true)?
+        }
+        RuntimeToolAuthorizationPolicy::VfsRead => vfs_grant(
             &surface,
             AppliedVfsOperation::Read,
             &[path_argument(&surface, &request.arguments, "path", false)?],
             false,
         )?,
-        "fs_glob" => vfs_grant(
+        RuntimeToolAuthorizationPolicy::VfsGlob => vfs_grant(
             &surface,
             AppliedVfsOperation::List,
             &[path_argument(&surface, &request.arguments, "path", true)?],
             false,
         )?,
-        "fs_grep" => vfs_grant(
+        RuntimeToolAuthorizationPolicy::VfsGrep => vfs_grant(
             &surface,
             AppliedVfsOperation::Search,
             &[path_argument(&surface, &request.arguments, "path", true)?],
             false,
         )?,
-        "fs_apply_patch" => vfs_grant(
+        RuntimeToolAuthorizationPolicy::VfsApplyPatch => vfs_grant(
             &surface,
             AppliedVfsOperation::Write,
             &patch_paths(&request.arguments)?,
             false,
         )?,
-        "shell_exec" => shell_vfs_grant(&surface, &request.arguments)?,
-        "task_read" => task_grant(&surface, AppliedTaskOperation::Read, &request.arguments)?,
-        "task_write" => task_grant(&surface, AppliedTaskOperation::Write, &request.arguments)?,
-        "wait"
-        | "complete_lifecycle_node"
-        | "companion_request"
-        | "companion_respond"
-        | "workspace_module_list"
-        | "workspace_module_describe"
-        | "workspace_module_invoke"
-        | "workspace_module_present" => RuntimeToolResourceGrant::Product,
-        name if name.starts_with("mcp_") => RuntimeToolResourceGrant::Product,
-        _ => {
-            return Err(denied(
-                "unsupported_runtime_tool_policy",
-                "no Product authorization policy is registered for this runtime tool",
-            ));
+        RuntimeToolAuthorizationPolicy::VfsShell => shell_vfs_grant(&surface, &request.arguments)?,
+        RuntimeToolAuthorizationPolicy::TaskRead => {
+            task_grant(&surface, AppliedTaskOperation::Read, &request.arguments)?
+        }
+        RuntimeToolAuthorizationPolicy::TaskWrite => {
+            task_grant(&surface, AppliedTaskOperation::Write, &request.arguments)?
         }
     };
     Ok(RuntimeToolAuthorizationGrant {
@@ -166,7 +135,10 @@ fn authorize_surface(
             vfs_provenance: map_provenance(&surface.provenance),
             task_digest: surface.task_surface_digest.clone(),
             product_binding_digest: surface.product_binding_digest.clone(),
-            host_binding_generation: request.context.binding_generation.0,
+            host_binding_generation: request
+                .context
+                .host_binding_generation
+                .map(|generation| generation.0),
         },
         resources,
     })
@@ -667,37 +639,6 @@ fn map_path_scope(scope: AppliedVfsPathScope) -> RuntimeVfsPathGrant {
     }
 }
 
-fn map_surface_query_error(
-    error: AgentRunAppliedResourceSurfaceQueryError,
-) -> RuntimeToolBrokerError {
-    match error {
-        AgentRunAppliedResourceSurfaceQueryError::MissingFacts => {
-            denied("product_surface_facts_missing", error.to_string())
-        }
-        AgentRunAppliedResourceSurfaceQueryError::TargetMismatch
-        | AgentRunAppliedResourceSurfaceQueryError::Conflict { .. }
-        | AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence { .. } => {
-            denied("invalid_product_surface", error.to_string())
-        }
-        AgentRunAppliedResourceSurfaceQueryError::Repository { .. } => {
-            denied("product_surface_query_failed", error.to_string())
-        }
-    }
-}
-
-fn ensure_current_binding(
-    binding: &AgentRunProductRuntimeBinding,
-    request: &RuntimeToolAuthorizationRequest,
-) -> Result<(), RuntimeToolBrokerError> {
-    if binding.runtime_thread_id != request.context.runtime_thread_id {
-        return Err(denied(
-            "stale_product_binding",
-            "Product target binding belongs to a different Runtime thread",
-        ));
-    }
-    Ok(())
-}
-
 fn denied(code: impl Into<String>, message: impl Into<String>) -> RuntimeToolBrokerError {
     RuntimeToolBrokerError::AuthorizationDenied {
         code: code.into(),
@@ -713,11 +654,11 @@ mod tests {
         RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolPermission, RuntimeToolResolvedContext,
     };
     use agentdash_agent_service_api::{
-        AgentBindingGeneration, AgentProfileDigest, AgentServiceInstanceId, AgentSourceCoordinate,
-        AgentSurfaceDigest, AgentSurfaceRevision, AgentToolName,
+        AgentBindingGeneration, AgentSurfaceRevision, AgentToolName,
     };
     use agentdash_application_agentrun::agent_run::{
-        AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceProvenance, AppliedTaskGrant,
+        AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceProvenance,
+        AgentRunAppliedResourceSurfaceQueryError, AgentRunProductRuntimeBinding, AppliedTaskGrant,
         AppliedVfsGrant, AppliedVfsMount,
     };
     use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -725,48 +666,81 @@ mod tests {
 
     use super::*;
 
-    struct BindingFixture {
-        value: Option<CommittedRuntimeToolProductBinding>,
+    #[derive(Clone)]
+    struct CommittedRuntimeToolProductBinding {
+        binding: AgentRunProductRuntimeBinding,
+        binding_digest: String,
     }
 
-    #[async_trait]
-    impl RuntimeToolProductBindingQueryPort for BindingFixture {
-        async fn binding_and_digest(
-            &self,
-            _runtime_thread_id: &RuntimeThreadId,
-        ) -> Result<Option<CommittedRuntimeToolProductBinding>, String> {
-            Ok(self.value.clone())
-        }
+    struct BindingFixture {
+        value: Option<CommittedRuntimeToolProductBinding>,
     }
 
     struct SurfaceFixture {
         value: Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>,
     }
 
-    #[async_trait]
-    impl AgentRunAppliedResourceSurfaceQueryPort for SurfaceFixture {
-        async fn applied_resource_surface(
-            &self,
-            _target: &AgentRunTarget,
-        ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>
-        {
-            self.value.clone()
-        }
+    #[derive(Clone)]
+    struct AuthorityFixture {
+        value: Result<RuntimeToolExecutionAuthority, String>,
+    }
 
-        async fn applied_resource_surface_at(
+    #[async_trait]
+    impl RuntimeToolExecutionAuthorityPort for AuthorityFixture {
+        async fn execution_authority(
             &self,
-            _target: &AgentRunTarget,
-            _agent_surface_revision: u64,
-        ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>
-        {
+            _runtime_thread_id: &RuntimeThreadId,
+        ) -> Result<RuntimeToolExecutionAuthority, String> {
             self.value.clone()
         }
+    }
+
+    fn test_authorizer(
+        binding: Arc<BindingFixture>,
+        surface: Arc<SurfaceFixture>,
+    ) -> ProductRuntimeToolAuthorizer {
+        let value = binding
+            .value
+            .clone()
+            .ok_or_else(|| "runtime thread has no ExecutionAuthority binding".to_string())
+            .and_then(|binding| {
+                surface
+                    .value
+                    .clone()
+                    .map_err(|error| error.to_string())
+                    .and_then(|surface| {
+                        if surface.product_binding_digest != binding.binding_digest {
+                            return Err(
+                                "ExecutionAuthority evidence does not match binding".to_string()
+                            );
+                        }
+                        Ok(RuntimeToolExecutionAuthority {
+                            runtime_thread_id: binding.binding.runtime_thread_id,
+                            capabilities: all_test_capabilities(),
+                            surface,
+                        })
+                    })
+            });
+        ProductRuntimeToolAuthorizer::new(Arc::new(AuthorityFixture { value }))
+    }
+
+    fn all_test_capabilities() -> BTreeSet<String> {
+        BTreeSet::from([
+            "collaboration".to_string(),
+            "file_read".to_string(),
+            "file_write".to_string(),
+            "mcp:agentdash-workflow-tools".to_string(),
+            "shell_execute".to_string(),
+            "task".to_string(),
+            "workflow".to_string(),
+            "workspace_module".to_string(),
+        ])
     }
 
     #[tokio::test]
     async fn missing_applied_surface_is_typed_deny() {
         let binding = binding();
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -781,7 +755,7 @@ mod tests {
         assert!(matches!(
             error,
             RuntimeToolBrokerError::AuthorizationDenied { code, .. }
-                if code == "product_surface_facts_missing"
+                if code == "execution_authority_unavailable"
         ));
     }
 
@@ -792,7 +766,7 @@ mod tests {
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -818,7 +792,7 @@ mod tests {
             binding.binding_digest.clone(),
         );
         snapshot.task_grants[0].operations = BTreeSet::from([AppliedTaskOperation::Read]);
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -844,7 +818,7 @@ mod tests {
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -869,7 +843,7 @@ mod tests {
         newer.vfs_grants[0]
             .operations
             .insert(AppliedVfsOperation::Write);
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -889,7 +863,7 @@ mod tests {
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -944,7 +918,7 @@ mod tests {
                 binding.binding.target.clone(),
                 binding.binding_digest.clone(),
             );
-            let authorizer = ProductRuntimeToolAuthorizer::new(
+            let authorizer = test_authorizer(
                 Arc::new(BindingFixture {
                     value: Some(binding),
                 }),
@@ -975,7 +949,7 @@ mod tests {
             assert_eq!(grant.applied_surface.vfs_digest, "vfs-test");
             assert_eq!(grant.applied_surface.task_digest, "task-test");
             assert_eq!(grant.applied_surface.product_binding_digest, "binding-test");
-            assert_eq!(grant.applied_surface.host_binding_generation, 1);
+            assert_eq!(grant.applied_surface.host_binding_generation, Some(1));
         }
     }
 
@@ -986,7 +960,7 @@ mod tests {
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -1033,7 +1007,7 @@ mod tests {
                 binding.binding.target.clone(),
                 binding.binding_digest.clone(),
             );
-            let authorizer = ProductRuntimeToolAuthorizer::new(
+            let authorizer = test_authorizer(
                 Arc::new(BindingFixture {
                     value: Some(binding),
                 }),
@@ -1059,7 +1033,7 @@ mod tests {
             binding.binding_digest.clone(),
         );
         snapshot.vfs_grants[0].path_scopes = vec![AppliedVfsPathScope::Prefix("docs".to_owned())];
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -1100,7 +1074,7 @@ mod tests {
                 path_scopes: vec![AppliedVfsPathScope::Prefix("node/artifacts".to_owned())],
             },
         ];
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -1157,7 +1131,7 @@ mod tests {
             },
             operations: BTreeSet::from([AppliedTaskOperation::Read, AppliedTaskOperation::Write]),
         }];
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -1199,7 +1173,7 @@ mod tests {
     #[tokio::test]
     async fn workspace_presentation_receives_only_the_committed_product_target() {
         let binding = binding();
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding.clone()),
             }),
@@ -1228,9 +1202,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_product_runtime_tool_uses_the_product_resource_policy() {
+        let binding = binding();
+        let authorizer = test_authorizer(
+            Arc::new(BindingFixture {
+                value: Some(binding.clone()),
+            }),
+            Arc::new(SurfaceFixture {
+                value: Ok(snapshot(
+                    binding.binding.target.clone(),
+                    binding.binding_digest,
+                )),
+            }),
+        );
+
+        for tool in [
+            "workspace_module_list",
+            "workspace_module_describe",
+            "workspace_module_invoke",
+            "workspace_module_present",
+            "operation_script",
+        ] {
+            let grant = authorizer
+                .authorize(request(tool))
+                .await
+                .unwrap_or_else(|error| panic!("{tool} must use Product authorization: {error}"));
+            assert_eq!(grant.resources, RuntimeToolResourceGrant::Product);
+        }
+    }
+
+    #[tokio::test]
+    async fn product_policy_still_requires_the_definition_capability() {
+        let binding = binding();
+        let authorizer = ProductRuntimeToolAuthorizer::new(Arc::new(AuthorityFixture {
+            value: Ok(RuntimeToolExecutionAuthority {
+                runtime_thread_id: binding.binding.runtime_thread_id.clone(),
+                capabilities: BTreeSet::new(),
+                surface: snapshot(binding.binding.target, binding.binding_digest),
+            }),
+        }));
+
+        let error = authorizer
+            .authorize(request("operation_script"))
+            .await
+            .expect_err("Product resource policy must not bypass capability admission");
+
+        assert!(matches!(
+            error,
+            RuntimeToolBrokerError::AuthorizationDenied { code, .. }
+                if code == "missing_runtime_tool_capability"
+        ));
+    }
+
+    #[tokio::test]
     async fn dynamic_mcp_tool_uses_the_same_committed_product_authority() {
         let binding = binding();
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding.clone()),
             }),
@@ -1373,7 +1400,10 @@ mod tests {
         arguments: serde_json::Value,
     ) -> RuntimeToolAuthorizationRequest {
         let (permission, effect) = match tool {
-            "task_write" | "workspace_module_present" => (
+            "task_write"
+            | "workspace_module_invoke"
+            | "workspace_module_present"
+            | "operation_script" => (
                 RuntimeToolPermission::ProductWrite,
                 RuntimeToolEffect::ProductMutation,
             ),
@@ -1386,19 +1416,13 @@ mod tests {
         RuntimeToolAuthorizationRequest {
             context: RuntimeToolResolvedContext {
                 runtime_thread_id: RuntimeThreadId::new("thread-test").unwrap(),
-                binding_generation: AgentBindingGeneration(1),
-                source: AgentSourceCoordinate::new("source-test").unwrap(),
-                service_instance_id: AgentServiceInstanceId::new("service-test").unwrap(),
-                profile_digest: AgentProfileDigest::new("profile-test").unwrap(),
-                bound_surface_revision: AgentSurfaceRevision(1),
-                bound_surface_digest: AgentSurfaceDigest::new("bound-test").unwrap(),
+                host_binding_generation: Some(AgentBindingGeneration(1)),
                 applied_surface_revision: AgentSurfaceRevision(1),
-                applied_surface_digest: AgentSurfaceDigest::new("applied-test").unwrap(),
                 turn_id: agentdash_agent_service_api::AgentTurnId::new("turn-test").unwrap(),
                 item_id: Some(agentdash_agent_service_api::AgentItemId::new("item-test").unwrap()),
                 effect_id: agentdash_agent_service_api::AgentEffectIdentity::new("effect-test")
                     .unwrap(),
-                callback_idempotency_key: "callback-test".to_owned(),
+                invocation_id: "callback-test".to_owned(),
                 deadline_at_ms: u64::MAX,
             },
             definition: RuntimeToolDefinition {
@@ -1406,7 +1430,22 @@ mod tests {
                 description: tool.to_owned(),
                 parameters_schema: serde_json::json!({}),
                 provenance: agentdash_agent_runtime::RuntimeToolProvenance {
-                    capability_key: "test".to_owned(),
+                    capability_key: match tool {
+                        "mounts_list" | "fs_read" | "fs_glob" | "fs_grep" => "file_read",
+                        "fs_apply_patch" => "file_write",
+                        "shell_exec" => "shell_execute",
+                        "task_read" | "task_write" => "task",
+                        "workspace_module_list"
+                        | "workspace_module_describe"
+                        | "workspace_module_invoke"
+                        | "workspace_module_present"
+                        | "operation_script" => "workspace_module",
+                        "complete_lifecycle_node" => "workflow",
+                        "companion_request" | "companion_respond" | "wait" => "collaboration",
+                        tool if tool.starts_with("mcp_") => "mcp:agentdash-workflow-tools",
+                        _ => "test",
+                    }
+                    .to_owned(),
                     source: "test".to_owned(),
                     tool_path: format!("test::{tool}"),
                     context_usage_kind: "system_tools".to_owned(),
@@ -1414,6 +1453,17 @@ mod tests {
                 protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
                 permission,
                 effect,
+                authorization_policy: match tool {
+                    "mounts_list" => RuntimeToolAuthorizationPolicy::VfsMountCatalog,
+                    "fs_read" => RuntimeToolAuthorizationPolicy::VfsRead,
+                    "fs_glob" => RuntimeToolAuthorizationPolicy::VfsGlob,
+                    "fs_grep" => RuntimeToolAuthorizationPolicy::VfsGrep,
+                    "fs_apply_patch" => RuntimeToolAuthorizationPolicy::VfsApplyPatch,
+                    "shell_exec" => RuntimeToolAuthorizationPolicy::VfsShell,
+                    "task_read" => RuntimeToolAuthorizationPolicy::TaskRead,
+                    "task_write" => RuntimeToolAuthorizationPolicy::TaskWrite,
+                    _ => RuntimeToolAuthorizationPolicy::Product,
+                },
             },
             arguments,
         }

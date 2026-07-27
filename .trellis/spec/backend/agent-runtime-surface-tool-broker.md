@@ -1,5 +1,101 @@
 # Business Agent Surface and Platform Tool Broker
 
+## Scenario: Execution Authority Convergence
+
+### 1. Scope / Trigger
+
+Agent actor 的 Workspace Module、Operation catalog、MCP/native adapter、VFS workspace view 或
+ToolBroker authorization 需要解释 current capability/resource 时，统一解析
+`ExecutionAuthority`。这样 visibility 与 execution admission 共享同一 revision/digest evidence。
+
+### 2. Signatures
+
+```rust
+trait ExecutionAuthorityResolver {
+    async fn resolve(
+        &self,
+        request: ExecutionAuthorityRequest,
+    ) -> Result<ExecutionAuthority, ExecutionAuthorityResolveError>;
+}
+
+trait RuntimeToolExecutionAuthorityPort {
+    async fn execution_authority(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+    ) -> Result<RuntimeToolExecutionAuthority, String>;
+}
+```
+
+### 3. Contracts
+
+- `ExecutionAuthority` 是 request-scoped immutable runtime value，字段包括 principal、project
+  scope、runtime thread、canonical capabilities、VFS/Task grants、surface revision/digest、
+  Product binding digest 与 provenance。
+- target/runtime thread 是 resolver locator；resolver 直接返回 authority，不公开只做字段转发的
+  AgentRun binding wrapper。
+- resolver 只读取 Product binding 固定的 AgentFrame revision，并校验 applied resource evidence。
+- explicit capabilities 与 enabled clusters 先规范化，再投影 runtime tools、`platform:*`
+  Operations 和 `builtin:*` modules。
+- OperationGateway 持有 catalog/effect/replay/execution core；ToolBroker 持有每次调用的
+  permission/effect/resource enforcement。两者消费 authority，不持有独立权限状态。
+- `ExecutionAuthority::operation_authority_grant()` 是 Agent actor Operation revision 与
+  capabilities 的唯一投影；Workspace Module discovery、Gateway direct invoke 与
+  OperationScript 内部 preflight/run 不得另算 authority revision。
+- `ActorOperationSurface` 在 Gateway 内按 actor visibility 与 granted capabilities 过滤；
+  Workspace Module、OperationScript 和其他 host 直接消费该结果，不各自复制可见性规则。
+- 每个 `RuntimeToolDefinition` 必须声明 typed authorization policy。Broker authorizer 先校验
+  definition capability 存在于同一次 ExecutionAuthority，再按 policy 生成 Product/VFS/Task
+  resource grant；新增工具不依赖按名称维护的授权白名单。
+- Complete Agent provision/rebind 继续生成 desired/offer/bound/applied 协议证据；成功后的 Product
+  binding commit 决定 current authority，不增加独立 adoption port 或状态机。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| target 与 runtime thread 指向不同 binding | `execution_authority_runtime_thread_mismatch` |
+| binding frame 与持久化 revision 不一致 | `execution_authority_frame_binding_mismatch` |
+| binding/frame/applied digest 或 provenance 不一致 | `execution_authority_evidence_mismatch` |
+| provider discovery 失败 | `surface_diagnostics[{provider,code,message}]` |
+| exact invoke/preflight 命中失败 provider | 返回该 provider 的 typed unavailable，不降级为 Operation 不存在 |
+| 原生 capability 已授予但 platform provider 不可用 | Workspace Module typed unavailable |
+| surface projection 期间 authority revision 改变 | `stale_execution_authority` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：一次 list/describe 持有 authority，Operation provider 用同一 revision 投影；invoke 与 nested
+  invoke 在执行时重新解析并进入 ToolBroker。
+- Base：`ready` 且 module count 为零，表示 current authority 确实没有可见模块。
+- Bad：latest frame、Product binding 和 applied surface 由不同消费者分别读取，provider failure
+  被解释为空 catalog。
+
+### 6. Tests Required
+
+- Resolver test 断言 binding-pinned frame 胜过未提交的 latest frame。
+- Resolver test 断言 digest/provenance mismatch 整体拒绝。
+- Capability test 断言 cluster-backed capability 进入 canonical capability keys。
+- Operation test 断言 dynamic provider failure 返回结构化 diagnostic。
+- Operation test 断言 actor surface 排除 authority 未授予的 descriptor，且 exact invoke 保留
+  provider unavailable code。
+- ToolBroker test 只注入一次解析完成的 authority projection，并断言 grant evidence 同源。
+- Runtime tool policy test 枚举 Workspace Module 与 OperationScript 工具，断言 Product policy
+  完整注册，并断言 Product policy 不能绕过 definition capability。
+
+### 7. Wrong vs Correct
+
+```text
+Wrong:
+Workspace Module -> latest frame
+OperationGateway  -> Product binding
+ToolBroker        -> applied surface
+
+Correct:
+locator -> ExecutionAuthority
+          -> Workspace Module projection
+          -> Operation authority/catalog projection
+          -> ToolBroker execution grant
+```
+
 ## 1. Scope / Trigger
 
 本规范适用于 Business Agent Surface 的 capability contribution 编译与 profile binding，以及平台 callable tool 通过 Direct Callback 或 session-scoped MCP façade 执行的统一 Broker 状态机。修改 Capability Pack、HookPlan 编译、ToolCatalog、Workspace/Skill 适配、tool policy顺序、approval、credential、VFS或tool-call persistence时必须复核本规范。
@@ -178,6 +274,11 @@ struct ToolCallCoordinates {
 skill/guideline并写回同一AgentFrame document；surface compiler从该frame生成skill/MCP instructions
 与native tools，授权器从同一applied resource surface生成Task/VFS grant。
 
+**Good case:** Agent 通过 Workspace Module/OperationScript 调用显式暴露的原生 Operation 时，
+Operation adapter 不直连 executor，而是以 current Product binding 与 applied surface revision
+重新进入 PlatformToolBroker。该 server-side invocation 没有 Complete Agent callback Host
+generation；grant 仍由同一 Product authorizer 生成。
+
 **Base case:** required approval创建durable Interaction并暂停；获批后由唯一claim owner使用同一Item和effective arguments继续。若进程在Running后消失，后续调用保留该不确定边界并返回typed in-progress，不猜测副作用是否发生。
 
 **Bad case:** 把Capability Pack拍成prompt、向driver传`DynAgentTool`、在permission/VFS之前解引用secret、把持久化Running直接当成executor重放许可，或让可选terminal registry静默产出孤儿`running` handle。这些行为会伪报能力、绕过执行点policy、重复不可逆副作用或切断terminal control，必须由类型、composition与顺序测试阻止。
@@ -191,6 +292,8 @@ skill/guideline并写回同一AgentFrame document；surface compiler从该frame�
 - runtime authorization测试断言Project AgentRun允许run-scoped`task_write`，read-only fixture仍拒绝
   write；`mounts_list`结果包含applied surface完整能力；final Product broker tracer覆盖Workspace Module
   list/describe/operate/invoke/present的read/write/presentation边界。
+- 原生 Operation adapter 测试断言 VFS/Process/Task 八个显式暴露项经 Broker 授权执行，Runtime
+  catalog 中其它 control/lifecycle tools 不会自动进入 Operation catalog。
 - embedded PostgreSQL Lifecycle launch 测试断言：product delivery 前 current AgentFrame 已包含 canonical workspace mount/backend/root/capability/context 与本次 Run execution profile；无 default workspace 的 Project 在 frame construction 边界失败。
 - Broker behavior覆盖Direct/MCP同状态机、rewrite/block/approval、permission/VFS/credential顺序、cancel/timeout/executor failure/result rewrite。
 - Broker lifecycle必须覆盖调用在accept后触发Surface/ToolSet hot-replace，断言progress与terminal成功、terminal唯一；另以旧revision发起新调用必须在accept前失败。

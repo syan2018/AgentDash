@@ -6,6 +6,7 @@ mod operation_hosts;
 mod operation_provider;
 mod operation_script_adapter;
 mod operation_types;
+mod platform_tool_operations;
 mod schema;
 mod setup_operations;
 
@@ -66,7 +67,12 @@ pub use operation_types::{
     OperationExecutionPolicy, OperationExecutionRequest, OperationExecutionResult,
     OperationInvocationCommand, OperationInvocationEnvelope, OperationPlacement,
     OperationPrincipal, OperationProvenance, OperationReadiness, OperationResultAccess,
-    OperationResultRef, OperationResultValue, OperationTraceContext, ScopedOperationResult,
+    OperationResultRef, OperationResultValue, OperationSurfaceDiagnostic, OperationTraceContext,
+    ScopedOperationResult,
+};
+pub use platform_tool_operations::{
+    PLATFORM_TOOL_OPERATION_NAMESPACE, PlatformToolOperation, PlatformToolOperationAccess,
+    PlatformToolOperationProvider,
 };
 pub use schema::{validate_json_schema_definition, validate_json_schema_subset};
 pub use setup_operations::{

@@ -6,8 +6,7 @@ use agentdash_agent_runtime::{
     RuntimeToolResourceGrant, ToolProtocolProjector,
 };
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentEffectIdentity, AgentProfileDigest, AgentSurfaceDigest,
-    AgentSurfaceRevision, AgentToolResult, AgentTurnId,
+    AgentEffectIdentity, AgentSurfaceRevision, AgentToolResult, AgentTurnId,
 };
 use agentdash_application_agentrun::agent_run::frame::runtime_backend_anchor_from_vfs;
 use agentdash_application_agentrun::agent_run::{
@@ -236,25 +235,14 @@ impl OperationMcpAccess for ProductRuntimeMcpOperationAccess {
         let invocation = RuntimeToolInvocation {
             context: RuntimeToolResolvedContext {
                 runtime_thread_id: surface.binding.runtime_thread_id.clone(),
-                binding_generation: AgentBindingGeneration(1),
-                source: surface.binding.agent.source.clone(),
-                service_instance_id: surface.binding.agent.service_instance_id.clone(),
-                profile_digest: AgentProfileDigest::new(
-                    surface.binding.execution_profile_digest.clone(),
-                )
-                .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
-                bound_surface_revision: AgentSurfaceRevision(revision),
-                bound_surface_digest: AgentSurfaceDigest::new(surface_digest.clone())
-                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
+                host_binding_generation: None,
                 applied_surface_revision: AgentSurfaceRevision(revision),
-                applied_surface_digest: AgentSurfaceDigest::new(surface_digest.clone())
-                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
                 turn_id: AgentTurnId::new("operation-gateway")
                     .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
                 item_id: None,
                 effect_id: AgentEffectIdentity::new(uuid::Uuid::new_v4().to_string())
                     .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
-                callback_idempotency_key: uuid::Uuid::new_v4().to_string(),
+                invocation_id: uuid::Uuid::new_v4().to_string(),
                 deadline_at_ms: chrono::Utc::now().timestamp_millis().max(0) as u64 + 30_000,
             },
             tool: definition.name.clone(),
@@ -287,7 +275,7 @@ impl OperationMcpAccess for ProductRuntimeMcpOperationAccess {
                         .binding
                         .calculated_digest()
                         .map_err(OperationExecutionError::provider_failed)?,
-                    host_binding_generation: 1,
+                    host_binding_generation: None,
                 },
                 resources: RuntimeToolResourceGrant::Product,
             },

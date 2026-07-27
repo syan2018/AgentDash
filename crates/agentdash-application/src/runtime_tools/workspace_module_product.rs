@@ -276,6 +276,14 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             .catalog
             .descriptors()
             .into_iter()
+            .filter(|descriptor| {
+                descriptor
+                    .actor_visibility
+                    .contains(&agentdash_application_operation_gateway::OperationActorKind::Agent)
+                    && descriptor
+                        .required_capabilities
+                        .is_subset(&operation_surface.granted_capabilities)
+            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -321,9 +329,11 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
         let modules = modules
             .into_iter()
             .filter(|module| {
-                capability
-                    .workspace_module
-                    .allows(&module.summary.module_id)
+                module.summary.kind
+                    == agentdash_contracts::workspace_module::WorkspaceModuleKind::Builtin
+                    || capability
+                        .workspace_module
+                        .allows(&module.summary.module_id)
                     || runtime_module_sources
                         .get(&module.summary.module_id)
                         .is_some_and(|source| capability.workspace_module.allows(source))

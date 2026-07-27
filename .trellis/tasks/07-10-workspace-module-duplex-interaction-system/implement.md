@@ -1,7 +1,8 @@
 # Implement · Workspace Module 通用双工交互系统
 
 父任务的 V1 主体实现与 WI-00 至 WI-10 已完成。PR #95 合入后的复核发现 Workspace Module
-生产接线与原始 Agent-facing 合同的漂移已通过 WI-11 完成最终收口；父任务暂留非归档区供验收。
+生产接线与原始 Agent-facing 合同的漂移已通过 WI-11 完成最终收口；WI-12 继续补齐原生平台工具
+进入 canonical Operation 与 OperationScript 组合面的合同。
 
 ## 1. 工作项追踪
 
@@ -21,6 +22,7 @@
 | WI-09 | RuntimeSession 依赖清除 | WI-02、WI-05、WI-06、AgentRun adapter 迁移 |
 | WI-10 | 全量集成、spec、migration 与残留验证 | WI-01 至 WI-09 |
 | WI-11 | Workspace Module Agent 能力最终收口 | WI-03、WI-07、PR #95 最终 Runtime 接线 |
+| WI-12 | 原生平台工具 Operation 组合 | WI-01、WI-03、WI-11 |
 
 依赖只由本表和 `work-items/README.md` 表达；工作项编号不表示可以绕过依赖。
 
@@ -149,6 +151,18 @@
 - 明确即时组合使用 OperationScript，durable multi-step 编排使用 Workflow；Extension `operation_catalog` 的单 dispatch projection 不冒充组合调用。
 - 重写 `workspace-module-system` Skill，覆盖模块类型、可见性、descriptor 字段、single invoke、OperationScript 组合、Workflow 边界、presentation 与 stale surface 处理。
 - 同步 backend/cross-layer specs、工具 schema、generated contracts 和 focused tests，验证 Agent 能发现并组合至少两个真实 module Operations。
+
+### WI-12 · 原生平台工具 Operation 组合
+
+- 以显式 exposure registry 把 VFS、Process、Task 原生工具映射为 exact `platform:*` Operations；
+  Runtime tool 注册本身不产生 Operation。
+- OperationGateway 只依赖 `PlatformToolOperationAccess`，API adapter 每次从 Agent principal 解析
+  current Product binding/applied surface，并通过 PlatformToolBroker 执行。
+- Complete Agent callback delivery evidence 与 server-side nested execution context 分离；后者不伪造
+  service/profile/bound surface 或 Host generation。
+- Workspace Module 投影 `builtin:vfs`、`builtin:process`、`builtin:task`，使 Agent 能 describe 后将
+  原生工具和 Extension/Interaction Operations 放入同一个 OperationScript manifest。
+- 控制面、递归入口和 lifecycle 工具不进入 exposure registry；effect/replay/capability 必须逐项显式声明。
 
 ## 3. 验证策略
 

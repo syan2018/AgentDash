@@ -26,6 +26,7 @@ Parent task: `.trellis/tasks/07-10-workspace-module-duplex-interaction-system`
 | WI-09 | `WI-09-runtime-session-cleanup.md` | done | WI-02、WI-05、WI-06、AgentRun adapter | Session-bound action gateway 删除，RuntimeSession 仅保留 delivery/trace evidence |
 | WI-10 | `WI-10-integration-spec-verification.md` | done | WI-01 至 WI-09 | targeted/full gates、规范收敛、残留扫描与仓库既有失败分类完成 |
 | WI-11 | `WI-11-workspace-module-agent-capability-closure.md` | completed | WI-03、WI-07、PR #95 最终 Runtime 接线 | 收口 projection 边界、可信 presentation、Agent OperationScript 组合入口、Skill 与死代码/规范漂移 |
+| WI-12 | `WI-12-native-platform-tool-operation-composition.md` | done | WI-01、WI-03、WI-11 | 显式暴露原生 VFS/Process/Task Operations，经 PlatformToolBroker 统一授权与执行 |
 
 ## Decision Ledger
 

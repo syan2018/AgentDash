@@ -5,6 +5,7 @@
 ```mermaid
 flowchart LR
   MCP["MCP Tool"] --> OC["Canonical Operation Catalog"]
+  PT["Explicit Native Platform Tool"] --> OC
   EP["ExtensionProtocol.method"] --> OC
   RA["Runtime Action / Host Operation"] --> OC
 
@@ -60,7 +61,23 @@ OperationDescriptor {
 }
 ```
 
-Provider adapters 可来自 MCP tool、ExtensionProtocol method、Runtime Action 或 host operation。Workspace Module 只按 module/category 组织 descriptor，不创建另一套 provider identity、schema 或 dispatch。
+Provider adapters 可来自 MCP tool、显式暴露的原生 platform tool、ExtensionProtocol method、
+Runtime Action 或 host operation。Workspace Module 只按 module/category 组织 descriptor，不创建
+另一套 provider identity、schema 或 dispatch。
+
+原生 platform tool 使用独立 adapter seam：
+
+```text
+explicit exposure metadata
+  -> PlatformToolOperationProvider
+  -> OperationGateway
+  -> PlatformToolBroker
+  -> native executor
+```
+
+Runtime catalog registration 不隐式产生 Operation。暴露项逐个固定 effect、replay、actor visibility
+与 capability；Broker 继续拥有 Product binding、applied surface、permission 和 resource grant。
+server-side nested invocation 不伪造 Complete Agent callback delivery evidence。
 
 `operation_ref` 必须携带 exact provider identity/version；Extension protocol 不再按全局 key 首个命中。discovery、preflight、direct invoke 与 OperationScript nested invoke 使用同一个 actor-specific catalog。
 

@@ -73,7 +73,7 @@ impl RuntimeToolAuthorizationPort for ProductGrantAuthorizer {
                 vfs_provenance: provenance.clone(),
                 task_digest: "task-digest".to_owned(),
                 product_binding_digest: "product-binding-digest".to_owned(),
-                host_binding_generation: 1,
+                host_binding_generation: Some(1),
             },
             resources: RuntimeToolResourceGrant::Product,
         })

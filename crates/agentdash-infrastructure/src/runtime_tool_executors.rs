@@ -218,7 +218,7 @@ impl RuntimeToolExecutor for ProductCommandRuntimeTool {
                 turn_id: invocation.context.turn_id.to_string(),
                 item_id: invocation.context.item_id.map(|value| value.to_string()),
                 effect_id: invocation.context.effect_id.to_string(),
-                invocation_id: invocation.context.callback_idempotency_key,
+                invocation_id: invocation.context.invocation_id,
                 deadline_at_ms: invocation.context.deadline_at_ms,
             },
             arguments: invocation.arguments,
@@ -523,7 +523,7 @@ async fn execute_vfs(
                 run_id,
                 agent_id,
                 runtime_thread_id: invocation.context.runtime_thread_id.to_string(),
-                invocation_id: invocation.context.callback_idempotency_key,
+                invocation_id: invocation.context.invocation_id,
             },
         })
         .await
@@ -646,9 +646,7 @@ mod tests {
     };
     use agentdash_agent_runtime_contract::RuntimeThreadId;
     use agentdash_agent_service_api::{
-        AgentBindingGeneration, AgentEffectIdentity, AgentItemId, AgentProfileDigest,
-        AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceDigest, AgentSurfaceRevision,
-        AgentTurnId,
+        AgentBindingGeneration, AgentEffectIdentity, AgentItemId, AgentSurfaceRevision, AgentTurnId,
     };
     use serde_json::Value;
 
@@ -929,18 +927,12 @@ mod tests {
     fn product_runtime_context() -> RuntimeToolResolvedContext {
         RuntimeToolResolvedContext {
             runtime_thread_id: RuntimeThreadId::new("runtime-thread").expect("thread"),
-            binding_generation: AgentBindingGeneration(1),
-            source: AgentSourceCoordinate::new("source").expect("source"),
-            service_instance_id: AgentServiceInstanceId::new("service").expect("service"),
-            profile_digest: AgentProfileDigest::new("profile").expect("profile"),
-            bound_surface_revision: AgentSurfaceRevision(1),
-            bound_surface_digest: AgentSurfaceDigest::new("bound").expect("bound"),
+            host_binding_generation: Some(AgentBindingGeneration(1)),
             applied_surface_revision: AgentSurfaceRevision(1),
-            applied_surface_digest: AgentSurfaceDigest::new("applied").expect("applied"),
             turn_id: AgentTurnId::new("turn").expect("turn"),
             item_id: Some(AgentItemId::new("item").expect("item")),
             effect_id: AgentEffectIdentity::new("effect").expect("effect"),
-            callback_idempotency_key: "callback".to_owned(),
+            invocation_id: "callback".to_owned(),
             deadline_at_ms: u64::MAX,
         }
     }
@@ -972,7 +964,7 @@ mod tests {
                 vfs_provenance: provenance.clone(),
                 task_digest: "task".to_owned(),
                 product_binding_digest: "binding".to_owned(),
-                host_binding_generation: 1,
+                host_binding_generation: Some(1),
             },
             resources: RuntimeToolResourceGrant::Product,
         }

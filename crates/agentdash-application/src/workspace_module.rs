@@ -18,6 +18,7 @@ use crate::extension_runtime::ExtensionRuntimeProjection;
 pub const MODULE_ID_EXTENSION_PREFIX: &str = "ext:";
 pub const MODULE_ID_CANVAS_PREFIX: &str = "canvas:";
 pub const MODULE_ID_INTERACTION_PREFIX: &str = "interaction:";
+pub const MODULE_ID_BUILTIN_PREFIX: &str = "builtin:";
 
 pub fn build_workspace_modules(
     extensions: &ExtensionRuntimeProjection,
@@ -25,6 +26,7 @@ pub fn build_workspace_modules(
     operations: &[OperationDescriptor],
 ) -> Vec<WorkspaceModuleDescriptor> {
     let mut modules = build_extension_modules(extensions, operations);
+    modules.extend(build_builtin_modules(operations));
     modules.extend(
         definitions
             .iter()
@@ -32,6 +34,65 @@ pub fn build_workspace_modules(
     );
     modules.sort_by(|left, right| left.summary.module_id.cmp(&right.summary.module_id));
     modules
+}
+
+fn build_builtin_modules(
+    operation_catalog: &[OperationDescriptor],
+) -> Vec<WorkspaceModuleDescriptor> {
+    let mut by_provider =
+        std::collections::BTreeMap::<String, Vec<WorkspaceModuleOperation>>::new();
+    for operation in operation_catalog
+        .iter()
+        .filter(|operation| operation.operation_ref.provider.namespace == "platform")
+    {
+        by_provider
+            .entry(operation.operation_ref.provider.provider_key.clone())
+            .or_default()
+            .push(extension_operation(operation));
+    }
+    by_provider
+        .into_iter()
+        .map(|(provider_key, mut operations)| {
+            operations.sort_by(|left, right| left.operation_key.cmp(&right.operation_key));
+            let permission_summary = operations
+                .iter()
+                .flat_map(|operation| operation.permission_summary.iter().cloned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            WorkspaceModuleDescriptor {
+                summary: WorkspaceModuleSummary {
+                    module_id: format!("{MODULE_ID_BUILTIN_PREFIX}{provider_key}"),
+                    kind: WorkspaceModuleKind::Builtin,
+                    title: builtin_module_title(&provider_key).to_string(),
+                    description: format!(
+                        "Native platform {provider_key} capabilities exposed as canonical Operations."
+                    ),
+                    source: provider_key.clone(),
+                    ui_summary: None,
+                    operation_summary: operations
+                        .iter()
+                        .map(|operation| operation.operation_key.clone())
+                        .collect(),
+                    permission_summary,
+                    status: WorkspaceModuleStatus::ready(),
+                },
+                ui_entries: Vec::new(),
+                operations,
+                runtime_backing: Some(format!("platform_tool_broker:{provider_key}")),
+                agent_state_projection: None,
+            }
+        })
+        .collect()
+}
+
+fn builtin_module_title(provider_key: &str) -> &str {
+    match provider_key {
+        "vfs" => "Workspace Files",
+        "process" => "Workspace Process",
+        "task" => "Project Tasks",
+        _ => "Platform Tools",
+    }
 }
 
 fn build_canvas_definition_module(
@@ -324,6 +385,42 @@ mod tests {
         SourceFile, SourceSandboxConfig,
     };
     use uuid::Uuid;
+
+    #[test]
+    fn native_platform_operations_project_as_builtin_modules() {
+        let operation_ref =
+            agentdash_domain::operation::OperationRef::new("platform", "vfs", "fs_read", 1)
+                .expect("operation ref");
+        let operation = OperationDescriptor {
+            operation_ref: operation_ref.clone(),
+            title: "fs_read".to_string(),
+            description: Some("Read a file".to_string()),
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: serde_json::json!(true),
+            effect: OperationEffect::Read,
+            replay_policy: OperationReplayPolicy::ReplaySafe,
+            required_capabilities: std::collections::BTreeSet::from(["file_read".to_string()]),
+            actor_visibility: std::collections::BTreeSet::from([OperationActorKind::Agent]),
+            execution_policy:
+                agentdash_application_operation_gateway::OperationExecutionPolicy::default(),
+            readiness: OperationReadiness::Ready,
+            provenance: agentdash_application_operation_gateway::OperationProvenance {
+                source: "platform_tool_broker".to_string(),
+                artifact_digest: None,
+            },
+            dispatch: agentdash_application_operation_gateway::OperationDispatch {
+                provider: operation_ref.provider,
+                route: "fs_read".to_string(),
+            },
+        };
+
+        let modules = build_builtin_modules(&[operation]);
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].summary.module_id, "builtin:vfs");
+        assert_eq!(modules[0].summary.kind, WorkspaceModuleKind::Builtin);
+        assert_eq!(modules[0].operations[0].operation_key, "fs_read");
+    }
 
     #[test]
     fn interaction_runtime_module_projects_only_allowlisted_state() {

@@ -11,11 +11,12 @@ use agentdash_application_operation_gateway::{
     ExtensionOperationRuntimeContext, InteractionCommandOperation, InteractionOperationAccess,
     InteractionOperationProvider, McpOperationProvider, McpProbeSetupPort, McpProbeTarget,
     McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput, OperationGateway,
-    SetupOperationAccessPort, SetupOperationAuthorityResolver, SetupOperationProvider,
-    TracingOperationAuditSink, WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput,
-    WorkspaceBrowseDirectoryOutput, WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput,
-    WorkspaceDetectGitOutput, WorkspaceDetectGitSetupPort, WorkspaceDetectInput,
-    WorkspaceDetectOutput, WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
+    PlatformToolOperationAccess, PlatformToolOperationProvider, SetupOperationAccessPort,
+    SetupOperationAuthorityResolver, SetupOperationProvider, TracingOperationAuditSink,
+    WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
+    WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
+    WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectOutput,
+    WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
     WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
@@ -51,6 +52,7 @@ pub(crate) fn build_operation_gateway(
     runtime_bindings: Arc<
         dyn agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository,
     >,
+    platform_tool_access: Arc<dyn PlatformToolOperationAccess>,
     repos: RepositorySet,
     backend_registry: Arc<BackendRegistry>,
     setup_action_transport: Arc<
@@ -89,7 +91,7 @@ pub(crate) fn build_operation_gateway(
         repos.project_extension_installation_repo.clone(),
         Arc::new(ApplicationExtensionOperationContext {
             repos: repos.clone(),
-            runtime_bindings,
+            runtime_bindings: runtime_bindings.clone(),
         }),
         backend_registry.clone(),
         backend_registry.clone(),
@@ -101,6 +103,7 @@ pub(crate) fn build_operation_gateway(
             gateway_handle,
         },
     )));
+    let platform_tool_provider = Arc::new(PlatformToolOperationProvider::new(platform_tool_access));
     OperationGateway::try_new(
         Arc::new(CompositeOperationAuthorityResolver::new(
             setup_authority,
@@ -113,6 +116,7 @@ pub(crate) fn build_operation_gateway(
         [
             Arc::new(McpOperationProvider::new(operation_mcp_access))
                 as Arc<dyn agentdash_application_operation_gateway::DynamicOperationProvider>,
+            platform_tool_provider,
             extension_provider,
             interaction_provider,
         ],

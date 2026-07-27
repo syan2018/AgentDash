@@ -51,12 +51,20 @@ pub struct PlatformToolBinding {
 - binding registry 保存 runtime name、capability provenance 与 captured AgentRun coordinates。
 - MCP/Extension bridge 通过 `AgentRunRuntimeBindingRepository` 把 `(run_id, agent_id)` 解析为
   `RuntimeThreadId`；Operation core 不读取 Runtime 类型。
+- 原生 VFS/Process/Task 工具只有进入显式 Operation exposure registry 后才获得 `platform:*`
+  OperationRef。`PlatformToolOperationProvider` 只依赖窄 access seam；API adapter 重新解析 current
+  Product binding/applied surface，并把执行交回 PlatformToolBroker。
+- Runtime tool catalog registration 不自动暴露 Operation。控制面、lifecycle、Workspace Module 与
+  OperationScript 自身工具不进入原生 Operation exposure，避免递归组合和隐式语义推断。
 - `operation_script_preflight/run` 只有顶层 Runtime ToolCall Item；nested call 使用
   `GatewayOperationScriptExecutor` 重新进入 canonical admission，并继承父 tool call trace。
 - Agent-facing program 只提交 source/input/limits/exact requested OperationRefs；descriptor digest、
   effect/replay、principal、scope、authority revision 和 granted capabilities 都由服务端 current
   surface 重建。
 - applied tool-set revision 与 binding generation 仍由 Tool Broker 校验；业务 tool adapter 不复制这套状态机。
+- Complete Agent callback delivery evidence 只存在于 callback path；server-side nested Operation
+  invocation 只携带 RuntimeThread、current applied surface revision、trace/idempotency/deadline，
+  Host binding generation 为空。
 
 ### 4. Validation & Error Matrix
 
@@ -80,6 +88,8 @@ pub struct PlatformToolBinding {
 - capability provenance 与 tool path mapping。
 - stale binding/generation/tool-set、cancel 与 timeout。
 - MCP RuntimeThread resolution、exact OperationRef 与 nested re-admission。
+- 原生工具显式 exposure allowlist、`platform:*` exact ref、Broker re-authorization 与 control-tool
+  non-exposure。
 - Interaction presentation attachment 使用 exact run/agent 双坐标；Agent 不提交 renderer、URI、
   title 或 attachment identity。
 

@@ -323,12 +323,17 @@ Workspace Module 是当前 Agent actor 可见的 Extension、Canvas definition �
   与 definition-owned V1 Agent state projection。projection 只包含 allowlisted JSON Pointer 值。
 - `ext:{extension_key}` 投影 installation UI 与 actor-visible canonical Operations；runtime action、
   protocol method、backend service 不建立第二套 dispatch。
+- `builtin:vfs`、`builtin:process`、`builtin:task` 投影当前 Agent 已获 tool capability 的原生
+  Operations。Runtime tool 注册不代表可组合；仅显式 exposure registry 中声明了 effect、replay、
+  capability 与 provenance 的工具可被 describe。
 - describe 返回 exact OperationRef、schema、visibility、readiness、effect、replay、permission 和
   provenance；invoke 不接受 module id 或 operation key 拼接。
 - present 的 renderer、URI、title、diagnostics 和 Interaction attachment 全由服务端从 current
   module surface 构造。
 - OperationScript program 显式列出 describe 得到的 exact OperationRefs。preflight token 绑定
   source/input/limits/current descriptors/principal/scope/authority；run 和 nested calls 继续重新准入。
+- `platform:*` nested call 通过 OperationGateway 后重新进入 PlatformToolBroker，从 current applied
+  resource surface 生成 VFS/Task grant；Workspace Module projection 不持有 executor 或资源授权。
 - Component event binding 是 platform command、single Operation 或 OperationScript tagged target；
   `.rhai` source 必须来自 pinned SourceBundle，iframe 只提交 schema-valid payload。
 

@@ -166,7 +166,10 @@ fn authorize_surface(
             vfs_provenance: map_provenance(&surface.provenance),
             task_digest: surface.task_surface_digest.clone(),
             product_binding_digest: surface.product_binding_digest.clone(),
-            host_binding_generation: request.context.binding_generation.0,
+            host_binding_generation: request
+                .context
+                .host_binding_generation
+                .map(|generation| generation.0),
         },
         resources,
     })
@@ -713,8 +716,7 @@ mod tests {
         RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolPermission, RuntimeToolResolvedContext,
     };
     use agentdash_agent_service_api::{
-        AgentBindingGeneration, AgentProfileDigest, AgentServiceInstanceId, AgentSourceCoordinate,
-        AgentSurfaceDigest, AgentSurfaceRevision, AgentToolName,
+        AgentBindingGeneration, AgentSurfaceRevision, AgentToolName,
     };
     use agentdash_application_agentrun::agent_run::{
         AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceProvenance, AppliedTaskGrant,
@@ -975,7 +977,7 @@ mod tests {
             assert_eq!(grant.applied_surface.vfs_digest, "vfs-test");
             assert_eq!(grant.applied_surface.task_digest, "task-test");
             assert_eq!(grant.applied_surface.product_binding_digest, "binding-test");
-            assert_eq!(grant.applied_surface.host_binding_generation, 1);
+            assert_eq!(grant.applied_surface.host_binding_generation, Some(1));
         }
     }
 
@@ -1386,19 +1388,13 @@ mod tests {
         RuntimeToolAuthorizationRequest {
             context: RuntimeToolResolvedContext {
                 runtime_thread_id: RuntimeThreadId::new("thread-test").unwrap(),
-                binding_generation: AgentBindingGeneration(1),
-                source: AgentSourceCoordinate::new("source-test").unwrap(),
-                service_instance_id: AgentServiceInstanceId::new("service-test").unwrap(),
-                profile_digest: AgentProfileDigest::new("profile-test").unwrap(),
-                bound_surface_revision: AgentSurfaceRevision(1),
-                bound_surface_digest: AgentSurfaceDigest::new("bound-test").unwrap(),
+                host_binding_generation: Some(AgentBindingGeneration(1)),
                 applied_surface_revision: AgentSurfaceRevision(1),
-                applied_surface_digest: AgentSurfaceDigest::new("applied-test").unwrap(),
                 turn_id: agentdash_agent_service_api::AgentTurnId::new("turn-test").unwrap(),
                 item_id: Some(agentdash_agent_service_api::AgentItemId::new("item-test").unwrap()),
                 effect_id: agentdash_agent_service_api::AgentEffectIdentity::new("effect-test")
                     .unwrap(),
-                callback_idempotency_key: "callback-test".to_owned(),
+                invocation_id: "callback-test".to_owned(),
                 deadline_at_ms: u64::MAX,
             },
             definition: RuntimeToolDefinition {

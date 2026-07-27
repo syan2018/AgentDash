@@ -46,7 +46,9 @@ Canvas、Extension panel/component 和 Interaction renderer 不以 AgentRun、Ag
 ## Requirements
 
 - R1：绘制并验证 Workspace Module、Canvas、Extension、MCP、RuntimeGateway、Agent capability、AgentRun/AgentFrame、RuntimeSession、VFS 和 WorkspacePanel 的当前调用链与事实源。
-- R2：建立 provider-qualified canonical `OperationRef/Descriptor`，统一 MCP tool、ExtensionProtocol method、Runtime Action 与 host operation 的 schema、effect、capability、readiness、provenance 和 dispatch identity。
+- R2：建立 provider-qualified canonical `OperationRef/Descriptor`，统一 MCP tool、显式暴露的原生
+  platform tool、ExtensionProtocol method、Runtime Action 与 host operation 的 schema、effect、
+  replay、capability、readiness、provenance 和 dispatch identity。
 - R3：把 RuntimeGateway invocation 正交拆为 principal、scope、origin、execution placement 与 trace correlation；browser 不提交 Session、Backend、workspace root 或预组装 capability。
 - R4：在 RuntimeGateway 内建立 direct invocation 与 OperationScript nested invoke 共用的 `OperationExecutionCore`，统一 schema/capability admission、output validation、cancellation、trace、audit 和 result ref。
 - R5：提供 `operation_script_preflight` 与 `operation_script_run`：编译/校验 `rhai_v1` source、解析 allowed Operation manifest、产出绑定完整 execution plan 的短期 token，并由 async executor 执行同步脚本语义。
@@ -90,6 +92,9 @@ Canvas、Extension panel/component 和 Interaction renderer 不以 AgentRun、Ag
 - [x] authoring definition 与 runtime instance 使用不同 module/presentation identity；archive/unpublish 不破坏已 pin 的 revision、instance 或 artifact。
 - [x] RuntimeGateway envelope 分离 principal/scope/origin/placement/trace；客户端 authority injection 被拒绝。
 - [x] Workspace Module 只消费 canonical Operation/Interaction projection；旧 weak parser、重复 resolver/provider 和手写 DTO 静态扫描为空。
+- [x] Agent 能从 `builtin:vfs`、`builtin:process`、`builtin:task` describe 显式暴露的原生工具
+  Operations，并与 Extension/Interaction Operations 通过同一个 OperationScript 组合；执行仍由
+  PlatformToolBroker 按 current applied surface 授权。
 - [x] Interaction attention 与 Channel message/delivery 边界清晰，Channel 不保存 canonical state/event body。
 - [x] 相关 `.trellis/spec/`、Rust contracts、generated TS、frontend 和 migrations 同步，所有 work items 完成最终检查与失败归因。
 - [x] 用户最终评审 planning artifacts 后才允许 `task.py start`。

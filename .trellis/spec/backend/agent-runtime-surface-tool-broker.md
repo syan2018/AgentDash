@@ -178,6 +178,11 @@ struct ToolCallCoordinates {
 skill/guideline并写回同一AgentFrame document；surface compiler从该frame生成skill/MCP instructions
 与native tools，授权器从同一applied resource surface生成Task/VFS grant。
 
+**Good case:** Agent 通过 Workspace Module/OperationScript 调用显式暴露的原生 Operation 时，
+Operation adapter 不直连 executor，而是以 current Product binding 与 applied surface revision
+重新进入 PlatformToolBroker。该 server-side invocation 没有 Complete Agent callback Host
+generation；grant 仍由同一 Product authorizer 生成。
+
 **Base case:** required approval创建durable Interaction并暂停；获批后由唯一claim owner使用同一Item和effective arguments继续。若进程在Running后消失，后续调用保留该不确定边界并返回typed in-progress，不猜测副作用是否发生。
 
 **Bad case:** 把Capability Pack拍成prompt、向driver传`DynAgentTool`、在permission/VFS之前解引用secret、把持久化Running直接当成executor重放许可，或让可选terminal registry静默产出孤儿`running` handle。这些行为会伪报能力、绕过执行点policy、重复不可逆副作用或切断terminal control，必须由类型、composition与顺序测试阻止。
@@ -191,6 +196,8 @@ skill/guideline并写回同一AgentFrame document；surface compiler从该frame�
 - runtime authorization测试断言Project AgentRun允许run-scoped`task_write`，read-only fixture仍拒绝
   write；`mounts_list`结果包含applied surface完整能力；final Product broker tracer覆盖Workspace Module
   list/describe/operate/invoke/present的read/write/presentation边界。
+- 原生 Operation adapter 测试断言 VFS/Process/Task 八个显式暴露项经 Broker 授权执行，Runtime
+  catalog 中其它 control/lifecycle tools 不会自动进入 Operation catalog。
 - embedded PostgreSQL Lifecycle launch 测试断言：product delivery 前 current AgentFrame 已包含 canonical workspace mount/backend/root/capability/context 与本次 Run execution profile；无 default workspace 的 Project 在 frame construction 边界失败。
 - Broker behavior覆盖Direct/MCP同状态机、rewrite/block/approval、permission/VFS/credential顺序、cancel/timeout/executor failure/result rewrite。
 - Broker lifecycle必须覆盖调用在accept后触发Surface/ToolSet hot-replace，断言progress与terminal成功、terminal唯一；另以旧revision发起新调用必须在accept前失败。

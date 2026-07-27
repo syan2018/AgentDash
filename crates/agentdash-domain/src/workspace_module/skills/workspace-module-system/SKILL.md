@@ -1,6 +1,6 @@
 ---
 name: workspace-module-system
-description: Discover, inspect, invoke, present, and compose capabilities exposed through actor-visible Workspace Modules. Use when an Agent needs to find available Canvas definitions, shared Interaction instances, or installed Extension capabilities; inspect their schemas and readiness; invoke one canonical Operation; open a module UI; or combine described Operations with an ephemeral OperationScript.
+description: Discover, inspect, invoke, present, and compose actor-visible Workspace Module capabilities. Use when an Agent needs Canvas definitions, shared Interaction instances, installed Extensions, native workspace file/process/task Operations, one canonical call, a module UI, or bounded multi-Operation composition with OperationScript.
 ---
 
 # Use Workspace Modules
@@ -32,6 +32,13 @@ Interpret module identities as follows:
 - `interaction:{instance_id}`: a shared Interaction runtime visible through a current attachment.
   Treat its projected state and revisions as read-only evidence, not write authority.
 - `ext:{extension_key}`: an installed Extension surface.
+- `builtin:vfs`: native workspace mount, read/search, and patch Operations.
+- `builtin:process`: native workspace process Operations such as `shell_exec`.
+- `builtin:task`: native Project Task read/write Operations.
+
+Builtin modules have no UI view. They make explicitly exposed native tools available as canonical
+Operations so they can be combined with Extension and Interaction Operations. Their invocation
+still re-enters the platform tool broker and current resource authorization.
 
 Use `canvas://{definition_id}` only as the Canvas definition preview URI and
 `interaction://{instance_id}` only as the shared runtime URI returned by the server. Do not build

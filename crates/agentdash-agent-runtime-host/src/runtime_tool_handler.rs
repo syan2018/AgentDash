@@ -30,23 +30,12 @@ impl CompleteAgentToolHandler for RuntimePlatformToolHandler {
             .invoke(
                 RuntimeToolResolvedContext {
                     runtime_thread_id: context.runtime_thread_id,
-                    binding_generation: context.binding_generation,
-                    source: context.source,
-                    service_instance_id: context.service_instance_id,
-                    profile_digest: context.profile_digest,
-                    bound_surface_revision: context.bound_surface_revision,
-                    bound_surface_digest: context.bound_surface_digest,
+                    host_binding_generation: Some(context.binding_generation),
                     applied_surface_revision: context.applied_surface_revision,
-                    applied_surface_digest: context.applied_surface_digest,
                     turn_id: callback.invocation.meta.turn_id,
                     item_id: callback.invocation.meta.item_id,
                     effect_id: callback.invocation.meta.effect_id,
-                    callback_idempotency_key: callback
-                        .invocation
-                        .meta
-                        .idempotency_key
-                        .as_str()
-                        .to_owned(),
+                    invocation_id: callback.invocation.meta.idempotency_key.as_str().to_owned(),
                     deadline_at_ms: callback.invocation.meta.deadline_at_ms,
                 },
                 callback.invocation.tool,

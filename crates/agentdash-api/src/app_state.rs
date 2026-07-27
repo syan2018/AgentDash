@@ -627,6 +627,13 @@ impl AppState {
             mcp_probe_relay,
             operation_mcp_access,
             runtime_product_bindings.clone(),
+            Arc::new(
+                crate::bootstrap::product_operation_platform_tool_access::ProductPlatformToolOperationAccess::new(
+                    runtime_product_bindings.clone(),
+                    product_resource_surfaces.clone(),
+                    runtime_tool_broker.clone(),
+                ),
+            ),
             repos.clone(),
             backend_registry.clone(),
             setup_action_transport,

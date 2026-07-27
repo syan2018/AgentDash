@@ -192,6 +192,11 @@ mod tests {
     use agentdash_agent_runtime::{
         RuntimeToolEffect, RuntimeToolPermission, RuntimeToolProvenance, ToolProtocolProjector,
     };
+    use agentdash_application::task::tools::{
+        task_read_parameters_schema, task_write_parameters_schema,
+    };
+    use agentdash_application_operation_gateway::validate_json_schema_definition;
+    use agentdash_application_vfs::{AppliedVfsRuntimeToolService, AppliedVfsToolKind};
 
     use super::*;
 
@@ -236,6 +241,43 @@ mod tests {
             "wait",
         ] {
             assert!(platform_tool_operation(definition(control)).is_none());
+        }
+    }
+
+    #[test]
+    fn exposed_native_schemas_are_gateway_compatible() {
+        let schemas = [
+            (
+                "mounts_list",
+                AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::MountsList),
+            ),
+            (
+                "fs_read",
+                AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::Read),
+            ),
+            (
+                "fs_glob",
+                AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::Glob),
+            ),
+            (
+                "fs_grep",
+                AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::Grep),
+            ),
+            (
+                "fs_apply_patch",
+                AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::ApplyPatch),
+            ),
+            (
+                "shell_exec",
+                AppliedVfsRuntimeToolService::parameters_schema(AppliedVfsToolKind::ShellExec),
+            ),
+            ("task_read", task_read_parameters_schema()),
+            ("task_write", task_write_parameters_schema()),
+        ];
+
+        for (tool_name, schema) in schemas {
+            validate_json_schema_definition(&schema)
+                .unwrap_or_else(|error| panic!("{tool_name} schema is incompatible: {error}"));
         }
     }
 }

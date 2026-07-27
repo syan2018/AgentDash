@@ -539,7 +539,15 @@ mod tests {
             operation_ref: operation_ref.clone(),
             title: if invalid { "" } else { "Echo" }.to_string(),
             description: None,
-            input_schema: json!({ "type": "object" }),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "patch": {
+                        "type": "string",
+                        "description": "The patch text in Codex apply_patch format."
+                    }
+                }
+            }),
             output_schema: json!({ "type": "object" }),
             effect: OperationEffect::Read,
             replay_policy: OperationReplayPolicy::ReplaySafe,

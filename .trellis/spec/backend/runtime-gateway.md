@@ -56,6 +56,10 @@ pub struct PlatformToolBinding {
   Product binding/applied surface，并把执行交回 PlatformToolBroker。
 - Runtime tool catalog registration 不自动暴露 Operation。控制面、lifecycle、Workspace Module 与
   OperationScript 自身工具不进入原生 Operation exposure，避免递归组合和隐式语义推断。
+- Operation descriptor 的 JSON Schema 子集区分执行约束与只读 annotation；Gateway 对
+  `anyOf`、`minimum`、`maximum` 执行真实输入校验，`description` 可存在于任意 schema 节点、
+  必须是字符串且不参与 admission，原因是原生工具的可见参数合同和执行准入需要保持同源，同时
+  参数说明需要无损进入 Agent discovery。
 - `operation_script_preflight/run` 只有顶层 Runtime ToolCall Item；nested call 使用
   `GatewayOperationScriptExecutor` 重新进入 canonical admission，并继承父 tool call trace。
 - Agent-facing program 只提交 source/input/limits/exact requested OperationRefs；descriptor digest、

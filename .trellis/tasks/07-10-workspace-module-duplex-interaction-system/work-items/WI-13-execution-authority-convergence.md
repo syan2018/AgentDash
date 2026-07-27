@@ -188,3 +188,6 @@ Operation catalog 投影，不混入权限实体；失败通过关联同一次 a
   port；Complete Agent provision/rebind 协议边界保持不变。
 - 2026-07-27：通过受影响 crates 定向测试、`agentdash-api --all-targets`、Skill validation、
   repository-wide residual scan 与 `git diff --check`。
+- 2026-07-27：补齐 Operation Gateway 对原生工具实际 schema 合同中的 `description`、
+  `minimum`、`maximum` 与 `anyOf` 支持，并以全部显式暴露 VFS/Task schema 组合测试锁定
+  platform Operation provider 不再因 descriptor 子集漂移而整体 unavailable。

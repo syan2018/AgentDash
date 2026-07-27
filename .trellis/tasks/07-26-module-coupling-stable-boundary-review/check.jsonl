@@ -1,1 +1,18 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-global-coupling.md","reason":"复核每个后端 P0/P1 的 production reachability、证据锚点与合理内聚反例"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/frontend-crosslayer-coupling.md","reason":"复核前端/跨端结论是否存在第二状态机、重复协议解释或 UI owner 泄漏"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/repo-dependency-churn.md","reason":"复核静态依赖数据、production/test 区分与共变数据 caveat"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/history-and-existing-reviews.md","reason":"复核历史问题的 residual/resurfaced/already-converged 分类与事故样本定位"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-entrypoint-coverage-index.md","reason":"检查三路后端审计没有遗漏非 HTTP 入口、平台操作、background worker 或持久化事实"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-business-assets.md","reason":"复核业务资产 P0/P1 的生产可达性、authorization、CAS、semantic transaction 与 object owner 证据"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-control-orchestration.md","reason":"复核 LifecycleRun CAS、dispatch saga、Routine occurrence、Interaction/Gate/Companion worker 与多入口 command owner 证据"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-execution-composition.md","reason":"复核 diagnostics、dynamic executor lease、Hook/Terminal/Relay、Local/Tauri、retirement 与 composition freeze 的生产证据"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-cross-audit-synthesis.md","reason":"检查重复风险已合并到唯一 authority owner，覆盖清单无未分类 production capability，work package graph 无循环"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/architecture-enforcement-feasibility.md","reason":"检查每条长期规则有可执行 authority、static/behavior边界、valid/invalid/missing-root self-test和真实CI入口"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/architecture-stability-ledger.md","reason":"检查每个边界只有在行为证明、production composition、old path absence和blocking gate齐全后才晋升proven"}
+{"file":".trellis/spec/index.md","reason":"检查任务证据与长期 architecture/current baseline 的归档边界"}
+{"file":".trellis/spec/backend/architecture.md","reason":"检查后端结论是否准确区分 interface/application/domain/infrastructure/composition"}
+{"file":".trellis/spec/frontend/architecture.md","reason":"检查前端结论是否区分 store、view model、service、component 与 app composition"}
+{"file":".trellis/spec/cross-layer/architecture.md","reason":"检查协议、Cloud/Local/Desktop 与 generated contract owner"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查每个高风险项是否覆盖 producer、admission、persistence、live/replay 与 renderer 闭环"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"检查跨聚合写入、repository bag 与 semantic transaction 建议"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查 internal fact 到 wire DTO 与 TS consumer 的单向映射"}

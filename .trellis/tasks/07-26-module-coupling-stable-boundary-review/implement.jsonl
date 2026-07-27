@@ -1,1 +1,20 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-global-coupling.md","reason":"后端全域 authority、依赖方向、transaction、facade 与 composition 证据"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/frontend-crosslayer-coupling.md","reason":"前端状态、生成合同与 Cloud/Local/Desktop 跨层边界证据"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/repo-dependency-churn.md","reason":"workspace/package graph、hub、test-only cycle 与演化耦合证据"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/history-and-existing-reviews.md","reason":"历史事故回放、既有 review 差异、git 共变与架构门禁 drift 证据"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-entrypoint-coverage-index.md","reason":"HTTP、MCP、Runtime Tool、Local Relay、Tauri、worker、stream 与 persistent fact 的完整性基线"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-business-assets.md","reason":"Project、Workspace、Story、Task、资产、身份、LLM、Extension 等生产用例的 owner、授权、事务与 object lifecycle 审计"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-control-orchestration.md","reason":"Workflow、LifecycleRun、Routine、Task、Companion、Gate、Channel、Interaction、Permission/Capability 的控制权威与恢复装配审计"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-execution-composition.md","reason":"AgentRun/Runtime/Host/Hook/VFS/Terminal/MCP/Relay/Local/Tauri/worker 的生产入口、执行事实、资源生命周期与装配审计"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/backend-cross-audit-synthesis.md","reason":"三路后端 use-case coverage、重复 finding、P0 authority 与 work package 前置关系的交叉收敛"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/research/architecture-enforcement-feasibility.md","reason":"G0-G9 架构规则的权威输入、检查形态、CI接入、self-test、例外与实施包可行性"}
+{"file":".trellis/tasks/07-26-module-coupling-stable-boundary-review/architecture-stability-ledger.md","reason":"current/target/proven 架构变化、Stability Delta、模块验证责任与每个child Boundary Proof的持续集成账本"}
+{"file":".trellis/spec/backend/architecture.md","reason":"后端允许依赖方向、composition root 与 owner 基线"}
+{"file":".trellis/spec/frontend/architecture.md","reason":"前端 feature、state、service 与 renderer 分层基线"}
+{"file":".trellis/spec/cross-layer/architecture.md","reason":"Cloud/Local/Desktop、协议与共享事实边界基线"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"跨层事实源、identity、projection、recovery 与 composition 审计清单"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"aggregate repository、跨聚合 command port 与 RepositorySet 使用边界"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"PostgreSQL/SQLite/migration 与事务边界"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"Rust wire DTO、TS 生成与 contract drift 契约"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"前端 canonical server state、local state 与 store owner 基线"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"generated DTO、mapper 与 runtime validation 边界"}

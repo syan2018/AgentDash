@@ -10,20 +10,18 @@ use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleGateRepository, LifecycleRun,
     LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
 };
-use agentdash_platform_spi::{Mount, MountCapability, Vfs};
+use agentdash_platform_spi::Vfs;
 
 use crate::agent_run::lifecycle_read_model_facade::{
     AgentRunRefView, AgentRunView, LifecycleSubjectAssociationView, RuntimeThreadRefView,
     SubjectRefView,
 };
 use crate::agent_run::{
-    AgentConversationSnapshotInput, AgentConversationSnapshotResolver,
-    AgentRunAppliedResourceSurfaceQueryPort, AgentRunExecutionState, AgentRunOwnershipModel,
-    AgentRunProductProjectionQueryPort, AgentRunProductRuntimeBinding,
-    AgentRunProductRuntimeExecutionObservation, AppliedVfsMount, AppliedVfsOperation,
-    ConversationModelConfigInput, ConversationModelConfigResolver,
-    ConversationModelConfigSourceModel, ConversationWaitingItemModel, ValidationSeverityModel,
-    resolve_agent_run_display_title,
+    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentRunExecutionState,
+    AgentRunOwnershipModel, AgentRunProductProjectionQueryPort, AgentRunProductRuntimeBinding,
+    AgentRunProductRuntimeExecutionObservation, ConversationModelConfigInput,
+    ConversationModelConfigResolver, ConversationModelConfigSourceModel,
+    ConversationWaitingItemModel, ValidationSeverityModel, resolve_agent_run_display_title,
 };
 use crate::error::WorkflowApplicationError;
 
@@ -38,7 +36,6 @@ use super::types::{
 #[derive(Clone, Copy)]
 pub struct AgentRunWorkspaceQueryDeps<'a> {
     pub product_projection: &'a dyn AgentRunProductProjectionQueryPort,
-    pub applied_resource_surfaces: &'a dyn AgentRunAppliedResourceSurfaceQueryPort,
     pub agent_frame_repo: &'a dyn AgentFrameRepository,
     pub project_agent_repo: &'a dyn ProjectAgentRepository,
     pub lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
@@ -64,6 +61,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         input: AgentRunWorkspaceQueryInput,
     ) -> Result<AgentRunWorkspaceSnapshot, WorkflowApplicationError> {
         let viewer_user_id = input.viewer_user_id;
+        let execution_authority_vfs = input.execution_authority_vfs;
         let run = input.run;
         let agent = input.agent;
         let target = AgentRunTarget {
@@ -105,7 +103,12 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         });
 
         let resource_surface = self
-            .resolve_resource_surface(&target, frame.as_ref(), binding.is_some())
+            .resolve_resource_surface(
+                &target,
+                frame.as_ref(),
+                binding.is_some(),
+                execution_authority_vfs,
+            )
             .await?;
         let resource_surface_coordinate = match (frame.as_ref(), binding, runtime_execution) {
             (Some(frame), Some(binding), Some(_)) => Some(resource_surface_coordinate_model(
@@ -305,15 +308,14 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         target: &AgentRunTarget,
         frame: Option<&AgentFrame>,
         has_product_binding: bool,
+        execution_authority_vfs: Option<Vfs>,
     ) -> Result<Option<ResolvedVfsSurface>, WorkflowApplicationError> {
         let vfs = if has_product_binding {
-            let surface = self
-                .repos
-                .applied_resource_surfaces
-                .applied_resource_surface(target)
-                .await
-                .map_err(|error| WorkflowApplicationError::Conflict(error.to_string()))?;
-            applied_surface_vfs(surface)
+            execution_authority_vfs.ok_or_else(|| {
+                WorkflowApplicationError::Conflict(
+                    "AgentRun current workspace 缺少 ExecutionAuthority VFS".to_string(),
+                )
+            })?
         } else {
             let Some(frame) = frame else {
                 return Ok(None);
@@ -445,43 +447,6 @@ fn runtime_execution_state(observation: &AgentObservation) -> AgentRunExecutionS
             turn_id: last_turn_id,
             message: Some("Complete Agent Runtime 已丢失".to_string()),
         },
-    }
-}
-
-fn applied_surface_vfs(surface: crate::agent_run::AgentRunAppliedResourceSurface) -> Vfs {
-    Vfs {
-        mounts: surface
-            .vfs_mounts
-            .into_iter()
-            .map(applied_vfs_mount)
-            .collect(),
-        default_mount_id: surface.default_mount_id,
-        source_project_id: Some(surface.project_id.to_string()),
-        source_story_id: None,
-        links: Vec::new(),
-    }
-}
-
-fn applied_vfs_mount(mount: AppliedVfsMount) -> Mount {
-    Mount {
-        id: mount.mount_id,
-        provider: mount.provider,
-        backend_id: mount.backend_id,
-        root_ref: mount.root_ref,
-        capabilities: mount
-            .capabilities
-            .into_iter()
-            .map(|operation| match operation {
-                AppliedVfsOperation::Read => MountCapability::Read,
-                AppliedVfsOperation::List => MountCapability::List,
-                AppliedVfsOperation::Search => MountCapability::Search,
-                AppliedVfsOperation::Write => MountCapability::Write,
-                AppliedVfsOperation::Exec => MountCapability::Exec,
-            })
-            .collect(),
-        default_write: mount.default_write,
-        display_name: mount.display_name,
-        metadata: mount.metadata,
     }
 }
 

@@ -334,6 +334,14 @@ pub struct ActorOperationSurface {
     pub authority_revision: String,
     pub granted_capabilities: BTreeSet<String>,
     pub catalog: OperationCatalog,
+    pub diagnostics: Vec<OperationSurfaceDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OperationSurfaceDiagnostic {
+    pub provider: String,
+    pub code: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

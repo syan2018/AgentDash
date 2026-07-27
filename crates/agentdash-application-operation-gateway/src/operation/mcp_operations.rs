@@ -78,6 +78,10 @@ impl McpOperationProvider {
 
 #[async_trait]
 impl DynamicOperationProvider for McpOperationProvider {
+    fn surface_source(&self) -> &'static str {
+        "mcp"
+    }
+
     fn owns_provider(&self, provider: &OperationProviderRef) -> bool {
         provider.namespace == MCP_OPERATION_NAMESPACE
     }

@@ -14,10 +14,10 @@ use super::{
     OperationExecutionCore, OperationExecutionError, OperationExecutionRequest,
     OperationExecutionResult, OperationInvocationCommand, OperationInvocationEnvelope,
     OperationOriginRef, OperationPlacement, OperationPlacementResolver, OperationPrincipal,
-    OperationProvider, OperationResultRef, OperationResultStore, OperationSurfaceResolver,
-    ScopedOperationResult, result_access_matches,
+    OperationProvider, OperationResultRef, OperationResultStore, OperationSurfaceDiagnostic,
+    OperationSurfaceResolver, ScopedOperationResult, result_access_matches,
 };
-use crate::operation::OperationAuthorityResolver;
+use crate::operation::{OperationAuthorityGrant, OperationAuthorityResolver};
 
 pub struct OperationGateway {
     core: OperationExecutionCore,
@@ -81,6 +81,28 @@ impl OperationGateway {
                     authority_revision: String::new(),
                 },
                 origin,
+                cancel,
+            )
+            .await
+    }
+
+    pub async fn surface_authorized(
+        &self,
+        principal: &OperationPrincipal,
+        scope_ref: &super::OperationScopeRef,
+        origin: &OperationOriginRef,
+        grant: OperationAuthorityGrant,
+        cancel: CancellationToken,
+    ) -> Result<ActorOperationSurface, OperationExecutionError> {
+        self.runtime
+            .resolve_surface_with_grant(
+                principal,
+                &OperationAuthorizationScope {
+                    scope_ref: scope_ref.clone(),
+                    authority_revision: grant.authority_revision.clone(),
+                },
+                origin,
+                grant,
                 cancel,
             )
             .await
@@ -223,22 +245,17 @@ impl OperationProviderRuntime {
         }
         Ok(first)
     }
-}
 
-#[async_trait]
-impl OperationSurfaceResolver for OperationProviderRuntime {
-    async fn resolve_surface(
+    async fn resolve_surface_with_grant(
         &self,
         principal: &OperationPrincipal,
         scope: &OperationAuthorizationScope,
         origin: &OperationOriginRef,
+        grant: OperationAuthorityGrant,
         cancel: CancellationToken,
     ) -> Result<ActorOperationSurface, OperationExecutionError> {
-        let grant = self
-            .authority_resolver
-            .resolve(principal, scope, origin, cancel.clone())
-            .await?;
         let mut descriptors = Vec::new();
+        let mut diagnostics = Vec::new();
         for provider in self.providers.values() {
             descriptors.extend(
                 provider
@@ -254,6 +271,11 @@ impl OperationSurfaceResolver for OperationProviderRuntime {
                 Ok(discovered) => match OperationCatalog::try_new(discovered.clone()) {
                     Ok(_) => descriptors.extend(discovered),
                     Err(error) => {
+                        diagnostics.push(OperationSurfaceDiagnostic {
+                            provider: provider.surface_source().to_string(),
+                            code: "invalid_descriptor".to_string(),
+                            message: error.to_string(),
+                        });
                         diag!(
                             Warn,
                             Subsystem::Infra,
@@ -266,6 +288,11 @@ impl OperationSurfaceResolver for OperationProviderRuntime {
                     return Err(OperationExecutionError::Cancelled);
                 }
                 Err(error) => {
+                    diagnostics.push(OperationSurfaceDiagnostic {
+                        provider: provider.surface_source().to_string(),
+                        code: "discovery_failed".to_string(),
+                        message: error.to_string(),
+                    });
                     diag!(
                         Warn,
                         Subsystem::Infra,
@@ -279,7 +306,26 @@ impl OperationSurfaceResolver for OperationProviderRuntime {
             authority_revision: grant.authority_revision,
             granted_capabilities: grant.capabilities,
             catalog: OperationCatalog::try_new(descriptors)?,
+            diagnostics,
         })
+    }
+}
+
+#[async_trait]
+impl OperationSurfaceResolver for OperationProviderRuntime {
+    async fn resolve_surface(
+        &self,
+        principal: &OperationPrincipal,
+        scope: &OperationAuthorizationScope,
+        origin: &OperationOriginRef,
+        cancel: CancellationToken,
+    ) -> Result<ActorOperationSurface, OperationExecutionError> {
+        let grant = self
+            .authority_resolver
+            .resolve(principal, scope, origin, cancel.clone())
+            .await?;
+        self.resolve_surface_with_grant(principal, scope, origin, grant, cancel)
+            .await
     }
 }
 
@@ -416,13 +462,36 @@ mod tests {
         }
     }
 
+    struct RejectAuthority;
+
+    #[async_trait]
+    impl OperationAuthorityResolver for RejectAuthority {
+        async fn resolve(
+            &self,
+            _: &OperationPrincipal,
+            _: &OperationAuthorizationScope,
+            _: &OperationOriginRef,
+            _: CancellationToken,
+        ) -> Result<OperationAuthorityGrant, OperationExecutionError> {
+            Err(OperationExecutionError::NotReady {
+                code: "unexpected_authority_lookup".to_string(),
+                message: "pre-resolved authority must be used".to_string(),
+            })
+        }
+    }
+
     struct FixtureDynamicProvider {
         provider_key: &'static str,
         invalid: bool,
+        fail: bool,
     }
 
     #[async_trait]
     impl DynamicOperationProvider for FixtureDynamicProvider {
+        fn surface_source(&self) -> &'static str {
+            "fixture"
+        }
+
         fn owns_provider(&self, provider: &OperationProviderRef) -> bool {
             provider.namespace == "dynamic" && provider.provider_key == self.provider_key
         }
@@ -434,6 +503,12 @@ mod tests {
             _: &OperationOriginRef,
             _: CancellationToken,
         ) -> Result<Vec<OperationDescriptor>, OperationExecutionError> {
+            if self.fail {
+                return Err(OperationExecutionError::NotReady {
+                    code: "fixture_unavailable".to_string(),
+                    message: "fixture provider is unavailable".to_string(),
+                });
+            }
             Ok(vec![descriptor(self.provider_key, self.invalid)])
         }
 
@@ -507,10 +582,12 @@ mod tests {
                 Arc::new(FixtureDynamicProvider {
                     provider_key: "invalid",
                     invalid: true,
+                    fail: false,
                 }) as Arc<dyn DynamicOperationProvider>,
                 Arc::new(FixtureDynamicProvider {
                     provider_key: "valid",
                     invalid: false,
+                    fail: false,
                 }),
             ],
             Arc::new(EphemeralOperationResultStore::default()),
@@ -533,5 +610,80 @@ mod tests {
         let descriptors = surface.catalog.descriptors();
         assert_eq!(descriptors.len(), 1);
         assert_eq!(descriptors[0].operation_ref.provider.provider_key, "valid");
+        assert_eq!(surface.diagnostics.len(), 1);
+        assert_eq!(surface.diagnostics[0].provider, "fixture");
+        assert_eq!(surface.diagnostics[0].code, "invalid_descriptor");
+        assert!(!surface.diagnostics[0].message.is_empty());
+    }
+
+    #[tokio::test]
+    async fn authorized_surface_uses_the_request_scoped_authority_value() {
+        let gateway = OperationGateway::try_new(
+            Arc::new(RejectAuthority),
+            [],
+            [Arc::new(FixtureDynamicProvider {
+                provider_key: "valid",
+                invalid: false,
+                fail: false,
+            }) as Arc<dyn DynamicOperationProvider>],
+            Arc::new(EphemeralOperationResultStore::default()),
+            Arc::new(TracingOperationAuditSink),
+        )
+        .expect("gateway");
+        let grant = OperationAuthorityGrant {
+            authority_revision: "execution-authority:7".to_string(),
+            capabilities: BTreeSet::from(["operation.invoke".to_string()]),
+        };
+
+        let surface = gateway
+            .surface_authorized(
+                &principal(),
+                &OperationScopeRef::Project {
+                    project_id: Uuid::new_v4(),
+                },
+                &OperationOriginRef::UserWorkshop,
+                grant.clone(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("surface");
+
+        assert_eq!(surface.authority_revision, grant.authority_revision);
+        assert_eq!(surface.granted_capabilities, grant.capabilities);
+        assert_eq!(surface.catalog.descriptors().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_dynamic_provider_is_reported_as_unavailable_not_empty() {
+        let gateway = OperationGateway::try_new(
+            Arc::new(AllowAuthority),
+            [],
+            [Arc::new(FixtureDynamicProvider {
+                provider_key: "failed",
+                invalid: false,
+                fail: true,
+            }) as Arc<dyn DynamicOperationProvider>],
+            Arc::new(EphemeralOperationResultStore::default()),
+            Arc::new(TracingOperationAuditSink),
+        )
+        .expect("gateway");
+
+        let surface = gateway
+            .surface_current(
+                &principal(),
+                &OperationScopeRef::Project {
+                    project_id: Uuid::new_v4(),
+                },
+                &OperationOriginRef::UserWorkshop,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("surface");
+
+        assert!(surface.catalog.descriptors().is_empty());
+        assert_eq!(surface.diagnostics.len(), 1);
+        assert_eq!(surface.diagnostics[0].provider, "fixture");
+        assert_eq!(surface.diagnostics[0].code, "discovery_failed");
+        assert!(surface.diagnostics[0].message.contains("fixture provider"));
     }
 }

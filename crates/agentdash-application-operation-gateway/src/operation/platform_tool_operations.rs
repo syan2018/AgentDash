@@ -83,6 +83,10 @@ impl PlatformToolOperationProvider {
 
 #[async_trait]
 impl DynamicOperationProvider for PlatformToolOperationProvider {
+    fn surface_source(&self) -> &'static str {
+        "platform_tool"
+    }
+
     fn owns_provider(&self, provider: &OperationProviderRef) -> bool {
         provider.namespace == PLATFORM_TOOL_OPERATION_NAMESPACE
     }

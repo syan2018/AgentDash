@@ -5,6 +5,7 @@ use crate::agent_run::lifecycle_read_model_facade::{
 use crate::agent_run::{AgentConversationSnapshotModel, ConversationEffectiveExecutorConfigModel};
 use agentdash_application_vfs::ResolvedVfsSurface;
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
+use agentdash_platform_spi::Vfs;
 use serde_json::Value;
 
 #[derive(Debug, Clone)]
@@ -12,6 +13,7 @@ pub struct AgentRunWorkspaceQueryInput {
     pub run: LifecycleRun,
     pub agent: LifecycleAgent,
     pub viewer_user_id: Option<String>,
+    pub execution_authority_vfs: Option<Vfs>,
 }
 
 #[derive(Debug, Clone)]

@@ -1,5 +1,88 @@
 # Business Agent Surface and Platform Tool Broker
 
+## Scenario: Execution Authority Convergence
+
+### 1. Scope / Trigger
+
+Agent actor 的 Workspace Module、Operation catalog、MCP/native adapter、VFS workspace view 或
+ToolBroker authorization 需要解释 current capability/resource 时，统一解析
+`ExecutionAuthority`。这样 visibility 与 execution admission 共享同一 revision/digest evidence。
+
+### 2. Signatures
+
+```rust
+trait ExecutionAuthorityResolver {
+    async fn resolve(
+        &self,
+        request: ExecutionAuthorityRequest,
+    ) -> Result<ExecutionAuthority, ExecutionAuthorityResolveError>;
+}
+
+trait RuntimeToolExecutionAuthorityPort {
+    async fn execution_authority(
+        &self,
+        runtime_thread_id: &RuntimeThreadId,
+    ) -> Result<RuntimeToolExecutionAuthority, String>;
+}
+```
+
+### 3. Contracts
+
+- `ExecutionAuthority` 是 request-scoped immutable runtime value，字段包括 principal、project
+  scope、runtime thread、canonical capabilities、VFS/Task grants、surface revision/digest、
+  Product binding digest 与 provenance。
+- target/runtime thread 是 resolver locator；resolver 直接返回 authority，不公开只做字段转发的
+  AgentRun binding wrapper。
+- resolver 只读取 Product binding 固定的 AgentFrame revision，并校验 applied resource evidence。
+- explicit capabilities 与 enabled clusters 先规范化，再投影 runtime tools、`platform:*`
+  Operations 和 `builtin:*` modules。
+- OperationGateway 持有 catalog/effect/replay/execution core；ToolBroker 持有每次调用的
+  permission/effect/resource enforcement。两者消费 authority，不持有独立权限状态。
+- Complete Agent provision/rebind 继续生成 desired/offer/bound/applied 协议证据；成功后的 Product
+  binding commit 决定 current authority，不增加独立 adoption port 或状态机。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| target 与 runtime thread 指向不同 binding | `execution_authority_runtime_thread_mismatch` |
+| binding frame 与持久化 revision 不一致 | `execution_authority_frame_binding_mismatch` |
+| binding/frame/applied digest 或 provenance 不一致 | `execution_authority_evidence_mismatch` |
+| provider discovery 失败 | `surface_diagnostics[{provider,code,message}]` |
+| 原生 capability 已授予但 platform provider 不可用 | Workspace Module typed unavailable |
+| surface projection 期间 authority revision 改变 | `stale_execution_authority` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：一次 list/describe 持有 authority，Operation provider 用同一 revision 投影；invoke 与 nested
+  invoke 在执行时重新解析并进入 ToolBroker。
+- Base：`ready` 且 module count 为零，表示 current authority 确实没有可见模块。
+- Bad：latest frame、Product binding 和 applied surface 由不同消费者分别读取，provider failure
+  被解释为空 catalog。
+
+### 6. Tests Required
+
+- Resolver test 断言 binding-pinned frame 胜过未提交的 latest frame。
+- Resolver test 断言 digest/provenance mismatch 整体拒绝。
+- Capability test 断言 cluster-backed capability 进入 canonical capability keys。
+- Operation test 断言 dynamic provider failure 返回结构化 diagnostic。
+- ToolBroker test 只注入一次解析完成的 authority projection，并断言 grant evidence 同源。
+
+### 7. Wrong vs Correct
+
+```text
+Wrong:
+Workspace Module -> latest frame
+OperationGateway  -> Product binding
+ToolBroker        -> applied surface
+
+Correct:
+locator -> ExecutionAuthority
+          -> Workspace Module projection
+          -> Operation authority/catalog projection
+          -> ToolBroker execution grant
+```
+
 ## 1. Scope / Trigger
 
 本规范适用于 Business Agent Surface 的 capability contribution 编译与 profile binding，以及平台 callable tool 通过 Direct Callback 或 session-scoped MCP façade 执行的统一 Broker 状态机。修改 Capability Pack、HookPlan 编译、ToolCatalog、Workspace/Skill 适配、tool policy顺序、approval、credential、VFS或tool-call persistence时必须复核本规范。

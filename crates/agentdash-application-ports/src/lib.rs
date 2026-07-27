@@ -15,7 +15,7 @@ pub mod operation_script;
 pub mod product_runtime_tool;
 pub mod project_projection_notification;
 pub mod request_digest;
-pub mod runtime_surface_adoption;
+pub mod runtime_surface_target;
 pub mod vfs_materialization;
 pub mod vfs_surface_runtime;
 pub mod workflow_agent_frame_materialization;

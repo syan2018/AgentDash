@@ -1,6 +1,6 @@
 ---
 name: workspace-module-system
-description: Discover, inspect, invoke, present, and compose actor-visible Workspace Module capabilities. Use when an Agent needs Canvas definitions, shared Interaction instances, installed Extensions, native workspace file/process/task Operations, one canonical call, a module UI, or bounded multi-Operation composition with OperationScript.
+description: Discover, inspect, invoke, present, compose, and diagnose actor-visible Workspace Module capabilities. Use when an Agent needs Canvas definitions, shared Interaction instances, installed Extensions, native workspace file/process/task Operations, one canonical call, a module UI, bounded OperationScript composition, or an explanation for an unavailable or empty current capability surface.
 ---
 
 # Use Workspace Modules
@@ -24,6 +24,19 @@ the server and OperationGateway enforce current state, permission, placement, ex
 2. Select a returned `module_id`.
 3. Call `workspace_module_describe` with that exact `module_id`.
 4. Use only Operations and views returned by the latest describe result.
+
+Read `surface_readiness` before interpreting `module_count`:
+
+- `ready` with zero modules is an authoritative empty surface for the current execution authority.
+- `degraded` includes `surface_diagnostics`; use each provider/code/message to explain which catalog
+  facet is unavailable.
+- A typed tool failure such as `execution_authority_*` or
+  `workspace_module_platform_operation_surface_unavailable` means the current authority could not
+  be resolved. It is not an empty module surface.
+
+The platform derives builtin visibility from the same current execution authority used by
+OperationGateway and the native tool broker. A changed Agent permission becomes visible after the
+runtime rebind commits the new authority revision; re-run list and describe after that transition.
 
 Interpret module identities as follows:
 

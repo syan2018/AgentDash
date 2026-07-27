@@ -77,8 +77,7 @@ pub use runtime_shell_terminal_registry::{
     ProcessShellTerminalOutput, ProcessShellTerminalRegistry,
 };
 pub use runtime_tool_authorization::{
-    CommittedRuntimeToolProductBinding, ProductRuntimeToolAuthorizer,
-    RuntimeToolProductBindingQueryPort,
+    ProductRuntimeToolAuthorizer, RuntimeToolExecutionAuthority, RuntimeToolExecutionAuthorityPort,
 };
 pub use runtime_tool_executors::{
     DeferredProductRuntimeToolService, FsApplyPatchRuntimeTool, FsGlobRuntimeTool,

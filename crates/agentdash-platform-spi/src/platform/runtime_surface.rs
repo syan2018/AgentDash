@@ -641,11 +641,16 @@ impl CapabilityState {
 
     /// 已解析能力全集的 string key 视图——供 hook runtime 初始化使用。
     pub fn capability_keys(&self) -> BTreeSet<String> {
-        self.tool
+        let mut capabilities = self
+            .tool
             .capabilities
             .iter()
             .map(|c| c.key().to_string())
-            .collect()
+            .collect::<BTreeSet<_>>();
+        capabilities.extend(self.tool.enabled_clusters.iter().map(|cluster| {
+            crate::platform::tool_capability::tool_cluster_capability_key(*cluster).to_string()
+        }));
+        capabilities
     }
 
     /// 与另一个 CapabilityState 做交集（用于 agent 级配置裁剪）。
@@ -855,6 +860,24 @@ mod tests {
         assert!(
             !flow.is_capability_tool_enabled("workflow_management", "upsert_workflow_tool", None),
             "MCP 工具必须先由 canonical CapabilityState 授予 capability"
+        );
+    }
+
+    #[test]
+    fn capability_keys_include_cluster_backed_platform_capabilities() {
+        let flow = CapabilityState::from_clusters([
+            ToolCluster::Read,
+            ToolCluster::Task,
+            ToolCluster::WorkspaceModule,
+        ]);
+
+        assert_eq!(
+            flow.capability_keys(),
+            BTreeSet::from([
+                "file_read".to_string(),
+                "task".to_string(),
+                "workspace_module".to_string(),
+            ])
         );
     }
 }

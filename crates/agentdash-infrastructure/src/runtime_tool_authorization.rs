@@ -9,54 +9,34 @@ use agentdash_agent_runtime::{
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunAppliedResourceSurfaceQueryError, AgentRunAppliedResourceSurfaceQueryPort,
-    AgentRunProductRuntimeBinding, AppliedTaskOperation, AppliedTaskScope, AppliedVfsOperation,
+    AgentRunAppliedResourceSurface, AppliedTaskOperation, AppliedTaskScope, AppliedVfsOperation,
     AppliedVfsPathScope,
 };
 use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
 
-/// Runtime tool authorization only consumes an immutable Product activation record.
-///
-/// The PostgreSQL repository and its transaction semantics are intentionally supplied by the
-/// Product projection composition owner. Keeping this DTO beside the adapter prevents the Runtime
-/// tool surface from assuming a migration or concrete persistence layout.
 #[derive(Clone, Debug)]
-pub struct CommittedRuntimeToolProductBinding {
-    pub binding: AgentRunProductRuntimeBinding,
-    pub binding_digest: String,
+pub struct RuntimeToolExecutionAuthority {
+    pub runtime_thread_id: RuntimeThreadId,
+    pub surface: AgentRunAppliedResourceSurface,
 }
 
 pub struct ProductRuntimeToolAuthorizer {
-    bindings: Arc<dyn RuntimeToolProductBindingQueryPort>,
-    surfaces: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
+    authorities: Arc<dyn RuntimeToolExecutionAuthorityPort>,
 }
 
 #[async_trait]
-pub trait RuntimeToolProductBindingQueryPort: Send + Sync {
-    async fn binding_and_digest(
+pub trait RuntimeToolExecutionAuthorityPort: Send + Sync {
+    async fn execution_authority(
         &self,
         runtime_thread_id: &RuntimeThreadId,
-    ) -> Result<Option<CommittedRuntimeToolProductBinding>, String>;
-}
-
-#[async_trait]
-impl RuntimeToolProductBindingQueryPort for crate::PostgresAgentRunProductRuntimeBindingRepository {
-    async fn binding_and_digest(
-        &self,
-        runtime_thread_id: &RuntimeThreadId,
-    ) -> Result<Option<CommittedRuntimeToolProductBinding>, String> {
-        self.load_committed_tool_binding(runtime_thread_id).await
-    }
+    ) -> Result<RuntimeToolExecutionAuthority, String>;
 }
 
 impl ProductRuntimeToolAuthorizer {
-    pub fn new(
-        bindings: Arc<dyn RuntimeToolProductBindingQueryPort>,
-        surfaces: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
-    ) -> Self {
-        Self { bindings, surfaces }
+    pub fn new(authorities: Arc<dyn RuntimeToolExecutionAuthorityPort>) -> Self {
+        Self { authorities }
     }
 }
 
@@ -66,33 +46,18 @@ impl RuntimeToolAuthorizationPort for ProductRuntimeToolAuthorizer {
         &self,
         request: RuntimeToolAuthorizationRequest,
     ) -> Result<RuntimeToolAuthorizationGrant, RuntimeToolBrokerError> {
-        let binding = self
-            .bindings
-            .binding_and_digest(&request.context.runtime_thread_id)
+        let authority = self
+            .authorities
+            .execution_authority(&request.context.runtime_thread_id)
             .await
-            .map_err(|message| denied("product_binding_query_failed", message))?
-            .ok_or_else(|| {
-                denied(
-                    "missing_product_binding",
-                    "runtime thread has no committed Product target binding",
-                )
-            })?;
-        ensure_current_binding(&binding.binding, &request)?;
-        let surface = self
-            .surfaces
-            .applied_resource_surface_at(
-                &binding.binding.target,
-                request.context.applied_surface_revision.0,
-            )
-            .await
-            .map_err(map_surface_query_error)?;
-        if surface.product_binding_digest != binding.binding_digest {
+            .map_err(|message| denied("execution_authority_unavailable", message))?;
+        if authority.runtime_thread_id != request.context.runtime_thread_id {
             return Err(denied(
-                "stale_product_binding",
-                "Product resource authority does not attest the committed Product binding digest",
+                "stale_execution_authority",
+                "execution authority belongs to another runtime thread",
             ));
         }
-        authorize_surface(surface, request)
+        authorize_surface(authority.surface, request)
     }
 }
 
@@ -670,37 +635,6 @@ fn map_path_scope(scope: AppliedVfsPathScope) -> RuntimeVfsPathGrant {
     }
 }
 
-fn map_surface_query_error(
-    error: AgentRunAppliedResourceSurfaceQueryError,
-) -> RuntimeToolBrokerError {
-    match error {
-        AgentRunAppliedResourceSurfaceQueryError::MissingFacts => {
-            denied("product_surface_facts_missing", error.to_string())
-        }
-        AgentRunAppliedResourceSurfaceQueryError::TargetMismatch
-        | AgentRunAppliedResourceSurfaceQueryError::Conflict { .. }
-        | AgentRunAppliedResourceSurfaceQueryError::CorruptEvidence { .. } => {
-            denied("invalid_product_surface", error.to_string())
-        }
-        AgentRunAppliedResourceSurfaceQueryError::Repository { .. } => {
-            denied("product_surface_query_failed", error.to_string())
-        }
-    }
-}
-
-fn ensure_current_binding(
-    binding: &AgentRunProductRuntimeBinding,
-    request: &RuntimeToolAuthorizationRequest,
-) -> Result<(), RuntimeToolBrokerError> {
-    if binding.runtime_thread_id != request.context.runtime_thread_id {
-        return Err(denied(
-            "stale_product_binding",
-            "Product target binding belongs to a different Runtime thread",
-        ));
-    }
-    Ok(())
-}
-
 fn denied(code: impl Into<String>, message: impl Into<String>) -> RuntimeToolBrokerError {
     RuntimeToolBrokerError::AuthorizationDenied {
         code: code.into(),
@@ -719,7 +653,8 @@ mod tests {
         AgentBindingGeneration, AgentSurfaceRevision, AgentToolName,
     };
     use agentdash_application_agentrun::agent_run::{
-        AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceProvenance, AppliedTaskGrant,
+        AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceProvenance,
+        AgentRunAppliedResourceSurfaceQueryError, AgentRunProductRuntimeBinding, AppliedTaskGrant,
         AppliedVfsGrant, AppliedVfsMount,
     };
     use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -727,48 +662,67 @@ mod tests {
 
     use super::*;
 
-    struct BindingFixture {
-        value: Option<CommittedRuntimeToolProductBinding>,
+    #[derive(Clone)]
+    struct CommittedRuntimeToolProductBinding {
+        binding: AgentRunProductRuntimeBinding,
+        binding_digest: String,
     }
 
-    #[async_trait]
-    impl RuntimeToolProductBindingQueryPort for BindingFixture {
-        async fn binding_and_digest(
-            &self,
-            _runtime_thread_id: &RuntimeThreadId,
-        ) -> Result<Option<CommittedRuntimeToolProductBinding>, String> {
-            Ok(self.value.clone())
-        }
+    struct BindingFixture {
+        value: Option<CommittedRuntimeToolProductBinding>,
     }
 
     struct SurfaceFixture {
         value: Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>,
     }
 
-    #[async_trait]
-    impl AgentRunAppliedResourceSurfaceQueryPort for SurfaceFixture {
-        async fn applied_resource_surface(
-            &self,
-            _target: &AgentRunTarget,
-        ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>
-        {
-            self.value.clone()
-        }
+    #[derive(Clone)]
+    struct AuthorityFixture {
+        value: Result<RuntimeToolExecutionAuthority, String>,
+    }
 
-        async fn applied_resource_surface_at(
+    #[async_trait]
+    impl RuntimeToolExecutionAuthorityPort for AuthorityFixture {
+        async fn execution_authority(
             &self,
-            _target: &AgentRunTarget,
-            _agent_surface_revision: u64,
-        ) -> Result<AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryError>
-        {
+            _runtime_thread_id: &RuntimeThreadId,
+        ) -> Result<RuntimeToolExecutionAuthority, String> {
             self.value.clone()
         }
+    }
+
+    fn test_authorizer(
+        binding: Arc<BindingFixture>,
+        surface: Arc<SurfaceFixture>,
+    ) -> ProductRuntimeToolAuthorizer {
+        let value = binding
+            .value
+            .clone()
+            .ok_or_else(|| "runtime thread has no ExecutionAuthority binding".to_string())
+            .and_then(|binding| {
+                surface
+                    .value
+                    .clone()
+                    .map_err(|error| error.to_string())
+                    .and_then(|surface| {
+                        if surface.product_binding_digest != binding.binding_digest {
+                            return Err(
+                                "ExecutionAuthority evidence does not match binding".to_string()
+                            );
+                        }
+                        Ok(RuntimeToolExecutionAuthority {
+                            runtime_thread_id: binding.binding.runtime_thread_id,
+                            surface,
+                        })
+                    })
+            });
+        ProductRuntimeToolAuthorizer::new(Arc::new(AuthorityFixture { value }))
     }
 
     #[tokio::test]
     async fn missing_applied_surface_is_typed_deny() {
         let binding = binding();
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -783,7 +737,7 @@ mod tests {
         assert!(matches!(
             error,
             RuntimeToolBrokerError::AuthorizationDenied { code, .. }
-                if code == "product_surface_facts_missing"
+                if code == "execution_authority_unavailable"
         ));
     }
 
@@ -794,7 +748,7 @@ mod tests {
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -820,7 +774,7 @@ mod tests {
             binding.binding_digest.clone(),
         );
         snapshot.task_grants[0].operations = BTreeSet::from([AppliedTaskOperation::Read]);
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -846,7 +800,7 @@ mod tests {
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -871,7 +825,7 @@ mod tests {
         newer.vfs_grants[0]
             .operations
             .insert(AppliedVfsOperation::Write);
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -891,7 +845,7 @@ mod tests {
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -946,7 +900,7 @@ mod tests {
                 binding.binding.target.clone(),
                 binding.binding_digest.clone(),
             );
-            let authorizer = ProductRuntimeToolAuthorizer::new(
+            let authorizer = test_authorizer(
                 Arc::new(BindingFixture {
                     value: Some(binding),
                 }),
@@ -988,7 +942,7 @@ mod tests {
             binding.binding.target.clone(),
             binding.binding_digest.clone(),
         );
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -1035,7 +989,7 @@ mod tests {
                 binding.binding.target.clone(),
                 binding.binding_digest.clone(),
             );
-            let authorizer = ProductRuntimeToolAuthorizer::new(
+            let authorizer = test_authorizer(
                 Arc::new(BindingFixture {
                     value: Some(binding),
                 }),
@@ -1061,7 +1015,7 @@ mod tests {
             binding.binding_digest.clone(),
         );
         snapshot.vfs_grants[0].path_scopes = vec![AppliedVfsPathScope::Prefix("docs".to_owned())];
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -1102,7 +1056,7 @@ mod tests {
                 path_scopes: vec![AppliedVfsPathScope::Prefix("node/artifacts".to_owned())],
             },
         ];
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -1159,7 +1113,7 @@ mod tests {
             },
             operations: BTreeSet::from([AppliedTaskOperation::Read, AppliedTaskOperation::Write]),
         }];
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding),
             }),
@@ -1201,7 +1155,7 @@ mod tests {
     #[tokio::test]
     async fn workspace_presentation_receives_only_the_committed_product_target() {
         let binding = binding();
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding.clone()),
             }),
@@ -1232,7 +1186,7 @@ mod tests {
     #[tokio::test]
     async fn dynamic_mcp_tool_uses_the_same_committed_product_authority() {
         let binding = binding();
-        let authorizer = ProductRuntimeToolAuthorizer::new(
+        let authorizer = test_authorizer(
             Arc::new(BindingFixture {
                 value: Some(binding.clone()),
             }),

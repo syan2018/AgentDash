@@ -302,8 +302,8 @@ Workspace Module 是当前 Agent actor 可见的 Extension、Canvas definition �
 
 - `workspace_module` ToolCluster 开放时，Frame tool plan 同时暴露 module discovery、single invoke、
   trusted presentation 与 OperationScript preflight/run。
-- Product tool adapter 每次从 RuntimeThread binding、immutable AgentFrame revision、applied resource
-  surface 和 current Operation surface 解析事实。
+- Product tool adapter 每次通过 `ExecutionAuthorityResolver` 取得不可变运行时权限值，再以同一
+  revision 生成 current Operation surface。
 
 ### 2. Signatures
 
@@ -313,6 +313,19 @@ Workspace Module 是当前 Agent actor 可见的 Extension、Canvas definition �
 - `workspace_module_present(module_id: string, view_key?: string, payload?: JsonValue)`
 - `operation_script_preflight(source, requested_operations, input?, language?, host_api_version?, limits?)`
 - `operation_script_run(source, requested_operations, token, input?, language?, host_api_version?, limits?)`
+
+```rust
+trait ExecutionAuthorityResolver {
+    async fn resolve(
+        &self,
+        request: ExecutionAuthorityRequest,
+    ) -> Result<ExecutionAuthority, ExecutionAuthorityResolveError>;
+}
+```
+
+`ExecutionAuthorityRequest` 以 AgentRun target、RuntimeThread 或两者作为 locator；
+`ExecutionAuthority` 直接携带 principal、scope、runtime coordinate、canonical capabilities、
+resource grants 与 revision/digest evidence，不再包一层 AgentRun binding adapter。
 
 ### 3. Contracts
 
@@ -326,6 +339,14 @@ Workspace Module 是当前 Agent actor 可见的 Extension、Canvas definition �
 - `builtin:vfs`、`builtin:process`、`builtin:task` 投影当前 Agent 已获 tool capability 的原生
   Operations。Runtime tool 注册不代表可组合；仅显式 exposure registry 中声明了 effect、replay、
   capability 与 provenance 的工具可被 describe。
+- `CapabilityState.tool.capabilities` 与 `enabled_clusters` 在 `ExecutionAuthority` 中规范化为一份
+  canonical capability set；原生 tool、`platform:*` Operation 与 `builtin:*` module 都消费该集合。
+- Product binding、binding-pinned AgentFrame 与 applied resource evidence 只在 resolver 内部读取；
+  frame revision、surface digest、binding digest 或 provenance 不一致时拒绝整个 authority。
+- `ExecutionAuthority` 是 request-scoped value object，不是数据库实体或 bearer grant。list/describe
+  在一次请求内持有它；invoke、OperationScript nested invoke 与 ToolBroker execution 重新 resolve。
+- Complete Agent desired/offer/bound/applied 是 runtime 协议握手。权限 currentness 由成功
+  provision/rebind 后提交的 Product binding 表达，不建立独立 `SurfaceAdopt` 状态机。
 - describe 返回 exact OperationRef、schema、visibility、readiness、effect、replay、permission 和
   provenance；invoke 不接受 module id 或 operation key 拼接。
 - present 的 renderer、URI、title、diagnostics 和 Interaction attachment 全由服务端从 current
@@ -333,7 +354,9 @@ Workspace Module 是当前 Agent actor 可见的 Extension、Canvas definition �
 - OperationScript program 显式列出 describe 得到的 exact OperationRefs。preflight token 绑定
   source/input/limits/current descriptors/principal/scope/authority；run 和 nested calls 继续重新准入。
 - `platform:*` nested call 通过 OperationGateway 后重新进入 PlatformToolBroker，从 current applied
-  resource surface 生成 VFS/Task grant；Workspace Module projection 不持有 executor 或资源授权。
+  resource grants 生成 VFS/Task grant；Workspace Module projection 不持有 executor。
+- dynamic provider discovery failure 进入 `surface_diagnostics`。`ready + module_count=0` 才表示
+  authoritative empty；required platform provider 失败返回 typed unavailable，不伪装空 catalog。
 - Component event binding 是 platform command、single Operation 或 OperationScript tagged target；
   `.rhai` source 必须来自 pinned SourceBundle，iframe 只提交 schema-valid payload。
 
@@ -349,6 +372,10 @@ Workspace Module 是当前 Agent actor 可见的 Extension、Canvas definition �
 | Agent projection path 在 current state 缺失 | projection failure，不暴露完整 state |
 | token 过期或 descriptor/authority/limits 漂移 | preflight/run plan rejection |
 | nested call 部分成功后失败 | 返回 call evidence、partial 与 outcome_unknown |
+| binding/frame/applied evidence revision 或 digest 不一致 | `execution_authority_evidence_mismatch` |
+| 未提交的 latest AgentFrame 比 binding frame 更新 | 仍使用 binding-pinned revision |
+| platform provider discovery 失败且 authority 授予原生能力 | `workspace_module_platform_operation_surface_unavailable` |
+| optional dynamic provider discovery 失败 | `surface_readiness=degraded` 并返回 provider diagnostic |
 
 ### 5. Reference Cases
 
@@ -358,12 +385,20 @@ Workspace Module 是当前 Agent actor 可见的 Extension、Canvas definition �
 - Immediate composition：describe 多个 module，preflight/run 一个使用至少两个 exact refs 的 Rhai
   program。
 - Durable orchestration：需要 retry、recovery、human gate 或跨会话状态时进入 Workflow。
+- Bad：Workspace Module、Operation authority 与 ToolBroker 各自读取 latest frame、binding 和
+  applied surface，再把查询失败解释为空列表。
 
 ### 6. Tests Required
 
 - Capability catalog test asserts WorkspaceModule cluster 包含 list/describe/invoke/present 和
   OperationScript preflight/run。
 - Product tool test覆盖可信 present 参数、exact ref、token 与 current surface re-admission。
+- ExecutionAuthority contract test断言 binding-pinned revision 胜过未提交的 latest frame，
+  cluster-backed capability 会同时产生 native Operation/module，并拒绝 evidence mismatch。
+- Operation provider test断言 discovery failure 返回 provider/code/message diagnostic，成功空集合
+  与 unavailable 可区分。
+- ToolBroker authorizer test只注入一次解析好的 execution authority projection，并断言
+  VFS/Task grant、revision 与 binding digest 来自同一 evidence。
 - Interaction test覆盖 attachment visibility、pinned revision、state revision 与 secret isolation。
 - Component event test覆盖三类 target、payload schema、`.rhai` source 和不自动写 state。
 - Policy test asserts tool-level filtering still gates each `workspace_module_*` tool via `CapabilityState.tool_policy`.
@@ -373,12 +408,13 @@ Workspace Module 是当前 Agent actor 可见的 Extension、Canvas definition �
 #### Wrong
 
 ```text
-Agent submits module_id + operation_key, renderer URI, or full Interaction state
+Workspace Module、OperationGateway 与 ToolBroker 分别读取 latest frame/binding/resource surface
 ```
 
 #### Correct
 
 ```text
+let authority = execution_authority.resolve(current_locator)
 workspace_module_describe(module_id="canvas:{definition_id}")
 workspace_module_invoke(operation_ref=<exact describe result>, input={...})
 workspace_module_present(module_id="canvas:{definition_id}", view_key="preview")

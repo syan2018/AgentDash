@@ -6,9 +6,8 @@ use agentdash_agent_runtime::{
 use agentdash_agent_service_api::{
     AgentEffectIdentity, AgentSurfaceRevision, AgentToolName, AgentToolResult, AgentTurnId,
 };
-use agentdash_application_agentrun::agent_run::{
-    AgentRunAppliedResourceSurface, AgentRunAppliedResourceSurfaceQueryPort,
-    AgentRunProductRuntimeBinding, AgentRunProductRuntimeBindingRepository,
+use agentdash_application::execution_authority::{
+    ExecutionAuthority, ExecutionAuthorityRequest, ExecutionAuthorityResolver,
 };
 use agentdash_application_operation_gateway::{
     OperationAuthorizationScope, OperationEffect, OperationExecutionError,
@@ -20,20 +19,17 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) struct ProductPlatformToolOperationAccess {
-    runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
-    applied_resource_surfaces: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
+    execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
     broker: Arc<PlatformToolBroker>,
 }
 
 impl ProductPlatformToolOperationAccess {
     pub(crate) fn new(
-        runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
-        applied_resource_surfaces: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
+        execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
         broker: Arc<PlatformToolBroker>,
     ) -> Self {
         Self {
-            runtime_bindings,
-            applied_resource_surfaces,
+            execution_authorities,
             broker,
         }
     }
@@ -42,13 +38,7 @@ impl ProductPlatformToolOperationAccess {
         &self,
         principal: &OperationPrincipal,
         scope: &OperationAuthorizationScope,
-    ) -> Result<
-        (
-            AgentRunProductRuntimeBinding,
-            AgentRunAppliedResourceSurface,
-        ),
-        OperationExecutionError,
-    > {
+    ) -> Result<ExecutionAuthority, OperationExecutionError> {
         let OperationPrincipalRef::AgentRunAgent { run_id, agent_id } = principal.principal_ref()
         else {
             return Err(OperationExecutionError::CapabilitiesDenied {
@@ -60,28 +50,27 @@ impl ProductPlatformToolOperationAccess {
             agent_id: *agent_id,
         };
         let binding = self
-            .runtime_bindings
-            .load_product_binding(&target)
-            .await
-            .map_err(OperationExecutionError::provider_failed)?
-            .ok_or_else(|| OperationExecutionError::NotReady {
-                code: "platform_tool_runtime_binding_missing".to_string(),
-                message: "AgentRun Product runtime binding 不存在".to_string(),
-            })?;
-        let surface = self
-            .applied_resource_surfaces
-            .applied_resource_surface(&target)
+            .execution_authorities
+            .resolve(ExecutionAuthorityRequest::for_target(target))
             .await
             .map_err(|error| OperationExecutionError::NotReady {
-                code: "platform_tool_surface_unavailable".to_string(),
+                code: error.code().to_string(),
                 message: error.to_string(),
             })?;
-        if scope_project_id(&scope.scope_ref) != Some(surface.project_id) {
+        if scope_project_id(&scope.scope_ref) != Some(binding.project_id()) {
             return Err(OperationExecutionError::CapabilitiesDenied {
                 missing: vec!["agent_run.project_scope".to_string()],
             });
         }
-        Ok((binding, surface))
+        if !scope.authority_revision.is_empty()
+            && scope.authority_revision != binding.revision_token()
+        {
+            return Err(OperationExecutionError::NotReady {
+                code: "stale_execution_authority".to_string(),
+                message: "Operation surface authority changed during projection".to_string(),
+            });
+        }
+        Ok(binding)
     }
 }
 
@@ -117,13 +106,13 @@ impl PlatformToolOperationAccess for ProductPlatformToolOperationAccess {
         tool_name: &str,
         cancel: CancellationToken,
     ) -> Result<serde_json::Value, OperationExecutionError> {
-        let (binding, surface) = self
+        let binding = self
             .resolve_agent_surface(&envelope.principal, &envelope.scope)
             .await?;
         let context = RuntimeToolResolvedContext {
-            runtime_thread_id: binding.runtime_thread_id,
+            runtime_thread_id: binding.runtime_thread_id().clone(),
             host_binding_generation: None,
-            applied_surface_revision: AgentSurfaceRevision(surface.agent_surface_revision),
+            applied_surface_revision: AgentSurfaceRevision(binding.revision()),
             turn_id: AgentTurnId::new(envelope.trace.trace_id.clone())
                 .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
             item_id: None,

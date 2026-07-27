@@ -70,10 +70,10 @@ Canvas、Extension panel/component 和 Interaction renderer 不以 AgentRun、Ag
 - R21：OperationScript evaluator 在有界专用 worker pool 中运行，使用 execution-scoped `ops` capability object 连接 async OperationExecutionCore；`ops.invoke` 隐式等待，`ops.invoke_all` 有界并行，progress/cancellation/deadline 同时中止纯脚本循环与 nested invocation。
 - R22：Interaction command transaction 原子写入 command idempotency、event、state revision 和可选 `OperationEffectIntent`。只有 descriptor 声明 replay-safe/idempotent 的单 Operation 可进入该 outbox；任意 OperationScript 和多步 effect 使用即时结果或 Workflow。
 - R23：完整保留并迁移 Canvas CRUD、publish/copy/unpublish、lineage、VFS source changeset、data/resource binding、Extension promotion、Workspace Module module/presentation 与 effective access 行为，不把旧字段机械复制成新事实源。
-- R24：建立单一 AgentRun Surface Authority，从 canonical SurfaceAdopt 已接受的 AgentFrame、
-  Product binding/resource grants、Complete Agent bound/applied evidence 与 provider readiness
-  解析 request-scoped current surface，并由同一结果生成 runtime tool、Operation、Workspace
-  Module 与 diagnostics 投影；消费者不再独立选择 frame、拼装 capability 或把解析失败降级为空。
+- R24：建立单一 `ExecutionAuthorityResolver`，从 runtime provision/rebind 成功后提交的 Product
+  binding、其固定 AgentFrame 与 applied resource evidence 解析 request-scoped 权限值对象，并由
+  同一结果生成 runtime tool、Operation、Workspace Module 与 diagnostics 投影；AgentRun target/
+  RuntimeThread 只作为 locator，消费者不再独立选择 frame、拼装 capability 或把解析失败降级为空。
 
 ## Acceptance Criteria
 

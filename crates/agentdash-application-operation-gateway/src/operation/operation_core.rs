@@ -697,6 +697,7 @@ mod tests {
             authority_revision: revision.to_string(),
             granted_capabilities: capabilities,
             catalog: OperationCatalog::try_new(descriptors).expect("valid catalog"),
+            diagnostics: Vec::new(),
         }
     }
 

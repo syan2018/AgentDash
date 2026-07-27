@@ -67,7 +67,8 @@ pub use operation_types::{
     OperationExecutionPolicy, OperationExecutionRequest, OperationExecutionResult,
     OperationInvocationCommand, OperationInvocationEnvelope, OperationPlacement,
     OperationPrincipal, OperationProvenance, OperationReadiness, OperationResultAccess,
-    OperationResultRef, OperationResultValue, OperationTraceContext, ScopedOperationResult,
+    OperationResultRef, OperationResultValue, OperationSurfaceDiagnostic, OperationTraceContext,
+    ScopedOperationResult,
 };
 pub use platform_tool_operations::{
     PLATFORM_TOOL_OPERATION_NAMESPACE, PlatformToolOperation, PlatformToolOperationAccess,

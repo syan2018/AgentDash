@@ -11,6 +11,7 @@ use agentdash_contracts::workspace_module::{
 };
 use agentdash_domain::interaction::{InteractionDefinitionRevision, InteractionInstance};
 use agentdash_domain::operation::{OperationEffect, OperationReplayPolicy};
+use agentdash_platform_spi::WorkspaceModuleDimension;
 use thiserror::Error;
 
 use crate::extension_runtime::ExtensionRuntimeProjection;
@@ -34,6 +35,25 @@ pub fn build_workspace_modules(
     );
     modules.sort_by(|left, right| left.summary.module_id.cmp(&right.summary.module_id));
     modules
+}
+
+pub fn project_workspace_module_visibility(
+    modules: Vec<WorkspaceModuleDescriptor>,
+    visibility: &WorkspaceModuleDimension,
+    runtime_module_sources: &std::collections::BTreeMap<String, String>,
+) -> Vec<WorkspaceModuleDescriptor> {
+    modules
+        .into_iter()
+        .filter(|module| match module.summary.kind {
+            WorkspaceModuleKind::Builtin => true,
+            WorkspaceModuleKind::Interaction => runtime_module_sources
+                .get(&module.summary.module_id)
+                .is_some_and(|source| visibility.allows(source)),
+            WorkspaceModuleKind::Extension | WorkspaceModuleKind::Canvas => {
+                visibility.allows(&module.summary.module_id)
+            }
+        })
+        .collect()
 }
 
 fn build_builtin_modules(

@@ -120,26 +120,25 @@ resolve current actor surface
 
 Agent loop 的 message/tool hook 与 outer tool approval 留在 Agent adapter。任何 adapter 都不能绕过 common core 直接调用 provider。
 
-### 2.4 AgentRun Surface Authority
+### 2.4 Execution Authority
 
-AgentRun 的 current callable surface 由 application 层深模块统一解析：
+current callable authority 由 application 层深模块统一解析：
 
 ```text
-canonical SurfaceAdopt accepted AgentFrame
-  + Product binding/resource grants
-  + Complete Agent bound/applied evidence
-  + provider readiness
-  -> AgentRunSurfaceAuthority::resolve_current
+AgentRun target / RuntimeThread locator
+  -> Product binding-pinned AgentFrame
+  + applied resource evidence
+  -> ExecutionAuthorityResolver::resolve
      -> RuntimeToolProjection
      -> ActorOperationProjection
      -> WorkspaceModuleProjection
      -> SurfaceDiagnostics
 ```
 
-该模块不建立新的 durable Surface snapshot。AgentFrame 继续表达 Product desired business
-surface，Complete Agent offer/bound/applied 继续表达实际接纳证据；resolver 在一次 request 中校验
-这些 revision/digest 的一致性并生成不可持久化投影。Surface mutation 复用 canonical
-`SurfaceAdopt`，无法热应用时返回 typed rebind/apply 结果。
+`ExecutionAuthority` 是 request-scoped immutable runtime value，不建立 durable snapshot。
+AgentFrame 继续表达 Product desired business surface，Complete Agent offer/bound/applied 继续表达
+runtime 协议证据；provision/rebind 成功后提交的 Product binding 决定 current revision。resolver
+校验 revision/digest 一致性并直接返回 authority，不增加公开 binding adapter 或 adoption 状态机。
 
 显式 capability 与 enabled cluster 在模块内部规范化为同一 canonical capability set。原生工具、
 `platform:*` Operations 与 `builtin:*` Workspace Modules 从同一 capability 与 explicit exposure
@@ -148,7 +147,7 @@ registry 推导；extension/canvas module visibility 继续由 Workspace Module 
 
 动态 facet 使用 `ready / unavailable` 语义。provider、binding 或 applied evidence 解析失败保留
 结构化 diagnostic；成功解析后的空集合才表达当前没有能力。ToolBroker 继续在每次 invocation
-执行 permission、effect 与 resource authorization，Surface discovery 不成为 bearer capability。
+执行 permission、effect 与 resource authorization，request-scoped authority 不成为 bearer grant。
 
 ## 3. OperationScript
 

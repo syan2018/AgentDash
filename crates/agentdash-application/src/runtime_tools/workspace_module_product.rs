@@ -1,15 +1,16 @@
 use std::sync::Arc;
 
+use crate::execution_authority::{
+    ExecutionAuthority, ExecutionAuthorityRequest, ExecutionAuthorityResolver,
+};
 use crate::extension_runtime::extension_runtime_projection_from_installations;
 use crate::workspace_module::{
     build_interaction_runtime_module, build_workspace_module_presentation, build_workspace_modules,
-};
-use agentdash_application_agentrun::agent_run::{
-    AgentFrameSurfaceExt, AgentRunAppliedResourceSurfaceQueryPort,
-    AgentRunProductRuntimeBindingRepository,
+    project_workspace_module_visibility,
 };
 use agentdash_application_operation_gateway::{
-    OperationGateway, OperationInvocationCommand, OperationPrincipal, OperationTraceContext,
+    OperationAuthorityGrant, OperationGateway, OperationInvocationCommand, OperationPrincipal,
+    OperationSurfaceDiagnostic, OperationTraceContext,
 };
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
@@ -27,7 +28,6 @@ use agentdash_domain::interaction::{
 };
 use agentdash_domain::operation::{OperationOriginRef, OperationRef, OperationScopeRef};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
-use agentdash_domain::workflow::AgentFrameRepository;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -131,9 +131,7 @@ pub fn workspace_module_runtime_tool_schema(kind: ProductRuntimeToolKind) -> Val
 
 #[derive(Clone)]
 pub struct WorkspaceModuleRuntimeToolDeps {
-    pub runtime_bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
-    pub applied_surfaces: Arc<dyn AgentRunAppliedResourceSurfaceQueryPort>,
-    pub frames: Arc<dyn AgentFrameRepository>,
+    pub execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
     pub installations: Arc<dyn ProjectExtensionInstallationRepository>,
     pub definitions: Arc<dyn InteractionDefinitionRepository>,
     pub instances: Arc<dyn InteractionInstanceRepository>,
@@ -168,24 +166,15 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             run_id: request.context.target.run_id,
             agent_id: request.context.target.agent_id,
         };
-        let binding = self
+        let agent_run_surface = self
             .deps
-            .runtime_bindings
-            .load_product_binding_by_runtime_thread(&request.context.runtime_thread_id)
+            .execution_authorities
+            .resolve(ExecutionAuthorityRequest::for_target_and_runtime_thread(
+                target.clone(),
+                request.context.runtime_thread_id.clone(),
+            ))
             .await
-            .map_err(|message| failed("workspace_module_binding_query_failed", message))?
-            .ok_or_else(|| {
-                rejected(
-                    "workspace_module_runtime_thread_unbound",
-                    "RuntimeThread has no durable Product binding",
-                )
-            })?;
-        if binding.target != target {
-            return Err(rejected(
-                "workspace_module_product_target_mismatch",
-                "RuntimeThread Product binding does not match the authorized tool target",
-            ));
-        }
+            .map_err(|error| failed(error.code(), error.to_string()))?;
         if request.context.target.project_id.is_nil() {
             return Err(rejected(
                 "workspace_module_project_missing",
@@ -193,59 +182,12 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             ));
         }
 
-        let surface = self
-            .deps
-            .applied_surfaces
-            .applied_resource_surface(&target)
-            .await
-            .map_err(|error| {
-                failed(
-                    "workspace_module_applied_surface_query_failed",
-                    error.to_string(),
-                )
-            })?;
-        surface.validate_for(&target).map_err(|error| {
-            rejected(
-                "workspace_module_applied_surface_invalid",
-                error.to_string(),
-            )
-        })?;
-        if surface.project_id != request.context.target.project_id {
+        if agent_run_surface.project_id() != request.context.target.project_id {
             return Err(rejected(
                 "workspace_module_project_mismatch",
                 "applied resource surface project does not match the authorized Product target",
             ));
         }
-
-        let frame = self
-            .deps
-            .frames
-            .get(binding.launch_frame.frame_id)
-            .await
-            .map_err(|error| failed("workspace_module_frame_query_failed", error.to_string()))?
-            .ok_or_else(|| {
-                failed(
-                    "workspace_module_frame_missing",
-                    format!(
-                        "Product binding AgentFrame {} does not exist",
-                        binding.launch_frame.frame_id
-                    ),
-                )
-            })?;
-        if frame.agent_id != target.agent_id
-            || u64::try_from(frame.revision).ok() != Some(binding.launch_frame.revision)
-        {
-            return Err(rejected(
-                "workspace_module_frame_binding_mismatch",
-                "Product binding does not identify the immutable AgentFrame revision",
-            ));
-        }
-        let capability = frame.typed_capability_state().ok_or_else(|| {
-            failed(
-                "workspace_module_capability_surface_missing",
-                "bound AgentFrame has no typed capability surface",
-            )
-        })?;
 
         let principal = OperationPrincipal::server_resolved(
             agentdash_domain::operation::OperationPrincipalRef::AgentRunAgent {
@@ -254,15 +196,42 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             },
         );
         let scope = OperationScopeRef::Project {
-            project_id: surface.project_id,
+            project_id: agent_run_surface.project_id(),
         };
+        let installations = self
+            .deps
+            .installations
+            .list_enabled_by_project(agent_run_surface.project_id())
+            .await
+            .map_err(|error| {
+                failed(
+                    "workspace_module_installation_query_failed",
+                    error.to_string(),
+                )
+            })?;
+        let mut granted_capabilities = agent_run_surface.operation_capabilities();
+        granted_capabilities.insert("operation.invoke".to_string());
+        granted_capabilities.insert("agent.operation.invoke".to_string());
+        for installation in &installations {
+            if agent_run_surface
+                .capability_state()
+                .workspace_module
+                .allows(&format!("ext:{}", installation.extension_key))
+            {
+                granted_capabilities.insert(format!("extension:{}", installation.extension_key));
+            }
+        }
         let operation_surface = self
             .deps
             .operation_gateway
-            .surface_current(
+            .surface_authorized(
                 &principal,
                 &scope,
                 &OperationOriginRef::AgentTool,
+                OperationAuthorityGrant {
+                    authority_revision: agent_run_surface.revision_token(),
+                    capabilities: granted_capabilities,
+                },
                 CancellationToken::new(),
             )
             .await
@@ -272,6 +241,7 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                     error.to_string(),
                 )
             })?;
+        reject_required_provider_failures(&agent_run_surface, &operation_surface.diagnostics)?;
         let operations = operation_surface
             .catalog
             .descriptors()
@@ -287,17 +257,6 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             .cloned()
             .collect::<Vec<_>>();
 
-        let installations = self
-            .deps
-            .installations
-            .list_enabled_by_project(surface.project_id)
-            .await
-            .map_err(|error| {
-                failed(
-                    "workspace_module_installation_query_failed",
-                    error.to_string(),
-                )
-            })?;
         let extensions =
             extension_runtime_projection_from_installations(installations).map_err(|error| {
                 failed(
@@ -305,7 +264,9 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                     error.to_string(),
                 )
             })?;
-        let definitions = self.project_definitions(surface.project_id).await?;
+        let definitions = self
+            .project_definitions(agent_run_surface.project_id())
+            .await?;
         let mut modules = build_workspace_modules(&extensions, &definitions, &operations);
         let runtime_modules = self
             .project_interaction_runtime_modules(
@@ -326,25 +287,18 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             })
             .collect::<std::collections::BTreeMap<_, _>>();
         modules.extend(runtime_modules);
-        let modules = modules
-            .into_iter()
-            .filter(|module| {
-                module.summary.kind
-                    == agentdash_contracts::workspace_module::WorkspaceModuleKind::Builtin
-                    || capability
-                        .workspace_module
-                        .allows(&module.summary.module_id)
-                    || runtime_module_sources
-                        .get(&module.summary.module_id)
-                        .is_some_and(|source| capability.workspace_module.allows(source))
-            })
-            .collect();
+        let modules = project_workspace_module_visibility(
+            modules,
+            &agent_run_surface.capability_state().workspace_module,
+            &runtime_module_sources,
+        );
 
         Ok(ResolvedWorkspaceModuleSurface {
             modules,
             definitions,
             principal,
             scope,
+            diagnostics: operation_surface.diagnostics,
         })
     }
 
@@ -477,6 +431,8 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
         };
         completed(json!({
             "module_count": surface.modules.len(),
+            "surface_readiness": if surface.diagnostics.is_empty() { "ready" } else { "degraded" },
+            "surface_diagnostics": surface.diagnostics,
             "modules": surface
                 .modules
                 .into_iter()
@@ -513,7 +469,11 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                 format!("workspace module is not visible: {}", arguments.module_id),
             );
         };
-        completed(json!({ "module": module }))
+        completed(json!({
+            "module": module,
+            "surface_readiness": if surface.diagnostics.is_empty() { "ready" } else { "degraded" },
+            "surface_diagnostics": surface.diagnostics,
+        }))
     }
 
     async fn execute_invoke(
@@ -817,6 +777,7 @@ struct ResolvedWorkspaceModuleSurface {
     definitions: Vec<InteractionDefinitionRevision>,
     principal: OperationPrincipal,
     scope: OperationScopeRef,
+    diagnostics: Vec<OperationSurfaceDiagnostic>,
 }
 
 struct WorkspaceModulePresentationTarget {
@@ -840,4 +801,25 @@ fn failed(code: impl Into<String>, message: impl Into<String>) -> ProductRuntime
         code: code.into(),
         message: message.into(),
     }
+}
+
+fn reject_required_provider_failures(
+    surface: &ExecutionAuthority,
+    diagnostics: &[OperationSurfaceDiagnostic],
+) -> Result<(), ProductRuntimeToolOutcome> {
+    let capabilities = surface.operation_capabilities();
+    let native_operations_required = ["file_read", "file_write", "shell_execute", "task"]
+        .iter()
+        .any(|capability| capabilities.contains(*capability));
+    if native_operations_required
+        && let Some(diagnostic) = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.provider == "platform_tool")
+    {
+        return Err(failed(
+            "workspace_module_platform_operation_surface_unavailable",
+            format!("{}: {}", diagnostic.code, diagnostic.message),
+        ));
+    }
+    Ok(())
 }

@@ -117,6 +117,10 @@ impl ExtensionOperationProvider {
 
 #[async_trait]
 impl DynamicOperationProvider for ExtensionOperationProvider {
+    fn surface_source(&self) -> &'static str {
+        "extension"
+    }
+
     fn owns_provider(&self, provider: &OperationProviderRef) -> bool {
         provider.namespace == EXTENSION_OPERATION_NAMESPACE
     }

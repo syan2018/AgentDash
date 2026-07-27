@@ -9,8 +9,8 @@ Depends On: WI-03、WI-07、PR #95 最终 Runtime 接线
 PR #95 合入后，Workspace Module 的主体方向已经是 projection-only，但原始 V1 合同没有在生产
 接线和 Agent 使用面完整闭环：
 
-- `agentdash-workspace-module` 已只负责 Extension/Interaction/Operation descriptor projection，
-  crate 描述、依赖和 API bootstrap 残留仍表达旧 Canvas/runtime provider 边界。
+- Workspace Module 已只负责 Extension/Interaction/Operation descriptor projection；该职责属于
+  application actor projection，不再形成独立 crate 边界。
 - 生产 `workspace_module_present` 要求 Agent 提交完整 `WorkspaceModulePresentation`，而 Skill
   仍声明只提交 `module_id + view_key`；renderer、URI 和 title 因而由不可信调用方重复构造。
 - 旧的服务端 descriptor lookup、Canvas Interaction attachment 和 canonical presentation 构造仍留在
@@ -140,7 +140,8 @@ resolve current module surface
 
 ## Write Set
 
-- `crates/agentdash-workspace-module/`
+- `crates/agentdash-application/src/extension_runtime.rs`
+- `crates/agentdash-application/src/workspace_module.rs`
 - `crates/agentdash-domain/src/workspace_module/skills/workspace-module-system/`
 - `crates/agentdash-application/src/runtime_tools/`
 - `crates/agentdash-application-ports/src/operation_script.rs`
@@ -161,7 +162,8 @@ resolve current module surface
 
 ## Exit Criteria
 
-- [x] `agentdash-workspace-module` 的描述、依赖和公开模块与 projection-only 职责一致。
+- [x] Workspace Module projection 已收回 `agentdash-application`，不再保留无独立
+      authority、port 或 domain contract 的 crate。
 - [x] 未挂载的旧 Workspace Module runtime tool provider 被删除；仍有效的可信 presentation 行为迁入
       唯一生产路径。
 - [x] list/describe/invoke/present 的 schema、Skill 与实际生产工具一致。
@@ -208,7 +210,9 @@ resolve current module surface
 - 2026-07-27：补齐 Agent `operation_script_preflight/run`、可信 presentation、显式 Agent state
   projection、attachment-scoped `interaction:*` runtime module、component tagged target 与
   SourceBundle `.rhai`/inline host execution。
-- 2026-07-27：删除未挂载旧 provider，收敛 projection crate 依赖，更新 embedded Skill、Trellis
-  specs、数据库 migration、generated TypeScript 与 Canvas frontend event path。
+- 2026-07-27：删除未挂载旧 provider，更新 embedded Skill、Trellis specs、generated TypeScript 与
+  Canvas frontend event path。
 - 2026-07-27：通过受影响 Rust crates check/test target、Workspace Module/Agent projection/tool
   focused tests、app-web typecheck、contracts check、migration guard 与 `git diff --check`。
+- 2026-07-27：将 projection-only Workspace Module 收回 `agentdash-application` 并删除独立 crate；
+  当前数据库已重建，因此 schema 直接使用最新 document contract，不保留仅更新旧数据的 0002。

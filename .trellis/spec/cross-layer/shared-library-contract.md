@@ -305,7 +305,9 @@ pub struct ExtensionTemplatePayload {
 
 - `@agentdash/extension` app-pipeline test 覆盖 generate/validate/pack、runtime actions、protocol channels、backend services、operation catalog、panel-only。
 - `@agentdash/extension` fetch-route test 覆盖 backendService 点分段 key、POST body/headers 与 no-body response。
-- `agentdash-workspace-module` tests 覆盖 operation catalog projection、panel-only describe/invoke filtering、backendService bridge dispatch、route mismatch 和 bridge unavailable readiness。
+- `agentdash-application` Workspace Module tests 覆盖 operation catalog projection、panel-only
+  describe/invoke filtering、backendService bridge dispatch、route mismatch 和 bridge unavailable
+  readiness。
 - `contracts:check` 覆盖 generated TS DTO 同步。
 
 ### 7. Wrong vs Correct

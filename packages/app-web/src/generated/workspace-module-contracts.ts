@@ -72,11 +72,12 @@ export type WorkspaceModuleStatusKind = "ready" | "unavailable";
  */
 export type WorkspaceModuleSummary = {
 /**
- * 稳定 id：`ext:{extension_key}` / `canvas:{definition_id}` / `builtin:{key}`。
+ * 稳定 id：`ext:{extension_key}` / `canvas:{definition_id}` /
+ * `interaction:{instance_id}` / `builtin:{key}`。
  */
 module_id: string, kind: WorkspaceModuleKind, title: string, description: string,
 /**
- * extension_key / canvas mount / builtin key。
+ * extension_key / definition_id / instance_id / builtin key。
  */
 source: string,
 /**

@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use crate::extension_runtime::extension_runtime_projection_from_installations;
+use crate::workspace_module::{
+    build_interaction_runtime_module, build_workspace_module_presentation, build_workspace_modules,
+};
 use agentdash_application_agentrun::agent_run::{
     AgentFrameSurfaceExt, AgentRunAppliedResourceSurfaceQueryPort,
     AgentRunProductRuntimeBindingRepository,
@@ -24,10 +28,6 @@ use agentdash_domain::interaction::{
 use agentdash_domain::operation::{OperationOriginRef, OperationRef, OperationScopeRef};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_domain::workflow::AgentFrameRepository;
-use agentdash_workspace_module::extension_runtime::extension_runtime_projection_from_installations;
-use agentdash_workspace_module::workspace_module::{
-    build_interaction_runtime_module, build_workspace_module_presentation, build_workspace_modules,
-};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};

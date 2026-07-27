@@ -135,7 +135,8 @@
 
 ### WI-11 · Workspace Module Agent 能力最终收口
 
-- 固定 `agentdash-workspace-module` 为 projection-only 边界，清理过时 crate 描述、无效依赖和未挂载的旧 runtime tool provider。
+- 将 projection-only Workspace Module 收回 `agentdash-application`，由 application 统一组装
+  actor-visible module 与可信 presentation，不再为没有独立 authority/port 的 projection 保留 crate。
 - 让 `list/describe/invoke/present` 统一消费当前 RuntimeThread Product binding、immutable AgentFrame、applied resource surface 与 actor-specific Operation catalog。
 - `workspace_module_present` 只接受 `module_id`、`view_key` 和可选 payload；renderer、URI、title、Interaction attachment 与 diagnostics 由服务端根据当前 descriptor/definition 解析，不接受 Agent 自行构造可信 presentation。
 - 保持 `workspace_module_invoke` 只调用一个 exact OperationRef；补齐 Agent-facing `operation_script_preflight/run`，其 allowed Operation manifest 来自当前 Workspace Module describe 结果并由服务端重新解析、绑定和 admission。

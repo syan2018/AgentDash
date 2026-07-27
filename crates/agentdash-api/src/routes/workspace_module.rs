@@ -15,14 +15,14 @@ use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::rpc::ApiError;
 use agentdash_application::extension_runtime::extension_runtime_projection_from_installations;
+use agentdash_application::workspace_module::{
+    WorkspaceModulePresentationError, build_workspace_module_presentation, build_workspace_modules,
+};
 use agentdash_application_operation_gateway::UserWorkshopOperationHost;
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
 };
 use agentdash_domain::interaction::{InteractionDefinitionStatus, InteractionOwner};
-use agentdash_workspace_module::workspace_module::{
-    WorkspaceModulePresentationError, build_workspace_module_presentation, build_workspace_modules,
-};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Deserialize)]

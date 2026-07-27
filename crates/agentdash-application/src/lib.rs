@@ -40,6 +40,7 @@ pub mod skill_asset;
 pub mod story;
 pub mod task;
 pub mod wait_activity;
+pub mod workspace_module;
 pub mod vfs {
     pub use agentdash_application_vfs::*;
 }

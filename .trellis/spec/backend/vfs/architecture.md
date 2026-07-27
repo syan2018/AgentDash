@@ -108,7 +108,9 @@ pub trait RuntimeToolProvider {
 
 - `agentdash-application vfs::tools` 测试 mounts/fs/shell 工具 schema、capability gating 与 VFS 缺失错误。
 - `agentdash-application workspace_module::tools` 测试 module list/describe/create/invoke/present 装配和 Gateway 延迟注入。
-- `agentdash-workspace-module workspace_module::surface` 测试 typed outcome，例如 Canvas binding 返回 `CanvasBindingApplied`、Canvas present 返回 `Presented` 并注入 notification；adapter 测试再覆盖 outcome 到 `AgentToolResult` 的投影。
+- `agentdash-application workspace_module` 测试 Workspace Module descriptor、可信 presentation 与
+  Interaction runtime projection；Product runtime tool 测试再覆盖 actor surface 到 tool outcome
+  的投影。
 - `agentdash-api bootstrap::tests::bootstrap_modules_do_not_depend_on_routes` 断言 bootstrap 不反向依赖 routes。
 - `agentdash-api vfs_access::tests::runtime_tool_schemas_are_openai_compatible` 覆盖最终 tool schema 兼容性。
 

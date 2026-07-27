@@ -216,3 +216,6 @@ resolve current module surface
   focused tests、app-web typecheck、contracts check、migration guard 与 `git diff --check`。
 - 2026-07-27：将 projection-only Workspace Module 收回 `agentdash-application` 并删除独立 crate；
   当前数据库已重建，因此 schema 直接使用最新 document contract，不保留仅更新旧数据的 0002。
+- 2026-07-27：按 Skill 渐进披露合同重写 `workspace-module-system`：description 同时覆盖能力与
+  Canvas/Interaction/Extension、单次调用、UI presentation 和即时组合触发场景；正文收束为
+  list/describe/invoke/present/OperationScript 的可执行决策与 exact 参数示例。

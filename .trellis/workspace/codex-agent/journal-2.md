@@ -596,3 +596,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 71: 修复原生 Operation Schema 兼容性
+
+**Date**: 2026-07-27
+**Task**: 修复原生 Operation Schema 兼容性
+**Branch**: `main`
+
+### Summary
+
+补齐 Operation Gateway 对 description、anyOf 与数值边界的真实校验，并以全部显式暴露 VFS/Task schema 组合回归锁定 Workspace Module provider 可用性。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d8e434744` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

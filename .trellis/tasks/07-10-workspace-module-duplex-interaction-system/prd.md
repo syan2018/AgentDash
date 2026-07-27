@@ -70,6 +70,10 @@ Canvas、Extension panel/component 和 Interaction renderer 不以 AgentRun、Ag
 - R21：OperationScript evaluator 在有界专用 worker pool 中运行，使用 execution-scoped `ops` capability object 连接 async OperationExecutionCore；`ops.invoke` 隐式等待，`ops.invoke_all` 有界并行，progress/cancellation/deadline 同时中止纯脚本循环与 nested invocation。
 - R22：Interaction command transaction 原子写入 command idempotency、event、state revision 和可选 `OperationEffectIntent`。只有 descriptor 声明 replay-safe/idempotent 的单 Operation 可进入该 outbox；任意 OperationScript 和多步 effect 使用即时结果或 Workflow。
 - R23：完整保留并迁移 Canvas CRUD、publish/copy/unpublish、lineage、VFS source changeset、data/resource binding、Extension promotion、Workspace Module module/presentation 与 effective access 行为，不把旧字段机械复制成新事实源。
+- R24：建立单一 AgentRun Surface Authority，从 canonical SurfaceAdopt 已接受的 AgentFrame、
+  Product binding/resource grants、Complete Agent bound/applied evidence 与 provider readiness
+  解析 request-scoped current surface，并由同一结果生成 runtime tool、Operation、Workspace
+  Module 与 diagnostics 投影；消费者不再独立选择 frame、拼装 capability 或把解析失败降级为空。
 
 ## Acceptance Criteria
 
@@ -95,6 +99,9 @@ Canvas、Extension panel/component 和 Interaction renderer 不以 AgentRun、Ag
 - [x] Agent 能从 `builtin:vfs`、`builtin:process`、`builtin:task` describe 显式暴露的原生工具
   Operations，并与 Extension/Interaction Operations 通过同一个 OperationScript 组合；执行仍由
   PlatformToolBroker 按 current applied surface 授权。
+- [ ] 同一个 accepted AgentRun Surface revision 对 native runtime tools、canonical Operations
+  与 builtin Workspace Modules 给出一致结果；provider/binding/applied evidence 失败返回 typed
+  unavailable，未接受的 latest frame 和局部 grant 不会改变 current surface。
 - [x] Interaction attention 与 Channel message/delivery 边界清晰，Channel 不保存 canonical state/event body。
 - [x] 相关 `.trellis/spec/`、Rust contracts、generated TS、frontend 和 migrations 同步，所有 work items 完成最终检查与失败归因。
 - [x] 用户最终评审 planning artifacts 后才允许 `task.py start`。

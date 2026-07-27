@@ -120,6 +120,36 @@ resolve current actor surface
 
 Agent loop 的 message/tool hook 与 outer tool approval 留在 Agent adapter。任何 adapter 都不能绕过 common core 直接调用 provider。
 
+### 2.4 AgentRun Surface Authority
+
+AgentRun 的 current callable surface 由 application 层深模块统一解析：
+
+```text
+canonical SurfaceAdopt accepted AgentFrame
+  + Product binding/resource grants
+  + Complete Agent bound/applied evidence
+  + provider readiness
+  -> AgentRunSurfaceAuthority::resolve_current
+     -> RuntimeToolProjection
+     -> ActorOperationProjection
+     -> WorkspaceModuleProjection
+     -> SurfaceDiagnostics
+```
+
+该模块不建立新的 durable Surface snapshot。AgentFrame 继续表达 Product desired business
+surface，Complete Agent offer/bound/applied 继续表达实际接纳证据；resolver 在一次 request 中校验
+这些 revision/digest 的一致性并生成不可持久化投影。Surface mutation 复用 canonical
+`SurfaceAdopt`，无法热应用时返回 typed rebind/apply 结果。
+
+显式 capability 与 enabled cluster 在模块内部规范化为同一 canonical capability set。原生工具、
+`platform:*` Operations 与 `builtin:*` Workspace Modules 从同一 capability 与 explicit exposure
+registry 推导；extension/canvas module visibility 继续由 Workspace Module policy 表达。调用方不再
+自行读取 latest frame、内联 builtin 特判或重复组合 applied surface。
+
+动态 facet 使用 `ready / unavailable` 语义。provider、binding 或 applied evidence 解析失败保留
+结构化 diagnostic；成功解析后的空集合才表达当前没有能力。ToolBroker 继续在每次 invocation
+执行 permission、effect 与 resource authorization，Surface discovery 不成为 bearer capability。
+
 ## 3. OperationScript
 
 ### 3.1 定位
@@ -463,4 +493,6 @@ Interaction definition 保存 logical component contract ref、layout/slot、pro
 - Canvas distribution/lineage、resource binding、VFS、promotion 和 authoring/runtime public identity 在新模型中有完整落点。
 - 所有持久化/调用合同携带 V1 discriminator；future breaking change 通过 V2 与显式 migration 演进。
 - Workspace Module 只做 projection；Interaction command/event 与 Channel message/delivery 不合并。
+- AgentRun runtime tool、Operation 与 Workspace Module projection 来自同一个 accepted Surface
+  revision；Surface adoption、permission 与 applied receipt 保持既有唯一 authority。
 - 父任务 `work-items/` 统一覆盖完整实现、spec、migration 和最终残留验证。

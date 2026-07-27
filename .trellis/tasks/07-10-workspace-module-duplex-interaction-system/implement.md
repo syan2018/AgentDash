@@ -1,8 +1,9 @@
 # Implement · Workspace Module 通用双工交互系统
 
 父任务的 V1 主体实现与 WI-00 至 WI-10 已完成。PR #95 合入后的复核发现 Workspace Module
-生产接线与原始 Agent-facing 合同的漂移已通过 WI-11 完成最终收口；WI-12 继续补齐原生平台工具
-进入 canonical Operation 与 OperationScript 组合面的合同。
+生产接线与原始 Agent-facing 合同的漂移已通过 WI-11 完成最终收口；WI-12 补齐原生平台工具
+进入 canonical Operation 与 OperationScript 组合面的合同。运行验证暴露出的多套 current
+Surface 解析与局部状态漂移由 WI-13 统一收束。
 
 ## 1. 工作项追踪
 
@@ -23,6 +24,7 @@
 | WI-10 | 全量集成、spec、migration 与残留验证 | WI-01 至 WI-09 |
 | WI-11 | Workspace Module Agent 能力最终收口 | WI-03、WI-07、PR #95 最终 Runtime 接线 |
 | WI-12 | 原生平台工具 Operation 组合 | WI-01、WI-03、WI-11 |
+| WI-13 | AgentRun Surface Authority 收束 | WI-11、WI-12、Agent Runtime 已接受 Surface revision 合同 |
 
 依赖只由本表和 `work-items/README.md` 表达；工作项编号不表示可以绕过依赖。
 
@@ -164,6 +166,22 @@
   原生工具和 Extension/Interaction Operations 放入同一个 OperationScript manifest。
 - 控制面、递归入口和 lifecycle 工具不进入 exposure registry；effect/replay/capability 必须逐项显式声明。
 
+### WI-13 · AgentRun Surface Authority 收束
+
+- 在 AgentRun application 层建立单一 `AgentRunSurfaceAuthority` interface，一次解析已接受
+  AgentFrame、Product binding/resource grants、Complete Agent bound/applied evidence 与 provider
+  readiness。
+- 内部统一规范化 capability/cluster，只从同一 request-scoped surface 生成 runtime tool、
+  Actor Operation、Workspace Module 与 diagnostics 投影。
+- 让 Workspace Module product service、Operation authority、PlatformTool access、ToolBroker
+  authorizer 与 native runtime adapters 迁移到同一投影，删除各自的 latest-frame 读取、applied
+  surface 拼装、builtin 特判和重复 capability mapper。
+- provider/binding/applied mismatch 返回 typed unavailable；成功空集合与解析失败保持可区分。
+- Surface mutation 复用 AgentRun canonical `SurfaceAdopt` 与 active revision，不新增局部 grant
+  入口；无法热应用时返回明确 rebind/apply 结果。
+- 以深模块 interface 的组合测试证明 native tools、`platform:*` Operations 与 `builtin:*`
+  modules 同时出现或消失，并删除被替代的浅层测试。
+
 ## 3. 验证策略
 
 - OperationScript：`rhai_v1`/host API discriminator、AST/evaluator factory、plan-token mismatch、`ops` host surface、recursive-script rejection、worker exhaustion、CPU/host-call cancellation、nested admission、调用/并行/输出上限、partial outcome 和 scoped result ref。
@@ -173,6 +191,8 @@
 - Canvas distribution/binding：publish/copy/unpublish lineage、archive pinning、definition/instance identity、resource slot authorization、shared VFS read-only 与 Extension promotion。
 - Migration：干净数据库直接形成最终 V1 Interaction schema；旧五张 Canvas/runtime state 表、旧 routes/contracts/repositories 和 compatibility decoder 均不存在。
 - Workspace Module：canonical descriptor/provenance、describe/invoke parity、presentation、旧 resolver/parser/DTO 静态清扫。
+- AgentRun Surface：accepted/latest revision、capability/cluster normalization、bound/applied digest、
+  provider unavailable，以及 runtime tool/Operation/builtin module 同源一致性。
 - 全局：`cargo fmt --check`、受影响 package test/check/clippy、`pnpm run contracts:check`、`pnpm run frontend:check`、focused frontend/browser tests、`pnpm run migration:guard`、`git diff --check`。
 
 ## 4. 数据库 migration 合同

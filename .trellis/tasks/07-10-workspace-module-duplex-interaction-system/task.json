@@ -29,6 +29,6 @@
     "packages/app-web/src/features/extension-runtime",
     "packages/extension/src"
   ],
-  "notes": "V1 冻结方案与 WI-00 至 WI-10 已完成。2026-07-27 从 codex/workspace-duplex-interaction-planning 恢复到非归档区；WI-11 已补齐 Workspace Module projection、Agent OperationScript、可信 presentation、Interaction Agent projection/runtime module 与 component action host。父任务暂留非归档区供验收。",
+  "notes": "V1 冻结方案与 WI-00 至 WI-10 已完成。2026-07-27 从 codex/workspace-duplex-interaction-planning 恢复到非归档区；WI-11 已补齐 Workspace Module Agent 能力，WI-12 已补齐原生平台工具 Operation 组合；WI-13 计划以单一 AgentRun Surface Authority 收束 runtime tool、Operation、Workspace Module 与 diagnostics 投影。父任务暂留非归档区供验收。",
   "meta": {}
 }

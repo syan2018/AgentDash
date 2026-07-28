@@ -46,7 +46,15 @@ describe("Agent Runtime projection", () => {
         view_revision: 9n,
         execution: {
           status: "active",
-          active_turn_id: "turn-1",
+          active_turn: {
+            turn_id: "turn-1",
+            kind: "conversation",
+            phase: "running",
+            operation_id: null,
+            started_at_ms: 1000n,
+            cancellable: true,
+          },
+          last_compaction_outcome: null,
           latest_turn_id: "turn-1",
         },
         command_availability:

@@ -1,4 +1,7 @@
-import type { AgentRuntimeOperationStatus } from "../../../generated/agent-runtime-contracts";
+import type {
+  AgentRuntimeOperationStatus,
+  AgentRuntimeUnavailabilityReason,
+} from "../../../generated/agent-runtime-contracts";
 import type {
   AgentRuntimeCommandAvailability,
   AgentRuntimeView,
@@ -14,10 +17,13 @@ function operationStatus(status: FixtureStatus): AgentRuntimeOperationStatus {
 function availability(
   status: FixtureStatus,
   available: boolean,
+  unavailableReason?: AgentRuntimeUnavailabilityReason,
 ): AgentRuntimeCommandAvailability {
   const evidence = {
     blocking_operation_id:
       status === "running" ? "operation-compaction" : null,
+    expected_view_revision: null,
+    expected_turn_id: status === "running" ? "turn-compaction" : null,
     bound_surface_revision: null,
     applied_surface_revision: null,
   };
@@ -33,7 +39,7 @@ function availability(
     : {
       status: "unavailable",
       reason: status === "running"
-        ? "operation_in_flight"
+        ? (unavailableReason ?? "operation_in_flight")
         : "active_turn_required",
       evidence,
     };
@@ -51,7 +57,25 @@ function runtimeSnapshot(
     lifecycle: "active",
     execution: {
       status: active ? "active" : "idle",
-      active_turn_id: active ? "turn-compaction" : null,
+      active_turn: active
+        ? {
+            turn_id: "turn-compaction",
+            kind: "context_compaction",
+            phase: "running",
+            operation_id: "operation-compaction",
+            started_at_ms: 1000n,
+            cancellable: false,
+          }
+        : null,
+      last_compaction_outcome: active
+        ? null
+        : {
+            turn_id: "turn-compaction",
+            operation_id: "operation-compaction",
+            status: status === "completed" ? "succeeded" : status,
+            completed_at_ms: 1000n + revision,
+            error: status === "failed" || status === "lost" ? status : null,
+          },
       latest_turn_id: "turn-compaction",
     },
     conversation: [],
@@ -70,10 +94,10 @@ function runtimeSnapshot(
     authority: "source_authoritative",
     fidelity: "exact",
     command_availability: {
-      submit_input: availability(status, !active),
-      steer: availability(status, active),
-      interrupt: availability(status, active),
-      request_compaction: availability(status, !active),
+      submit_input: availability(status, !active, "compaction_in_progress"),
+      steer: availability(status, false, "active_turn_not_steerable"),
+      interrupt: availability(status, false, "turn_not_cancellable"),
+      request_compaction: availability(status, !active, "compaction_in_progress"),
       resolve_interaction: availability(status, false),
     },
   };

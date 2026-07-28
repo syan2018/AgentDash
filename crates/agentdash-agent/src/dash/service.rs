@@ -1414,6 +1414,7 @@ impl DashAgentService {
                         entry_id: HistoryEntryId::new(format!("{prefix}:B-started")),
                         payload: HistoryPayload::CompactionStarted {
                             compaction_id: compaction_id.clone(),
+                            operation_id: compaction_effect_id.clone(),
                             mode: CompactionMode::AutomaticOverflow,
                             source_head: store.history().head().cloned(),
                             source_digest: store.history().digest(),
@@ -1854,6 +1855,7 @@ impl DashAgentService {
                         },
                         dependency: None,
                     },
+                    request.effect_id.clone(),
                     HistoryEntryId::new(format!("{effect_prefix}:compaction-started")),
                 )?;
                 let history = repository.store.history().clone();

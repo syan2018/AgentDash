@@ -4,7 +4,7 @@ use agentdash_agent_protocol::{ContextFrame, ToolProtocolProjector};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{DashExecutionFailure, DashToolDefinition};
+use super::{DashExecutionFailure, DashToolDefinition, EffectId};
 use crate::ContentPart;
 use thiserror::Error;
 
@@ -184,6 +184,7 @@ pub enum HistoryPayload {
     },
     CompactionStarted {
         compaction_id: CompactionId,
+        operation_id: EffectId,
         mode: CompactionMode,
         source_head: Option<HistoryEntryId>,
         source_digest: String,
@@ -507,12 +508,16 @@ pub struct InteractionState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompactionState {
+    pub operation_id: EffectId,
     pub mode: CompactionMode,
     pub status: ActivityStatus,
     pub revision: Option<ContextRevision>,
     pub summary: Option<String>,
     pub retained_from: Option<HistoryEntryId>,
     pub source_digest: String,
+    pub started_at_ms: u64,
+    pub completed_at_ms: Option<u64>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -897,6 +902,7 @@ fn apply_payload(
         }
         HistoryPayload::CompactionStarted {
             compaction_id,
+            operation_id,
             mode,
             source_head,
             source_digest,
@@ -911,12 +917,16 @@ fn apply_payload(
                 .insert(
                     compaction_id.clone(),
                     CompactionState {
+                        operation_id: operation_id.clone(),
                         mode: *mode,
                         status: ActivityStatus::Active,
                         revision: None,
                         summary: None,
                         retained_from: None,
                         source_digest: source_digest.clone(),
+                        started_at_ms: *started_at_ms,
+                        completed_at_ms: None,
+                        error: None,
                     },
                 )
                 .is_some()
@@ -995,6 +1005,7 @@ fn apply_payload(
                 ));
             }
             compaction.status = ActivityStatus::Completed;
+            compaction.completed_at_ms = Some(*completed_at_ms);
             state.active_compaction = None;
             let turn_id = compaction_turn_id(compaction_id);
             let item_id = compaction_item_id(compaction_id);
@@ -1007,6 +1018,7 @@ fn apply_payload(
         }
         HistoryPayload::CompactionFailed {
             compaction_id,
+            error,
             lost,
             completed_at_ms,
             ..
@@ -1017,11 +1029,13 @@ fn apply_payload(
             } else {
                 ActivityStatus::Failed
             };
-            state
+            let compaction = state
                 .compactions
                 .get_mut(compaction_id)
-                .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?
-                .status = status;
+                .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?;
+            compaction.status = status;
+            compaction.completed_at_ms = Some(*completed_at_ms);
+            compaction.error = Some(error.clone());
             state.active_compaction = None;
             let turn_id = compaction_turn_id(compaction_id);
             let item_id = compaction_item_id(compaction_id);

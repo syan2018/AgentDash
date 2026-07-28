@@ -785,6 +785,8 @@ mod tests {
     ) -> AgentRuntimeView {
         let evidence = AgentRuntimeAvailabilityEvidence {
             blocking_operation_id: None,
+            expected_view_revision: Some(RuntimeProjectionRevision(7)),
+            expected_turn_id: None,
             bound_surface_revision: Some(SurfaceRevision(3)),
             applied_surface_revision: Some(SurfaceRevision(3)),
         };
@@ -797,7 +799,8 @@ mod tests {
             lifecycle: AgentRuntimeLifecycleStatus::Active,
             execution: AgentRuntimeExecutionView {
                 status: AgentRuntimeExecutionStatus::Idle,
-                active_turn_id: None,
+                active_turn: None,
+                last_compaction_outcome: None,
                 latest_turn_id: None,
             },
             interactions: Vec::new(),

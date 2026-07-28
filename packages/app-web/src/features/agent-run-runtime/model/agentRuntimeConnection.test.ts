@@ -55,7 +55,15 @@ function update(
     view_revision: sequence + 10n,
     execution: {
       status: "active",
-      active_turn_id: "turn-live",
+      active_turn: {
+        turn_id: "turn-live",
+        kind: "conversation",
+        phase: "running",
+        operation_id: null,
+        started_at_ms: 1000n,
+        cancellable: true,
+      },
+      last_compaction_outcome: null,
       latest_turn_id: "turn-live",
     },
     command_availability:
@@ -111,7 +119,7 @@ describe("AgentRuntimeConnection", () => {
       expect.objectContaining({
         execution: expect.objectContaining({
           status: "active",
-          active_turn_id: "turn-live",
+          active_turn: expect.objectContaining({ turn_id: "turn-live" }),
         }),
       }),
     );
@@ -143,7 +151,8 @@ describe("AgentRuntimeConnection", () => {
     transportOptions[0]?.onEvent(update(3n, {
       execution: {
         status: "idle",
-        active_turn_id: null,
+        active_turn: null,
+        last_compaction_outcome: null,
         latest_turn_id: "turn-live",
       },
     }));
@@ -221,7 +230,8 @@ describe("AgentRuntimeConnection", () => {
         agentRuntimeTestFixtures.snapshots.started.view_revision - 1n,
       execution: {
         status: "idle",
-        active_turn_id: null,
+        active_turn: null,
+        last_compaction_outcome: null,
         latest_turn_id: "turn-live",
       },
       presentations: [
@@ -274,7 +284,8 @@ describe("AgentRuntimeConnection", () => {
       view_revision: 1n,
       execution: {
         status: "idle",
-        active_turn_id: null,
+        active_turn: null,
+        last_compaction_outcome: null,
         latest_turn_id: null,
       },
       presentations: [bufferedPresentation],
@@ -328,7 +339,7 @@ describe("AgentRuntimeConnection", () => {
       expect.objectContaining({
         execution: expect.objectContaining({
           status: "idle",
-          active_turn_id: null,
+          active_turn: null,
         }),
       }),
     );
@@ -369,7 +380,8 @@ describe("AgentRuntimeConnection", () => {
     transportOptions[0]?.onEvent(update(1n, {
       execution: {
         status: "idle",
-        active_turn_id: null,
+        active_turn: null,
+        last_compaction_outcome: null,
         latest_turn_id: "turn-live",
       },
       presentations: [terminal],

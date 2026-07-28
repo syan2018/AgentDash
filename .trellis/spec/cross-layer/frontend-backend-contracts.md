@@ -178,6 +178,107 @@ AgentRunCommandReceipt {
   first input → operation response → Runtime update → reconnect view。
 - Create-run contract generation test断言 generated TypeScript 只暴露 `model_selection` 与 `backend_selection`，不重新引入可覆盖 executor 的请求字段。
 
+### Scenario: Typed Active Turn 与 Owner Command Policy
+
+#### 1. Scope / Trigger
+
+修改 Complete Agent execution snapshot、Compaction Turn、Runtime command mapper、Product command
+facade或Session命令门禁时适用。活动类型和控制权限必须来自同一次Agent owner observation，原因是
+普通对话Turn与Compaction Turn虽然都处于active，但可执行命令不同。
+
+#### 2. Signatures
+
+```rust
+AgentExecutionSnapshot {
+    active_turn: Option<AgentActiveTurnSnapshot>,
+    last_compaction_outcome: Option<AgentCompactionOutcomeSnapshot>,
+}
+
+AgentActiveTurnSnapshot {
+    turn_id,
+    kind: conversation | context_compaction,
+    phase: running | applied,
+    operation_id?,
+    started_at_ms,
+    cancellable,
+}
+
+AgentSnapshot {
+    execution,
+    command_availability: BTreeMap<AgentControlKind, AgentControlAvailability>,
+    ...
+}
+
+AgentChangePayload::ExecutionChanged {
+    execution,
+    command_availability,
+}
+```
+
+Runtime无损映射为`AgentRuntimeExecutionView.active_turn`、
+`last_compaction_outcome`和带`expected_view_revision/expected_turn_id/
+blocking_operation_id`证据的command availability。
+
+#### 3. Contracts
+
+- concrete Agent从同一durable history或provider observation构造typed active Turn；Native
+  Compaction的`operation_id`与执行effect identity一致，reload后保持稳定。
+- `AgentExecutionSnapshot::command_availability`是Submit、Steer、Interrupt、Compact、
+  interaction、Close与Fork的共享owner policy；adapter只决定可观察的kind/phase与
+  `cancellable`。
+- Compaction active时Submit、Steer、重复Compact、Fork与Close按owner policy关闭；Interrupt只在
+  `cancellable=true`时开放。草稿编辑与只读浏览不属于Agent command。
+- Product command facade先读取owner availability：只有Steer可用时才把产品Submit映射为
+  `AgentCommand::Steer`；否则只在Submit可用时提交新Turn。
+- `SourceObservation.state=ExecutionChanged`与同次canonical presentation共同发布
+  running/applied/terminal；Runtime update继续在同一lane携带execution、commands和presentation。
+- Codex只投影`thread/read`实际可观察的ContextCompaction item；未提供的operation/checkpoint
+  evidence保持空值，保留Observed语义。
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| active conversation Turn | Steer/可取消的Interrupt可用；Submit按Steer执行 |
+| active Compaction、`cancellable=false` | Submit/Steer/Interrupt/重复Compact/Fork/Close不可用 |
+| active Compaction、`cancellable=true` | 仅Interrupt按owner证据开放 |
+| `phase=applied` | active Turn保持到terminal；context checkpoint已应用但operation尚未结束 |
+| terminal success/failure/lost/cancelled | `active_turn=None`并发布typed `last_compaction_outcome` |
+| Product请求与owner availability不符 | side effect前拒绝，不根据`execution.status`改写命令 |
+| Codex未提供operation/checkpoint字段 | 保持`None`，不生成Native语义 |
+| snapshot command map缺项 | Runtime projection拒绝该snapshot |
+
+#### 5. Good / Base / Bad Cases
+
+- Good：Native reload在Compaction running阶段恢复同一turn/effect identity、开始时间和命令矩阵。
+- Base：普通Turn继续通过owner开放Steer，现有产品Submit入口无需复制Turn类型判断。
+- Bad：只根据`execution.status=active`启用Steer/Interrupt，会把Compaction误当普通对话Turn。
+
+#### 6. Tests Required
+
+- Native blocking-compactor集成测试在provider返回前读取snapshot，断言kind、phase、operation、
+  cancellable与完整命令矩阵；terminal后断言同一operation outcome。
+- Native changes测试断言running → applied → terminal均以`ExecutionChanged`发布，并与canonical
+  Compaction Turn presentation同lane出现。
+- Runtime mapper测试断言typed Turn、operation和owner unavailable reason无损映射。
+- Product command facade测试断言普通Turn的Submit映射Steer，Compaction Turn在副作用前拒绝。
+- frontend selector测试断言Compaction期间Submit/Cancel/Compact禁用且原因来自Runtime view。
+- Codex fixture断言可观察ContextCompaction进入typed active Turn，operation保持空值。
+
+#### 7. Wrong vs Correct
+
+```ts
+// 状态猜测：active无法区分对话Turn和Compaction Turn。
+const submitGate = view.execution.status === "active" ? "steer" : "submit_input";
+
+// Owner事实：优先消费具体命令availability及其stale evidence。
+const submitGate = isAvailable(view, "submit_input")
+  ? "submit_input"
+  : isAvailable(view, "steer")
+    ? "steer"
+    : "submit_input";
+```
+
 ## 4. Companion and Workflow Product Facts
 
 - Companion/subagent dispatch 以 Lifecycle run/agent/frame、assignment/activity attempt 与 canonical Runtime thread/operation refs表达。

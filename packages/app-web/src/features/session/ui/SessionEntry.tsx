@@ -181,7 +181,9 @@ export function SingleEntry({
         <ToolCallCardShell
           kind={card.kind}
           header={card.header}
-          status={card.status}
+          status={threadItem.type === "contextCompaction"
+            ? event.type === "item_completed" ? "completed" : "inProgress"
+            : card.status}
           isPendingApproval={isPendingApproval}
           agentRunTarget={agentRunTarget}
           itemId={threadItem.id}

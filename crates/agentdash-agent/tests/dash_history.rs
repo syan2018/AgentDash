@@ -156,6 +156,7 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
                 "entry-compaction-start",
                 HistoryPayload::CompactionStarted {
                     compaction_id: CompactionId::new("compact-b"),
+                    operation_id: EffectId::new("effect-compact-b"),
                     mode: CompactionMode::AutomaticOverflow,
                     source_head,
                     source_digest: source_digest.clone(),
@@ -433,7 +434,11 @@ fn manual_compaction_defers_new_input_until_terminal_then_promotes_explicitly() 
         dependency: None,
     };
     store
-        .begin_compaction(compaction, HistoryEntryId::new("manual-start"))
+        .begin_compaction(
+            compaction,
+            EffectId::new("manual-effect"),
+            HistoryEntryId::new("manual-start"),
+        )
         .unwrap();
     let input = DashCommand {
         command_id: CommandId::new("input-after-manual"),
@@ -486,6 +491,7 @@ fn automatic_compaction_failure_settles_dependent_continuation_in_same_commit() 
                 },
                 dependency: None,
             },
+            EffectId::new("auto-b-effect"),
             HistoryEntryId::new("auto-start"),
         )
         .unwrap();
@@ -542,6 +548,7 @@ fn invalid_compaction_provenance_does_not_mutate_history() {
             "bad-compaction",
             HistoryPayload::CompactionStarted {
                 compaction_id: CompactionId::new("bad"),
+                operation_id: EffectId::new("bad-effect"),
                 mode: CompactionMode::Manual,
                 source_head: history.head().cloned(),
                 source_digest: "forged".into(),

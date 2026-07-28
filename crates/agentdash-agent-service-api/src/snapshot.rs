@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -94,10 +96,216 @@ impl AgentInteractionSnapshot {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentActiveTurnKind {
+    Conversation,
+    ContextCompaction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentActiveTurnPhase {
+    Running,
+    Applied,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentActiveTurnSnapshot {
+    pub turn_id: AgentTurnId,
+    pub kind: AgentActiveTurnKind,
+    pub phase: AgentActiveTurnPhase,
+    pub operation_id: Option<crate::AgentEffectIdentity>,
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+    #[ts(type = "AgentServiceU64")]
+    pub started_at_ms: u64,
+    pub cancellable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCompactionOutcomeStatus {
+    Succeeded,
+    Failed,
+    Lost,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentCompactionOutcomeSnapshot {
+    pub turn_id: AgentTurnId,
+    pub operation_id: Option<crate::AgentEffectIdentity>,
+    pub status: AgentCompactionOutcomeStatus,
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+    #[ts(type = "AgentServiceU64")]
+    pub completed_at_ms: u64,
+    pub error: Option<String>,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentControlKind {
+    SubmitInput,
+    Steer,
+    Interrupt,
+    RequestCompaction,
+    ResolveInteraction,
+    Close,
+    Fork,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentControlUnavailabilityReason {
+    AgentNotActive,
+    ActiveTurnRequired,
+    NoActiveTurnRequired,
+    ActiveTurnNotSteerable,
+    CompactionInProgress,
+    TurnNotCancellable,
+    PendingInteractionRequired,
+    SourceLost,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentControlAvailabilityEvidence {
+    pub expected_snapshot_revision: AgentSnapshotRevision,
+    pub expected_turn_id: Option<AgentTurnId>,
+    pub blocking_operation_id: Option<crate::AgentEffectIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum AgentControlAvailability {
+    Available {
+        evidence: AgentControlAvailabilityEvidence,
+    },
+    Unavailable {
+        reason: AgentControlUnavailabilityReason,
+        evidence: AgentControlAvailabilityEvidence,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentExecutionSnapshot {
-    pub active_turn_id: Option<AgentTurnId>,
+    pub active_turn: Option<AgentActiveTurnSnapshot>,
+    pub last_compaction_outcome: Option<AgentCompactionOutcomeSnapshot>,
+}
+
+impl AgentExecutionSnapshot {
+    /// Derives the control surface from the same owner execution fact published in the snapshot.
+    ///
+    /// Concrete adapters decide whether an active turn is cancellable. The shared policy then
+    /// guarantees that every consumer sees the same Submit/Steer/Compaction command matrix.
+    pub fn command_availability(
+        &self,
+        lifecycle: AgentLifecycleStatus,
+        revision: AgentSnapshotRevision,
+        has_pending_interaction: bool,
+    ) -> BTreeMap<AgentControlKind, AgentControlAvailability> {
+        let evidence = AgentControlAvailabilityEvidence {
+            expected_snapshot_revision: revision,
+            expected_turn_id: self.active_turn.as_ref().map(|turn| turn.turn_id.clone()),
+            blocking_operation_id: self
+                .active_turn
+                .as_ref()
+                .and_then(|turn| turn.operation_id.clone()),
+        };
+        let active = lifecycle == AgentLifecycleStatus::Active;
+        let active_turn = self.active_turn.as_ref();
+        let compaction_active =
+            active_turn.is_some_and(|turn| turn.kind == AgentActiveTurnKind::ContextCompaction);
+
+        [
+            AgentControlKind::SubmitInput,
+            AgentControlKind::Steer,
+            AgentControlKind::Interrupt,
+            AgentControlKind::RequestCompaction,
+            AgentControlKind::ResolveInteraction,
+            AgentControlKind::Close,
+            AgentControlKind::Fork,
+        ]
+        .into_iter()
+        .map(|command| {
+            let unavailable_reason = if !active {
+                Some(if lifecycle == AgentLifecycleStatus::Lost {
+                    AgentControlUnavailabilityReason::SourceLost
+                } else {
+                    AgentControlUnavailabilityReason::AgentNotActive
+                })
+            } else {
+                match command {
+                    AgentControlKind::SubmitInput if active_turn.is_some() => {
+                        Some(if compaction_active {
+                            AgentControlUnavailabilityReason::CompactionInProgress
+                        } else {
+                            AgentControlUnavailabilityReason::NoActiveTurnRequired
+                        })
+                    }
+                    AgentControlKind::SubmitInput => None,
+                    AgentControlKind::Steer if compaction_active => {
+                        Some(AgentControlUnavailabilityReason::ActiveTurnNotSteerable)
+                    }
+                    AgentControlKind::Steer if active_turn.is_none() => {
+                        Some(AgentControlUnavailabilityReason::ActiveTurnRequired)
+                    }
+                    AgentControlKind::Steer => None,
+                    AgentControlKind::Interrupt if active_turn.is_none() => {
+                        Some(AgentControlUnavailabilityReason::ActiveTurnRequired)
+                    }
+                    AgentControlKind::Interrupt
+                        if active_turn.is_some_and(|turn| !turn.cancellable) =>
+                    {
+                        Some(AgentControlUnavailabilityReason::TurnNotCancellable)
+                    }
+                    AgentControlKind::Interrupt => None,
+                    AgentControlKind::RequestCompaction if active_turn.is_some() => {
+                        Some(if compaction_active {
+                            AgentControlUnavailabilityReason::CompactionInProgress
+                        } else {
+                            AgentControlUnavailabilityReason::NoActiveTurnRequired
+                        })
+                    }
+                    AgentControlKind::RequestCompaction => None,
+                    AgentControlKind::ResolveInteraction if !has_pending_interaction => {
+                        Some(AgentControlUnavailabilityReason::PendingInteractionRequired)
+                    }
+                    AgentControlKind::ResolveInteraction => None,
+                    AgentControlKind::Close if compaction_active => {
+                        Some(AgentControlUnavailabilityReason::CompactionInProgress)
+                    }
+                    AgentControlKind::Close => None,
+                    AgentControlKind::Fork if active_turn.is_some() => Some(if compaction_active {
+                        AgentControlUnavailabilityReason::CompactionInProgress
+                    } else {
+                        AgentControlUnavailabilityReason::NoActiveTurnRequired
+                    }),
+                    AgentControlKind::Fork => None,
+                }
+            };
+            (
+                command,
+                match unavailable_reason {
+                    None => AgentControlAvailability::Available {
+                        evidence: evidence.clone(),
+                    },
+                    Some(reason) => AgentControlAvailability::Unavailable {
+                        reason,
+                        evidence: evidence.clone(),
+                    },
+                },
+            )
+        })
+        .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -107,6 +315,7 @@ pub struct AgentSnapshot {
     pub revision: AgentSnapshotRevision,
     pub lifecycle: AgentLifecycleStatus,
     pub execution: AgentExecutionSnapshot,
+    pub command_availability: BTreeMap<AgentControlKind, AgentControlAvailability>,
     pub interactions: Vec<AgentInteractionSnapshot>,
     pub thread_name: Option<AgentThreadNameSnapshot>,
     pub source_info: AgentSnapshotSource,
@@ -122,9 +331,9 @@ impl AgentSnapshot {
 
     pub fn active_turn_id(&self) -> Option<&str> {
         self.execution
-            .active_turn_id
+            .active_turn
             .as_ref()
-            .map(AgentTurnId::as_str)
+            .map(|turn| turn.turn_id.as_str())
     }
 }
 
@@ -154,7 +363,8 @@ pub struct AgentObservation {
     pub source: AgentSourceCoordinate,
     pub revision: AgentSnapshotRevision,
     pub lifecycle: AgentLifecycleStatus,
-    pub active_turn_id: Option<AgentTurnId>,
+    pub execution: AgentExecutionSnapshot,
+    pub command_availability: BTreeMap<AgentControlKind, AgentControlAvailability>,
     pub latest_turn: Option<AgentTurnObservation>,
 }
 
@@ -175,7 +385,8 @@ impl AgentObservation {
             source: snapshot.source.clone(),
             revision: snapshot.revision,
             lifecycle: snapshot.lifecycle,
-            active_turn_id: snapshot.execution.active_turn_id.clone(),
+            execution: snapshot.execution.clone(),
+            command_availability: snapshot.command_availability.clone(),
             latest_turn,
         })
     }
@@ -205,6 +416,10 @@ pub enum AgentChangePayload {
     },
     LifecycleChanged {
         status: AgentLifecycleStatus,
+    },
+    ExecutionChanged {
+        execution: AgentExecutionSnapshot,
+        command_availability: BTreeMap<AgentControlKind, AgentControlAvailability>,
     },
     InteractionChanged {
         interaction: AgentInteractionSnapshot,

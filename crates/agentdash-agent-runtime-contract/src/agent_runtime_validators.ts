@@ -231,6 +231,10 @@ function decodeAvailability(value: unknown, path: string): AgentRuntimeCommandAv
     ...(availability as unknown as AgentRuntimeCommandAvailabilityWire),
     evidence: {
       ...evidence,
+      expected_view_revision: optionalRuntimeU64(
+        evidence.expected_view_revision,
+        `${path}.evidence.expected_view_revision`,
+      ),
       bound_surface_revision: optionalRuntimeU64(
         evidence.bound_surface_revision,
         `${path}.evidence.bound_surface_revision`,
@@ -250,6 +254,10 @@ function encodeAvailability(
     ...availability,
     evidence: {
       ...availability.evidence,
+      expected_view_revision:
+        availability.evidence.expected_view_revision === null
+          ? null
+          : encodeRuntimeU64(availability.evidence.expected_view_revision),
       bound_surface_revision:
         availability.evidence.bound_surface_revision === null
           ? null
@@ -283,6 +291,66 @@ function encodeAvailabilityMap(
   ) as AgentRuntimeViewWire["command_availability"];
 }
 
+function decodeExecution(
+  value: unknown,
+  path: string,
+): AgentRuntimeView["execution"] {
+  const execution = record(value, path);
+  const activeTurn = execution.active_turn === null
+    ? null
+    : (() => {
+        const turn = record(execution.active_turn, `${path}.active_turn`);
+        return {
+          ...turn,
+          started_at_ms: runtimeU64(
+            turn.started_at_ms,
+            `${path}.active_turn.started_at_ms`,
+          ),
+        };
+      })();
+  const lastCompactionOutcome = execution.last_compaction_outcome === null
+    ? null
+    : (() => {
+        const outcome = record(
+          execution.last_compaction_outcome,
+          `${path}.last_compaction_outcome`,
+        );
+        return {
+          ...outcome,
+          completed_at_ms: runtimeU64(
+            outcome.completed_at_ms,
+            `${path}.last_compaction_outcome.completed_at_ms`,
+          ),
+        };
+      })();
+  return {
+    ...(execution as unknown as AgentRuntimeViewWire["execution"]),
+    active_turn: activeTurn,
+    last_compaction_outcome: lastCompactionOutcome,
+  } as AgentRuntimeView["execution"];
+}
+
+function encodeExecution(
+  execution: AgentRuntimeView["execution"],
+): AgentRuntimeViewWire["execution"] {
+  return {
+    ...execution,
+    active_turn: execution.active_turn === null
+      ? null
+      : {
+          ...execution.active_turn,
+          started_at_ms: encodeRuntimeU64(execution.active_turn.started_at_ms),
+        },
+    last_compaction_outcome: execution.last_compaction_outcome === null
+      ? null
+      : {
+          ...execution.last_compaction_outcome,
+          completed_at_ms: encodeRuntimeU64(
+            execution.last_compaction_outcome.completed_at_ms,
+          ),
+        },
+  };
+}
 
 export function decodeAgentRuntimeView(value: unknown): AgentRuntimeView {
   const view = record(value, "$");
@@ -303,6 +371,7 @@ export function decodeAgentRuntimeView(value: unknown): AgentRuntimeView {
     ...(view as unknown as AgentRuntimeViewWire),
     view_revision: runtimeU64(view.view_revision, "$.view_revision"),
     captured_at_ms: runtimeU64(view.captured_at_ms, "$.captured_at_ms"),
+    execution: decodeExecution(view.execution, "$.execution"),
     thread_name_source: threadNameSource,
     operations: array(view.operations, "$.operations").map((operation, index) =>
       decodeOperation(operation, `$.operations[${index}]`)
@@ -325,6 +394,7 @@ export function encodeAgentRuntimeView(
     ...view,
     view_revision: encodeRuntimeU64(view.view_revision),
     captured_at_ms: encodeRuntimeU64(view.captured_at_ms),
+    execution: encodeExecution(view.execution),
     thread_name_source:
       view.thread_name_source === null
         ? null
@@ -347,6 +417,7 @@ export function decodeAgentRuntimeUpdate(value: unknown): AgentRuntimeUpdate {
     ...(update as unknown as AgentRuntimeUpdateWire),
     lane_sequence: runtimeU64(update.lane_sequence, "$.lane_sequence"),
     view_revision: runtimeU64(update.view_revision, "$.view_revision"),
+    execution: decodeExecution(update.execution, "$.execution"),
     command_availability: decodeAvailabilityMap(
       update.command_availability,
       "$.command_availability",
@@ -362,6 +433,7 @@ export function encodeAgentRuntimeUpdate(
     ...update,
     lane_sequence: encodeRuntimeU64(update.lane_sequence),
     view_revision: encodeRuntimeU64(update.view_revision),
+    execution: encodeExecution(update.execution),
     command_availability: encodeAvailabilityMap(update.command_availability),
   } as AgentRuntimeUpdateWire;
 }

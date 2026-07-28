@@ -42,15 +42,19 @@ export function applyAgentRuntimeControlToChatCommandState(
 ): SessionChatCommandState {
   if (!view || productState.mode !== "runtime") return productState;
   const active = view.execution.status === "active";
+  const submitAvailabilityKey = runtimeCommandAvailable(view, "submit_input")
+    || !runtimeCommandAvailable(view, "steer")
+    ? "submit_input"
+    : "steer";
   const availabilityKey = (
     command: SessionChatCommandModel,
   ): "submit_input" | "steer" | "interrupt" | "request_compaction" | null => {
     if (command.runtimeCommand === "interrupt") return "interrupt";
     if (command.runtimeCommand === "request_compaction") return "request_compaction";
     if (command.runtimeCommand === "submit_input") {
-      return active ? "steer" : "submit_input";
+      return submitAvailabilityKey;
     }
-    if (command.kind === "submit_message") return active ? "steer" : "submit_input";
+    if (command.kind === "submit_message") return submitAvailabilityKey;
     if (command.kind === "cancel") return "interrupt";
     if (command.kind === "compact_context") return "request_compaction";
     return null;
@@ -90,7 +94,7 @@ export function applyAgentRuntimeControlToChatCommandState(
   return {
     ...productState,
     executionStatus: active ? "running_active" : "ready",
-    activeTurnId: view.execution.active_turn_id,
+    activeTurnId: view.execution.active_turn?.turn_id ?? null,
     commands,
     cancelCommand,
   };

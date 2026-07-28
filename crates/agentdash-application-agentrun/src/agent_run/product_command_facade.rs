@@ -6,10 +6,11 @@ use agentdash_agent_runtime_contract::{
 };
 use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentCommand, AgentCommandEnvelope, AgentCommandId,
-    AgentCommandMeta, AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspectionState,
-    AgentIdempotencyKey, AgentInput, AgentInputContent, AgentInteractionId,
-    AgentInteractionResponse, AgentPayloadDigest, AgentReadQuery, AgentReceiptState,
-    AgentServiceError, AgentTerminalOutcome, ResumeAgentCommand,
+    AgentCommandMeta, AgentCommandReceipt, AgentControlAvailability, AgentControlKind,
+    AgentEffectIdentity, AgentEffectInspectionState, AgentIdempotencyKey, AgentInput,
+    AgentInputContent, AgentInteractionId, AgentInteractionResponse, AgentPayloadDigest,
+    AgentReadQuery, AgentReceiptState, AgentServiceError, AgentSnapshot, AgentTerminalOutcome,
+    ResumeAgentCommand,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use serde::{Deserialize, Serialize};
@@ -135,7 +136,7 @@ impl AgentRunProductCommandFacade {
             ))
             .map_err(|error| AgentRunProductCommandError::InvalidCommand(error.to_string()))?,
             binding_generation: generation,
-            expected_snapshot_revision: None,
+            expected_snapshot_revision: Some(snapshot.revision),
         };
         let inspection = service.inspect(meta.effect_id.clone()).await?;
         if !inspection.validate() || inspection.effect_id != meta.effect_id {
@@ -186,22 +187,11 @@ impl AgentRunProductCommandFacade {
                             .await?
                     }
                     command => {
-                        let active_turn_id = snapshot
-                            .active_turn_id()
-                            .map(|turn_id| {
-                                agentdash_agent_service_api::AgentTurnId::new(turn_id.to_owned())
-                                    .map_err(|error| {
-                                        AgentRunProductCommandError::InvalidCommand(
-                                            error.to_string(),
-                                        )
-                                    })
-                            })
-                            .transpose()?;
                         service
                             .execute(AgentCommandEnvelope {
                                 meta,
                                 source: binding.agent.source.clone(),
-                                command: map_command(command, active_turn_id.as_ref())?,
+                                command: map_command(command, &snapshot)?,
                             })
                             .await?
                     }
@@ -282,37 +272,57 @@ fn validate_client_command_id(value: &str) -> Result<&str, AgentRunProductComman
 
 fn map_command(
     command: AgentRunProductCommand,
-    active_turn_id: Option<&agentdash_agent_service_api::AgentTurnId>,
+    snapshot: &AgentSnapshot,
 ) -> Result<AgentCommand, AgentRunProductCommandError> {
     Ok(match command {
         AgentRunProductCommand::SubmitInput { content } => {
             let input = AgentInput {
                 content: map_input(content)?,
             };
-            active_turn_id.map_or(
-                AgentCommand::SubmitInput {
-                    input: input.clone(),
-                },
-                |expected_turn_id| AgentCommand::Steer {
-                    expected_turn_id: expected_turn_id.clone(),
+            if control_available(snapshot, AgentControlKind::Steer) {
+                AgentCommand::Steer {
+                    expected_turn_id: snapshot
+                        .execution
+                        .active_turn
+                        .as_ref()
+                        .map(|turn| turn.turn_id.clone())
+                        .ok_or(AgentRunProductCommandError::ActiveTurnMissing)?,
                     input,
-                },
-            )
+                }
+            } else {
+                ensure_control_available(snapshot, AgentControlKind::SubmitInput)?;
+                AgentCommand::SubmitInput { input }
+            }
         }
-        AgentRunProductCommand::Interrupt => AgentCommand::Interrupt {
-            expected_turn_id: active_turn_id
-                .cloned()
-                .ok_or(AgentRunProductCommandError::ActiveTurnMissing)?,
-        },
-        AgentRunProductCommand::RequestCompaction => AgentCommand::RequestCompaction,
+        AgentRunProductCommand::Interrupt => {
+            ensure_control_available(snapshot, AgentControlKind::Interrupt)?;
+            AgentCommand::Interrupt {
+                expected_turn_id: snapshot
+                    .execution
+                    .active_turn
+                    .as_ref()
+                    .map(|turn| turn.turn_id.clone())
+                    .ok_or(AgentRunProductCommandError::ActiveTurnMissing)?,
+            }
+        }
+        AgentRunProductCommand::RequestCompaction => {
+            ensure_control_available(snapshot, AgentControlKind::RequestCompaction)?;
+            AgentCommand::RequestCompaction
+        }
         AgentRunProductCommand::ResolveInteraction {
             interaction_id,
             response,
-        } => AgentCommand::ResolveInteraction {
-            interaction_id: source_interaction_id(interaction_id)?,
-            response: map_interaction_response(response)?,
-        },
-        AgentRunProductCommand::Close => AgentCommand::Close,
+        } => {
+            ensure_control_available(snapshot, AgentControlKind::ResolveInteraction)?;
+            AgentCommand::ResolveInteraction {
+                interaction_id: source_interaction_id(interaction_id)?,
+                response: map_interaction_response(response)?,
+            }
+        }
+        AgentRunProductCommand::Close => {
+            ensure_control_available(snapshot, AgentControlKind::Close)?;
+            AgentCommand::Close
+        }
         AgentRunProductCommand::Resume => {
             return Err(AgentRunProductCommandError::InvalidCommand(
                 "Resume uses the Complete Agent lifecycle command".to_owned(),
@@ -324,6 +334,26 @@ fn map_command(
             ));
         }
     })
+}
+
+fn control_available(snapshot: &AgentSnapshot, command: AgentControlKind) -> bool {
+    matches!(
+        snapshot.command_availability.get(&command),
+        Some(AgentControlAvailability::Available { .. })
+    )
+}
+
+fn ensure_control_available(
+    snapshot: &AgentSnapshot,
+    command: AgentControlKind,
+) -> Result<(), AgentRunProductCommandError> {
+    if control_available(snapshot, command) {
+        return Ok(());
+    }
+    Err(AgentRunProductCommandError::InvalidCommand(format!(
+        "owner reported {command:?} unavailable: {:?}",
+        snapshot.command_availability.get(&command)
+    )))
 }
 
 fn source_interaction_id(
@@ -473,6 +503,46 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    fn snapshot_with_active_turn(
+        kind: agentdash_agent_service_api::AgentActiveTurnKind,
+        cancellable: bool,
+    ) -> AgentSnapshot {
+        let execution = agentdash_agent_service_api::AgentExecutionSnapshot {
+            active_turn: Some(agentdash_agent_service_api::AgentActiveTurnSnapshot {
+                turn_id: agentdash_agent_service_api::AgentTurnId::new("turn-1").unwrap(),
+                kind,
+                phase: agentdash_agent_service_api::AgentActiveTurnPhase::Running,
+                operation_id: None,
+                started_at_ms: 1,
+                cancellable,
+            }),
+            last_compaction_outcome: None,
+        };
+        let revision = agentdash_agent_service_api::AgentSnapshotRevision(1);
+        AgentSnapshot {
+            source: agentdash_agent_service_api::AgentSourceCoordinate::new("source-1").unwrap(),
+            revision,
+            lifecycle: agentdash_agent_service_api::AgentLifecycleStatus::Active,
+            command_availability: execution.command_availability(
+                agentdash_agent_service_api::AgentLifecycleStatus::Active,
+                revision,
+                false,
+            ),
+            execution,
+            interactions: Vec::new(),
+            thread_name: None,
+            source_info: agentdash_agent_service_api::AgentSnapshotSource {
+                authority: agentdash_agent_service_api::AgentSnapshotAuthority::AgentAuthoritative,
+                source_revision: None,
+                fidelity: agentdash_agent_service_api::SemanticFidelity::Exact,
+                observed_at_ms: 1,
+            },
+            applied_surface: None,
+            initial_context: None,
+            conversation_history: Vec::new(),
+        }
+    }
+
     #[test]
     fn operation_identity_depends_only_on_product_target_and_client_identity() {
         let target = AgentRunTarget {
@@ -494,6 +564,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(source.as_str(), "approval-1");
+    }
+
+    #[test]
+    fn submit_maps_to_steer_only_when_owner_admits_steering() {
+        let input = AgentRunProductCommand::SubmitInput {
+            content: vec![AgentRuntimeContentBlock::Text {
+                text: "continue".to_owned(),
+            }],
+        };
+        let conversation = snapshot_with_active_turn(
+            agentdash_agent_service_api::AgentActiveTurnKind::Conversation,
+            true,
+        );
+        assert!(matches!(
+            map_command(input.clone(), &conversation).unwrap(),
+            AgentCommand::Steer { .. }
+        ));
+
+        let compaction = snapshot_with_active_turn(
+            agentdash_agent_service_api::AgentActiveTurnKind::ContextCompaction,
+            false,
+        );
+        assert!(matches!(
+            map_command(input, &compaction),
+            Err(AgentRunProductCommandError::InvalidCommand(_))
+        ));
     }
 
     #[test]

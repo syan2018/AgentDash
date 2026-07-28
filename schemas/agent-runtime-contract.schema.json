@@ -891,10 +891,24 @@
         "status": {
           "$ref": "#/$defs/AgentRuntimeExecutionStatus"
         },
-        "active_turn_id": {
-          "type": [
-            "string",
-            "null"
+        "active_turn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRuntimeActiveTurn"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_compaction_outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRuntimeCompactionOutcome"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "latest_turn_id": {
@@ -913,6 +927,93 @@
       "enum": [
         "idle",
         "active"
+      ]
+    },
+    "AgentRuntimeActiveTurn": {
+      "type": "object",
+      "properties": {
+        "turn_id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentRuntimeActiveTurnKind"
+        },
+        "phase": {
+          "$ref": "#/$defs/AgentRuntimeActiveTurnPhase"
+        },
+        "operation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "started_at_ms": {
+          "$ref": "#/$defs/RuntimeU64"
+        },
+        "cancellable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "turn_id",
+        "kind",
+        "phase",
+        "started_at_ms",
+        "cancellable"
+      ]
+    },
+    "AgentRuntimeActiveTurnKind": {
+      "type": "string",
+      "enum": [
+        "conversation",
+        "context_compaction"
+      ]
+    },
+    "AgentRuntimeActiveTurnPhase": {
+      "type": "string",
+      "enum": [
+        "running",
+        "applied"
+      ]
+    },
+    "AgentRuntimeCompactionOutcome": {
+      "type": "object",
+      "properties": {
+        "turn_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/AgentRuntimeCompactionOutcomeStatus"
+        },
+        "completed_at_ms": {
+          "$ref": "#/$defs/RuntimeU64"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "turn_id",
+        "status",
+        "completed_at_ms"
+      ]
+    },
+    "AgentRuntimeCompactionOutcomeStatus": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "failed",
+        "lost",
+        "cancelled"
       ]
     },
     "AgentRuntimeInteraction": {
@@ -1338,6 +1439,22 @@
             "null"
           ]
         },
+        "expected_view_revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeProjectionRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "bound_surface_revision": {
           "anyOf": [
             {
@@ -1371,7 +1488,10 @@
         "no_active_turn_required",
         "pending_interaction_required",
         "operation_in_flight",
-        "source_unavailable"
+        "source_unavailable",
+        "active_turn_not_steerable",
+        "compaction_in_progress",
+        "turn_not_cancellable"
       ]
     },
     "CanonicalConversationRecord": {

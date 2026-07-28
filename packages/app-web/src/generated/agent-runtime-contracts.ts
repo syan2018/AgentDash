@@ -12,15 +12,25 @@ export type AgentRuntimeContentBlock = { "kind": "text", text: string, } | { "ki
  */
 export type RuntimeU64 = string & { readonly __runtime_u64: "canonical_unsigned_decimal" };
 
+export type AgentRuntimeActiveTurn = { turn_id: RuntimeTurnId, kind: AgentRuntimeActiveTurnKind, phase: AgentRuntimeActiveTurnPhase, operation_id: RuntimeOperationId | null, started_at_ms: RuntimeU64, cancellable: boolean, };
+
+export type AgentRuntimeActiveTurnKind = "conversation" | "context_compaction";
+
+export type AgentRuntimeActiveTurnPhase = "running" | "applied";
+
 export type AgentRuntimeAppliedContextProvenance = { authority: AgentRuntimeContextAuthority, source: RuntimeContextSourceRef, revision: RuntimeContextSourceRevision, digest: RuntimePayloadDigest, };
 
 export type AgentRuntimeAppliedInitialContextEvidence = { package_id: RuntimeContextPackageId, package_digest: RuntimePayloadDigest, contributions: Array<AgentRuntimeInitialContextContributionEvidence>, };
 
-export type AgentRuntimeAvailabilityEvidence = { blocking_operation_id: RuntimeOperationId | null, bound_surface_revision: SurfaceRevision | null, applied_surface_revision: SurfaceRevision | null, };
+export type AgentRuntimeAvailabilityEvidence = { blocking_operation_id: RuntimeOperationId | null, expected_view_revision: RuntimeProjectionRevision | null, expected_turn_id: RuntimeTurnId | null, bound_surface_revision: SurfaceRevision | null, applied_surface_revision: SurfaceRevision | null, };
 
 export type AgentRuntimeCommandAvailability = { "status": "available", evidence: AgentRuntimeAvailabilityEvidence, } | { "status": "unavailable", reason: AgentRuntimeUnavailabilityReason, evidence: AgentRuntimeAvailabilityEvidence, };
 
 export type AgentRuntimeCommandKind = "create" | "resume" | "rebind" | "activate" | "submit_input" | "steer" | "interrupt" | "request_compaction" | "resolve_interaction" | "close" | "fork";
+
+export type AgentRuntimeCompactionOutcome = { turn_id: RuntimeTurnId, operation_id: RuntimeOperationId | null, status: AgentRuntimeCompactionOutcomeStatus, completed_at_ms: RuntimeU64, error: string | null, };
+
+export type AgentRuntimeCompactionOutcomeStatus = "succeeded" | "failed" | "lost" | "cancelled";
 
 export type AgentRuntimeContextAuthority = "agent_history" | "agent_snapshot" | "workflow" | "constraint";
 
@@ -30,7 +40,7 @@ export type AgentRuntimeContractSchema = { initial_context: AgentRuntimeInitialC
 
 export type AgentRuntimeExecutionStatus = "idle" | "active";
 
-export type AgentRuntimeExecutionView = { status: AgentRuntimeExecutionStatus, active_turn_id: RuntimeTurnId | null, latest_turn_id: RuntimeTurnId | null, };
+export type AgentRuntimeExecutionView = { status: AgentRuntimeExecutionStatus, active_turn: AgentRuntimeActiveTurn | null, last_compaction_outcome: AgentRuntimeCompactionOutcome | null, latest_turn_id: RuntimeTurnId | null, };
 
 export type AgentRuntimeForkCutoff = { "kind": "head" } | { "kind": "completed_turn", turn_id: RuntimeTurnId, };
 
@@ -82,7 +92,7 @@ export type AgentRuntimeSourceBindingEvidence = { source_ref: RuntimeSourceRef, 
 
 export type AgentRuntimeThreadNameSource = { authority: AgentRuntimeProjectionAuthority, fidelity: AgentRuntimeProjectionFidelity, source_identity_digest: RuntimePayloadDigest, source_revision_digest: RuntimePayloadDigest | null, observed_at_ms: RuntimeU64, };
 
-export type AgentRuntimeUnavailabilityReason = "runtime_not_active" | "admission_denied" | "bound_surface_unavailable" | "applied_surface_mismatch" | "active_turn_required" | "no_active_turn_required" | "pending_interaction_required" | "operation_in_flight" | "source_unavailable";
+export type AgentRuntimeUnavailabilityReason = "runtime_not_active" | "admission_denied" | "bound_surface_unavailable" | "applied_surface_mismatch" | "active_turn_required" | "no_active_turn_required" | "pending_interaction_required" | "operation_in_flight" | "source_unavailable" | "active_turn_not_steerable" | "compaction_in_progress" | "turn_not_cancellable";
 
 export type AgentRuntimeUpdate = { lane_sequence: RuntimeU64, view_revision: RuntimeProjectionRevision, execution: AgentRuntimeExecutionView, command_availability: { [key in AgentRuntimeCommandKind]?: AgentRuntimeCommandAvailability }, interactions: Array<AgentRuntimeInteraction>, presentations: Array<CanonicalConversationRecord>, };
 

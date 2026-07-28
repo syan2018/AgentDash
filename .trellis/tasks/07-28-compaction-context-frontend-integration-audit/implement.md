@@ -22,7 +22,9 @@ Slice 5的Runtime/Frontend接线已解除前置阻塞。
 - [x] Slice 1：原Session Compaction Turn、共享materializer与canonical lifecycle已实现。
 - [x] Slice 1复核：Compaction Turn生命周期时间已进入durable history，snapshot/live/reload不再从
   Unix epoch计时。
-- [ ] Slice 2：统一Runtime seam已就绪，进入Agent-owned typed Turn与command policy实施。
+- [ ] Slice 2：typed active Turn、terminal outcome、owner command policy、Runtime无损映射、
+  Codex observed projection与前端基础门禁已完成；manual queue、deferred input、cancel phase与
+  recovery fixture继续实施。
 - [ ] Slice 3：进入typed checkpoint与Exact context query实施。
 
 ## Slice 2/3 实施前复核（2026-07-28）

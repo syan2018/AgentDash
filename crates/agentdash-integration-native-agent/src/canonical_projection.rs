@@ -936,6 +936,7 @@ mod tests {
                     entry_id: HistoryEntryId::new("compact-started"),
                     payload: HistoryPayload::CompactionStarted {
                         compaction_id: compaction_id.clone(),
+                        operation_id: agentdash_agent::dash::EffectId::new("compact-effect-1"),
                         mode: agentdash_agent::dash::CompactionMode::Manual,
                         source_head: None,
                         source_digest: source_digest.clone(),
@@ -1023,6 +1024,7 @@ mod tests {
                     entry_id: HistoryEntryId::new("compact-started"),
                     payload: HistoryPayload::CompactionStarted {
                         compaction_id: compaction_id.clone(),
+                        operation_id: agentdash_agent::dash::EffectId::new("compact-failed-effect"),
                         mode: agentdash_agent::dash::CompactionMode::Manual,
                         source_head: None,
                         source_digest,

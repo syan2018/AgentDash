@@ -369,12 +369,17 @@ pub enum AgentRuntimeUnavailabilityReason {
     PendingInteractionRequired,
     OperationInFlight,
     SourceUnavailable,
+    ActiveTurnNotSteerable,
+    CompactionInProgress,
+    TurnNotCancellable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeAvailabilityEvidence {
     pub blocking_operation_id: Option<RuntimeOperationId>,
+    pub expected_view_revision: Option<RuntimeProjectionRevision>,
+    pub expected_turn_id: Option<RuntimeTurnId>,
     pub bound_surface_revision: Option<SurfaceRevision>,
     pub applied_surface_revision: Option<SurfaceRevision>,
 }
@@ -406,11 +411,62 @@ pub enum AgentRuntimeExecutionStatus {
     Active,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRuntimeActiveTurnKind {
+    Conversation,
+    ContextCompaction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRuntimeActiveTurnPhase {
+    Running,
+    Applied,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRuntimeActiveTurn {
+    pub turn_id: RuntimeTurnId,
+    pub kind: AgentRuntimeActiveTurnKind,
+    pub phase: AgentRuntimeActiveTurnPhase,
+    pub operation_id: Option<RuntimeOperationId>,
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::RuntimeU64")]
+    #[ts(type = "RuntimeU64")]
+    pub started_at_ms: u64,
+    pub cancellable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRuntimeCompactionOutcomeStatus {
+    Succeeded,
+    Failed,
+    Lost,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRuntimeCompactionOutcome {
+    pub turn_id: RuntimeTurnId,
+    pub operation_id: Option<RuntimeOperationId>,
+    pub status: AgentRuntimeCompactionOutcomeStatus,
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::RuntimeU64")]
+    #[ts(type = "RuntimeU64")]
+    pub completed_at_ms: u64,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeExecutionView {
     pub status: AgentRuntimeExecutionStatus,
-    pub active_turn_id: Option<RuntimeTurnId>,
+    pub active_turn: Option<AgentRuntimeActiveTurn>,
+    pub last_compaction_outcome: Option<AgentRuntimeCompactionOutcome>,
     pub latest_turn_id: Option<RuntimeTurnId>,
 }
 
@@ -444,9 +500,9 @@ impl AgentRuntimeView {
 
     pub fn active_turn_id(&self) -> Option<&str> {
         self.execution
-            .active_turn_id
+            .active_turn
             .as_ref()
-            .map(RuntimeTurnId::as_str)
+            .map(|turn| turn.turn_id.as_str())
     }
 }
 
@@ -486,6 +542,8 @@ mod tests {
     fn evidence() -> AgentRuntimeAvailabilityEvidence {
         AgentRuntimeAvailabilityEvidence {
             blocking_operation_id: None,
+            expected_view_revision: Some(RuntimeProjectionRevision(5)),
+            expected_turn_id: None,
             bound_surface_revision: Some(SurfaceRevision(3)),
             applied_surface_revision: Some(SurfaceRevision(3)),
         }
@@ -506,7 +564,15 @@ mod tests {
         }
         let execution = AgentRuntimeExecutionView {
             status: AgentRuntimeExecutionStatus::Active,
-            active_turn_id: Some(active_turn_id.clone()),
+            active_turn: Some(AgentRuntimeActiveTurn {
+                turn_id: active_turn_id.clone(),
+                kind: AgentRuntimeActiveTurnKind::Conversation,
+                phase: AgentRuntimeActiveTurnPhase::Running,
+                operation_id: None,
+                started_at_ms: 42,
+                cancellable: true,
+            }),
+            last_compaction_outcome: None,
             latest_turn_id: Some(active_turn_id),
         };
         let contract = AgentRuntimeProjectionSchema {

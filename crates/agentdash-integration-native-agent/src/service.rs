@@ -4,15 +4,16 @@ use std::{
 };
 
 use agentdash_agent::dash::{
-    AgentHistory, AgentHistoryReplayer, AgentHistoryState, AgentItemId as DashItemId,
-    AgentSessionId, AgentTurnId as DashTurnId, BranchId, CommandId, CompactionMode,
-    ContextDeliveryFidelity, DashAgentChange, DashAgentChangePayload, DashAgentRepositoryState,
-    DashAgentRepositoryStore, DashAgentService, DashChangeCursor, DashCommandRequest,
-    DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
-    DashHistoryCallbacks, DashHistoryCommit, DashPublicCommand, DashReceiptState, DashServiceError,
-    DashSurface, DashSurfaceInstruction, DashTerminalOutcome, DashToolDefinition, ForkCutoff,
-    HistoryPayload, InitialContextContribution, InitialContextInstallation, InitialContextMode,
-    InteractionId as DashInteractionId, InteractionState,
+    ActivityStatus, AgentHistory, AgentHistoryReplayer, AgentHistoryState,
+    AgentItemId as DashItemId, AgentSessionId, AgentTurnId as DashTurnId, BranchId, CommandId,
+    CompactionMode, ContextDeliveryFidelity, DashAgentChange, DashAgentChangePayload,
+    DashAgentRepositoryState, DashAgentRepositoryStore, DashAgentService, DashChangeCursor,
+    DashCommandRequest, DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies,
+    DashExecutionEvent, DashHistoryCallbacks, DashHistoryCommit, DashPublicCommand,
+    DashReceiptState, DashServiceError, DashSurface, DashSurfaceInstruction, DashTerminalOutcome,
+    DashToolDefinition, ForkCutoff, HistoryPayload, InitialContextContribution,
+    InitialContextInstallation, InitialContextMode, InteractionId as DashInteractionId,
+    InteractionState,
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
@@ -22,29 +23,30 @@ use agentdash_agent_protocol::{
     ToolProtocolProjector, TraceInfo,
 };
 use agentdash_agent_service_api::{
-    AgentAppliedEffectOutcome, AgentCapabilityProfile, AgentChange, AgentChangePage,
-    AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandCapability,
-    AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
-    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkCapability,
-    AgentForkCutoffKind, AgentForkPoint, AgentHookBlockingSemantics, AgentHookMutationKind,
-    AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming, AgentHostCallbackBinding,
-    AgentHostCallbacks, AgentInput, AgentInputContent, AgentInteractionRequest,
-    AgentInteractionResolution, AgentInteractionSnapshot, AgentInteractionStatus,
-    AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveEvent, AgentLiveEventStream,
-    AgentObservation, AgentObservationQuery, AgentPayloadDigest, AgentReadQuery, AgentReceiptState,
-    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
-    AgentServiceInstanceId, AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority,
-    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
-    AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile,
-    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot,
-    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnObservation,
-    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
-    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
-    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
-    BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
-    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
-    InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
-    ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentActiveTurnKind, AgentActiveTurnPhase, AgentActiveTurnSnapshot, AgentAppliedEffectOutcome,
+    AgentCapabilityProfile, AgentChange, AgentChangePage, AgentChangePayload, AgentChangesQuery,
+    AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
+    AgentCompactionMode, AgentCompactionOutcomeSnapshot, AgentCompactionOutcomeStatus,
+    AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
+    AgentEffectInspectionState, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint,
+    AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet,
+    AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbacks, AgentInput, AgentInputContent,
+    AgentInteractionRequest, AgentInteractionResolution, AgentInteractionSnapshot,
+    AgentInteractionStatus, AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveEvent,
+    AgentLiveEventStream, AgentObservation, AgentObservationQuery, AgentPayloadDigest,
+    AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor,
+    AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId, AgentServiceU64,
+    AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource,
+    AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor, AgentSourceRevision,
+    AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
+    AgentTerminalOutcome, AgentThreadNameSnapshot, AgentToolDelivery, AgentToolSemanticFacet,
+    AgentToolUpdateSemantics, AgentTurnObservation, AppliedAgentCommandReceipt,
+    AppliedAgentSurface, AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt,
+    AppliedContributionStatus, AppliedForkAgentReceipt, AppliedInitialContextEvidence,
+    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
+    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
+    InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
+    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, CompleteAgentPlacementRequirement, CompleteAgentRegistrationClaim,
@@ -156,21 +158,30 @@ pub fn dash_complete_agent_observation(
             };
             Some((turn_id, state.turns.get(turn_id)))
         });
+    let revision = AgentSnapshotRevision(state.entry_count);
+    let execution = dash_execution_snapshot(&state)?;
+    let command_availability = execution.command_availability(
+        if state.status == agentdash_agent::dash::SessionStatus::Closed {
+            AgentLifecycleStatus::Closed
+        } else {
+            AgentLifecycleStatus::Active
+        },
+        revision,
+        state
+            .interactions
+            .values()
+            .any(|interaction| !interaction.cancelled && interaction.response.is_none()),
+    );
     Ok(AgentObservation {
         source: source.clone(),
-        revision: AgentSnapshotRevision(state.entry_count),
+        revision,
         lifecycle: if state.status == agentdash_agent::dash::SessionStatus::Closed {
             AgentLifecycleStatus::Closed
         } else {
             AgentLifecycleStatus::Active
         },
-        active_turn_id: state
-            .active_turn
-            .as_ref()
-            .map(|turn_id| {
-                agentdash_agent_service_api::AgentTurnId::new(turn_id.0.clone()).map_err(internal)
-            })
-            .transpose()?,
+        execution,
+        command_availability,
         latest_turn: latest_turn
             .map(|(turn_id, turn)| {
                 Ok(AgentTurnObservation {
@@ -792,6 +803,24 @@ impl CompleteAgentService for DashAgentCompleteService {
                 None
             };
         let (service, _) = self.open_source(&command.source).await?;
+        if accepted_record.is_none() {
+            if let Some(expected) = command.meta.expected_snapshot_revision {
+                let actual = AgentSnapshotRevision(
+                    service
+                        .read()
+                        .await
+                        .map_err(map_dash_error)?
+                        .state
+                        .entry_count,
+                );
+                if actual != expected {
+                    return Err(conflict(format!(
+                        "Dash Agent snapshot revision moved from {} to {}",
+                        expected.0, actual.0
+                    )));
+                }
+            }
+        }
         let dash_receipt = service
             .execute_admitted(DashCommandRequest {
                 command_id: CommandId::new(command.meta.command_id.as_str()),
@@ -881,24 +910,26 @@ impl CompleteAgentService for DashAgentCompleteService {
             fidelity: SemanticFidelity::Exact,
             observed_at_ms: 0,
         };
+        let lifecycle = if history_state.status == agentdash_agent::dash::SessionStatus::Closed {
+            AgentLifecycleStatus::Closed
+        } else {
+            AgentLifecycleStatus::Active
+        };
+        let execution = dash_execution_snapshot(&history_state)?;
+        let command_availability = execution.command_availability(
+            lifecycle,
+            revision,
+            history_state
+                .interactions
+                .values()
+                .any(|interaction| !interaction.cancelled && interaction.response.is_none()),
+        );
         Ok(AgentSnapshot {
             source: query.source,
             revision,
-            lifecycle: if history_state.status == agentdash_agent::dash::SessionStatus::Closed {
-                AgentLifecycleStatus::Closed
-            } else {
-                AgentLifecycleStatus::Active
-            },
-            execution: agentdash_agent_service_api::AgentExecutionSnapshot {
-                active_turn_id: history_state
-                    .active_turn
-                    .as_ref()
-                    .map(|turn_id| {
-                        agentdash_agent_service_api::AgentTurnId::new(turn_id.0.clone())
-                            .map_err(internal)
-                    })
-                    .transpose()?,
-            },
+            lifecycle,
+            execution,
+            command_availability,
             interactions: history_state
                 .interactions
                 .iter()
@@ -1622,6 +1653,85 @@ fn service_turn_id(
     agentdash_agent_service_api::AgentTurnId::new(id.0.clone()).map_err(internal)
 }
 
+fn dash_execution_snapshot(
+    state: &AgentHistoryState,
+) -> Result<agentdash_agent_service_api::AgentExecutionSnapshot, AgentServiceError> {
+    let active_turn = state
+        .active_turn
+        .as_ref()
+        .map(|turn_id| {
+            let turn = state
+                .turns
+                .get(turn_id)
+                .ok_or_else(|| internal("history fold lost the active turn"))?;
+            let active_compaction = state
+                .active_compaction
+                .as_ref()
+                .and_then(|compaction_id| state.compactions.get(compaction_id));
+            Ok(AgentActiveTurnSnapshot {
+                turn_id: service_turn_id(turn_id)?,
+                kind: if active_compaction.is_some() {
+                    AgentActiveTurnKind::ContextCompaction
+                } else {
+                    AgentActiveTurnKind::Conversation
+                },
+                phase: if active_compaction.is_some_and(|compaction| compaction.revision.is_some())
+                {
+                    AgentActiveTurnPhase::Applied
+                } else {
+                    AgentActiveTurnPhase::Running
+                },
+                operation_id: active_compaction
+                    .map(|compaction| {
+                        AgentEffectIdentity::new(compaction.operation_id.0.clone())
+                            .map_err(internal)
+                    })
+                    .transpose()?,
+                started_at_ms: turn.started_at_ms,
+                // Dash conversation turns have a cancellation handle. Compaction becomes
+                // cancellable only after Slice 4 moves it behind the durable worker.
+                cancellable: active_compaction.is_none(),
+            })
+        })
+        .transpose()?;
+    let last_compaction_outcome = state
+        .compactions
+        .iter()
+        .filter_map(|(compaction_id, compaction)| {
+            compaction
+                .completed_at_ms
+                .map(|completed_at_ms| (compaction_id, compaction, completed_at_ms))
+        })
+        .max_by_key(|(_, _, completed_at_ms)| *completed_at_ms)
+        .map(|(compaction_id, compaction, completed_at_ms)| {
+            let status = match compaction.status {
+                ActivityStatus::Completed => AgentCompactionOutcomeStatus::Succeeded,
+                ActivityStatus::Failed => AgentCompactionOutcomeStatus::Failed,
+                ActivityStatus::Lost => AgentCompactionOutcomeStatus::Lost,
+                ActivityStatus::Interrupted => AgentCompactionOutcomeStatus::Cancelled,
+                ActivityStatus::Active => {
+                    return Err(internal("active compaction has a completion timestamp"));
+                }
+            };
+            Ok(AgentCompactionOutcomeSnapshot {
+                turn_id: agentdash_agent_service_api::AgentTurnId::new(compaction_id.0.clone())
+                    .map_err(internal)?,
+                operation_id: Some(
+                    AgentEffectIdentity::new(compaction.operation_id.0.clone())
+                        .map_err(internal)?,
+                ),
+                status,
+                completed_at_ms,
+                error: compaction.error.clone(),
+            })
+        })
+        .transpose()?;
+    Ok(agentdash_agent_service_api::AgentExecutionSnapshot {
+        active_turn,
+        last_compaction_outcome,
+    })
+}
+
 fn service_item_id(
     id: &DashItemId,
 ) -> Result<agentdash_agent_service_api::AgentItemId, AgentServiceError> {
@@ -1672,6 +1782,14 @@ fn change_payload(
     source_digest: &str,
 ) -> Result<Option<AgentChangePayload>, AgentServiceError> {
     match payload {
+        HistoryPayload::TurnStarted { .. }
+        | HistoryPayload::TurnCompleted { .. }
+        | HistoryPayload::TurnFailed { .. }
+        | HistoryPayload::TurnInterrupted { .. }
+        | HistoryPayload::CompactionStarted { .. }
+        | HistoryPayload::CompactionApplied { .. }
+        | HistoryPayload::CompactionCompleted { .. }
+        | HistoryPayload::CompactionFailed { .. } => Ok(Some(execution_change_payload(state)?)),
         HistoryPayload::InteractionRequested { interaction_id, .. }
         | HistoryPayload::InteractionResolved { interaction_id, .. }
         | HistoryPayload::InteractionCancelled { interaction_id } => {
@@ -1712,6 +1830,28 @@ fn change_payload(
         }
         _ => Ok(None),
     }
+}
+
+fn execution_change_payload(
+    state: &AgentHistoryState,
+) -> Result<AgentChangePayload, AgentServiceError> {
+    let lifecycle = if state.status == agentdash_agent::dash::SessionStatus::Closed {
+        AgentLifecycleStatus::Closed
+    } else {
+        AgentLifecycleStatus::Active
+    };
+    let execution = dash_execution_snapshot(state)?;
+    Ok(AgentChangePayload::ExecutionChanged {
+        command_availability: execution.command_availability(
+            lifecycle,
+            AgentSnapshotRevision(state.entry_count),
+            state
+                .interactions
+                .values()
+                .any(|interaction| !interaction.cancelled && interaction.response.is_none()),
+        ),
+        execution,
+    })
 }
 
 fn surface_contribution_supported(
@@ -1871,7 +2011,9 @@ fn dash_change_payload(
         DashAgentChangePayload::HistoryEntry { entry } => {
             change_payload(state, &entry.payload, &change.source_digest)
         }
-        DashAgentChangePayload::ActiveTurnChanged { .. } => Ok(None),
+        DashAgentChangePayload::ActiveTurnChanged { .. } => {
+            Ok(Some(execution_change_payload(state)?))
+        }
     }
 }
 

@@ -692,6 +692,7 @@ export function SessionChatView({
         hasRuntimeStreamTarget={hasRuntimeStreamTarget}
         isLoading={isLoading}
         streamingEntryId={streamingEntryId}
+        activeTurn={runtimeView?.execution.active_turn ?? null}
         streamPrefixContent={streamPrefixContent}
         onForkFromMessageRef={intents.forkFromMessageRef}
         onScroll={handleScroll}

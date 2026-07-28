@@ -4,6 +4,7 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 import { SessionProjectionView } from "./SessionProjectionView";
 
 import type { SessionMessageRefDto } from "../../../generated/agent-run-interaction-contracts";
+import type { AgentRuntimeView } from "../../../generated/agent-runtime-validators";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 import type {
@@ -32,6 +33,8 @@ import { ComposerSendButton } from "./composer/ComposerSendButton";
 import { ComposerPlusMenu } from "./composer/ComposerPlusMenu";
 import { DisclosureRow } from "../../../components/ui/disclosure";
 import { getTurnSectionKey } from "./turnSectionIdentity";
+
+type AgentRuntimeActiveTurn = NonNullable<AgentRuntimeView["execution"]["active_turn"]>;
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
 type ExecutorConfigState = ReturnType<typeof useExecutorConfig>;
@@ -244,6 +247,7 @@ export function SessionChatStream({
   hasRuntimeStreamTarget,
   isLoading,
   streamingEntryId,
+  activeTurn,
   streamPrefixContent,
   onForkFromMessageRef,
   onScroll,
@@ -256,6 +260,7 @@ export function SessionChatStream({
   hasRuntimeStreamTarget: boolean;
   isLoading: boolean;
   streamingEntryId: string | null;
+  activeTurn?: AgentRuntimeActiveTurn | null;
   streamPrefixContent?: ReactNode;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   onScroll: () => void;
@@ -280,6 +285,7 @@ export function SessionChatStream({
                 agentRunTarget={agentRunTarget}
                 companionSubagents={companionSubagents}
                 streamingEntryId={streamingEntryId}
+                activeTurn={activeTurn}
                 onForkFromMessageRef={onForkFromMessageRef}
               />
             ))
@@ -428,16 +434,24 @@ function TurnSection({
   agentRunTarget,
   companionSubagents,
   streamingEntryId,
+  activeTurn,
   onForkFromMessageRef,
 }: {
   segment: TurnSegment;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   streamingEntryId: string | null;
+  activeTurn?: AgentRuntimeActiveTurn | null;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
 }) {
   const terminalLabel = segment.turnId ? terminalTurnLabel(segment.status) : null;
-  const headerLabel = terminalLabel ?? (segment.turnId ? "执行中" : null);
+  const currentActivity = activeTurn?.turn_id === segment.turnId ? activeTurn : null;
+  const headerLabel = terminalLabel
+    ?? (currentActivity?.kind === "context_compaction"
+      ? currentActivity.phase === "applied"
+        ? "正在应用上下文压缩"
+        : "正在压缩上下文"
+      : segment.turnId ? "执行中" : null);
   const activeElapsedMs = useActiveTurnElapsedMs(segment.startedAtMs, segment.status === "active");
   const displayDurationMs = segment.durationMs ?? activeElapsedMs;
   const [collapsed, setCollapsed] = useState(false);

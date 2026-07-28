@@ -1509,6 +1509,33 @@
         "execution": {
           "$ref": "#/$defs/AgentExecutionSnapshot"
         },
+        "command_availability": {
+          "type": "object",
+          "properties": {
+            "close": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "fork": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "interrupt": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "request_compaction": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "resolve_interaction": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "steer": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "submit_input": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            }
+          },
+          "additionalProperties": false
+        },
         "interactions": {
           "type": "array",
           "items": {
@@ -1560,6 +1587,7 @@
         "revision",
         "lifecycle",
         "execution",
+        "command_availability",
         "interactions",
         "source_info",
         "conversation_history"
@@ -1578,13 +1606,190 @@
     "AgentExecutionSnapshot": {
       "type": "object",
       "properties": {
-        "active_turn_id": {
+        "active_turn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentActiveTurnSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_compaction_outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentCompactionOutcomeSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "AgentActiveTurnSnapshot": {
+      "type": "object",
+      "properties": {
+        "turn_id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentActiveTurnKind"
+        },
+        "phase": {
+          "$ref": "#/$defs/AgentActiveTurnPhase"
+        },
+        "operation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "started_at_ms": {
+          "$ref": "#/$defs/AgentServiceU64"
+        },
+        "cancellable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "turn_id",
+        "kind",
+        "phase",
+        "started_at_ms",
+        "cancellable"
+      ]
+    },
+    "AgentActiveTurnKind": {
+      "type": "string",
+      "enum": [
+        "conversation",
+        "context_compaction"
+      ]
+    },
+    "AgentActiveTurnPhase": {
+      "type": "string",
+      "enum": [
+        "running",
+        "applied"
+      ]
+    },
+    "AgentCompactionOutcomeSnapshot": {
+      "type": "object",
+      "properties": {
+        "turn_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/AgentCompactionOutcomeStatus"
+        },
+        "completed_at_ms": {
+          "$ref": "#/$defs/AgentServiceU64"
+        },
+        "error": {
           "type": [
             "string",
             "null"
           ]
         }
-      }
+      },
+      "required": [
+        "turn_id",
+        "status",
+        "completed_at_ms"
+      ]
+    },
+    "AgentCompactionOutcomeStatus": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "failed",
+        "lost",
+        "cancelled"
+      ]
+    },
+    "AgentControlAvailability": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "evidence": {
+              "$ref": "#/$defs/AgentControlAvailabilityEvidence"
+            },
+            "status": {
+              "type": "string",
+              "const": "available"
+            }
+          },
+          "required": [
+            "status",
+            "evidence"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/AgentControlUnavailabilityReason"
+            },
+            "evidence": {
+              "$ref": "#/$defs/AgentControlAvailabilityEvidence"
+            },
+            "status": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "required": [
+            "status",
+            "reason",
+            "evidence"
+          ]
+        }
+      ]
+    },
+    "AgentControlAvailabilityEvidence": {
+      "type": "object",
+      "properties": {
+        "expected_snapshot_revision": {
+          "$ref": "#/$defs/AgentSnapshotRevision"
+        },
+        "expected_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "blocking_operation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "expected_snapshot_revision"
+      ]
+    },
+    "AgentControlUnavailabilityReason": {
+      "type": "string",
+      "enum": [
+        "agent_not_active",
+        "active_turn_required",
+        "no_active_turn_required",
+        "active_turn_not_steerable",
+        "compaction_in_progress",
+        "turn_not_cancellable",
+        "pending_interaction_required",
+        "source_lost"
+      ]
     },
     "AgentInteractionSnapshot": {
       "type": "object",
@@ -9215,11 +9420,35 @@
         "lifecycle": {
           "$ref": "#/$defs/AgentLifecycleStatus"
         },
-        "active_turn_id": {
-          "type": [
-            "string",
-            "null"
-          ]
+        "execution": {
+          "$ref": "#/$defs/AgentExecutionSnapshot"
+        },
+        "command_availability": {
+          "type": "object",
+          "properties": {
+            "close": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "fork": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "interrupt": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "request_compaction": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "resolve_interaction": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "steer": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "submit_input": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            }
+          },
+          "additionalProperties": false
         },
         "latest_turn": {
           "anyOf": [
@@ -9235,7 +9464,9 @@
       "required": [
         "source",
         "revision",
-        "lifecycle"
+        "lifecycle",
+        "execution",
+        "command_availability"
       ]
     },
     "AgentTurnObservation": {
@@ -9397,6 +9628,50 @@
           "required": [
             "kind",
             "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "execution": {
+              "$ref": "#/$defs/AgentExecutionSnapshot"
+            },
+            "command_availability": {
+              "type": "object",
+              "properties": {
+                "close": {
+                  "$ref": "#/$defs/AgentControlAvailability"
+                },
+                "fork": {
+                  "$ref": "#/$defs/AgentControlAvailability"
+                },
+                "interrupt": {
+                  "$ref": "#/$defs/AgentControlAvailability"
+                },
+                "request_compaction": {
+                  "$ref": "#/$defs/AgentControlAvailability"
+                },
+                "resolve_interaction": {
+                  "$ref": "#/$defs/AgentControlAvailability"
+                },
+                "steer": {
+                  "$ref": "#/$defs/AgentControlAvailability"
+                },
+                "submit_input": {
+                  "$ref": "#/$defs/AgentControlAvailability"
+                }
+              },
+              "additionalProperties": false
+            },
+            "kind": {
+              "type": "string",
+              "const": "execution_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "execution",
+            "command_availability"
           ]
         },
         {

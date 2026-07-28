@@ -8,7 +8,15 @@ describe("Agent Runtime update transport boundary", () => {
     view_revision: "2",
     execution: {
       status: "active",
-      active_turn_id: "turn-1",
+      active_turn: {
+        turn_id: "turn-1",
+        kind: "conversation",
+        phase: "running",
+        operation_id: null,
+        started_at_ms: "1000",
+        cancellable: true,
+      },
+      last_compaction_outcome: null,
       latest_turn_id: "turn-1",
     },
     command_availability: {},
@@ -21,6 +29,13 @@ describe("Agent Runtime update transport boundary", () => {
       ...update,
       lane_sequence: 1n,
       view_revision: 2n,
+      execution: {
+        ...update.execution,
+        active_turn: {
+          ...update.execution.active_turn,
+          started_at_ms: 1000n,
+        },
+      },
     });
   });
 

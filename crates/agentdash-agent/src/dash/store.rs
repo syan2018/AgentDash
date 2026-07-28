@@ -125,6 +125,7 @@ impl DashAgentStore {
     pub fn begin_compaction(
         &mut self,
         command: DashCommand,
+        operation_id: EffectId,
         started_entry_id: HistoryEntryId,
     ) -> Result<CompactionId, StoreError> {
         let (compaction_id, mode) = match &command.kind {
@@ -153,6 +154,7 @@ impl DashAgentStore {
                 entry_id: started_entry_id,
                 payload: HistoryPayload::CompactionStarted {
                     compaction_id: compaction_id.clone(),
+                    operation_id,
                     mode,
                     source_head: self.history.head().cloned(),
                     source_digest: self.history.digest(),

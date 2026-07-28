@@ -3,15 +3,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use agentdash_agent_protocol::{BackboneEvent, CanonicalConversationView};
 
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeAvailabilityEvidence, AgentRuntimeCommandAvailability, AgentRuntimeCommandKind,
-    AgentRuntimeExecutionStatus, AgentRuntimeExecutionView, AgentRuntimeInteraction,
-    AgentRuntimeInteractionRequest, AgentRuntimeInteractionResolution,
-    AgentRuntimeInteractionStatus, AgentRuntimeLifecycleStatus, AgentRuntimeProjectionAuthority,
-    AgentRuntimeProjectionFidelity, AgentRuntimeThreadNameSource, AgentRuntimeUnavailabilityReason,
-    AgentRuntimeView, RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest,
-    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
+    AgentRuntimeActiveTurn, AgentRuntimeAvailabilityEvidence, AgentRuntimeCommandAvailability,
+    AgentRuntimeCommandKind, AgentRuntimeCompactionOutcome, AgentRuntimeExecutionStatus,
+    AgentRuntimeExecutionView, AgentRuntimeInteraction, AgentRuntimeInteractionRequest,
+    AgentRuntimeInteractionResolution, AgentRuntimeInteractionStatus, AgentRuntimeLifecycleStatus,
+    AgentRuntimeProjectionAuthority, AgentRuntimeProjectionFidelity, AgentRuntimeThreadNameSource,
+    AgentRuntimeUnavailabilityReason, AgentRuntimeView, RuntimeInteractionId, RuntimeItemId,
+    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
+    SurfaceRevision,
 };
 use agentdash_agent_service_api::{
+    AgentControlAvailability, AgentControlKind, AgentControlUnavailabilityReason,
     AgentInteractionStatus, AgentLifecycleStatus, AgentSnapshot, AgentSnapshotAuthority,
     AgentSnapshotSource, SemanticFidelity,
 };
@@ -119,36 +121,38 @@ pub fn project_authoritative_agent_view(
     let (thread_name, thread_name_source) =
         project_thread_name(snapshot.thread_name, &snapshot.source)?;
     let conversation = CanonicalConversationView::new(&snapshot.conversation_history);
-    let active_turn_id = snapshot
+    let active_turn = snapshot
         .execution
-        .active_turn_id
+        .active_turn
         .as_ref()
-        .map(|turn| RuntimeTurnId::new(turn.as_str().to_owned()))
-        .transpose()
-        .map_err(|error| presentation(error.to_string()))?;
+        .map(transcode::<_, AgentRuntimeActiveTurn>)
+        .transpose()?;
+    let last_compaction_outcome = snapshot
+        .execution
+        .last_compaction_outcome
+        .as_ref()
+        .map(transcode::<_, AgentRuntimeCompactionOutcome>)
+        .transpose()?;
     let latest_turn_id = conversation
         .latest_turn()
         .map(|turn| RuntimeTurnId::new(turn.id.clone()))
         .transpose()
         .map_err(|error| presentation(error.to_string()))?;
     let execution = AgentRuntimeExecutionView {
-        status: if active_turn_id.is_some() {
+        status: if active_turn.is_some() {
             AgentRuntimeExecutionStatus::Active
         } else {
             AgentRuntimeExecutionStatus::Idle
         },
-        active_turn_id,
+        active_turn,
+        last_compaction_outcome,
         latest_turn_id,
     };
-    let command_availability = presentation_command_availability(
+    let command_availability = project_command_availability(
+        &snapshot.command_availability,
         snapshot.lifecycle,
-        execution.status == AgentRuntimeExecutionStatus::Active,
-        snapshot
-            .interactions
-            .iter()
-            .any(|interaction| interaction.status == AgentInteractionStatus::Pending),
         applied_surface_revision,
-    );
+    )?;
 
     Ok(AgentRuntimeView {
         thread_id,
@@ -218,55 +222,131 @@ fn project_thread_name_source(
     })
 }
 
-fn presentation_command_availability(
+fn project_command_availability(
+    source: &BTreeMap<AgentControlKind, AgentControlAvailability>,
     lifecycle: AgentLifecycleStatus,
-    has_active_turn: bool,
-    has_pending_interaction: bool,
     applied_surface_revision: Option<SurfaceRevision>,
-) -> BTreeMap<AgentRuntimeCommandKind, AgentRuntimeCommandAvailability> {
-    let active = lifecycle == AgentLifecycleStatus::Active;
-    AgentRuntimeCommandKind::ALL
-        .into_iter()
-        .map(|command| {
-            let available = match command {
-                AgentRuntimeCommandKind::Create
-                | AgentRuntimeCommandKind::Activate
-                | AgentRuntimeCommandKind::Rebind => false,
-                AgentRuntimeCommandKind::Resume => lifecycle == AgentLifecycleStatus::Suspended,
-                AgentRuntimeCommandKind::SubmitInput
-                | AgentRuntimeCommandKind::RequestCompaction
-                | AgentRuntimeCommandKind::Fork => active && !has_active_turn,
-                AgentRuntimeCommandKind::Steer | AgentRuntimeCommandKind::Interrupt => {
-                    active && has_active_turn
-                }
-                AgentRuntimeCommandKind::ResolveInteraction => active && has_pending_interaction,
-                AgentRuntimeCommandKind::Close => !matches!(
-                    lifecycle,
-                    AgentLifecycleStatus::Closed | AgentLifecycleStatus::Lost
-                ),
-            };
-            let evidence = AgentRuntimeAvailabilityEvidence {
-                blocking_operation_id: None,
-                bound_surface_revision: applied_surface_revision,
-                applied_surface_revision,
-            };
-            let availability = if available {
+) -> Result<
+    BTreeMap<AgentRuntimeCommandKind, AgentRuntimeCommandAvailability>,
+    AgentSnapshotProjectionError,
+> {
+    let mut projected = [
+        AgentRuntimeCommandKind::Create,
+        AgentRuntimeCommandKind::Resume,
+        AgentRuntimeCommandKind::Rebind,
+        AgentRuntimeCommandKind::Activate,
+    ]
+    .into_iter()
+    .map(|command| {
+        let available = match command {
+            AgentRuntimeCommandKind::Resume => lifecycle == AgentLifecycleStatus::Suspended,
+            _ => false,
+        };
+        let evidence = AgentRuntimeAvailabilityEvidence {
+            blocking_operation_id: None,
+            expected_view_revision: None,
+            expected_turn_id: None,
+            bound_surface_revision: applied_surface_revision,
+            applied_surface_revision,
+        };
+        let availability = if available {
+            AgentRuntimeCommandAvailability::Available { evidence }
+        } else {
+            AgentRuntimeCommandAvailability::Unavailable {
+                reason: AgentRuntimeUnavailabilityReason::AdmissionDenied,
+                evidence,
+            }
+        };
+        (command, availability)
+    })
+    .collect::<BTreeMap<_, _>>();
+    for (command, availability) in source {
+        let runtime_command = match command {
+            AgentControlKind::SubmitInput => AgentRuntimeCommandKind::SubmitInput,
+            AgentControlKind::Steer => AgentRuntimeCommandKind::Steer,
+            AgentControlKind::Interrupt => AgentRuntimeCommandKind::Interrupt,
+            AgentControlKind::RequestCompaction => AgentRuntimeCommandKind::RequestCompaction,
+            AgentControlKind::ResolveInteraction => AgentRuntimeCommandKind::ResolveInteraction,
+            AgentControlKind::Close => AgentRuntimeCommandKind::Close,
+            AgentControlKind::Fork => AgentRuntimeCommandKind::Fork,
+        };
+        let (available, reason, evidence) = match availability {
+            AgentControlAvailability::Available { evidence } => (true, None, evidence),
+            AgentControlAvailability::Unavailable { reason, evidence } => {
+                (false, Some(*reason), evidence)
+            }
+        };
+        let evidence = AgentRuntimeAvailabilityEvidence {
+            blocking_operation_id: evidence
+                .blocking_operation_id
+                .as_ref()
+                .map(|id| {
+                    agentdash_agent_runtime_contract::RuntimeOperationId::new(
+                        id.as_str().to_owned(),
+                    )
+                    .map_err(|error| presentation(error.to_string()))
+                })
+                .transpose()?,
+            expected_view_revision: Some(RuntimeProjectionRevision(
+                evidence.expected_snapshot_revision.0,
+            )),
+            expected_turn_id: evidence
+                .expected_turn_id
+                .as_ref()
+                .map(runtime_turn_id)
+                .transpose()?,
+            bound_surface_revision: applied_surface_revision,
+            applied_surface_revision,
+        };
+        projected.insert(
+            runtime_command,
+            if available {
                 AgentRuntimeCommandAvailability::Available { evidence }
             } else {
                 AgentRuntimeCommandAvailability::Unavailable {
-                    reason: if !active {
-                        AgentRuntimeUnavailabilityReason::RuntimeNotActive
-                    } else if has_active_turn {
-                        AgentRuntimeUnavailabilityReason::NoActiveTurnRequired
-                    } else {
-                        AgentRuntimeUnavailabilityReason::ActiveTurnRequired
-                    },
+                    reason: project_unavailability_reason(
+                        reason.expect("unavailable owner command has reason"),
+                    ),
                     evidence,
                 }
-            };
-            (command, availability)
-        })
-        .collect()
+            },
+        );
+    }
+    if projected.len() != AgentRuntimeCommandKind::ALL.len() {
+        return invalid("owner command availability is incomplete");
+    }
+    Ok(projected)
+}
+
+fn project_unavailability_reason(
+    reason: AgentControlUnavailabilityReason,
+) -> AgentRuntimeUnavailabilityReason {
+    match reason {
+        AgentControlUnavailabilityReason::AgentNotActive => {
+            AgentRuntimeUnavailabilityReason::RuntimeNotActive
+        }
+        AgentControlUnavailabilityReason::ActiveTurnRequired => {
+            AgentRuntimeUnavailabilityReason::ActiveTurnRequired
+        }
+        AgentControlUnavailabilityReason::NoActiveTurnRequired => {
+            AgentRuntimeUnavailabilityReason::NoActiveTurnRequired
+        }
+        AgentControlUnavailabilityReason::ActiveTurnNotSteerable => {
+            AgentRuntimeUnavailabilityReason::ActiveTurnNotSteerable
+        }
+        AgentControlUnavailabilityReason::CompactionInProgress => {
+            AgentRuntimeUnavailabilityReason::CompactionInProgress
+        }
+        AgentControlUnavailabilityReason::TurnNotCancellable => {
+            AgentRuntimeUnavailabilityReason::TurnNotCancellable
+        }
+        AgentControlUnavailabilityReason::PendingInteractionRequired => {
+            AgentRuntimeUnavailabilityReason::PendingInteractionRequired
+        }
+        AgentControlUnavailabilityReason::SourceLost => {
+            AgentRuntimeUnavailabilityReason::SourceUnavailable
+        }
+    }
 }
 
 fn runtime_turn_id(
@@ -355,8 +435,10 @@ fn presentation(reason: impl Into<String>) -> AgentSnapshotProjectionError {
 #[cfg(test)]
 mod tests {
     use agentdash_agent_service_api::{
-        AgentExecutionSnapshot, AgentSnapshot, AgentSnapshotRevision, AgentSnapshotSource,
-        AgentSourceCoordinate,
+        AgentActiveTurnKind, AgentActiveTurnPhase, AgentActiveTurnSnapshot,
+        AgentControlAvailability, AgentControlAvailabilityEvidence, AgentControlKind,
+        AgentControlUnavailabilityReason, AgentExecutionSnapshot, AgentSnapshot,
+        AgentSnapshotRevision, AgentSnapshotSource, AgentSourceCoordinate,
     };
 
     use super::*;
@@ -367,8 +449,33 @@ mod tests {
             revision: AgentSnapshotRevision(7),
             lifecycle: AgentLifecycleStatus::Active,
             execution: AgentExecutionSnapshot {
-                active_turn_id: None,
+                active_turn: None,
+                last_compaction_outcome: None,
             },
+            command_availability: [
+                AgentControlKind::SubmitInput,
+                AgentControlKind::Steer,
+                AgentControlKind::Interrupt,
+                AgentControlKind::RequestCompaction,
+                AgentControlKind::ResolveInteraction,
+                AgentControlKind::Close,
+                AgentControlKind::Fork,
+            ]
+            .into_iter()
+            .map(|command| {
+                (
+                    command,
+                    AgentControlAvailability::Unavailable {
+                        reason: AgentControlUnavailabilityReason::ActiveTurnRequired,
+                        evidence: AgentControlAvailabilityEvidence {
+                            expected_snapshot_revision: AgentSnapshotRevision(7),
+                            expected_turn_id: None,
+                            blocking_operation_id: None,
+                        },
+                    },
+                )
+            })
+            .collect(),
             interactions: Vec::new(),
             thread_name: None,
             source_info: AgentSnapshotSource {
@@ -407,8 +514,14 @@ mod tests {
     #[test]
     fn execution_uses_complete_agent_fact_even_when_presentation_has_not_arrived() {
         let mut snapshot = snapshot();
-        snapshot.execution.active_turn_id =
-            Some(agentdash_agent_service_api::AgentTurnId::new("turn-1").expect("turn"));
+        snapshot.execution.active_turn = Some(AgentActiveTurnSnapshot {
+            turn_id: agentdash_agent_service_api::AgentTurnId::new("turn-1").expect("turn"),
+            kind: AgentActiveTurnKind::Conversation,
+            phase: AgentActiveTurnPhase::Running,
+            operation_id: None,
+            started_at_ms: 42,
+            cancellable: true,
+        });
 
         let projected = project_authoritative_agent_view(
             RuntimeThreadId::new("thread-1").expect("thread"),
@@ -422,5 +535,60 @@ mod tests {
         );
         assert_eq!(projected.active_turn_id(), Some("turn-1"));
         assert!(projected.conversation.is_empty());
+    }
+
+    #[test]
+    fn compaction_turn_and_owner_policy_are_projected_without_reinterpretation() {
+        let mut snapshot = snapshot();
+        let operation_id =
+            agentdash_agent_service_api::AgentEffectIdentity::new("effect-compact").unwrap();
+        snapshot.execution.active_turn = Some(AgentActiveTurnSnapshot {
+            turn_id: agentdash_agent_service_api::AgentTurnId::new("turn-compact").unwrap(),
+            kind: AgentActiveTurnKind::ContextCompaction,
+            phase: AgentActiveTurnPhase::Applied,
+            operation_id: Some(operation_id.clone()),
+            started_at_ms: 42,
+            cancellable: false,
+        });
+        snapshot.command_availability.insert(
+            AgentControlKind::Interrupt,
+            AgentControlAvailability::Unavailable {
+                reason: AgentControlUnavailabilityReason::TurnNotCancellable,
+                evidence: AgentControlAvailabilityEvidence {
+                    expected_snapshot_revision: AgentSnapshotRevision(7),
+                    expected_turn_id: Some(
+                        agentdash_agent_service_api::AgentTurnId::new("turn-compact").unwrap(),
+                    ),
+                    blocking_operation_id: Some(operation_id),
+                },
+            },
+        );
+
+        let projected =
+            project_authoritative_agent_view(RuntimeThreadId::new("thread-1").unwrap(), snapshot)
+                .unwrap();
+        let active = projected.execution.active_turn.expect("active compaction");
+        assert_eq!(
+            active.kind,
+            agentdash_agent_runtime_contract::AgentRuntimeActiveTurnKind::ContextCompaction
+        );
+        assert_eq!(
+            active.phase,
+            agentdash_agent_runtime_contract::AgentRuntimeActiveTurnPhase::Applied
+        );
+        assert_eq!(
+            active.operation_id.as_ref().map(|id| id.as_str()),
+            Some("effect-compact")
+        );
+        assert!(matches!(
+            projected
+                .command_availability
+                .get(&AgentRuntimeCommandKind::Interrupt),
+            Some(AgentRuntimeCommandAvailability::Unavailable {
+                reason: AgentRuntimeUnavailabilityReason::TurnNotCancellable,
+                evidence,
+            }) if evidence.expected_turn_id.as_ref().map(|id| id.as_str())
+                == Some("turn-compact")
+        ));
     }
 }

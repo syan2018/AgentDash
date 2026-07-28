@@ -397,7 +397,8 @@ mod tests {
             lifecycle: AgentRuntimeLifecycleStatus::Active,
             execution: agentdash_agent_runtime_contract::AgentRuntimeExecutionView {
                 status: agentdash_agent_runtime_contract::AgentRuntimeExecutionStatus::Idle,
-                active_turn_id: None,
+                active_turn: None,
+                last_compaction_outcome: None,
                 latest_turn_id: None,
             },
             interactions: Vec::new(),
@@ -412,6 +413,8 @@ mod tests {
                 AgentRuntimeCommandAvailability::Available {
                     evidence: AgentRuntimeAvailabilityEvidence {
                         blocking_operation_id: None,
+                        expected_view_revision: Some(revision),
+                        expected_turn_id: None,
                         bound_surface_revision: None,
                         applied_surface_revision: None,
                     },

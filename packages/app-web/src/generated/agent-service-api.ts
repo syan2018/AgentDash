@@ -29,6 +29,12 @@ export type AgentServiceApiSchema = { descriptor: AgentServiceDescriptor, create
  */
 export type ToolProtocolProjector = { "family": "command" } | { "family": "file_change" } | { "family": "fs_read" } | { "family": "fs_grep" } | { "family": "fs_glob" } | { "family": "mcp", server_key: string, } | { "family": "dynamic" };
 
+export type AgentActiveTurnKind = "conversation" | "context_compaction";
+
+export type AgentActiveTurnPhase = "running" | "applied";
+
+export type AgentActiveTurnSnapshot = { turn_id: AgentTurnId, kind: AgentActiveTurnKind, phase: AgentActiveTurnPhase, operation_id: AgentEffectIdentity | null, started_at_ms: AgentServiceU64, cancellable: boolean, };
+
 export type AgentAppliedEffectOutcome = { "kind": "create", receipt: AppliedAgentCommandReceipt, } | { "kind": "resume", receipt: AppliedAgentCommandReceipt, } | { "kind": "fork", receipt: AppliedForkAgentReceipt, } | { "kind": "command", receipt: AppliedAgentCommandReceipt, } | { "kind": "surface_apply", receipt: AppliedAgentSurfaceReceipt, } | { "kind": "surface_revoke", receipt: AppliedAgentCommandReceipt, };
 
 export type AgentBindingGeneration = AgentServiceU64;
@@ -61,7 +67,7 @@ export type AgentChange = { cursor: AgentSourceCursor, source_revision: AgentSou
 
 export type AgentChangePage = { source: AgentSourceCoordinate, changes: Array<AgentChange>, next: AgentSourceCursor | null, gap: boolean, };
 
-export type AgentChangePayload = { "kind": "source_observation", state: AgentChangePayload | null, presentation: Array<CanonicalConversationRecord>, } | { "kind": "thread_name_changed", thread_name: string | null, source_info: AgentSnapshotSource, } | { "kind": "lifecycle_changed", status: AgentLifecycleStatus, } | { "kind": "interaction_changed", interaction: AgentInteractionSnapshot, } | { "kind": "surface_applied", applied: AppliedAgentSurface, } | { "kind": "snapshot_invalidated", reason: string, };
+export type AgentChangePayload = { "kind": "source_observation", state: AgentChangePayload | null, presentation: Array<CanonicalConversationRecord>, } | { "kind": "thread_name_changed", thread_name: string | null, source_info: AgentSnapshotSource, } | { "kind": "lifecycle_changed", status: AgentLifecycleStatus, } | { "kind": "execution_changed", execution: AgentExecutionSnapshot, command_availability: { [key in AgentControlKind]?: AgentControlAvailability }, } | { "kind": "interaction_changed", interaction: AgentInteractionSnapshot, } | { "kind": "surface_applied", applied: AppliedAgentSurface, } | { "kind": "snapshot_invalidated", reason: string, };
 
 export type AgentChangesQuery = { source: AgentSourceCoordinate, after: AgentSourceCursor | null, limit: number, };
 
@@ -79,6 +85,10 @@ export type AgentCommandReceipt = { command_id: AgentCommandId, effect_id: Agent
 
 export type AgentCompactionMode = "agent_owned_native" | "exact_context_revision" | "observed_only";
 
+export type AgentCompactionOutcomeSnapshot = { turn_id: AgentTurnId, operation_id: AgentEffectIdentity | null, status: AgentCompactionOutcomeStatus, completed_at_ms: AgentServiceU64, error: string | null, };
+
+export type AgentCompactionOutcomeStatus = "succeeded" | "failed" | "lost" | "cancelled";
+
 export type AgentConfigurationBoundary = "static_service" | "binding" | "create" | "turn" | "hot_update";
 
 export type AgentContextPackageId = string;
@@ -89,6 +99,14 @@ export type AgentContextSourceCoordinate = string;
 
 export type AgentContextSourceRevision = string;
 
+export type AgentControlAvailability = { "status": "available", evidence: AgentControlAvailabilityEvidence, } | { "status": "unavailable", reason: AgentControlUnavailabilityReason, evidence: AgentControlAvailabilityEvidence, };
+
+export type AgentControlAvailabilityEvidence = { expected_snapshot_revision: AgentSnapshotRevision, expected_turn_id: AgentTurnId | null, blocking_operation_id: AgentEffectIdentity | null, };
+
+export type AgentControlKind = "submit_input" | "steer" | "interrupt" | "request_compaction" | "resolve_interaction" | "close" | "fork";
+
+export type AgentControlUnavailabilityReason = "agent_not_active" | "active_turn_required" | "no_active_turn_required" | "active_turn_not_steerable" | "compaction_in_progress" | "turn_not_cancellable" | "pending_interaction_required" | "source_lost";
+
 export type AgentCreateEvidence = { source: AgentSourceCoordinate, initial_context_package_id: AgentContextPackageId | null, initial_context_digest: AgentPayloadDigest | null, };
 
 export type AgentEffectIdentity = string;
@@ -97,7 +115,7 @@ export type AgentEffectInspection = { effect_id: AgentEffectIdentity, command_id
 
 export type AgentEffectInspectionState = { "kind": "not_applied" } | { "kind": "accepted", source: AgentSourceCoordinate, } | { "kind": "applied", outcome: AgentAppliedEffectOutcome, } | { "kind": "unknown" };
 
-export type AgentExecutionSnapshot = { active_turn_id: AgentTurnId | null, };
+export type AgentExecutionSnapshot = { active_turn: AgentActiveTurnSnapshot | null, last_compaction_outcome: AgentCompactionOutcomeSnapshot | null, };
 
 export type AgentForkCapability = { cutoffs: { [key in AgentForkCutoffKind]?: SemanticFidelity }, lineage_fidelity: SemanticFidelity, native_durability: SemanticFidelity, };
 
@@ -163,7 +181,7 @@ export type AgentLifecycleCapability = "create" | "start" | "resume" | "close";
 
 export type AgentLifecycleStatus = "creating" | "active" | "suspended" | "closed" | "lost";
 
-export type AgentObservation = { source: AgentSourceCoordinate, revision: AgentSnapshotRevision, lifecycle: AgentLifecycleStatus, active_turn_id: AgentTurnId | null, latest_turn: AgentTurnObservation | null, };
+export type AgentObservation = { source: AgentSourceCoordinate, revision: AgentSnapshotRevision, lifecycle: AgentLifecycleStatus, execution: AgentExecutionSnapshot, command_availability: { [key in AgentControlKind]?: AgentControlAvailability }, latest_turn: AgentTurnObservation | null, };
 
 export type AgentObservationQuery = { source: AgentSourceCoordinate, };
 
@@ -187,7 +205,7 @@ export type AgentServiceErrorCode = "invalid_argument" | "not_found" | "conflict
 
 export type AgentServiceInstanceId = string;
 
-export type AgentSnapshot = { source: AgentSourceCoordinate, revision: AgentSnapshotRevision, lifecycle: AgentLifecycleStatus, execution: AgentExecutionSnapshot, interactions: Array<AgentInteractionSnapshot>, thread_name: AgentThreadNameSnapshot | null, source_info: AgentSnapshotSource, applied_surface: AppliedAgentSurface | null, initial_context: AppliedInitialContextEvidence | null, conversation_history: Array<CanonicalConversationRecord>, };
+export type AgentSnapshot = { source: AgentSourceCoordinate, revision: AgentSnapshotRevision, lifecycle: AgentLifecycleStatus, execution: AgentExecutionSnapshot, command_availability: { [key in AgentControlKind]?: AgentControlAvailability }, interactions: Array<AgentInteractionSnapshot>, thread_name: AgentThreadNameSnapshot | null, source_info: AgentSnapshotSource, applied_surface: AppliedAgentSurface | null, initial_context: AppliedInitialContextEvidence | null, conversation_history: Array<CanonicalConversationRecord>, };
 
 export type AgentSnapshotAuthority = "agent_authoritative" | "agent_observed" | "derived";
 

@@ -5,19 +5,20 @@ use std::{
 };
 
 use agentdash_agent_service_api::{
-    AgentAppliedEffectOutcome, AgentCapabilityProfile, AgentChange, AgentChangePage,
-    AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandCapability,
-    AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
-    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkCapability,
-    AgentForkCutoffKind, AgentForkPoint, AgentInput, AgentInputContent, AgentInteractionId,
-    AgentInteractionRequest, AgentInteractionSnapshot, AgentInteractionStatus, AgentItemId,
-    AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest,
-    AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor,
-    AgentServiceError, AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority,
-    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
-    AgentSourceCursor, AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload,
-    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
-    AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+    AgentActiveTurnKind, AgentActiveTurnPhase, AgentActiveTurnSnapshot, AgentAppliedEffectOutcome,
+    AgentCapabilityProfile, AgentChange, AgentChangePage, AgentChangePayload, AgentChangesQuery,
+    AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
+    AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
+    AgentEffectInspectionState, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint,
+    AgentInput, AgentInputContent, AgentInteractionId, AgentInteractionRequest,
+    AgentInteractionSnapshot, AgentInteractionStatus, AgentItemId, AgentLifecycleCapability,
+    AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
+    AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
+    AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
+    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
+    AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload, AgentSurfaceProfile,
+    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentTurnId,
+    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
     AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
     AppliedInitialContextEvidence, ApplyBoundAgentSurface, CompleteAgentService,
     CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
@@ -1031,6 +1032,32 @@ impl CompleteAgentService for CodexCompleteAgentService {
         {
             return Ok(receipt);
         }
+        if let Some(expected) = command.meta.expected_snapshot_revision {
+            let actual = self
+                .state
+                .read()
+                .await
+                .sources
+                .get(&command.source)
+                .map(|source| AgentSnapshotRevision(source.revision))
+                .ok_or_else(|| {
+                    service_error(
+                        AgentServiceErrorCode::NotFound,
+                        "Codex source is not registered",
+                        false,
+                    )
+                })?;
+            if actual != expected {
+                return Err(service_error(
+                    AgentServiceErrorCode::Conflict,
+                    format!(
+                        "Codex snapshot revision moved from {} to {}",
+                        expected.0, actual.0
+                    ),
+                    true,
+                ));
+            }
+        }
         let method;
         let params;
         let terminal;
@@ -1218,12 +1245,23 @@ impl CompleteAgentService for CodexCompleteAgentService {
                     ))
                 },
             )?;
-        let active_turn_id = response_active_turn_id(&result)?;
+        let observed_at_ms = now_ms();
+        let active_turn = response_active_turn(&result, observed_at_ms)?;
+        let execution = agentdash_agent_service_api::AgentExecutionSnapshot {
+            active_turn,
+            last_compaction_outcome: None,
+        };
+        let command_availability = execution.command_availability(
+            source.lifecycle,
+            AgentSnapshotRevision(source.revision),
+            !source.pending_interactions.is_empty(),
+        );
         Ok(AgentSnapshot {
             source: query.source,
             revision: AgentSnapshotRevision(source.revision),
             lifecycle: source.lifecycle,
-            execution: agentdash_agent_service_api::AgentExecutionSnapshot { active_turn_id },
+            execution,
+            command_availability,
             interactions,
             thread_name: Some(agentdash_agent_service_api::AgentThreadNameSnapshot {
                 thread_name,
@@ -1231,7 +1269,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
                     authority: AgentSnapshotAuthority::AgentAuthoritative,
                     source_revision: None,
                     fidelity: SemanticFidelity::Exact,
-                    observed_at_ms: now_ms(),
+                    observed_at_ms,
                 },
             }),
             source_info: AgentSnapshotSource {
@@ -1239,7 +1277,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 // App Server does not expose a stable durable snapshot/context revision.
                 source_revision: None,
                 fidelity: SemanticFidelity::Observed,
-                observed_at_ms: now_ms(),
+                observed_at_ms,
             },
             applied_surface: source.applied_surface.clone(),
             initial_context: source.initial_context.clone(),
@@ -1715,17 +1753,20 @@ fn response_thread_name(result: &Value) -> Result<Option<String>, AgentServiceEr
     }
 }
 
-fn response_active_turn_id(result: &Value) -> Result<Option<AgentTurnId>, AgentServiceError> {
+fn response_active_turn(
+    result: &Value,
+    observed_at_ms: u64,
+) -> Result<Option<AgentActiveTurnSnapshot>, AgentServiceError> {
     let turns = result
         .pointer("/thread/turns")
         .and_then(Value::as_array)
         .ok_or_else(|| protocol_violation("thread/read response misses thread.turns"))?;
-    let mut active_turn_id = None;
+    let mut active_turn = None;
     for turn in turns {
         if turn.get("status").and_then(Value::as_str) != Some("inProgress") {
             continue;
         }
-        if active_turn_id.is_some() {
+        if active_turn.is_some() {
             return Err(protocol_violation(
                 "thread/read returned more than one in-progress turn",
             ));
@@ -1734,9 +1775,30 @@ fn response_active_turn_id(result: &Value) -> Result<Option<AgentTurnId>, AgentS
             .get("id")
             .and_then(Value::as_str)
             .ok_or_else(|| protocol_violation("thread/read active turn misses id"))?;
-        active_turn_id = Some(AgentTurnId::new(turn_id).map_err(internal_error)?);
+        let is_compaction = turn
+            .get("items")
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("contextCompaction")
+                })
+            });
+        active_turn = Some(AgentActiveTurnSnapshot {
+            turn_id: AgentTurnId::new(turn_id).map_err(internal_error)?,
+            kind: if is_compaction {
+                AgentActiveTurnKind::ContextCompaction
+            } else {
+                AgentActiveTurnKind::Conversation
+            },
+            // App Server exposes the live compaction item, but not a durable checkpoint phase
+            // or operation identity.
+            phase: AgentActiveTurnPhase::Running,
+            operation_id: None,
+            started_at_ms: observed_at_ms,
+            cancellable: true,
+        });
     }
-    Ok(active_turn_id)
+    Ok(active_turn)
 }
 
 fn codex_thread_history_digest(result: &Value) -> Result<AgentPayloadDigest, AgentServiceError> {
@@ -2292,12 +2354,32 @@ mod tests {
         });
 
         assert_eq!(
-            response_active_turn_id(&result)
+            response_active_turn(&result, 1_000)
                 .expect("active turn")
                 .as_ref()
-                .map(AgentTurnId::as_str),
+                .map(|turn| turn.turn_id.as_str()),
             Some("turn-active")
         );
+    }
+
+    #[test]
+    fn active_context_compaction_is_observed_without_inventing_checkpoint_evidence() {
+        let result = json!({
+            "thread": {
+                "turns": [{
+                    "id": "turn-compact",
+                    "status": "inProgress",
+                    "items": [{"id": "compact-item", "type": "contextCompaction"}]
+                }]
+            }
+        });
+
+        let active = response_active_turn(&result, 1_000)
+            .expect("active turn")
+            .expect("compaction turn");
+        assert_eq!(active.kind, AgentActiveTurnKind::ContextCompaction);
+        assert_eq!(active.phase, AgentActiveTurnPhase::Running);
+        assert!(active.operation_id.is_none());
     }
 
     #[test]
@@ -2311,7 +2393,7 @@ mod tests {
             }
         });
 
-        let error = response_active_turn_id(&result).expect_err("invalid execution state");
+        let error = response_active_turn(&result, 1_000).expect_err("invalid execution state");
         assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
     }
 

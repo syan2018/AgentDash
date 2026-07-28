@@ -1,0 +1,13 @@
+{"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/prd.md", "reason": "逐项复核 control/state/presentation owner、P0 correctness 与 AC1-AC12。"}
+{"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/backend-compaction-lifecycle.md", "reason": "复核工具事实、manual/auto lifecycle、effect owner、崩溃恢复与command matrix。"}
+{"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/frontend-compaction-state-ui.md", "reason": "复核timeline状态、交互门禁、target/revision fence、reload/reconnect与浏览器行为。"}
+{"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/contextframe-compaction-contract.md", "reason": "复核Exact/Observed recipe、retained membership与typed CompactionSummary frame。"}
+{"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/control-state-plane-convergence.md", "reason": "确认没有新增Compaction专用store、第二connection、Workspace command副本或presentation refresh特判。"}
+{"file": ".trellis/tasks/07-28-runtime-session-state-chain/prd.md", "reason": "确认Compaction接线复用统一AgentRuntimeConnection/View并保持Product Workspace职责。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "检查provider capture、checkpoint、summary与retained suffix保持同一context recipe。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "检查Started后任一崩溃点可恢复且无永久Accepted。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "检查state与presentation沿同一source observation收敛，process-local sequence不成为control cursor。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查Runtime view、Product边界、context query与generated DTO端到端一致。"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "检查同target单connection、Feed与Composer同源以及Workspace不拥有Runtime control state。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "执行前端定向测试、type-check、lint与真实浏览器验证。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "执行Rust定向测试、schema生成检查、provider fixture与集成验证。"}

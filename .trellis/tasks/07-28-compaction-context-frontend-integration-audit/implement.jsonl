@@ -1,0 +1,14 @@
+{"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/design.md", "reason": "实现 Compaction activity、checkpoint、context recipe、统一 Runtime view selector 与 durable recovery 的目标契约。"}
+{"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/cross-layer-synthesis.md", "reason": "保留 P0/P1 根因、生产事件顺序、retained suffix 与纵向场景矩阵。"}
+{"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/control-state-plane-convergence.md", "reason": "约束 Compaction 复用单一 Agent Runtime connection/view，禁止建立 Workspace refresh 特判或第二状态 owner。"}
+{"file": ".trellis/tasks/07-28-runtime-session-state-chain/prd.md", "reason": "依赖相邻任务统一 Complete Agent read/change、AgentRuntimeConnection/View 与 Product Workspace 职责边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "约束 AgentSnapshot、Runtime normalize、command availability 与 live/read 恢复边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "约束 CompactionSummary、retained suffix、ContextFrame 与 provider 输入同源。"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "约束 Native compaction lifecycle、manual queue、deferred input、live 与 durable history。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "实现 durable compaction worker、claim/lease、effect owner 与 crash recovery。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "保持 Product association、Runtime target 和 command facade 不形成第二执行 owner。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "保持 Session、AgentFrame、Complete Agent authority 与 current context query 的职责边界。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "保持 snapshot、source change、canonical presentation 与 process-local live sequence 的坐标语义。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "修正 compaction boundary、Runtime view、context query 与前端 revision fence 的跨层契约。"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "统一 Feed、Composer、Agent状态 UI 的 Runtime connection 与 presentation projection。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "实现 source observation、presentation overlay、target隔离与query reconciliation。"}

@@ -1,0 +1,28 @@
+{
+  "id": "runtime-session-state-chain",
+  "name": "runtime-session-state-chain",
+  "title": "统一 Agent Runtime View 状态链路并修复停止按钮",
+  "description": "以 AgentRuntimeView/AgentRuntimeConnection 收口 Complete Agent authority 的读取与实时更新，删除 Feed 推断控制状态和 Workspace 重复执行投影。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": "fullstack",
+  "package": null,
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-07-28",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "estimated_files": "55-70"
+  }
+}

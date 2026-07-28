@@ -1,0 +1,6 @@
+{"file":"CONTEXT.md","reason":"统一 AgentRun Product、Agent Runtime 与 Complete Agent 的领域语言和 owner 边界。"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"约束 AgentRun Product 通过 Runtime facade 读取/命令 concrete Agent，禁止 Product 保存执行状态。"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"约束 Complete Agent history/context authority、snapshot/change 恢复和 compaction presentation。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"约束 Runtime feed、Workspace state、command availability、target fence 与 terminal convergence。"}
+{"file":".trellis/tasks/07-28-runtime-session-state-chain/research/current-state.md","reason":"提供当前停止按钮故障链、重复投影和影响面证据。"}
+{"file":".trellis/tasks/07-28-runtime-session-state-chain/design.md","reason":"提供最终术语、模块 seam、合同、数据流与拒绝方案。"}

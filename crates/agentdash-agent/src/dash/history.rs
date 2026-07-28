@@ -919,6 +919,39 @@ fn apply_payload(
             {
                 return Err(HistoryError::DuplicateCompaction(compaction_id.clone()));
             }
+            let turn_id = compaction_turn_id(compaction_id);
+            if state
+                .turns
+                .insert(
+                    turn_id.clone(),
+                    TurnState {
+                        status: ActivityStatus::Active,
+                        output: None,
+                        started_at_ms: 0,
+                        completed_at_ms: None,
+                    },
+                )
+                .is_some()
+            {
+                return Err(HistoryError::DuplicateTurn(turn_id.clone()));
+            }
+            let item_id = compaction_item_id(compaction_id);
+            if state
+                .items
+                .insert(
+                    item_id.clone(),
+                    ItemState {
+                        turn_id: turn_id.clone(),
+                        kind: ItemKind::ContextCompaction,
+                        status: ActivityStatus::Active,
+                        details: ItemDetails::ContextCompaction,
+                    },
+                )
+                .is_some()
+            {
+                return Err(HistoryError::DuplicateItem(item_id));
+            }
+            state.active_turn = Some(turn_id);
             state.active_compaction = Some(compaction_id.clone());
         }
         HistoryPayload::CompactionApplied {
@@ -933,7 +966,7 @@ fn apply_payload(
             let compaction = state
                 .compactions
                 .get_mut(compaction_id)
-                .expect("active compaction exists");
+                .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?;
             if compaction.source_digest != *source_digest || compaction.revision.is_some() {
                 return Err(HistoryError::InvalidCompactionTransition(
                     compaction_id.clone(),
@@ -948,7 +981,7 @@ fn apply_payload(
             let compaction = state
                 .compactions
                 .get_mut(compaction_id)
-                .expect("active compaction exists");
+                .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?;
             if compaction.revision.is_none() {
                 return Err(HistoryError::InvalidCompactionTransition(
                     compaction_id.clone(),
@@ -956,6 +989,14 @@ fn apply_payload(
             }
             compaction.status = ActivityStatus::Completed;
             state.active_compaction = None;
+            let turn_id = compaction_turn_id(compaction_id);
+            let item_id = compaction_item_id(compaction_id);
+            state
+                .items
+                .get_mut(&item_id)
+                .ok_or_else(|| HistoryError::UnknownItem(item_id.clone()))?
+                .status = ActivityStatus::Completed;
+            terminalize_turn(state, &turn_id, ActivityStatus::Completed, 0)?;
         }
         HistoryPayload::CompactionFailed {
             compaction_id,
@@ -963,16 +1004,25 @@ fn apply_payload(
             ..
         } => {
             ensure_active_compaction(state, compaction_id)?;
-            state
-                .compactions
-                .get_mut(compaction_id)
-                .expect("active compaction exists")
-                .status = if *lost {
+            let status = if *lost {
                 ActivityStatus::Lost
             } else {
                 ActivityStatus::Failed
             };
+            state
+                .compactions
+                .get_mut(compaction_id)
+                .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?
+                .status = status;
             state.active_compaction = None;
+            let turn_id = compaction_turn_id(compaction_id);
+            let item_id = compaction_item_id(compaction_id);
+            state
+                .items
+                .get_mut(&item_id)
+                .ok_or_else(|| HistoryError::UnknownItem(item_id.clone()))?
+                .status = status;
+            terminalize_turn(state, &turn_id, status, 0)?;
         }
         HistoryPayload::TurnCompleted {
             turn_id,
@@ -1022,6 +1072,14 @@ fn ensure_idle(state: &AgentHistoryState) -> Result<(), HistoryError> {
     } else {
         Ok(())
     }
+}
+
+fn compaction_turn_id(compaction_id: &CompactionId) -> AgentTurnId {
+    AgentTurnId::new(compaction_id.0.clone())
+}
+
+fn compaction_item_id(compaction_id: &CompactionId) -> AgentItemId {
+    AgentItemId::new(compaction_id.0.clone())
 }
 
 fn ensure_active_turn(

@@ -1,16 +1,16 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use agentdash_agent::{
     AgentMessage, BridgeError, BridgeRequest, ContentPart, ConversationNamer,
     ConversationNamingInput, LlmBridge, ProviderErrorKind, StopReason, StreamChunk, ThinkingLevel,
     ToolDefinition,
     dash::{
-        CompactionId, ContextRevision, DashCompactionRequest, DashCompactionResult, DashCompactor,
-        DashConversationNamer, DashConversationNamingRequest, DashCoreError,
-        DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent, DashFinishReason,
-        DashMessageRole, DashProvider, DashProviderEvent, DashProviderEventStream,
-        DashProviderRequest, DashServiceError, DashToolCall, DashToolCallbacks, DashToolResult,
-        HistoryEntryId, HistoryPayload, NoopDashHistoryCallbacks,
+        CompactionId, ContextRevision, DashCompactionRequest, DashCompactionResult,
+        DashCompactionTurn, DashCompactor, DashConversationNamer, DashConversationNamingRequest,
+        DashCoreError, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
+        DashFinishReason, DashMessageRole, DashProvider, DashProviderEvent,
+        DashProviderEventStream, DashProviderRequest, DashServiceError, DashToolCall,
+        DashToolCallbacks, DashToolResult, HistoryEntryId, NoopDashHistoryCallbacks,
     },
 };
 use async_trait::async_trait;
@@ -145,19 +145,16 @@ impl DashProvider for BridgeDashProvider {
     }
 }
 
-/// Agent-owned LLM compaction implementation. It summarizes the effective prefix and keeps a
-/// bounded recent tail identified by a durable history entry coordinate.
-pub struct BridgeDashCompactor {
-    bridge: Arc<dyn LlmBridge>,
-    thinking_level: Option<ThinkingLevel>,
+/// Executes compaction as a dedicated provider turn over the exact current Dash session context.
+pub struct ProviderDashCompactor {
+    provider: Arc<dyn DashProvider>,
     retained_conversation_messages: usize,
 }
 
-impl BridgeDashCompactor {
-    pub fn new(bridge: Arc<dyn LlmBridge>, thinking_level: Option<ThinkingLevel>) -> Self {
+impl ProviderDashCompactor {
+    pub fn new(provider: Arc<dyn DashProvider>) -> Self {
         Self {
-            bridge,
-            thinking_level,
+            provider,
             retained_conversation_messages: DEFAULT_RETAINED_CONVERSATION_MESSAGES,
         }
     }
@@ -169,13 +166,12 @@ impl BridgeDashCompactor {
 }
 
 #[async_trait]
-impl DashCompactor for BridgeDashCompactor {
+impl DashCompactor for ProviderDashCompactor {
     async fn compact(
         &self,
         request: DashCompactionRequest,
     ) -> Result<DashCompactionResult, DashServiceError> {
-        let effective = effective_conversation(&request);
-        if effective.messages.is_empty() && effective.previous_summary.is_none() {
+        if request.context.history.is_empty() {
             return Err(DashServiceError::InvalidState {
                 message: "Agent history has no provider-visible content to compact".to_owned(),
             });
@@ -183,47 +179,32 @@ impl DashCompactor for BridgeDashCompactor {
 
         let retained_count = self
             .retained_conversation_messages
-            .min(effective.messages.len().saturating_sub(1));
-        let cut = effective.messages.len().saturating_sub(retained_count);
-        let retained_from = effective
-            .messages
-            .get(cut)
-            .map(|message| message.entry_id.clone());
-        let mut summary_messages = Vec::new();
-        if let Some(summary) = effective.previous_summary {
-            summary_messages.push(AgentMessage::User {
-                content: vec![ContentPart::text(format!(
-                    "Existing compacted context:\n{summary}"
-                ))],
-                timestamp: None,
-            });
-        }
-        summary_messages.extend(
-            effective.messages[..cut]
-                .iter()
-                .map(|message| message.message.clone()),
-        );
-        let response = self
-            .bridge
-            .complete(BridgeRequest {
-                system_prompt: Some(
-                    "Summarize the durable Agent conversation context for exact continuation. \
-                     Preserve decisions, constraints, unresolved work, tool outcomes, stable \
-                     identifiers, and branch-relevant facts. Do not add commentary."
-                        .to_owned(),
-                ),
-                messages: summary_messages,
-                tools: Vec::new(),
-                thinking_level: self.thinking_level,
+            .min(request.context.history.len().saturating_sub(1));
+        let cut = request.context.history.len().saturating_sub(retained_count);
+        let retained_from = request.message_entry_ids.get(cut).cloned();
+        let retained_start = retained_from
+            .as_ref()
+            .and_then(|entry_id| {
+                request
+                    .message_entry_ids
+                    .iter()
+                    .position(|candidate| candidate == entry_id)
             })
-            .await
-            .map_err(map_compaction_error)?;
-        let summary = message_text(&response.message);
-        if summary.trim().is_empty() {
-            return Err(DashServiceError::InvalidState {
-                message: "Dash Agent compactor returned an empty summary".to_owned(),
-            });
+            .unwrap_or(cut);
+        let retained_message_count = request.context.history.len().saturating_sub(retained_start);
+        let output = DashCompactionTurn {
+            context: request.context,
+            instruction: format!(
+                "Summarize the durable Agent conversation context before the final \
+                 {retained_message_count} provider messages. Those final messages will be \
+                 retained verbatim. Preserve decisions, constraints, unresolved work, tool \
+                 outcomes, stable identifiers, and branch-relevant facts. Do not add commentary."
+            ),
         }
+        .run(self.provider.as_ref())
+        .await
+        .map_err(map_compaction_turn_error)?;
+        let summary = output.summary;
         let revision = compaction_revision(
             &request.compaction_id,
             &request.source_digest,
@@ -243,16 +224,17 @@ pub fn bridge_dash_execution_dependencies(
     thinking_level: Option<ThinkingLevel>,
     context_window: u64,
 ) -> DashExecutionDependencies {
+    let provider: Arc<dyn DashProvider> = Arc::new(BridgeDashProvider::new(
+        bridge.clone(),
+        thinking_level,
+        context_window,
+    ));
     DashExecutionDependencies {
-        provider: Arc::new(BridgeDashProvider::new(
-            bridge.clone(),
-            thinking_level,
-            context_window,
-        )),
+        provider: provider.clone(),
         tools: Arc::new(UnboundDashToolCallbacks),
         callbacks: Arc::new(UnboundDashExecutionCallbacks),
         history_callbacks: Arc::new(NoopDashHistoryCallbacks),
-        compactor: Arc::new(BridgeDashCompactor::new(bridge.clone(), thinking_level)),
+        compactor: Arc::new(ProviderDashCompactor::new(provider)),
         conversation_namer: Arc::new(BridgeDashConversationNamer::new(bridge)),
     }
 }
@@ -281,84 +263,6 @@ impl DashExecutionCallbacks for UnboundDashExecutionCallbacks {
         Err(DashCoreError::Callback {
             message: "Dash execution has no source-scoped Complete Agent live sink".to_owned(),
         })
-    }
-}
-
-struct EffectiveConversation {
-    previous_summary: Option<String>,
-    messages: Vec<ConversationMessage>,
-}
-
-struct ConversationMessage {
-    entry_id: HistoryEntryId,
-    message: AgentMessage,
-}
-
-fn effective_conversation(request: &DashCompactionRequest) -> EffectiveConversation {
-    let entries = request.history.entries();
-    let mut applied = BTreeMap::new();
-    let mut latest = None;
-    for (index, entry) in entries.iter().enumerate() {
-        match &entry.payload {
-            HistoryPayload::CompactionApplied {
-                compaction_id,
-                summary,
-                retained_from,
-                ..
-            } => {
-                applied.insert(
-                    compaction_id.clone(),
-                    (index, summary.clone(), retained_from.clone()),
-                );
-            }
-            HistoryPayload::CompactionCompleted { compaction_id } => {
-                if let Some((applied_index, summary, retained_from)) =
-                    applied.get(compaction_id).cloned()
-                {
-                    latest = Some((index, applied_index, summary, retained_from));
-                }
-            }
-            _ => {}
-        }
-    }
-    let (previous_summary, start) = latest
-        .map(
-            |(completed_index, _applied_index, summary, retained_from)| {
-                let start = retained_from
-                    .as_ref()
-                    .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
-                    .unwrap_or(completed_index.saturating_add(1));
-                (Some(summary), start)
-            },
-        )
-        .unwrap_or((None, 0));
-    let messages = entries[start..]
-        .iter()
-        .filter_map(|entry| match &entry.payload {
-            HistoryPayload::InputAccepted { content, .. } => Some(ConversationMessage {
-                entry_id: entry.entry_id.clone(),
-                message: AgentMessage::User {
-                    content: vec![ContentPart::text(content.clone())],
-                    timestamp: None,
-                },
-            }),
-            HistoryPayload::AgentOutput { content, .. } => Some(ConversationMessage {
-                entry_id: entry.entry_id.clone(),
-                message: AgentMessage::Assistant {
-                    content: vec![ContentPart::text(content.clone())],
-                    tool_calls: Vec::new(),
-                    stop_reason: Some(StopReason::Stop),
-                    error_message: None,
-                    usage: None,
-                    timestamp: None,
-                },
-            }),
-            _ => None,
-        })
-        .collect();
-    EffectiveConversation {
-        previous_summary,
-        messages,
     }
 }
 
@@ -463,34 +367,17 @@ fn map_bridge_error(error: BridgeError) -> DashCoreError {
     }
 }
 
-fn map_compaction_error(error: BridgeError) -> DashServiceError {
-    let classification = error.classification();
-    if classification.kind == ProviderErrorKind::Aborted {
-        return DashServiceError::Lost {
-            message: error.to_string(),
-        };
-    }
-    DashServiceError::Unavailable {
-        message: error.to_string(),
-        retryable: classification.kind == ProviderErrorKind::Retryable,
-    }
-}
-
-fn message_text(message: &AgentMessage) -> String {
-    match message {
-        AgentMessage::Assistant { content, .. }
-        | AgentMessage::User { content, .. }
-        | AgentMessage::ToolResult { content, .. } => content
-            .iter()
-            .filter_map(|part| match part {
-                ContentPart::Text { text } | ContentPart::Reasoning { text, .. } => {
-                    Some(text.as_str())
-                }
-                ContentPart::Image { .. } => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        AgentMessage::CompactionSummary { summary, .. } => summary.clone(),
+fn map_compaction_turn_error(error: DashCoreError) -> DashServiceError {
+    match error {
+        DashCoreError::ProviderStreamDisconnected | DashCoreError::Cancelled => {
+            DashServiceError::Lost {
+                message: error.to_string(),
+            }
+        }
+        DashCoreError::Provider {
+            message, retryable, ..
+        } => DashServiceError::Unavailable { message, retryable },
+        error => DashServiceError::Core(error),
     }
 }
 
@@ -519,7 +406,7 @@ mod tests {
     use super::*;
     use agentdash_agent::{
         BridgeResponse, TokenUsage, ToolCallDeltaContent, ToolCallInfo,
-        dash::{AgentHistory, AgentSessionId, BranchId, HistoryContribution},
+        dash::{DashCoreContext, DashMessage},
     };
     use futures::stream;
 
@@ -532,11 +419,14 @@ mod tests {
             &self,
             _request: BridgeRequest,
         ) -> std::pin::Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>> {
-            Box::pin(stream::iter([StreamChunk::Done(BridgeResponse {
-                message: AgentMessage::assistant("durable summary"),
-                raw_content: vec![ContentPart::text("durable summary")],
-                usage: TokenUsage::default(),
-            })]))
+            Box::pin(stream::iter([
+                StreamChunk::TextDelta("durable summary".to_owned()),
+                StreamChunk::Done(BridgeResponse {
+                    message: AgentMessage::assistant("durable summary"),
+                    raw_content: vec![ContentPart::text("durable summary")],
+                    usage: TokenUsage::default(),
+                }),
+            ]))
         }
     }
 
@@ -683,51 +573,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compactor_uses_durable_entry_as_retained_boundary() {
-        let mut history =
-            AgentHistory::empty(AgentSessionId::new("session"), BranchId::new("branch"));
-        for (id, payload) in [
-            (
-                "input-1",
-                HistoryPayload::InputAccepted {
-                    input_id: "1".to_owned(),
-                    content: "first".to_owned(),
-                },
-            ),
-            (
-                "input-2",
-                HistoryPayload::InputAccepted {
-                    input_id: "2".to_owned(),
-                    content: "answer".to_owned(),
-                },
-            ),
-            (
-                "input-3",
-                HistoryPayload::InputAccepted {
-                    input_id: "3".to_owned(),
-                    content: "second".to_owned(),
-                },
-            ),
-        ] {
-            history
-                .append(HistoryContribution {
-                    entry_id: HistoryEntryId::new(id),
-                    payload,
-                })
-                .unwrap();
-        }
-        let result = BridgeDashCompactor::new(Arc::new(FixtureBridge), Some(ThinkingLevel::Off))
+    async fn compactor_retained_boundary_keeps_a_tool_call_and_result_together() {
+        let provider = Arc::new(BridgeDashProvider::new(
+            Arc::new(FixtureBridge),
+            Some(ThinkingLevel::Off),
+            200_000,
+        ));
+        let result = ProviderDashCompactor::new(provider)
             .with_retained_conversation_messages(1)
             .compact(DashCompactionRequest {
                 compaction_id: CompactionId::new("compact"),
                 mode: agentdash_agent::dash::CompactionMode::Manual,
-                source_head: history.head().cloned(),
-                source_digest: history.digest(),
-                history,
+                source_head: Some(HistoryEntryId::new("tool-result")),
+                source_digest: "source-digest".to_owned(),
+                context: DashCoreContext {
+                    system_prompt: "system".to_owned(),
+                    history: vec![
+                        DashMessage {
+                            role: DashMessageRole::User,
+                            content: "inspect".to_owned(),
+                            tool_call_id: None,
+                            tool_calls: Vec::new(),
+                            is_error: false,
+                        },
+                        DashMessage {
+                            role: DashMessageRole::Assistant,
+                            content: String::new(),
+                            tool_call_id: None,
+                            tool_calls: vec![DashToolCall {
+                                call_id: "call-1".to_owned(),
+                                name: "read".to_owned(),
+                                arguments: serde_json::json!({"path": "Cargo.toml"}),
+                            }],
+                            is_error: false,
+                        },
+                        DashMessage {
+                            role: DashMessageRole::Tool,
+                            content: "manifest".to_owned(),
+                            tool_call_id: Some("call-1".to_owned()),
+                            tool_calls: Vec::new(),
+                            is_error: false,
+                        },
+                    ],
+                    tools: Vec::new(),
+                },
+                message_entry_ids: ["input-1", "tool-call", "tool-call"]
+                    .into_iter()
+                    .map(HistoryEntryId::new)
+                    .collect(),
             })
             .await
             .unwrap();
-        assert_eq!(result.retained_from, Some(HistoryEntryId::new("input-3")));
+        assert_eq!(result.retained_from, Some(HistoryEntryId::new("tool-call")));
         assert!(result.revision.0.starts_with("sha256:"));
     }
 }

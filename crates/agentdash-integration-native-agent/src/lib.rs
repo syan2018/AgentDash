@@ -13,7 +13,7 @@ mod service;
 mod tool_presentation;
 
 pub use bridge_execution::{
-    BridgeDashCompactor, BridgeDashProvider, bridge_dash_execution_dependencies,
+    BridgeDashProvider, ProviderDashCompactor, bridge_dash_execution_dependencies,
 };
 pub use core_callbacks::DashAgentCoreToolCallbacks;
 pub use service::{

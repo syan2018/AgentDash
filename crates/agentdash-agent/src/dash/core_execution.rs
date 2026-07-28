@@ -382,6 +382,63 @@ pub struct DashCoreTurn {
     pub terminal_entry_id: HistoryEntryId,
 }
 
+pub struct DashCompactionTurn {
+    pub context: DashCoreContext,
+    pub instruction: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashCompactionTurnOutput {
+    pub summary: String,
+}
+
+impl DashCompactionTurn {
+    pub async fn run(
+        mut self,
+        provider: &dyn DashProvider,
+    ) -> Result<DashCompactionTurnOutput, DashCoreError> {
+        self.context.history.push(DashMessage {
+            role: DashMessageRole::User,
+            content: self.instruction,
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+            is_error: false,
+        });
+        let mut events = provider
+            .stream(DashProviderRequest {
+                system_prompt: self.context.system_prompt,
+                messages: self.context.history,
+                tools: Vec::new(),
+                round: 1,
+            })
+            .await?;
+        let mut summary = String::new();
+        while let Some(event) = events.next().await {
+            match event? {
+                DashProviderEvent::TextDelta { delta } => summary.push_str(&delta),
+                DashProviderEvent::ReasoningDelta { .. } => {}
+                DashProviderEvent::ToolCall { .. } => {
+                    return Err(DashCoreError::InvalidProviderTerminal);
+                }
+                DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::Stop,
+                    ..
+                } => {
+                    if summary.trim().is_empty() {
+                        return Err(DashCoreError::InvalidProviderTerminal);
+                    }
+                    return Ok(DashCompactionTurnOutput { summary });
+                }
+                DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::ToolCalls,
+                    ..
+                } => return Err(DashCoreError::InvalidProviderTerminal),
+            }
+        }
+        Err(DashCoreError::ProviderStreamDisconnected)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DashCoreTurnResult {
     pub core_output: DashCoreOutput,
@@ -908,5 +965,117 @@ fn dash_error(error: CoreError) -> DashCoreError {
             prompt,
         },
         CoreError::ContextOverflow => DashCoreError::ContextOverflow,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use futures::stream;
+    use tokio::sync::Mutex;
+
+    use super::*;
+
+    struct CapturingProvider {
+        request: Arc<Mutex<Option<DashProviderRequest>>>,
+    }
+
+    #[async_trait]
+    impl DashProvider for CapturingProvider {
+        async fn stream(
+            &self,
+            request: DashProviderRequest,
+        ) -> Result<DashProviderEventStream, DashCoreError> {
+            *self.request.lock().await = Some(request);
+            Ok(Box::pin(stream::iter([
+                Ok(DashProviderEvent::TextDelta {
+                    delta: "summary".to_owned(),
+                }),
+                Ok(DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::Stop,
+                    input_tokens: 100,
+                    output_tokens: 10,
+                    context_window: 200_000,
+                }),
+            ])))
+        }
+    }
+
+    #[tokio::test]
+    async fn compaction_turn_reuses_exact_context_prefix_and_disables_new_tools() {
+        let requests = Arc::new(Mutex::new(None));
+        let provider = CapturingProvider {
+            request: requests.clone(),
+        };
+        let prefix = vec![
+            DashMessage {
+                role: DashMessageRole::User,
+                content: "inspect the workspace".to_owned(),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+                is_error: false,
+            },
+            DashMessage {
+                role: DashMessageRole::Assistant,
+                content: String::new(),
+                tool_call_id: None,
+                tool_calls: vec![DashToolCall {
+                    call_id: "call-1".to_owned(),
+                    name: "read".to_owned(),
+                    arguments: serde_json::json!({"path": "Cargo.toml"}),
+                }],
+                is_error: false,
+            },
+            DashMessage {
+                role: DashMessageRole::Tool,
+                content: "workspace manifest".to_owned(),
+                tool_call_id: Some("call-1".to_owned()),
+                tool_calls: Vec::new(),
+                is_error: false,
+            },
+        ];
+        let context = DashCoreContext {
+            system_prompt: "accepted system context".to_owned(),
+            history: prefix.clone(),
+            tools: vec![DashToolDefinition {
+                name: "read".to_owned(),
+                description: "Read a file".to_owned(),
+                input_schema: serde_json::json!({"type": "object"}),
+                capability_key: "workspace/read".to_owned(),
+                source: "fixture".to_owned(),
+                tool_path: "workspace/read::read".to_owned(),
+                context_usage_kind: "system_tools".to_owned(),
+                protocol_projector: ToolProtocolProjector::Dynamic,
+            }],
+        };
+
+        let output = DashCompactionTurn {
+            context,
+            instruction: "Summarize context before the retained tail.".to_owned(),
+        }
+        .run(&provider)
+        .await
+        .expect("compaction turn should complete");
+
+        assert_eq!(output.summary, "summary");
+        let request = requests
+            .lock()
+            .await
+            .clone()
+            .expect("provider request must be captured");
+        assert_eq!(request.system_prompt, "accepted system context");
+        assert_eq!(&request.messages[..prefix.len()], prefix.as_slice());
+        assert_eq!(
+            request.messages.last(),
+            Some(&DashMessage {
+                role: DashMessageRole::User,
+                content: "Summarize context before the retained tail.".to_owned(),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+                is_error: false,
+            })
+        );
+        assert!(request.tools.is_empty());
     }
 }

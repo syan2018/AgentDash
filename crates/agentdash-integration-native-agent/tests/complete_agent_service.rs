@@ -585,11 +585,7 @@ impl DashCompactor for FixtureCompactor {
         Ok(DashCompactionResult {
             revision: ContextRevision::new("fixture-context-r1"),
             summary: "fixture compacted summary".into(),
-            retained_from: request
-                .history
-                .entries()
-                .last()
-                .map(|entry| entry.entry_id.clone()),
+            retained_from: request.message_entry_ids.last().cloned(),
         })
     }
 }
@@ -3209,39 +3205,44 @@ async fn manual_compaction_is_exposed_once_in_canonical_history_and_changes() {
         })
         .await
         .unwrap();
-    assert_eq!(changes.changes.len(), 3);
-    let presentation = changes
+    let lifecycle = changes
         .changes
         .iter()
-        .find_map(|change| match &change.payload {
+        .flat_map(|change| match &change.payload {
             agentdash_agent_service_api::AgentChangePayload::SourceObservation {
-                state,
                 presentation,
-            } if state.is_none()
-                && presentation.iter().any(|record| {
-                    matches!(
-                        &record.presentation.envelope.event,
-                        BackboneEvent::ItemStarted(started) if started.turn_id == "compact-1"
-                    )
-                }) =>
+                ..
+            } => presentation.as_slice(),
+            _ => &[],
+        })
+        .filter_map(|record| match &record.presentation.envelope.event {
+            BackboneEvent::TurnStarted(_) => Some("turn_started"),
+            BackboneEvent::ItemStarted(started)
+                if started.turn_id == "compact-1"
+                    && matches!(
+                        started.item.as_codex(),
+                        Some(codex::ThreadItem::ContextCompaction { id })
+                            if id == "compact-1"
+                    ) =>
             {
-                Some(presentation)
+                Some("item_started")
             }
+            BackboneEvent::ExecutorContextCompacted(_) => Some("context_compacted"),
+            BackboneEvent::ItemCompleted(_) => Some("item_completed"),
+            BackboneEvent::TurnCompleted(_) => Some("turn_completed"),
             _ => None,
         })
-        .expect("compaction start must be one canonical presentation observation");
-    assert_eq!(presentation.len(), 1);
-    assert!(matches!(
-        &presentation[0].presentation.envelope.event,
-        BackboneEvent::ItemStarted(started)
-            if started.thread_id == "dash-compaction"
-                && started.turn_id == "compact-1"
-                && matches!(
-                    started.item.as_codex(),
-                    Some(codex::ThreadItem::ContextCompaction { id })
-                        if id == "compact-1"
-                )
-    ));
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lifecycle,
+        vec![
+            "turn_started",
+            "item_started",
+            "context_compacted",
+            "item_completed",
+            "turn_completed",
+        ]
+    );
 }
 
 async fn create_source(service: &DashAgentCompleteService, source: &str) -> AgentSourceCoordinate {

@@ -631,25 +631,30 @@ Complete receipt在同一 `DashCompleteAtomicCommit` 中提交。项目未上线
 
 ## Recommended Target Contract
 
-### 1. 增加 Agent-owned activity snapshot
+### 1. 将 Compaction 建模为 Agent-owned 正式 Turn
 
-不要把 transient activity塞进 `AgentLifecycleStatus`。建议：
+不要把执行态塞进`AgentLifecycleStatus`，也不要建立平行activity owner。Compaction复用正式Turn：
 
 ```text
-AgentActivitySnapshot
-  Idle
-  Turn { turn_id, phase, interaction? }
-  Compaction {
-    compaction_id,
-    mode,
-    phase: queued | running | applied | failed | lost | cancelled,
-    cancellable,
-    source_revision
+ActiveTurnSnapshot {
+  turn_id
+  kind: normal | context_compaction
+  phase
+  interaction?
+  compaction? {
+    compaction_id
+    mode
+    base_context_revision
+    applied_context_revision?
   }
+  cancellable
+  source_revision
+}
 ```
 
-`AgentSnapshot`、`AgentObservation`、changes/live invalidation和 Runtime availability都消费该同一
-activity。Canonical ContextCompaction item负责 feed presentation，不单独充当 command authority。
+`AgentSnapshot`、`AgentObservation`、changes/live invalidation和Runtime availability都消费该同一
+Turn state。Canonical `ContextCompaction` item属于该Turn并负责feed presentation，不单独充当
+command authority。
 
 ### 2. 明确 command matrix
 
@@ -692,27 +697,30 @@ ContextFrame使用 structured `CompactionSummary` section表达 checkpoint prove
 retained payload仍由canonical history拥有。`SessionProjectionViewResponse`按 checkpoint membership
 选择 retained segments，而不是按 item completed的位置切一刀。
 
-### 4. summary 输入与 provider restore 使用同一个 context recipe
+### 4. summary 输入复用原 Session 的精确 context materialization
 
-先构造 provider-neutral recipe：
+Compaction在原Session上启动正式Turn。它复用正常Turn的精确provider context prefix，并只在末尾
+追加一次synthetic compaction instruction：
 
 ```text
-old summary frame
-+ compacted prefix messages
+active ContextFrames
++ previous summary frame
++ exact current conversation prefix
 + complete tool call/result pairs
-+ structured interaction outcomes
-+ retained suffix
++ synthetic compaction instruction
 ```
 
-同一 recipe同时驱动：
+本轮不开启新工具调用；历史tool pair仍属于prefix。provider output只作为checkpoint candidate，
+synthetic instruction与candidate不写成普通conversation records。成功安装checkpoint后，同一
+materializer继续驱动：
 
-- compactor request；
 - checkpoint digest；
 - post-compaction provider request；
 - canonical context projection；
 - frontend context details。
 
-这样可以用纵向测试证明“被 summary覆盖或被 retained保留”，不会出现第三类隐藏丢失。
+这样可以用纵向测试证明Compaction request没有第二套有损transcript，并证明“被summary覆盖或被
+retained保留”，不会出现第三类隐藏丢失。
 
 ### 5. terminal presentation 必须 typed
 

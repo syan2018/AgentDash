@@ -3,7 +3,7 @@
   "name": "compaction-context-frontend-integration-audit",
   "title": "Compaction 上下文与前端状态完整性评估",
   "description": "审计 Compaction 的上下文正确性，并围绕 concrete Complete Agent authority 与单一 Agent Runtime view 收束状态面、控制面和展示/查询面。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "cross-layer",
   "package": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "规划已获用户确认；07-28-runtime-session-state-chain 是前置任务，在其完成并稳定统一 AgentRuntimeConnection/View 前保持 planning，不运行 task.py start。",
+  "notes": "Slice 0/1已实现：Compaction复用原Session精确context materialization并作为正式Turn投影，failed/lost不再形成成功item boundary。Slice 2及以后待后续实施；Slice 5仍等待07-28-runtime-session-state-chain稳定统一AgentRuntimeConnection/View。全程未创建子任务。",
   "meta": {}
 }

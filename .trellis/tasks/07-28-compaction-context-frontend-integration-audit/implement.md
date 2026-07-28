@@ -1,6 +1,7 @@
 # 实施拆分
 
-本任务只完成评估。以下切片供后续独立实现任务使用，必须按顺序落地；前一切片的 contract 与纵向测试未通过前，不应先做 UI loading。
+本任务先完成评估，再在同一任务内按切片实施；不创建子任务。前一切片的contract与纵向测试未通过
+前，不应先做UI loading。
 
 ## 前置依赖与职责
 
@@ -18,84 +19,101 @@
 - Compaction前端接线等待统一Runtime view seam稳定；
 - 依赖通过类型与测试显式体现，不以任务目录树隐含。
 
-实施门禁：在 `07-28-runtime-session-state-chain` 完成并稳定统一
-`AgentRuntimeConnection/View` 前，本任务保持 `planning`，不得运行 `task.py start`。
+实施门禁：Slice 0/1不依赖`AgentRuntimeConnection/View`，在本次设计修订获用户确认后即可
+`task.py start`。Slice 5前端接线等待相邻任务稳定统一Runtime view seam；不得平行实现第二套
+connection/store。
 
-## Slice 0：固定生产缺陷 fixture
+## 当前实施状态
+
+- [x] Slice 0：精确context prefix、tool pairing、正式Turn与失败边界fixture已固定。
+- [x] Slice 1：原Session Compaction Turn、共享materializer与canonical lifecycle已实现。
+- [ ] Slice 2及以后：等待后续实施；Slice 5继续依赖相邻任务的统一Runtime view seam。
+
+## Slice 0：固定生产缺陷 fixture（已完成）
 
 目标：先把当前错误行为变成会失败的生产顺序测试，避免实现继续依赖合成事件。
 
 新增用例：
 
-- compacted prefix 中包含完整 `ToolCall/ToolResult`，retained tail 不包含该 pair；
-- retained messages 位于 `CompactionStarted/Applied/Completed` 之前；
+- 同一history在normal Turn与Compaction Turn materialization下产生结构相同的context prefix；
+- prefix包含active ContextFrames、previous summary、完整`ToolCall/ToolResult`与retained suffix；
+- Compaction Turn只在末尾追加一次synthetic instruction，且request tools为空；
+- synthetic instruction与provider summary candidate不成为普通conversation records；
+- canonical顺序为`TurnStarted -> ItemStarted(ContextCompaction) -> Applied ->
+  ItemCompleted -> TurnCompleted`；
 - `CompactionFailed { lost: false/true }`；
-- active Turn 请求 manual compaction；
-- automatic overflow B 期间提交新输入；
-- projection 请求乱序返回与 target 切换。
+- retained boundary不会拆分tool call/result pair。
 
 验证点：
 
-- summary provider capture包含工具事实；
+- Compaction provider capture精确复用normal Turn context prefix；
+- 不存在`effective_conversation`式第二套summary transcript；
 - failed/lost不改变 active context revision；
-- Product current context包含 retained suffix；
-- UI started card不显示 completed；
-- command availability与 owner admission一致。
+- failed/lost不产生成功`ItemCompleted`或context boundary；
+- live、snapshot与reload中的Compaction都属于一个正式Turn。
 
 主要文件：
 
 - `crates/agentdash-integration-native-agent/tests/`
 - `crates/agentdash-agent/tests/dash_service.rs`
 - `crates/agentdash-application-agentrun/src/agent_run/session_context_projection.rs`
-- `packages/app-web/src/features/session/**/*.test.ts(x)`
-- `packages/app-web/src/features/agent-run-workspace/model/controlPlaneModel.test.ts`
+- `crates/agentdash-integration-native-agent/src/canonical_projection.rs`
 
-## Slice 1：修复 P0 context correctness
+## Slice 1：修复 P0 context correctness（已完成）
 
 目标：
 
-- compactor request不再遗漏工具事实；
+- compactor作为原Session上的正式Turn运行，复用精确context prefix；
 - failed/lost不再成为成功 presentation 或 context boundary。
 
 工作：
 
-1. 提取 provider-neutral conversation/context recipe builder。
-2. 将 `ToolCall/ToolResult` 成对纳入 compactor input；包含 structured interaction outcome。
-3. 明确 cut 与 retain membership，禁止 tool pair 被拆断后两边都不可见。
-4. Native canonical projection无损表达 succeeded/failed/lost。
-5. Product projector临时也只能以明确成功 Applied checkpoint为边界；随后由 Slice 3 完全替换 event-position 算法。
-6. 前端 card根据 typed lifecycle显示 terminal。
+1. 删除`effective_conversation`与独立summary transcript lane。
+2. 在Dash owner建立dedicated Compaction Turn primitive，直接使用同一`DashProvider`。
+3. context materializer使用显式模式：normal Turn排除单独提交的active input；Compaction Turn保留
+   当前完整session prefix。
+4. Compaction Turn只追加一次synthetic instruction，本轮tools为空；历史tool pairs保持原样。
+5. provider output只返回summary candidate，不写入普通conversation records。
+6. retained boundary从同一history/materialization coordinate计算，禁止第二套projector拆分tool pair。
+7. source history与Native canonical projection补齐正式Turn lifecycle。
+8. failed/lost以带error的Turn terminal结束，不提交成功item/context boundary。
+9. Product projector临时也只能以明确成功Applied checkpoint为边界；随后由Slice 3替换
+   event-position算法。
 
 主要文件：
 
 - `crates/agentdash-integration-native-agent/src/bridge_execution.rs`
 - `crates/agentdash-integration-native-agent/src/canonical_projection.rs`
+- `crates/agentdash-agent/src/dash/core_execution.rs`
 - `crates/agentdash-agent/src/dash/history.rs`
 - `crates/agentdash-agent/src/dash/service.rs`
 - `crates/agentdash-agent-protocol/`
 - `crates/agentdash-application-agentrun/src/agent_run/session_context_projection.rs`
-- `packages/app-web/src/features/session/model/types.ts`
-- `packages/app-web/src/features/session/ui/SessionEntry.tsx`
-- `packages/app-web/src/features/session/ui/bodies/ContextCompactionCardBody.tsx`
 
 完成标准：
 
-- 被 cut 的每个 tool pair要么进入 summary capture，要么在 retained suffix；
+- Compaction request prefix与normal Turn context完全一致，只多一个末尾压缩指令；
+- Compaction不再建立或维护平行summary transcript；
+- synthetic records不污染canonical conversation；
+- 成功/失败/lost都具有完整Turn terminal；
 - failed/lost fixture中旧 context recipe与 revision完全不变；
-- live、snapshot、reload三条路径的 terminal outcome相同。
+- live、snapshot、reload三条路径的terminal outcome相同。
 
-## Slice 2：Agent-owned activity、source observation 与单一 command authority
+## Slice 2：Agent-owned Turn state、source observation 与单一 command authority
 
-目标：把 Compaction 建模为正式 activity，消除 Product/Runtime/UI 三套规则。
+目标：把Compaction Turn的kind/phase投影到统一Runtime execution view，消除
+Product/Runtime/UI三套规则。
 
 工作：
 
-1. Service API 增加 `AgentActivitySnapshot` 与 `last_compaction_outcome`。
-2. Native observation从 Dash folded `active_compaction` 直接构造 activity。
-3. Codex adapter用 provider可观察 operation/event构造 Observed activity。
-4. 同一次 `SourceObservation` 原子携带compaction state change与对应canonical presentation。
-5. 统一Runtime view原样投影activity、commands与source/context revision；不建立新的durable owner。
-6. command availability同时考虑 Turn、queued compaction、running/applied compaction与Lost。
+1. Service API的active Turn snapshot补充`kind/phase`与`last_compaction_outcome`，不新增平行activity
+   owner。
+2. Native observation从Dash folded Turn与compaction state构造同一个active Turn。
+3. Codex adapter用provider可观察operation/event构造Observed Compaction Turn。
+4. 同一次`SourceObservation`原子携带Turn state change与对应canonical presentation。
+5. 统一Runtime execution view原样投影Turn、commands与source/context revision；不建立新的
+   durable owner。
+6. command availability同时考虑normal Turn、queued/running/applied Compaction Turn与Lost。
 7. 删除 Product Workspace active-turn compact特例及Runtime command副本，统一使用同一command authority与stale identity。
 8. 明确并实现 `07-17` 已定义的 manual queue + deferred input语义。
 9. close/fork/interrupt/cancel按 activity phase显式计算。
@@ -114,7 +132,7 @@
 
 完成标准：
 
-- 任一 activity phase下，UI command state与owner实际admission一致；
+- 任一Turn phase下，UI command state与owner实际admission一致；
 - active Turn请求manual compaction可durable queue；
 - compaction期间输入只按既定deferred策略出现一次；
 - reload后仍能恢复同一operation id与phase。
@@ -277,8 +295,8 @@ pnpm dev
 ## 交付顺序与阻塞关系
 
 ```text
-Slice 0 fixtures
-  -> Slice 1 P0 correctness
+Slice 0 Compaction Turn fixtures
+  -> Slice 1 same-session P0 correctness
   -> Slice 2 activity/source observation/commands
   -> Slice 3 checkpoint/context recipe
   -> Slice 4 durable recovery

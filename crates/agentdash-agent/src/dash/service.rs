@@ -138,13 +138,14 @@ pub struct DashAgentChanges {
     pub history: AgentHistory,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DashCompactionRequest {
     pub compaction_id: CompactionId,
     pub mode: CompactionMode,
     pub source_head: Option<HistoryEntryId>,
     pub source_digest: String,
-    pub history: AgentHistory,
+    pub context: DashCoreContext,
+    pub message_entry_ids: Vec<HistoryEntryId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1377,7 +1378,7 @@ impl DashAgentService {
                 command_id: compaction_command_id.clone(),
             }),
         };
-        let (_, history) = self
+        let (_, ()) = self
             .update_store(|store| {
                 store.commit(DashAgentCommit {
                     expected_head: store.history().head().cloned(),
@@ -1420,20 +1421,21 @@ impl DashAgentService {
                     }],
                     enqueue_commands: vec![],
                 })?;
-                Ok(store.history().clone())
+                Ok(())
             })
             .await?;
         let compactor = self.execution_dependencies().await.compactor;
-        let compacted = match compactor
-            .compact(DashCompactionRequest {
-                compaction_id: compaction_id.clone(),
-                mode: CompactionMode::AutomaticOverflow,
-                source_head: history.head().cloned(),
-                source_digest: history.digest(),
-                history,
-            })
+        let compacted = match self
+            .materialize_compaction_request(
+                compaction_id.clone(),
+                CompactionMode::AutomaticOverflow,
+            )
             .await
         {
+            Ok(compaction_request) => compactor.compact(compaction_request).await,
+            Err(error) => Err(error),
+        };
+        let compacted = match compacted {
             Ok(compacted) => compacted,
             Err(error) => {
                 let lost = matches!(error, DashServiceError::Lost { .. });
@@ -1840,7 +1842,7 @@ impl DashAgentService {
     ) -> Result<DashCommandReceipt, DashServiceError> {
         let compaction_id = CompactionId::new(request.command_id.0.clone());
         let effect_prefix = request.effect_id.0.clone();
-        let (_, history) = self
+        let (_, ()) = self
             .update_repository(|repository| {
                 repository.store.begin_compaction(
                     DashCommand {
@@ -1868,19 +1870,17 @@ impl DashAgentService {
                         retryable: false,
                     },
                 );
-                Ok(history)
+                Ok(())
             })
             .await?;
         let compactor = self.execution_dependencies().await.compactor;
-        let result = compactor
-            .compact(DashCompactionRequest {
-                compaction_id: compaction_id.clone(),
-                mode,
-                source_head: history.head().cloned(),
-                source_digest: history.digest(),
-                history,
-            })
-            .await;
+        let result = match self
+            .materialize_compaction_request(compaction_id.clone(), mode)
+            .await
+        {
+            Ok(compaction_request) => compactor.compact(compaction_request).await,
+            Err(error) => Err(error),
+        };
         let (_, receipt) = self
             .update_repository(|repository| {
                 let (terminal, retryable) = match result {
@@ -2071,124 +2071,55 @@ impl DashAgentService {
         &self,
         active_turn: &AgentTurnId,
     ) -> Result<DashCoreContext, DashServiceError> {
+        Ok(self
+            .materialize_session_context(Some(active_turn), true)
+            .await?
+            .context)
+    }
+
+    async fn materialize_compaction_request(
+        &self,
+        compaction_id: CompactionId,
+        mode: CompactionMode,
+    ) -> Result<DashCompactionRequest, DashServiceError> {
         let repository = self.repository.load().await?;
-        let history_state = repository.store.history().state()?;
-        let surface = history_state.surface;
-        let initial_context = history_state.initial_context;
-        let entries = repository.store.history().entries();
-        let mut applied_compactions = BTreeMap::new();
-        let mut latest_compaction = None;
-        for (index, entry) in entries.iter().enumerate() {
-            match &entry.payload {
-                HistoryPayload::CompactionApplied {
-                    compaction_id,
-                    context_frame,
-                    retained_from,
+        let (source_head, source_digest) = repository
+            .store
+            .history()
+            .entries()
+            .iter()
+            .find_map(|entry| match &entry.payload {
+                HistoryPayload::CompactionStarted {
+                    compaction_id: started_id,
+                    source_head,
+                    source_digest,
                     ..
-                } => {
-                    applied_compactions.insert(
-                        compaction_id.clone(),
-                        (context_frame.clone(), retained_from.clone()),
-                    );
+                } if started_id == &compaction_id => {
+                    Some((source_head.clone(), source_digest.clone()))
                 }
-                HistoryPayload::CompactionCompleted { compaction_id } => {
-                    if let Some((context_frame, retained_from)) =
-                        applied_compactions.get(compaction_id).cloned()
-                    {
-                        latest_compaction = Some((index, context_frame, retained_from));
-                    }
-                }
-                _ => {}
-            }
-        }
-        let (compaction_frame, history_start) = latest_compaction
-            .map(|(completed_index, context_frame, retained_from)| {
-                let start = retained_from
-                    .as_ref()
-                    .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
-                    .unwrap_or(completed_index.saturating_add(1));
-                (Some(context_frame), start)
+                _ => None,
             })
-            .unwrap_or((None, 0));
-        let mut history = Vec::new();
-        let mut pending_tool_calls = Vec::new();
-        let mut tool_call_ids = BTreeMap::new();
-        for entry in &entries[history_start..] {
-            match &entry.payload {
-                HistoryPayload::InputAccepted { content, .. } => {
-                    flush_provider_tool_calls(&mut history, &mut pending_tool_calls);
-                    history.push(DashMessage {
-                        role: DashMessageRole::User,
-                        content: content.clone(),
-                        tool_call_id: None,
-                        tool_calls: Vec::new(),
-                        is_error: false,
-                    });
-                }
-                HistoryPayload::AgentOutput {
-                    turn_id, content, ..
-                } if turn_id != active_turn => {
-                    flush_provider_tool_calls(&mut history, &mut pending_tool_calls);
-                    history.push(DashMessage {
-                        role: DashMessageRole::Assistant,
-                        content: content.clone(),
-                        tool_call_id: None,
-                        tool_calls: Vec::new(),
-                        is_error: false,
-                    });
-                }
-                HistoryPayload::ToolCall {
-                    item_id,
-                    call_id,
-                    name,
-                    arguments,
-                    ..
-                } => {
-                    tool_call_ids.insert(item_id.clone(), call_id.clone());
-                    pending_tool_calls.push(DashToolCall {
-                        call_id: call_id.clone(),
-                        name: name.clone(),
-                        arguments: serde_json::from_str(arguments)
-                            .unwrap_or_else(|_| serde_json::Value::String(arguments.clone())),
-                    });
-                }
-                HistoryPayload::ToolResult {
-                    item_id,
-                    content,
-                    is_error,
-                    ..
-                } => {
-                    flush_provider_tool_calls(&mut history, &mut pending_tool_calls);
-                    if let Some(call_id) = tool_call_ids.get(item_id) {
-                        history.push(DashMessage {
-                            role: DashMessageRole::Tool,
-                            content: content
-                                .iter()
-                                .filter_map(crate::ContentPart::extract_text)
-                                .collect::<Vec<_>>()
-                                .join("\n"),
-                            tool_call_id: Some(call_id.clone()),
-                            tool_calls: Vec::new(),
-                            is_error: *is_error,
-                        });
-                    }
-                }
-                _ => {}
-            }
-        }
-        flush_provider_tool_calls(&mut history, &mut pending_tool_calls);
-        history.pop();
-        let system_prompt = render_accepted_context(
-            surface.as_ref(),
-            initial_context.as_ref(),
-            compaction_frame.as_ref(),
-            &accepted_surface_append_frames(entries),
-        );
-        Ok(DashCoreContext {
-            system_prompt,
-            history,
-            tools: surface.map(|surface| surface.tools).unwrap_or_default(),
+            .ok_or_else(|| DashServiceError::InvalidState {
+                message: format!("compaction {} has no started history fact", compaction_id.0),
+            })?;
+        let materialized = materialize_session_context(&repository, None, false)?;
+        Ok(DashCompactionRequest {
+            compaction_id,
+            mode,
+            source_head,
+            source_digest,
+            context: materialized.context,
+            message_entry_ids: materialized.message_entry_ids,
         })
+    }
+
+    async fn materialize_session_context(
+        &self,
+        excluded_turn: Option<&AgentTurnId>,
+        drop_latest_input: bool,
+    ) -> Result<MaterializedSessionContext, DashServiceError> {
+        let repository = self.repository.load().await?;
+        materialize_session_context(&repository, excluded_turn, drop_latest_input)
     }
 
     async fn materialize_provider_round_context(
@@ -2592,17 +2523,187 @@ fn accepted_surface_append_frames(
     frames
 }
 
-fn flush_provider_tool_calls(history: &mut Vec<DashMessage>, pending: &mut Vec<DashToolCall>) {
+struct MaterializedSessionContext {
+    context: DashCoreContext,
+    message_entry_ids: Vec<HistoryEntryId>,
+}
+
+fn materialize_session_context(
+    repository: &DashAgentRepositoryState,
+    excluded_turn: Option<&AgentTurnId>,
+    drop_latest_input: bool,
+) -> Result<MaterializedSessionContext, DashServiceError> {
+    let history_state = repository.store.history().state()?;
+    let surface = history_state.surface;
+    let initial_context = history_state.initial_context;
+    let entries = repository.store.history().entries();
+    let mut applied_compactions = BTreeMap::new();
+    let mut latest_compaction = None;
+    for (index, entry) in entries.iter().enumerate() {
+        match &entry.payload {
+            HistoryPayload::CompactionApplied {
+                compaction_id,
+                context_frame,
+                retained_from,
+                ..
+            } => {
+                applied_compactions.insert(
+                    compaction_id.clone(),
+                    (context_frame.clone(), retained_from.clone()),
+                );
+            }
+            HistoryPayload::CompactionCompleted { compaction_id } => {
+                if let Some((context_frame, retained_from)) =
+                    applied_compactions.get(compaction_id).cloned()
+                {
+                    latest_compaction = Some((index, context_frame, retained_from));
+                }
+            }
+            _ => {}
+        }
+    }
+    let (compaction_frame, history_start) = latest_compaction
+        .map(|(completed_index, context_frame, retained_from)| {
+            let start = retained_from
+                .as_ref()
+                .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
+                .unwrap_or(completed_index.saturating_add(1));
+            (Some(context_frame), start)
+        })
+        .unwrap_or((None, 0));
+    let mut history = Vec::new();
+    let mut message_entry_ids = Vec::new();
+    let mut pending_tool_calls = Vec::new();
+    let mut tool_call_ids = BTreeMap::new();
+    for entry in &entries[history_start..] {
+        match &entry.payload {
+            HistoryPayload::InputAccepted { content, .. } => {
+                flush_provider_tool_calls(
+                    &mut history,
+                    &mut message_entry_ids,
+                    &mut pending_tool_calls,
+                );
+                history.push(DashMessage {
+                    role: DashMessageRole::User,
+                    content: content.clone(),
+                    tool_call_id: None,
+                    tool_calls: Vec::new(),
+                    is_error: false,
+                });
+                message_entry_ids.push(entry.entry_id.clone());
+            }
+            HistoryPayload::AgentOutput {
+                turn_id, content, ..
+            } if excluded_turn.is_none_or(|excluded| turn_id != excluded) => {
+                flush_provider_tool_calls(
+                    &mut history,
+                    &mut message_entry_ids,
+                    &mut pending_tool_calls,
+                );
+                history.push(DashMessage {
+                    role: DashMessageRole::Assistant,
+                    content: content.clone(),
+                    tool_call_id: None,
+                    tool_calls: Vec::new(),
+                    is_error: false,
+                });
+                message_entry_ids.push(entry.entry_id.clone());
+            }
+            HistoryPayload::ToolCall {
+                item_id,
+                call_id,
+                name,
+                arguments,
+                ..
+            } => {
+                tool_call_ids.insert(item_id.clone(), (call_id.clone(), entry.entry_id.clone()));
+                pending_tool_calls.push((
+                    DashToolCall {
+                        call_id: call_id.clone(),
+                        name: name.clone(),
+                        arguments: serde_json::from_str(arguments)
+                            .unwrap_or_else(|_| serde_json::Value::String(arguments.clone())),
+                    },
+                    entry.entry_id.clone(),
+                ));
+            }
+            HistoryPayload::ToolResult {
+                item_id,
+                content,
+                is_error,
+                ..
+            } => {
+                flush_provider_tool_calls(
+                    &mut history,
+                    &mut message_entry_ids,
+                    &mut pending_tool_calls,
+                );
+                if let Some((call_id, call_entry_id)) = tool_call_ids.get(item_id) {
+                    history.push(DashMessage {
+                        role: DashMessageRole::Tool,
+                        content: content
+                            .iter()
+                            .filter_map(crate::ContentPart::extract_text)
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        tool_call_id: Some(call_id.clone()),
+                        tool_calls: Vec::new(),
+                        is_error: *is_error,
+                    });
+                    message_entry_ids.push(call_entry_id.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    flush_provider_tool_calls(
+        &mut history,
+        &mut message_entry_ids,
+        &mut pending_tool_calls,
+    );
+    if drop_latest_input {
+        history.pop();
+        message_entry_ids.pop();
+    }
+    let system_prompt = render_accepted_context(
+        surface.as_ref(),
+        initial_context.as_ref(),
+        compaction_frame.as_ref(),
+        &accepted_surface_append_frames(entries),
+    );
+    Ok(MaterializedSessionContext {
+        context: DashCoreContext {
+            system_prompt,
+            history,
+            tools: surface.map(|surface| surface.tools).unwrap_or_default(),
+        },
+        message_entry_ids,
+    })
+}
+
+fn flush_provider_tool_calls(
+    history: &mut Vec<DashMessage>,
+    message_entry_ids: &mut Vec<HistoryEntryId>,
+    pending: &mut Vec<(DashToolCall, HistoryEntryId)>,
+) {
     if pending.is_empty() {
         return;
     }
+    let Some((_, entry_id)) = pending.first() else {
+        return;
+    };
+    let entry_id = entry_id.clone();
     history.push(DashMessage {
         role: DashMessageRole::Assistant,
         content: String::new(),
         tool_call_id: None,
-        tool_calls: std::mem::take(pending),
+        tool_calls: std::mem::take(pending)
+            .into_iter()
+            .map(|(call, _)| call)
+            .collect(),
         is_error: false,
     });
+    message_entry_ids.push(entry_id);
 }
 
 fn terminalize_repository_effect(

@@ -1,6 +1,6 @@
 use agentdash_agent::dash::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryReplayer, AgentHistoryState,
-    AgentItemId, HistoryPayload, ItemDetails,
+    AgentItemId, AgentTurnId, DashExecutionFailure, HistoryPayload, ItemDetails,
 };
 #[cfg(test)]
 use agentdash_agent_protocol::AgentCapabilityManifest;
@@ -171,11 +171,14 @@ pub(crate) fn entry_records(
             }));
         }
         HistoryPayload::CompactionStarted { compaction_id, .. } => {
+            let turn_id = AgentTurnId::new(compaction_id.0.clone());
+            let item_id = AgentItemId::new(compaction_id.0.clone());
+            events.push(BackboneEvent::TurnStarted(TurnStartedNotification {
+                thread_id: session_id.to_owned(),
+                turn: turn(state, &turn_id, None)?,
+            }));
             events.push(BackboneEvent::ItemStarted(ItemStartedNotification {
-                item: codex::ThreadItem::ContextCompaction {
-                    id: compaction_id.0.clone(),
-                }
-                .into(),
+                item: item(state, &item_id)?,
                 thread_id: session_id.to_owned(),
                 turn_id: compaction_id.0.clone(),
                 started_at_ms: 0,
@@ -194,16 +197,38 @@ pub(crate) fn entry_records(
             ));
             events.extend(accepted_context_events(std::slice::from_ref(context_frame)));
         }
-        HistoryPayload::CompactionCompleted { compaction_id }
-        | HistoryPayload::CompactionFailed { compaction_id, .. } => {
+        HistoryPayload::CompactionCompleted { compaction_id } => {
+            let turn_id = AgentTurnId::new(compaction_id.0.clone());
+            let item_id = AgentItemId::new(compaction_id.0.clone());
             events.push(BackboneEvent::ItemCompleted(ItemCompletedNotification {
-                item: codex::ThreadItem::ContextCompaction {
-                    id: compaction_id.0.clone(),
-                }
-                .into(),
+                item: item(state, &item_id)?,
                 thread_id: session_id.to_owned(),
                 turn_id: compaction_id.0.clone(),
                 completed_at_ms: 0,
+            }));
+            events.push(BackboneEvent::TurnCompleted(TurnCompletedNotification {
+                thread_id: session_id.to_owned(),
+                turn: turn(state, &turn_id, None)?,
+            }));
+        }
+        HistoryPayload::CompactionFailed {
+            compaction_id,
+            error,
+            lost,
+        } => {
+            let turn_id = AgentTurnId::new(compaction_id.0.clone());
+            let failure = DashExecutionFailure {
+                code: if *lost {
+                    "compaction_lost".to_owned()
+                } else {
+                    "compaction_failed".to_owned()
+                },
+                message: error.clone(),
+                retryable: false,
+            };
+            events.push(BackboneEvent::TurnCompleted(TurnCompletedNotification {
+                thread_id: session_id.to_owned(),
+                turn: turn(state, &turn_id, Some(&failure))?,
             }));
         }
         HistoryPayload::TurnCompleted { turn_id, .. }
@@ -888,5 +913,131 @@ mod tests {
         let event = event.expect("typed presentation event");
         assert_eq!(event.module_id, "canvas:cvs-live");
         assert_eq!(event.presentation_uri, "canvas://cvs-live");
+    }
+
+    #[test]
+    fn compaction_projects_one_complete_canonical_turn() {
+        let compaction_id = agentdash_agent::dash::CompactionId::new("compact-1");
+        let revision = agentdash_agent::dash::ContextRevision::new("revision-1");
+        let mut history =
+            AgentHistory::empty(AgentSessionId::new("session-1"), BranchId::new("branch-1"));
+        let source_digest = history.digest();
+        history
+            .append_batch(vec![
+                HistoryContribution {
+                    entry_id: HistoryEntryId::new("compact-started"),
+                    payload: HistoryPayload::CompactionStarted {
+                        compaction_id: compaction_id.clone(),
+                        mode: agentdash_agent::dash::CompactionMode::Manual,
+                        source_head: None,
+                        source_digest: source_digest.clone(),
+                    },
+                },
+                HistoryContribution {
+                    entry_id: HistoryEntryId::new("compact-applied"),
+                    payload: HistoryPayload::CompactionApplied {
+                        compaction_id: compaction_id.clone(),
+                        revision: revision.clone(),
+                        summary: "summary".to_owned(),
+                        retained_from: None,
+                        source_digest,
+                        context_frame: agentdash_agent::dash::accepted_compaction_summary_frame(
+                            &compaction_id,
+                            &revision,
+                            "summary",
+                        ),
+                    },
+                },
+                HistoryContribution {
+                    entry_id: HistoryEntryId::new("compact-completed"),
+                    payload: HistoryPayload::CompactionCompleted {
+                        compaction_id: compaction_id.clone(),
+                    },
+                },
+            ])
+            .expect("valid compaction history");
+
+        let records = history_records(&history).expect("canonical compaction records");
+        let event_types = records
+            .iter()
+            .filter_map(|record| match &record.presentation.envelope.event {
+                BackboneEvent::TurnStarted(_) => Some("turn_started"),
+                BackboneEvent::ItemStarted(_) => Some("item_started"),
+                BackboneEvent::ExecutorContextCompacted(_) => Some("context_compacted"),
+                BackboneEvent::ItemCompleted(_) => Some("item_completed"),
+                BackboneEvent::TurnCompleted(_) => Some("turn_completed"),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            event_types,
+            vec![
+                "turn_started",
+                "item_started",
+                "context_compacted",
+                "item_completed",
+                "turn_completed",
+            ]
+        );
+        let completed_turn = records
+            .iter()
+            .find_map(|record| match &record.presentation.envelope.event {
+                BackboneEvent::TurnCompleted(notification) => Some(&notification.turn),
+                _ => None,
+            })
+            .expect("compaction turn terminal");
+        assert_eq!(completed_turn.id, compaction_id.0);
+        assert_eq!(completed_turn.status, codex::TurnStatus::Completed);
+        assert_eq!(completed_turn.items.len(), 1);
+    }
+
+    #[test]
+    fn failed_compaction_terminates_the_turn_without_a_successful_item_boundary() {
+        let compaction_id = agentdash_agent::dash::CompactionId::new("compact-failed");
+        let mut history =
+            AgentHistory::empty(AgentSessionId::new("session-1"), BranchId::new("branch-1"));
+        let source_digest = history.digest();
+        history
+            .append_batch(vec![
+                HistoryContribution {
+                    entry_id: HistoryEntryId::new("compact-started"),
+                    payload: HistoryPayload::CompactionStarted {
+                        compaction_id: compaction_id.clone(),
+                        mode: agentdash_agent::dash::CompactionMode::Manual,
+                        source_head: None,
+                        source_digest,
+                    },
+                },
+                HistoryContribution {
+                    entry_id: HistoryEntryId::new("compact-failed"),
+                    payload: HistoryPayload::CompactionFailed {
+                        compaction_id: compaction_id.clone(),
+                        error: "provider unavailable".to_owned(),
+                        lost: false,
+                    },
+                },
+            ])
+            .expect("valid failed compaction history");
+
+        let records = history_records(&history).expect("canonical compaction records");
+        assert!(!records.iter().any(|record| matches!(
+            &record.presentation.envelope.event,
+            BackboneEvent::ItemCompleted(_)
+        )));
+        let completed_turn = records
+            .iter()
+            .find_map(|record| match &record.presentation.envelope.event {
+                BackboneEvent::TurnCompleted(notification) => Some(&notification.turn),
+                _ => None,
+            })
+            .expect("failed compaction turn terminal");
+        assert_eq!(completed_turn.status, codex::TurnStatus::Failed);
+        assert_eq!(
+            completed_turn
+                .error
+                .as_ref()
+                .map(|error| error.message.as_str()),
+            Some("provider unavailable")
+        );
     }
 }

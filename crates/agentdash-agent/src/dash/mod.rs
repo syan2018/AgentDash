@@ -5,10 +5,11 @@ mod service;
 mod store;
 
 pub use core_execution::{
-    DashBeforeToolDecision, DashCancellation, DashCoreContext, DashCoreError, DashCoreEvent,
-    DashCoreOutput, DashCoreTurn, DashCoreTurnResult, DashExecutionCallbacks, DashExecutionEvent,
-    DashExecutionFailure, DashFinishReason, DashMessage, DashMessageRole, DashProvider,
-    DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashProviderRoundMaterializer,
+    DashBeforeToolDecision, DashCancellation, DashCompactionTurn, DashCompactionTurnOutput,
+    DashCoreContext, DashCoreError, DashCoreEvent, DashCoreOutput, DashCoreTurn,
+    DashCoreTurnResult, DashExecutionCallbacks, DashExecutionEvent, DashExecutionFailure,
+    DashFinishReason, DashMessage, DashMessageRole, DashProvider, DashProviderEvent,
+    DashProviderEventStream, DashProviderRequest, DashProviderRoundMaterializer,
     DashProviderRoundSnapshots, DashToolCall, DashToolCallbacks, DashToolDefinition,
     DashToolResult, execution_assistant_item_id, execution_tool_item_id,
 };

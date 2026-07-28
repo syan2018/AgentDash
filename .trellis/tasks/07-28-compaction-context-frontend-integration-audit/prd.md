@@ -30,6 +30,9 @@ Workspace event-refresh补丁。
 
 ### Context correctness
 
+- P0：`BridgeDashCompactor` 当前并非接续原 Session 的 Compaction Turn，而是从 history
+  手工重建一套 summary transcript，再用独立 system prompt发起无状态 bridge request；
+  这既破坏正常 Turn 的精确上下文前缀，也使 provider prefix cache无法稳定复用。
 - P0：`crates/agentdash-integration-native-agent/src/bridge_execution.rs:297-362`
   的compactor输入只物化用户/助手文本，遗漏`ToolCall/ToolResult`；被cut且不在retained tail的
   工具事实会从后续模型输入真实消失。
@@ -78,6 +81,11 @@ Workspace event-refresh补丁。
 
 - R1：concrete Complete Agent必须是Compaction activity、checkpoint、context recipe、terminal
   outcome与command admission的唯一事实owner。
+- R1a：Compaction必须作为原 Agent Session中的正式 Turn执行，直接复用正常 Turn 的精确
+  context materialization，只在稳定prefix末尾追加一次synthetic compaction instruction；
+  禁止手工维护第二套summary transcript。
+- R1b：Compaction provider output只作为checkpoint candidate；synthetic instruction与候选
+  summary不得持久化成普通conversation records。
 - R2：Compaction state与canonical presentation必须由同一次`SourceObservation`原子投影；
   presentation只负责timeline/audit，不得反向充当control事实。
 - R3：统一Agent Runtime connection/view必须承载active activity、commands、source/context
@@ -109,6 +117,8 @@ Workspace event-refresh补丁。
 
 - [ ] AC1：Compaction activity从Complete Agent source observation进入同一Agent Runtime view；
   reload任一phase可恢复同一operation id与phase。
+- [ ] AC1a：Compaction以包含`ContextCompaction` item的正式Turn出现，canonical lifecycle完整；
+  failed/lost以Turn error终止，不能伪装成成功item。
 - [ ] AC2：同一AgentRun target只有一个Agent projection connection；Feed、Composer、Compaction UI
   与Agent状态UI消费同一observation。
 - [ ] AC3：Product Workspace不再拥有Runtime execution/commands副本，也不通过presentation event
@@ -116,8 +126,9 @@ Workspace event-refresh补丁。
 - [ ] AC4：manual/automatic compaction期间，提交、重复压缩、Fork、Close、Cancel等行为与owner
   command matrix一致；草稿编辑和只读浏览保持可用。
 - [ ] AC5：failed/lost/cancelled显示正确terminal，且active context recipe/revision保持不变。
-- [ ] AC6：Native provider capture与`AgentContextSnapshot`完整一致，包含summary、retained messages、
-  tool call/result pairs、active ContextFrames和structured tools。
+- [ ] AC6：Native Compaction Turn request与同一时刻正常Turn context拥有结构完全相同的prefix，
+  包含retained messages、tool call/result pairs与active ContextFrames；只额外追加一次压缩指令，
+  且本轮不开放structured tools。
 - [ ] AC7：typed `CompactionSummary` frame完整暴露checkpoint identity、边界、revision、digest、
   strategy、统计和usage freshness。
 - [ ] AC8：context inspector按target与required revision自动收敛；旧target/旧revision响应不能提交。
@@ -138,6 +149,7 @@ Workspace event-refresh补丁。
 
 本任务负责：
 
+- 原 Session精确上下文上的Compaction Turn执行语义；
 - typed Compaction activity、terminal、checkpoint与context recipe；
 - compaction command matrix与durable execution/recovery；
 - Compaction state observation和typed presentation；
@@ -154,6 +166,9 @@ Workspace event-refresh补丁。
 
 ## Deferred, Non-blocking
 
+- 当前`LlmBridge`没有server-side thread/session coordinate。Slice 1先保证同一精确上下文、
+  稳定prefix与prefix cache语义；未来provider-native remote compaction作为能力实现同一
+  Compaction Turn契约，不引入平行fallback设计。
 - `AgentRuntimeView/AgentRuntimeConnection`的最终公开命名由相邻任务收敛；本任务依赖的是其
   “单一可重建Runtime read/change view”语义，不依赖临时DTO名称。
 - 本轮结论来自静态源码审计；真实LLM、PostgreSQL crash-injection、Codex pinned schema fixture

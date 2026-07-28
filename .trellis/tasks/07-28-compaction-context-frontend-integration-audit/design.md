@@ -17,8 +17,8 @@ Compaction 必须成为 Agent owner 内可持久恢复的正式 activity；用�
 
 ```text
 Agent durable owner
-├─ Activity fold
-│  └─ AgentActivitySnapshot
+├─ Turn fold
+│  └─ ActiveTurnSnapshot（normal / context_compaction）
 ├─ Context materializer
 │  └─ AgentContextSnapshot / ModelInputRecipe
 ├─ Command policy
@@ -59,31 +59,27 @@ Canonical presentation 负责审计与展示，不再反向触发 Workspace HTTP
 - **展示/查询面**：Conversation Feed渲染canonical records；Context inspector按
   `context_revision`查询完整recipe。两者不能反向推导控制状态。
 
-## 1. Agent activity
+## 1. Compaction 是正式 Turn
 
-建议在 Service API 定义一等 activity：
+Compaction不建立独立于Turn的执行通道。它在原Agent Session上启动一个正式Turn，并包含一个
+`ContextCompaction` item：
 
 ```text
-AgentActivitySnapshot =
-  Idle
-  | Turn {
-      turn_id,
-      phase,
-      interaction?,
-      source_revision
-    }
-  | ContextCompaction {
-      operation_id,
-      compaction_id,
-      mode,
-      phase,
-      base_context_revision,
-      applied_context_revision?,
-      cancellable,
-      source_revision,
-      started_at,
-      terminal?
-    }
+Turn {
+  turn_id
+  kind = context_compaction
+  operation_id
+  compaction_id
+  mode
+  phase
+  base_context_revision
+  applied_context_revision?
+  cancellable
+  source_revision
+  started_at
+  terminal?
+  items = [ContextCompaction]
+}
 ```
 
 Compaction phase：
@@ -106,7 +102,9 @@ cancelled
 - `Failed/Lost/Cancelled` 不推进 active context revision。
 - `cancellable` 由 owner 当前 phase 决定，前端不得猜测。
 
-不把这些状态塞进 Agent lifecycle。Agent 可以是 Active，同时 activity 为 Idle、Turn 或 ContextCompaction。
+不把这些状态塞进 Agent lifecycle。Agent 可以是 Active，同时当前Turn为普通对话Turn或
+Compaction Turn。Runtime沿用统一active Turn/control observation，不建立Compaction专用连接、
+store或第二种active owner。
 
 ## 2. Typed compaction terminal
 
@@ -194,30 +192,42 @@ CompactionCheckpoint {
 
 `retained_record_ids` 可由稳定 range/revision 确定时不必重复持久化全部内容，但 query 结果必须能明确给出 membership，不能仅依赖 compaction event 的位置。
 
-### Compactor 与 restore 共用 recipe
+### 原 Session 精确上下文上的 Compaction Turn
 
-先构建 provider-neutral recipe，再由不同 consumer 使用：
+正常Turn与Compaction Turn必须共用同一个context materializer。Compaction不是先把history投影为
+另一套summary transcript，而是在同一精确provider context末尾追加一次synthetic instruction：
 
 ```text
 active stable ContextFrames
 + previous successful CompactionSummary frame
-+ compacted prefix conversation
-+ complete ToolCall/ToolResult pairs
-+ structured interaction outcomes
-+ retained suffix
-+ structured provider tools
++ exact current conversation prefix
+ complete ToolCall/ToolResult pairs
++ synthetic compaction instruction
 ```
 
-同一 recipe 驱动：
+Compaction Turn约束：
 
-- compactor provider request；
-- checkpoint digest；
+- context prefix与同一时刻正常Turn materialization结构完全相同；
+- synthetic instruction只追加一次；
+- 本轮provider request不开放新tools，但prefix保留历史tool call/result；
+- provider output只作为summary/checkpoint candidate；
+- synthetic instruction与candidate不成为普通conversation records；
+- retained boundary与checkpoint membership从同一history coordinate计算。
+
+当前bridge没有server-side session coordinate，因此provider request仍需提交模型可见上下文。
+该约束的价值是删除第二套有损transcript并稳定复用provider prefix cache。未来provider-native
+remote compaction只替换Compaction Turn的provider capability，不改变owner lifecycle或checkpoint
+契约。
+
+成功后，同一materializer使用installed checkpoint驱动：
+
 - post-compaction provider request；
+- checkpoint digest；
 - Agent context snapshot；
 - Product current-context view；
 - provider capture test。
 
-每项被 compact 的事实必须满足二选一：
+每项被compact的事实必须满足二选一：
 
 - 被 summary input 完整覆盖；
 - 明确属于 retained suffix。

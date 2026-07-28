@@ -4,17 +4,17 @@ use std::sync::{
 };
 
 use agentdash_agent::dash::{
-    ActivityStatus, AgentHistory, AgentSessionId, AgentTurnId, BranchId, CommandId, CompactionId,
-    ContextDeliveryFidelity, ContextRevision, DashAgentRepository, DashAgentRepositoryState,
-    DashAgentService, DashCommandRequest, DashCompactionRequest, DashCompactionResult,
-    DashCompactor, DashConversationNamer, DashConversationNamingRequest, DashCoreError,
-    DashExecutionCallbacks, DashExecutionConsistency, DashExecutionDependencies,
+    ActivityStatus, AgentHistory, AgentItemId, AgentSessionId, AgentTurnId, BranchId, CommandId,
+    CompactionId, ContextDeliveryFidelity, ContextRevision, DashAgentRepository,
+    DashAgentRepositoryState, DashAgentService, DashCommandRequest, DashCompactionRequest,
+    DashCompactionResult, DashCompactor, DashConversationNamer, DashConversationNamingRequest,
+    DashCoreError, DashExecutionCallbacks, DashExecutionConsistency, DashExecutionDependencies,
     DashExecutionEvent, DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
     DashProviderRequest, DashPublicCommand, DashReceiptState, DashServiceError, DashSurface,
     DashSurfaceInstruction, DashTerminalOutcome, DashToolCall, DashToolCallbacks,
-    DashToolDefinition, DashToolResult, EffectId, HistoryPayload, InitialContextContribution,
-    InitialContextInstallation, InitialContextMode, NoopDashConversationNamer,
-    NoopDashHistoryCallbacks,
+    DashToolDefinition, DashToolResult, EffectId, HistoryContribution, HistoryEntryId,
+    HistoryPayload, InitialContextContribution, InitialContextInstallation, InitialContextMode,
+    ItemKind, NoopDashConversationNamer, NoopDashHistoryCallbacks,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -616,6 +616,181 @@ impl DashCompactor for NoCompaction {
             retained_from: None,
         })
     }
+}
+
+#[derive(Default)]
+struct CapturingCompactor {
+    requests: tokio::sync::Mutex<Vec<DashCompactionRequest>>,
+}
+
+#[async_trait]
+impl DashCompactor for CapturingCompactor {
+    async fn compact(
+        &self,
+        request: DashCompactionRequest,
+    ) -> Result<DashCompactionResult, DashServiceError> {
+        self.requests.lock().await.push(request);
+        Ok(DashCompactionResult {
+            revision: ContextRevision::new("captured"),
+            summary: "captured summary".into(),
+            retained_from: Some(HistoryEntryId::new("tool-call")),
+        })
+    }
+}
+
+#[tokio::test]
+async fn compaction_receives_the_same_materialized_session_context_as_a_normal_turn() {
+    let turn_id = AgentTurnId::new("completed-turn");
+    let tool_item_id = AgentItemId::new("tool-item");
+    let mut history = AgentHistory::empty(
+        AgentSessionId::new("compact-session"),
+        BranchId::new("main"),
+    );
+    for (entry_id, payload) in [
+        (
+            "input",
+            HistoryPayload::InputAccepted {
+                input_id: "input".to_owned(),
+                content: "inspect the manifest".to_owned(),
+            },
+        ),
+        (
+            "turn-started",
+            HistoryPayload::TurnStarted {
+                turn_id: turn_id.clone(),
+                started_at_ms: 1,
+            },
+        ),
+        (
+            "tool-started",
+            HistoryPayload::ItemStarted {
+                turn_id: turn_id.clone(),
+                item_id: tool_item_id.clone(),
+                kind: ItemKind::ToolCall,
+            },
+        ),
+        (
+            "tool-call",
+            HistoryPayload::ToolCall {
+                turn_id: turn_id.clone(),
+                item_id: tool_item_id.clone(),
+                call_id: "call-1".to_owned(),
+                name: "read".to_owned(),
+                arguments: r#"{"path":"Cargo.toml"}"#.to_owned(),
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
+            },
+        ),
+        (
+            "tool-result",
+            HistoryPayload::ToolResult {
+                turn_id: turn_id.clone(),
+                item_id: tool_item_id.clone(),
+                content: vec![agentdash_agent::ContentPart::text("workspace manifest")],
+                is_error: false,
+                details: None,
+            },
+        ),
+        (
+            "tool-completed",
+            HistoryPayload::ItemCompleted {
+                turn_id: turn_id.clone(),
+                item_id: tool_item_id,
+            },
+        ),
+        (
+            "turn-completed",
+            HistoryPayload::TurnCompleted {
+                turn_id,
+                completed_at_ms: 2,
+            },
+        ),
+    ] {
+        history
+            .append(HistoryContribution {
+                entry_id: HistoryEntryId::new(entry_id),
+                payload,
+            })
+            .expect("fixture history must be valid");
+    }
+    let compactor = Arc::new(CapturingCompactor::default());
+    let service = create_service(
+        history,
+        DashExecutionDependencies {
+            provider: Arc::new(CapturingProvider::default()),
+            tools: Arc::new(NoTools),
+            callbacks: Arc::new(NoCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: compactor.clone(),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
+        },
+    )
+    .await;
+    service
+        .apply_surface(DashSurface {
+            revision: 1,
+            digest: "surface".to_owned(),
+            instructions: Vec::new(),
+            tools: Vec::new(),
+            context_frames: vec![accepted_context_frame(
+                "accepted-context",
+                "accepted system context",
+            )],
+        })
+        .await
+        .expect("surface should apply");
+
+    service
+        .execute(DashCommandRequest {
+            command_id: CommandId::new("compact"),
+            effect_id: EffectId::new("compact-effect"),
+            command: DashPublicCommand::RequestCompaction {
+                mode: agentdash_agent::dash::CompactionMode::Manual,
+            },
+        })
+        .await
+        .expect("compaction command should complete");
+
+    let requests = compactor.requests.lock().await;
+    let request = requests
+        .first()
+        .expect("compactor request must be captured");
+    assert!(
+        request
+            .context
+            .system_prompt
+            .contains("accepted system context")
+    );
+    assert_eq!(request.context.history.len(), 3);
+    assert_eq!(request.context.history[0].content, "inspect the manifest");
+    assert_eq!(request.context.history[1].tool_calls[0].call_id, "call-1");
+    assert_eq!(
+        request.context.history[2].tool_call_id.as_deref(),
+        Some("call-1")
+    );
+    assert_eq!(request.context.history[2].content, "workspace manifest");
+    assert_eq!(
+        request.message_entry_ids,
+        vec![
+            HistoryEntryId::new("input"),
+            HistoryEntryId::new("tool-call"),
+            HistoryEntryId::new("tool-call"),
+        ]
+    );
+    drop(requests);
+    let read = service
+        .read()
+        .await
+        .expect("compacted session should reload");
+    let compaction_turn_id = AgentTurnId::new("compact");
+    assert_eq!(
+        read.state.turns[&compaction_turn_id].status,
+        ActivityStatus::Completed
+    );
+    assert_eq!(
+        read.state.items[&AgentItemId::new("compact")].kind,
+        ItemKind::ContextCompaction
+    );
+    assert!(read.state.active_turn.is_none());
 }
 
 #[tokio::test]

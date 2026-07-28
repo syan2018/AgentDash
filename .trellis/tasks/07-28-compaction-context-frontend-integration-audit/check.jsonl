@@ -3,6 +3,7 @@
 {"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/frontend-compaction-state-ui.md", "reason": "复核timeline状态、交互门禁、target/revision fence、reload/reconnect与浏览器行为。"}
 {"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/contextframe-compaction-contract.md", "reason": "复核Exact/Observed recipe、retained membership与typed CompactionSummary frame。"}
 {"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/control-state-plane-convergence.md", "reason": "确认没有新增Compaction专用store、第二connection、Workspace command副本或presentation refresh特判。"}
+{"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/slice0-slice1-compaction-turn-evaluation.md", "reason": "复核 Compaction request 精确复用同一 Session context prefix、正式 Turn lifecycle与失败边界。"}
 {"file": ".trellis/tasks/07-28-runtime-session-state-chain/prd.md", "reason": "确认Compaction接线复用统一AgentRuntimeConnection/View并保持Product Workspace职责。"}
 {"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "检查provider capture、checkpoint、summary与retained suffix保持同一context recipe。"}
 {"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "检查Started后任一崩溃点可恢复且无永久Accepted。"}

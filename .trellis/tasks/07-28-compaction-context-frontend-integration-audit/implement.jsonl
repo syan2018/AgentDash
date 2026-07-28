@@ -1,6 +1,7 @@
 {"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/design.md", "reason": "实现 Compaction activity、checkpoint、context recipe、统一 Runtime view selector 与 durable recovery 的目标契约。"}
 {"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/cross-layer-synthesis.md", "reason": "保留 P0/P1 根因、生产事件顺序、retained suffix 与纵向场景矩阵。"}
 {"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/control-state-plane-convergence.md", "reason": "约束 Compaction 复用单一 Agent Runtime connection/view，禁止建立 Workspace refresh 特判或第二状态 owner。"}
+{"file": ".trellis/tasks/07-28-compaction-context-frontend-integration-audit/research/slice0-slice1-compaction-turn-evaluation.md", "reason": "规定原 Session 精确上下文上的正式 Compaction Turn，并删除平行 summary transcript 设计。"}
 {"file": ".trellis/tasks/07-28-runtime-session-state-chain/prd.md", "reason": "依赖相邻任务统一 Complete Agent read/change、AgentRuntimeConnection/View 与 Product Workspace 职责边界。"}
 {"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "约束 AgentSnapshot、Runtime normalize、command availability 与 live/read 恢复边界。"}
 {"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "约束 CompactionSummary、retained suffix、ContextFrame 与 provider 输入同源。"}

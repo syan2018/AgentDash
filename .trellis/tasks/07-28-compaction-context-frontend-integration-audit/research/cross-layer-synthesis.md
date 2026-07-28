@@ -125,7 +125,9 @@ Product context projection 当前却使用：
 
 所以 cut 区间内的工具调用结果同时不在 summary 和 retained suffix。prompt 即使要求“保留 tool outcomes”，模型也没有收到这些事实。
 
-修复边界：先建立 provider-neutral input recipe，保证完整 tool call/result pairing 与 structured outcome 被 summary 覆盖或 retained 保留；不能只修改 prompt。
+修复边界：Compaction必须作为原Session上的正式Turn，复用正常Turn的精确context
+materialization并只追加一次synthetic instruction；完整tool call/result pairing与structured
+outcome必须处于同一prefix，不能另建summary transcript或只修改prompt。
 
 ### P0：失败被当作成功边界
 

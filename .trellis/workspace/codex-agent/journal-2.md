@@ -651,3 +651,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 73: 收束 Compaction 上下文控制面与状态面
+
+**Date**: 2026-07-28
+**Task**: 收束 Compaction 上下文控制面与状态面
+**Branch**: `codex/compaction-context-integration`
+
+### Summary
+
+完成 Slice 0-6：收束压缩活动与持久恢复语义，建立类型化 checkpoint 和权威 ContextFrame 查询链，补齐 Runtime/Product/前端展示与陈旧请求隔离，并完成定向质量验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9e3b585ef` | (see git log) |
+| `8a22b594d` | (see git log) |
+| `09691fed0` | (see git log) |
+
+### Status
+
+[OK] **Completed**

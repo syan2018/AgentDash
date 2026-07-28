@@ -24,7 +24,7 @@ Canvas、Extension panel/component 和 Interaction renderer 不以 AgentRun、Ag
 
 ## Product Decisions
 
-- PD1：Agent-facing 能力命名为 `OperationScript`。调用方提交 inline Rhai source + input + allowed Operation manifest；生命周期限定为当前调用，持久内容由 Canvas/Workflow 等调用方 definition 自己保存。
+- PD1：Agent-facing 能力命名为 `OperationScript`。Agent 只提交 inline Rhai source + input，服务端从 current actor surface 构造 allowed Operation manifest 并应用平台运行上限；UserWorkshop/Workflow 等受信 application caller 可使用 engine 的显式 manifest/limits 合同。生命周期限定为当前调用，持久内容由 Canvas/Workflow 等调用方 definition 自己保存。
 - PD2：Application 定义 `OperationScriptEngine` port，Infrastructure 先复用现有 Rhai limits、JSON bridge 与 AST cache 设计并扩展 execution-scoped evaluator factory；未来增加其它 sandbox 只新增 engine adapter，不改变 Agent/Canvas/Workflow/Gateway 合同。
 - PD3：Canvas 可以把 `.rhai` 文件或 inline source 保存为 definition/source 的一部分，也可以由 Canvas JS/component event 通过 host bridge 触发；脚本始终在服务端 sandbox 执行，不在 iframe 中执行。
 - PD4：每个 script 内部 Operation 调用都重新进入共同 `OperationExecutionCore`，重新校验 operation manifest、schema、capability、readiness、limits、cancellation 与 trace；外层 script 获准不是内部调用的 blanket authorization。
@@ -51,7 +51,7 @@ Canvas、Extension panel/component 和 Interaction renderer 不以 AgentRun、Ag
   replay、capability、readiness、provenance 和 dispatch identity。
 - R3：把 RuntimeGateway invocation 正交拆为 principal、scope、origin、execution placement 与 trace correlation；browser 不提交 Session、Backend、workspace root 或预组装 capability。
 - R4：在 RuntimeGateway 内建立 direct invocation 与 OperationScript nested invoke 共用的 `OperationExecutionCore`，统一 schema/capability admission、output validation、cancellation、trace、audit 和 result ref。
-- R5：Agent 通过单一 `operation_script` 工具提交完整程序；服务端内部编译/校验 `rhai_v1` source、解析 allowed Operation manifest、签发绑定完整 execution plan 的短期 token，并立即由 async executor 执行同步脚本语义。UserWorkshop/Workflow 等非 Agent caller 可继续使用 engine 的显式 preflight/run 合同。
+- R5：Agent 通过单一 `operation_script` 工具提交 source 与可选 input；服务端固定 `rhai_v1`、host API、运行上限，从 current actor surface 构造 allowed Operation manifest，签发绑定完整 execution plan 的短期 token，并立即由 async executor 执行同步脚本语义。UserWorkshop/Workflow 等非 Agent caller 可继续使用 engine 的显式 preflight/run 合同。
 - R6：OperationScript 支持普通 Rhai 分支、循环、数组/map/filter 与 JSON result shaping；Operation 调用通过 execution-scoped `ops.invoke()`/`ops.invoke_all()`，受 worker admission、timeout、Rhai sandbox limits、最大调用数、并行上限和 output size 限制。
 - R7：OperationScript 不调用 LLM、不创建 AgentRun、不包含 human gate、不后台运行、不自动 retry/rollback、不承担跨会话恢复。已完成副作用不伪装成自动回滚；失败返回 bounded diagnostic、trace 与已执行 call evidence。
 - R8：建立 standalone UserWorkshop runtime surface；Canvas、Extension panel/component 与 Interaction renderer 在没有 AgentRun/AgentFrame/RuntimeSession 时发现并调用授权 Operation/OperationScript。

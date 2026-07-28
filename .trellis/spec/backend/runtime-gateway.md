@@ -63,9 +63,9 @@ pub struct PlatformToolBinding {
 - `operation_script` 只有一个顶层 Runtime ToolCall Item；服务端内部顺序执行 engine preflight/run，
   nested call 使用
   `GatewayOperationScriptExecutor` 重新进入 canonical admission，并继承父 tool call trace。
-- Agent-facing program 只提交 source/input/limits/exact requested OperationRefs；descriptor digest、
-  effect/replay、principal、scope、authority revision 和 granted capabilities 都由服务端 current
-  surface 重建。
+- Agent-facing program 只提交 source 与可选 input；dialect、host API、limits、allowed Operation
+  manifest、descriptor digest、effect/replay、principal、scope、authority revision 和 granted
+  capabilities 都由服务端 current surface 与平台运行策略构造。
 - AgentRun 的 authority revision 只由 `ExecutionAuthority::operation_authority_grant()` 生成；
   dynamic Platform/MCP/Extension provider、Workspace Module 与执行 core 使用同一个值，不对同一
   facts 集合另行 hash。

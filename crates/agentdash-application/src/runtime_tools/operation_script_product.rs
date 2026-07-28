@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_application_operation_gateway::{
-    AgentRunOperationHost, HostOperationScriptProgram, OperationGateway,
+    AgentRunOperationHost, HostOperationScriptOperationSet, HostOperationScriptProgram,
+    OperationGateway,
 };
 use agentdash_application_ports::operation_script::{
     OPERATION_SCRIPT_HOST_API_V1, OperationScriptEngine, OperationScriptError,
@@ -11,8 +12,6 @@ use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
     ProductRuntimeToolService,
 };
-use agentdash_contracts::workspace_module::WorkspaceModuleOperationRef;
-use agentdash_domain::operation::OperationRef;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -21,119 +20,26 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OperationScriptArguments {
-    #[serde(default = "default_language")]
-    language: String,
-    #[serde(default = "default_host_api_version")]
-    host_api_version: u16,
     source: String,
     #[serde(default)]
     input: Value,
-    requested_operations: Vec<WorkspaceModuleOperationRef>,
-    #[serde(default)]
-    limits: OperationScriptLimits,
-}
-
-fn default_language() -> String {
-    RHAI_V1_DIALECT.to_owned()
-}
-
-fn default_host_api_version() -> u16 {
-    OPERATION_SCRIPT_HOST_API_V1
 }
 
 pub fn operation_script_runtime_tool_schema() -> Value {
     let properties = serde_json::Map::from_iter([
         (
-            "language".to_owned(),
-            json!({
-                "type": "string",
-                "enum": [RHAI_V1_DIALECT],
-                "default": RHAI_V1_DIALECT
-            }),
-        ),
-        (
-            "host_api_version".to_owned(),
-            json!({
-                "type": "integer",
-                "enum": [OPERATION_SCRIPT_HOST_API_V1],
-                "default": OPERATION_SCRIPT_HOST_API_V1
-            }),
-        ),
-        (
             "source".to_owned(),
             json!({
                 "type": "string",
-                "description": "Ephemeral Rhai source executed by the trusted OperationScript host."
+                "description": "Ephemeral Rhai source. Use exact operation strings obtained from the latest workspace_module_describe results."
             }),
         ),
         ("input".to_owned(), json!({})),
-        (
-            "requested_operations".to_owned(),
-            json!({
-                "type": "array",
-                "minItems": 1,
-                "items": operation_ref_schema(),
-                "description": "Exact OperationRefs copied from current workspace_module_describe results."
-            }),
-        ),
-        (
-            "limits".to_owned(),
-            json!({
-                "type": "object",
-                "description": "Optional bounded execution limits. Omit to use server defaults.",
-                "properties": {
-                    "timeout_ms": {"type": "integer", "minimum": 1},
-                    "max_source_bytes": {"type": "integer", "minimum": 1},
-                    "max_input_bytes": {"type": "integer", "minimum": 1},
-                    "max_output_bytes": {"type": "integer", "minimum": 1},
-                    "max_rhai_operations": {"type": "integer", "minimum": 1},
-                    "max_call_levels": {"type": "integer", "minimum": 1},
-                    "max_string_size": {"type": "integer", "minimum": 1},
-                    "max_array_size": {"type": "integer", "minimum": 1},
-                    "max_map_size": {"type": "integer", "minimum": 1},
-                    "max_operation_calls": {"type": "integer", "minimum": 1},
-                    "max_parallel_operations": {"type": "integer", "minimum": 1}
-                },
-                "required": [
-                    "timeout_ms",
-                    "max_source_bytes",
-                    "max_input_bytes",
-                    "max_output_bytes",
-                    "max_rhai_operations",
-                    "max_call_levels",
-                    "max_string_size",
-                    "max_array_size",
-                    "max_map_size",
-                    "max_operation_calls",
-                    "max_parallel_operations"
-                ],
-                "additionalProperties": false
-            }),
-        ),
     ]);
     json!({
         "type": "object",
         "properties": properties,
-        "required": ["source", "requested_operations"],
-        "additionalProperties": false
-    })
-}
-
-fn operation_ref_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "namespace": {"type": "string"},
-            "provider_key": {"type": "string"},
-            "operation_key": {"type": "string"},
-            "contract_version": {"type": "integer", "minimum": 1}
-        },
-        "required": [
-            "namespace",
-            "provider_key",
-            "operation_key",
-            "contract_version"
-        ],
+        "required": ["source"],
         "additionalProperties": false
     })
 }
@@ -159,28 +65,13 @@ impl ApplicationOperationScriptRuntimeToolService {
                     format!("invalid OperationScript arguments: {error}"),
                 )
             })?;
-        let requested_operations = arguments
-            .requested_operations
-            .into_iter()
-            .map(|operation_ref| {
-                OperationRef::new(
-                    operation_ref.namespace,
-                    operation_ref.provider_key,
-                    operation_ref.operation_key,
-                    operation_ref.contract_version,
-                )
-                .map_err(|error| {
-                    rejected("operation_script_invalid_operation_ref", error.to_string())
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         let program = HostOperationScriptProgram {
-            language: arguments.language,
-            host_api_version: arguments.host_api_version,
+            language: RHAI_V1_DIALECT.to_owned(),
+            host_api_version: OPERATION_SCRIPT_HOST_API_V1,
             source: arguments.source,
             input: arguments.input,
-            requested_operations,
-            limits: arguments.limits,
+            operation_set: HostOperationScriptOperationSet::CurrentActorSurface,
+            limits: OperationScriptLimits::default(),
         };
         let host = AgentRunOperationHost::project(
             self.gateway.clone(),
@@ -292,25 +183,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_hides_internal_preflight_token_and_requires_exact_operation_refs() {
+    fn schema_exposes_only_source_and_input() {
         let schema = operation_script_runtime_tool_schema();
 
-        assert!(
-            !schema["properties"]
-                .as_object()
-                .expect("properties")
-                .contains_key("token")
-        );
-        assert!(
-            schema["required"]
-                .as_array()
-                .expect("required")
-                .iter()
-                .any(|field| field == "requested_operations")
-        );
-        assert_eq!(
-            schema["properties"]["requested_operations"]["items"]["additionalProperties"],
-            false
-        );
+        let properties = schema["properties"].as_object().expect("properties");
+        let mut property_names = properties.keys().map(String::as_str).collect::<Vec<_>>();
+        property_names.sort_unstable();
+        assert_eq!(property_names, vec!["input", "source"]);
+        assert_eq!(schema["required"], json!(["source"]));
     }
 }

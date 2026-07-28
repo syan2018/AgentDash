@@ -8,7 +8,7 @@ Depends On: WI-01、WI-03、WI-11
 
 OperationGateway 已统一 MCP、Extension、Interaction 与 host action，但 VFS、进程和 Task
 原生工具仍只能由 Agent 逐个回调。它们没有 exact OperationRef，因此不能进入 Workspace Module
-describe、OperationScript allowed manifest 和 nested admission。
+describe、服务端 current-surface OperationScript manifest 和 nested admission。
 
 直接让 OperationGateway 调用任意 Runtime executor 会把 catalog、Product authorization、applied
 surface 与 callback delivery evidence揉进 application execution core，并可能递归暴露

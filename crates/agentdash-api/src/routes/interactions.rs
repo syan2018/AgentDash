@@ -648,7 +648,10 @@ async fn execute_interaction_component_event(
                 host_api_version,
                 source,
                 input: request.payload,
-                requested_operations,
+                operation_set:
+                    agentdash_application_operation_gateway::HostOperationScriptOperationSet::Exact(
+                        requested_operations,
+                    ),
                 limits: OperationScriptLimits::default(),
             };
             let host = UserWorkshopOperationHost::interaction(

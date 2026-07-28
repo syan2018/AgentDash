@@ -63,9 +63,9 @@ workspace_module_list
 - 暴露单一 Agent-facing `operation_script`，复用 WI-03 的 `OperationScriptEngine`、内部 preflight
   token、limits、result ref 和 Gateway nested executor；服务端在同一 tool request 内完成
   preflight 与 run，token 不进入 Agent 上下文。
-- Agent 从一个或多个 `workspace_module_describe` 结果选择完整 OperationRefs；服务端必须重新从当前
-  actor surface 解析 descriptor、digest、effect、replay policy、authority revision 与 granted
-  capabilities，不能信任 Agent 提交的 manifest 元数据。
+- Agent 只提交 source 与可选 input，并在脚本中使用一个或多个 `workspace_module_describe` 返回的
+  exact OperationRef 字符串；服务端固定 dialect、host API、运行上限，并从 current actor surface
+  构造完整 manifest、descriptor、effect、replay policy、authority revision 与 granted capabilities。
 - engine preflight token继续绑定 dialect/host API、source、input、allowed descriptors、limits、
   principal/scope 和 expiry；内部 run 与每个 nested call 都重新 admission。
 - 即时组合失败返回 bounded diagnostic、partial/outcome-unknown 与 call evidence；需要 durable
@@ -136,8 +136,8 @@ resolve current module surface
 - list/describe/invoke/present 的准确参数和推荐顺序。
 - panel-only、agent-and-panel、readiness、effect、replay policy、schema、permission、provenance 的含义。
 - 单次 invoke、OperationScript 即时组合和 Workflow durable orchestration 的选择边界。
-- allowed OperationRefs 必须来自 describe，但 `operation_script` 的内部 preflight/run 仍以服务端
-  current surface 为准。
+- 脚本中的 exact OperationRef 必须来自 describe；Agent 不提交 manifest 或运行 limits，
+  `operation_script` 的内部 preflight/run 以服务端 current surface 与平台运行策略为准。
 - surface 变化后重新 describe，不缓存或重建 exact ref/presentation。
 
 ## Write Set
@@ -222,4 +222,6 @@ resolve current module surface
   Canvas/Interaction/Extension、单次调用、UI presentation 和即时组合触发场景；正文收束为
   list/describe/invoke/present/OperationScript 的可执行决策与 exact 参数示例。
 - 2026-07-27：Agent 工具面收敛为单一 `operation_script`；服务端内部继续执行 engine
-  preflight/run 并保留 token/TOCTOU 校验，模型只提交一次完整 program 并接收最终执行结果。
+  preflight/run 并保留 token/TOCTOU 校验，模型通过一次工具调用提交脚本并接收最终执行结果。
+- 2026-07-28：进一步深化 Agent 工具接口为 `source + input`；current actor manifest、dialect、
+  host API 与 limits 全部由服务端持有，并在 Skill 中增加 VFS + Task 的完整并行查询示例。

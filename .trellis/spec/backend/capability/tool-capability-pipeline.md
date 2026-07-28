@@ -311,7 +311,7 @@ Workspace Module 是当前 Agent actor 可见的 Extension、Canvas definition �
 - `workspace_module_describe(module_id: string)`
 - `workspace_module_invoke(operation_ref: ExactOperationRef, input?: JsonValue)`
 - `workspace_module_present(module_id: string, view_key?: string, payload?: JsonValue)`
-- `operation_script(source, requested_operations, input?, language?, host_api_version?, limits?)`
+- `operation_script(source, input?)`
 
 ```rust
 trait ExecutionAuthorityResolver {
@@ -350,9 +350,10 @@ resource grants 与 revision/digest evidence，不再包一层 AgentRun binding 
   provenance；invoke 不接受 module id 或 operation key 拼接。
 - present 的 renderer、URI、title、diagnostics 和 Interaction attachment 全由服务端从 current
   module surface 构造。
-- OperationScript program 显式列出 describe 得到的 exact OperationRefs。Agent tool 内部执行
-  engine preflight/run，token 绑定 source/input/limits/current descriptors/principal/scope/authority
-  且不暴露给模型；run 和 nested calls 继续重新准入。
+- OperationScript 的脚本使用 describe 得到的 exact OperationRef 字符串；Agent 不提交 manifest、
+  dialect、host API 或 limits。服务端从 current actor surface 构造完整 manifest 并应用平台运行
+  策略；内部 engine preflight/run token 绑定 source/input/limits/current descriptors/principal/
+  scope/authority 且不暴露给模型，run 和 nested calls 继续重新准入。
 - `platform:*` nested call 通过 OperationGateway 后重新进入 PlatformToolBroker，从 current applied
   resource grants 生成 VFS/Task grant；Workspace Module projection 不持有 executor。
 - dynamic provider discovery failure 进入 `surface_diagnostics`。`ready + module_count=0` 才表示
@@ -418,7 +419,7 @@ let authority = execution_authority.resolve(current_locator)
 workspace_module_describe(module_id="canvas:{definition_id}")
 workspace_module_invoke(operation_ref=<exact describe result>, input={...})
 workspace_module_present(module_id="canvas:{definition_id}", view_key="preview")
-operation_script(source=..., requested_operations=[<exact refs>])
+operation_script(source=..., input={...})
 ```
 
 ## Task Runtime Tool Surface

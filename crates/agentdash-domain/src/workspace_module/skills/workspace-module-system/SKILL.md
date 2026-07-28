@@ -102,41 +102,36 @@ the canonical presentation returned by the server.
 
 ## Compose immediate Operations
 
-Use `operation_script` only for bounded, ephemeral composition. Copy every structured
-`requested_operations` entry from current describe results.
-
-Address an allowed Operation inside Rhai with:
+Use `operation_script` only for bounded, ephemeral composition. First describe every module you
+need, then address its Operations inside Rhai with:
 
 ```text
 namespace:provider_key:operation_key:v<contract_version>
 ```
 
-Invoke sequentially with:
+Call `operation_script` with `source` and optional `input` only. For example, after current
+descriptors confirm the two exact refs below, query VFS mounts and the current task overview
+concurrently:
 
-```rhai
-let value = ops.invoke(
-    "namespace:provider_key:operation_key:v1",
-    #{ key: input.key }
-);
-value
+```json
+{
+  "source": "let results = ops.invoke_all([#{ operation: \"platform:vfs:mounts_list:v1\", input: #{} }, #{ operation: \"platform:task:task_read:v1\", input: #{ mode: input.task_mode } }]); #{ mounts: results[0], task_overview: results[1] }",
+  "input": {
+    "task_mode": "overview"
+  }
+}
 ```
 
-Invoke independent calls concurrently with bounded parallelism:
+Use those strings only when the latest describe result returned them. Use `ops.invoke` for
+dependent or sequential calls. Use `ops.invoke_all` for independent calls; each entry requires
+`operation` and `input`, and results preserve input order. The global `input` value is the tool's
+JSON input. The script's final expression is its returned value.
 
-```rhai
-ops.invoke_all([
-    #{ operation: "namespace:provider-a:first:v1", input: #{} },
-    #{ operation: "namespace:provider-b:second:v1", input: #{} }
-])
-```
-
-1. Send `source`, `input`, exact `requested_operations`, and optional limits to `operation_script`.
-2. Inspect the returned value, per-call evidence, `partial`, and `outcome_unknown`.
-3. Re-describe and run the script again when the actor surface or descriptor changes.
-
-The server validates and binds the complete program before execution, then re-admits the run and
-every nested Operation against current authority. Do not assume OperationScript commits Interaction
-state; use an admitted Interaction command for state changes.
+The server fixes the Rhai dialect, host API, runtime limits, and current actor Operation manifest.
+It validates and binds the program before execution, then re-admits the run and every nested
+Operation against current authority. Inspect the returned value and call evidence. Re-describe and
+run again after the actor surface or descriptor changes. Do not assume OperationScript commits
+Interaction state; use an admitted Interaction command for state changes.
 
 If `operation_script` returns a provider unavailable code, treat the requested catalog facet as
 temporarily unresolved. Re-run list/describe after the authority or provider becomes ready; do not

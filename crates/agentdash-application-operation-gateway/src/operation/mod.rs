@@ -54,7 +54,7 @@ pub use operation_gateway::{
 pub use operation_hosts::{
     AgentRunOperationHost, BoundOperationHost, BoundOperationScriptHost,
     ExtensionServiceOperationHost, HostInvocationOptions, HostOperationInvocation,
-    HostOperationScriptProgram, UserWorkshopOperationHost,
+    HostOperationScriptOperationSet, HostOperationScriptProgram, UserWorkshopOperationHost,
 };
 pub use operation_provider::{
     DynamicOperationProvider, OperationAuthorityGrant, OperationAuthorityResolver,

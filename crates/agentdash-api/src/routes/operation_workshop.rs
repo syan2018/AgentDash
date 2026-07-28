@@ -248,11 +248,13 @@ fn program_from_dto(
         host_api_version: dto.host_api_version,
         source: dto.source,
         input: dto.input,
-        requested_operations: dto
-            .requested_operations
-            .into_iter()
-            .map(operation_ref_from_dto)
-            .collect::<Result<Vec<_>, _>>()?,
+        operation_set:
+            agentdash_application_operation_gateway::HostOperationScriptOperationSet::Exact(
+                dto.requested_operations
+                    .into_iter()
+                    .map(operation_ref_from_dto)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
         limits: limits_from_dto(dto.limits)?,
     })
 }

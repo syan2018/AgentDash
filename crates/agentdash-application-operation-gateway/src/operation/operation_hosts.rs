@@ -21,12 +21,18 @@ use super::{
 };
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum HostOperationScriptOperationSet {
+    CurrentActorSurface,
+    Exact(Vec<OperationRef>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct HostOperationScriptProgram {
     pub language: String,
     pub host_api_version: u16,
     pub source: String,
     pub input: Value,
-    pub requested_operations: Vec<OperationRef>,
+    pub operation_set: HostOperationScriptOperationSet,
     pub limits: OperationScriptLimits,
 }
 
@@ -226,8 +232,17 @@ impl BoundOperationScriptHost {
             .discover(cancel)
             .await
             .map_err(operation_script_surface_error)?;
-        let mut allowed_operations = Vec::with_capacity(program.requested_operations.len());
-        for operation_ref in &program.requested_operations {
+        let operation_refs = match &program.operation_set {
+            HostOperationScriptOperationSet::CurrentActorSurface => surface
+                .catalog
+                .descriptors()
+                .into_iter()
+                .map(|descriptor| descriptor.operation_ref.clone())
+                .collect::<Vec<_>>(),
+            HostOperationScriptOperationSet::Exact(operation_refs) => operation_refs.clone(),
+        };
+        let mut allowed_operations = Vec::with_capacity(operation_refs.len());
+        for operation_ref in &operation_refs {
             let descriptor = self
                 .host
                 .gateway

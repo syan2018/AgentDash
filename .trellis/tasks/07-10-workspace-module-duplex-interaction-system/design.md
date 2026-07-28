@@ -166,7 +166,12 @@ registry 推导；extension/canvas module visibility 继续由 Workspace Module 
 ### 3.2 外部合同
 
 ```text
-OperationScriptInput {
+AgentOperationScriptInput {
+  source,
+  input?
+}
+
+OperationScriptProgram {
   language: "rhai_v1",
   host_api_version: 1,
   source,
@@ -181,13 +186,13 @@ OperationScriptInput {
 }
 ```
 
-`allowed_operations` 是本次 script 可调用面的显式 manifest。script 中的 `ops.invoke()`/`ops.invoke_all()` 只能使用 manifest 内的 exact ref；engine preflight 解析当前 descriptor、capability/effect/replay summary，并生成 execution plan digest。V1 不允许 allowed manifest 包含 OperationScript 自身，避免递归 evaluator。
+Agent 只控制脚本业务逻辑与输入。Agent host 固定 dialect、host API 和运行上限，并从 current actor surface 构造 `allowed_operations`；UserWorkshop、Canvas 与 Workflow 等受信 application caller 可显式提交完整 `OperationScriptProgram`。script 中的 `ops.invoke()`/`ops.invoke_all()` 只能使用 manifest 内的 exact ref；engine preflight 解析当前 descriptor、capability/effect/replay summary，并生成 execution plan digest。V1 不允许 allowed manifest 包含 OperationScript 自身，避免递归 evaluator。
 
 engine preflight 返回短期 opaque token，绑定 `language/host_api_version + source_digest + input_digest + descriptor/effect_manifest_digest + normalized_limits + principal/scope + expiry`。engine run 对任一不匹配都拒绝，并在每个 nested invoke 重新读取当前 surface，避免 approval substitution 与 TOCTOU。
 
 入口：
 
-- Agent Runtime 只暴露 `operation_script`：接收完整 program，在一次服务端调用内顺序完成 engine preflight 与 run，只返回最终 output、call evidence 和 diagnostics；短期 plan token 不进入模型上下文。
+- Agent Runtime 只暴露 `operation_script(source, input?)`：服务端补全 current-surface manifest 与运行策略，在一次调用内顺序完成 engine preflight 与 run，只返回最终 output、call evidence 和 diagnostics；短期 plan token 不进入模型上下文。
 - UserWorkshop/Canvas 与 Workflow application caller 可继续显式调用 engine preflight/run，以支持独立校验 UI 或 durable node admission，但两者复用同一 engine 与 Gateway executor。
 
 ### 3.3 Engine boundary

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 71
-- **Last Active**: 2026-07-27
+- **Total Sessions**: 72
+- **Last Active**: 2026-07-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~631 | Active |
+| `journal-2.md` | ~653 | Active |
 | `journal-1.md` | ~1971 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 72 | 2026-07-28 | 统一 Agent Runtime 状态链路与停止控制 | `918e67389`, `af458f82f` | `main` |
 | 71 | 2026-07-27 | 修复原生 Operation Schema 兼容性 | `d8e434744` | `main` |
 | 70 | 2026-07-27 | 收束 Workspace Module Execution Authority | `4f589308f` | `main` |
 | 69 | 2026-07-24 | 数据库表收束与迁移基线压缩 | `108ae5633` | `codex/agent-runtime-final-convergence-plan` |

@@ -629,3 +629,25 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 72: 统一 Agent Runtime 状态链路与停止控制
+
+**Date**: 2026-07-28
+**Task**: 统一 Agent Runtime 状态链路与停止控制
+**Branch**: `main`
+
+### Summary
+
+以 Complete Agent 显式执行事实驱动 AgentRuntimeView/Update，前端由单一 AgentRuntimeConnection 统一 Feed、Composer、重连与命令；删除 Workspace 重复控制投影并修复运行中停止按钮。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `918e67389` | (see git log) |
+| `af458f82f` | (see git log) |
+
+### Status
+
+[OK] **Completed**

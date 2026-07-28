@@ -275,13 +275,8 @@ impl FunctionNodeRunner {
             trace_id: prepared.request.identity.effect_id.clone(),
             attachment_ref: None,
         };
-        let cancel = CancellationToken::new();
-        let preflight = caller
-            .preflight(program.clone(), context.clone(), cancel.clone())
-            .await
-            .map_err(operation_script_node_error)?;
         let outcome = caller
-            .run(program, context, preflight.token, cancel)
+            .execute(program, context, CancellationToken::new())
             .await
             .map_err(operation_script_node_error)?;
         let raw = match outcome.value {
@@ -345,11 +340,6 @@ fn operation_script_node_error(error: WorkflowOperationScriptCallerError) -> Run
             "operation_script_operation_unavailable".to_string(),
             false,
             Some(json!({ "operation_ref": operation_ref })),
-        ),
-        WorkflowOperationScriptCallerError::DescriptorSerialization(_) => (
-            "operation_script_descriptor_serialize_failed".to_string(),
-            false,
-            None,
         ),
         WorkflowOperationScriptCallerError::Script(script) => script_error_detail(script),
     };

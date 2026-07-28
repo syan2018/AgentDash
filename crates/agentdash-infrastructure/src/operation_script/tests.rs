@@ -1,7 +1,6 @@
 use super::*;
 use agentdash_application_ports::operation_script::{
-    OperationEffect, OperationOriginRef, OperationPrincipalRef, OperationReplayPolicy,
-    OperationScopeRef, OperationScriptOperationResult,
+    OperationOriginRef, OperationPrincipalRef, OperationScopeRef, OperationScriptOperationResult,
 };
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -39,9 +38,8 @@ fn executor() -> Arc<FixtureExecutor> {
         peak: AtomicUsize::new(0),
     })
 }
-fn engine(secret: u8) -> RhaiOperationScriptEngine {
-    RhaiOperationScriptEngine::new(&[secret; 32], RhaiOperationScriptConfig::default())
-        .expect("engine")
+fn engine() -> RhaiOperationScriptEngine {
+    RhaiOperationScriptEngine::new(RhaiOperationScriptConfig::default()).expect("engine")
 }
 fn context() -> OperationScriptExecutionContext {
     OperationScriptExecutionContext {
@@ -58,20 +56,8 @@ fn context() -> OperationScriptExecutionContext {
         attachment_ref: None,
     }
 }
-fn allowed() -> OperationScriptAllowedOperation {
-    OperationScriptAllowedOperation {
-        operation_ref: agentdash_domain::operation::OperationRef::new(
-            "agentdash",
-            "fixture",
-            "echo",
-            1,
-        )
-        .expect("ref"),
-        descriptor_digest: sha256(b"descriptor"),
-        effect: OperationEffect::Read,
-        replay_policy: OperationReplayPolicy::ReplaySafe,
-        recursive_operation_script: false,
-    }
+fn allowed() -> OperationRef {
+    OperationRef::new("agentdash", "fixture", "echo", 1).expect("ref")
 }
 fn program(source: &str) -> OperationScriptProgram {
     OperationScriptProgram {
@@ -88,24 +74,10 @@ async fn run(
     program: OperationScriptProgram,
     context: OperationScriptExecutionContext,
     executor: Arc<dyn OperationScriptOperationExecutor>,
-) -> Result<OperationScriptRunOutcome, OperationScriptError> {
-    let plan = engine
-        .preflight(
-            OperationScriptPreflightRequest {
-                program: program.clone(),
-                context: context.clone(),
-            },
-            CancellationToken::new(),
-        )
-        .await
-        .expect("preflight");
+) -> Result<OperationScriptOutcome, OperationScriptError> {
     engine
-        .run(
-            OperationScriptRunRequest {
-                program,
-                context,
-                token: plan.token,
-            },
+        .execute(
+            OperationScriptExecuteRequest { program, context },
             executor,
             CancellationToken::new(),
         )
@@ -113,26 +85,15 @@ async fn run(
 }
 
 #[tokio::test]
-async fn plain_run_uses_unique_execution_id_per_token() {
-    let engine = engine(7);
+async fn plain_execute_uses_unique_execution_id() {
+    let engine = engine();
     let context = context();
     let program = program("input.values");
-    let plan = engine
-        .preflight(
-            OperationScriptPreflightRequest {
-                program: program.clone(),
-                context: context.clone(),
-            },
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
     let first = engine
-        .run(
-            OperationScriptRunRequest {
+        .execute(
+            OperationScriptExecuteRequest {
                 program: program.clone(),
                 context: context.clone(),
-                token: plan.token.clone(),
             },
             executor(),
             CancellationToken::new(),
@@ -140,24 +101,19 @@ async fn plain_run_uses_unique_execution_id_per_token() {
         .await
         .unwrap();
     let second = engine
-        .run(
-            OperationScriptRunRequest {
-                program,
-                context,
-                token: plan.token.clone(),
-            },
+        .execute(
+            OperationScriptExecuteRequest { program, context },
             executor(),
             CancellationToken::new(),
         )
         .await
         .unwrap();
     assert_ne!(first.execution_id, second.execution_id);
-    assert_eq!(first.plan_id, plan.token.plan_id);
 }
 
 #[tokio::test]
 async fn invoke_and_invoke_all_are_exact_ordered_and_bounded() {
-    let engine = engine(7);
+    let engine = engine();
     let mut program = program(
         r#"let one = ops.invoke("agentdash:fixture:echo:v1", #{value: 1}); let many = ops.invoke_all([#{operation:"agentdash:fixture:echo:v1",input:#{value:2}},#{operation:"agentdash:fixture:echo:v1",input:#{value:3}},#{operation:"agentdash:fixture:echo:v1",input:#{value:4}}]); #{one:one,many:many}"#,
     );
@@ -183,7 +139,7 @@ async fn call_limit_failure_keeps_completed_evidence() {
     );
     program.allowed_operations.push(allowed());
     program.limits.max_operation_calls = 1;
-    let error = run(&engine(7), program, context(), executor())
+    let error = run(&engine(), program, context(), executor())
         .await
         .unwrap_err();
     assert!(
@@ -193,20 +149,10 @@ async fn call_limit_failure_keeps_completed_evidence() {
 
 #[tokio::test]
 async fn nested_call_cancellation_keeps_outcome_unknown_evidence() {
-    let engine = Arc::new(engine(7));
+    let engine = Arc::new(engine());
     let mut program = program(r#"ops.invoke("agentdash:fixture:echo:v1", #{})"#);
     program.allowed_operations.push(allowed());
     let context = context();
-    let plan = engine
-        .preflight(
-            OperationScriptPreflightRequest {
-                program: program.clone(),
-                context: context.clone(),
-            },
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
     let cancel = CancellationToken::new();
     let executor = executor();
     let task = {
@@ -215,12 +161,8 @@ async fn nested_call_cancellation_keeps_outcome_unknown_evidence() {
         let executor = executor.clone();
         tokio::spawn(async move {
             engine
-                .run(
-                    OperationScriptRunRequest {
-                        program,
-                        context,
-                        token: plan.token,
-                    },
+                .execute(
+                    OperationScriptExecuteRequest { program, context },
                     executor,
                     cancel,
                 )
@@ -245,7 +187,7 @@ async fn nested_call_cancellation_keeps_outcome_unknown_evidence() {
 async fn denied_operation_is_not_dispatched() {
     let executor = executor();
     let error = run(
-        &engine(7),
+        &engine(),
         program(r#"ops.invoke("agentdash:fixture:echo:v1", #{})"#),
         context(),
         executor.clone(),
@@ -264,7 +206,7 @@ async fn failure_keeps_partial_and_outcome_unknown_evidence() {
         r#"ops.invoke("agentdash:fixture:echo:v1", #{ok:true}); ops.invoke("agentdash:fixture:echo:v1", #{fail:true})"#,
     );
     program.allowed_operations.push(allowed());
-    let error = run(&engine(7), program, context(), executor())
+    let error = run(&engine(), program, context(), executor())
         .await
         .unwrap_err();
     assert!(
@@ -279,15 +221,15 @@ async fn ast_cache_evicts_by_entry_and_source_budget() {
         max_ast_cache_source_bytes: 16,
         ..Default::default()
     };
-    let engine = RhaiOperationScriptEngine::new(&[7; 32], config).unwrap();
+    let engine = RhaiOperationScriptEngine::new(config).unwrap();
     for source in ["1 + 1", "2 + 2", "3 + 3"] {
-        let program = program(source);
         engine
-            .preflight(
-                OperationScriptPreflightRequest {
-                    program,
+            .execute(
+                OperationScriptExecuteRequest {
+                    program: program(source),
                     context: context(),
                 },
+                executor(),
                 CancellationToken::new(),
             )
             .await
@@ -304,7 +246,7 @@ async fn large_result_ref_is_scoped_and_rechecks_capabilities() {
         max_inline_result_bytes: 4,
         ..Default::default()
     };
-    let engine = RhaiOperationScriptEngine::new(&[7; 32], config).unwrap();
+    let engine = RhaiOperationScriptEngine::new(config).unwrap();
     let context = context();
     let outcome = run(
         &engine,
@@ -342,7 +284,7 @@ async fn scoped_result_ref_expires_without_bearer_access() {
         result_ttl: Duration::milliseconds(1),
         ..Default::default()
     };
-    let engine = RhaiOperationScriptEngine::new(&[7; 32], config).unwrap();
+    let engine = RhaiOperationScriptEngine::new(config).unwrap();
     let context = context();
     let outcome = run(
         &engine,
@@ -363,47 +305,4 @@ async fn scoped_result_ref_expires_without_bearer_access() {
             .unwrap(),
         None
     );
-}
-
-#[tokio::test]
-async fn secret_rotation_invalidates_plan() {
-    let first = engine(7);
-    let second = engine(8);
-    let context = context();
-    let program = program("input");
-    let plan = first
-        .preflight(
-            OperationScriptPreflightRequest {
-                program: program.clone(),
-                context: context.clone(),
-            },
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
-    let error = second
-        .run(
-            OperationScriptRunRequest {
-                program,
-                context,
-                token: plan.token,
-            },
-            executor(),
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        OperationScriptError::InvalidPlan {
-            reason: "signature_mismatch"
-        }
-    ));
-}
-
-#[test]
-fn mac_comparison_is_constant_shape() {
-    assert!(constant_time_eq(b"same", b"same"));
-    assert!(!constant_time_eq(b"same", b"diff"));
-    assert!(!constant_time_eq(b"same", b"same-longer"));
 }

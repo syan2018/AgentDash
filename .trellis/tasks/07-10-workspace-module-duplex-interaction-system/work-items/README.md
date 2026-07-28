@@ -17,7 +17,7 @@ Parent task: `.trellis/tasks/07-10-workspace-module-duplex-interaction-system`
 | WI-00 | `WI-00-architecture-contract-gate.md` | done | 已确认产品决策 | canonical Operation、Interaction V1、Rhai 与 Extension 最终合同已进入 specs |
 | WI-01 | `WI-01-runtime-gateway-operation-core.md` | done | WI-00 | exact provider catalog、可信 envelope、统一 execution core 与 MCP/Extension/Interaction provider |
 | WI-02 | `WI-02-user-workshop-canvas-standalone.md` | done | WI-01 | Project-scoped OperationWorkshop、standalone Canvas/Extension host 与 server-resolved authority |
-| WI-03 | `WI-03-operation-script.md` | done | WI-01 | bounded async Rhai engine preflight/run、各 caller 与 scoped result ref |
+| WI-03 | `WI-03-operation-script.md` | done | WI-01 | bounded async Rhai engine execute、各 caller 与 scoped result ref |
 | WI-04 | `WI-04-interaction-domain.md` | done | WI-00 | immutable revision、Instance、CAS command/event、presentation/lease、attachment 与 effect admission |
 | WI-05 | `WI-05-canvas-interaction-migration.md` | done | WI-02、WI-04 | 0062 migration、旧 Canvas 删除、Interaction frontend、exact Extension promotion |
 | WI-06 | `WI-06-extension-component-runtime.md` | done | WI-02、WI-04、Channel WI-01 | Component ABI、隔离 host、exact artifact 与 canonical Operation bridge |

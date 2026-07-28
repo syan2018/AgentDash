@@ -4,22 +4,18 @@ use agentdash_application_operation_gateway::{
     BoundOperationHost, HostInvocationOptions, HostOperationInvocation, HostOperationScriptProgram,
     OperationReadiness, UserWorkshopOperationHost,
 };
-use agentdash_application_ports::operation_script::{
-    OperationScriptLimits, OperationScriptPreflightToken,
-};
+use agentdash_application_ports::operation_script::OperationScriptLimits;
 use agentdash_contracts::interaction::{
-    InteractionOperationRefDto, OperationScriptLimitsDto, OperationScriptPreflightTokenDto,
-    OperationScriptProgramDto, OperationWorkshopContextDto, OperationWorkshopDescriptorDto,
-    OperationWorkshopInvokeRequestDto, OperationWorkshopInvokeResponseDto,
-    OperationWorkshopScriptPreflightRequestDto, OperationWorkshopScriptPreflightResponseDto,
-    OperationWorkshopScriptRunRequestDto, OperationWorkshopScriptRunResponseDto,
-    OperationWorkshopSurfaceDto, OperationWorkshopSurfaceRequestDto,
+    InteractionOperationRefDto, OperationScriptLimitsDto, OperationScriptProgramDto,
+    OperationWorkshopContextDto, OperationWorkshopDescriptorDto, OperationWorkshopInvokeRequestDto,
+    OperationWorkshopInvokeResponseDto, OperationWorkshopScriptExecuteRequestDto,
+    OperationWorkshopScriptExecuteResponseDto, OperationWorkshopSurfaceDto,
+    OperationWorkshopSurfaceRequestDto,
 };
 use agentdash_domain::interaction::InteractionOwner;
 use agentdash_domain::operation::{OperationEffect, OperationRef, OperationReplayPolicy};
 use axum::Json;
 use axum::extract::{Path, State};
-use chrono::{DateTime, Utc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -43,12 +39,8 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::post(invoke),
         )
         .route(
-            "/projects/{project_id}/operation-workshop/scripts/preflight",
-            axum::routing::post(script_preflight),
-        )
-        .route(
-            "/projects/{project_id}/operation-workshop/scripts/run",
-            axum::routing::post(script_run),
+            "/projects/{project_id}/operation-workshop/scripts/execute",
+            axum::routing::post(script_execute),
         )
 }
 
@@ -137,46 +129,21 @@ async fn invoke(
     }))
 }
 
-async fn script_preflight(
+async fn script_execute(
     State(state): State<Arc<AppState>>,
     CurrentUser(user): CurrentUser,
     Path(path): Path<ProjectWorkshopPath>,
-    Json(request): Json<OperationWorkshopScriptPreflightRequestDto>,
-) -> Result<Json<OperationWorkshopScriptPreflightResponseDto>, ApiError> {
+    Json(request): Json<OperationWorkshopScriptExecuteRequestDto>,
+) -> Result<Json<OperationWorkshopScriptExecuteResponseDto>, ApiError> {
     let project_id = project_id(&state, &user, &path.project_id).await?;
     let host = resolve_host(&state, &user, project_id, request.context)
         .await?
         .operation_script(state.services.operation_script_engine.clone());
     let output = host
-        .preflight(program_from_dto(request.program)?, CancellationToken::new())
+        .execute(program_from_dto(request.program)?, CancellationToken::new())
         .await
         .map_err(script_error)?;
-    Ok(Json(OperationWorkshopScriptPreflightResponseDto {
-        token: token_to_dto(output.token),
-        source_digest: output.source_digest,
-        manifest_digest: output.manifest_digest,
-    }))
-}
-
-async fn script_run(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(user): CurrentUser,
-    Path(path): Path<ProjectWorkshopPath>,
-    Json(request): Json<OperationWorkshopScriptRunRequestDto>,
-) -> Result<Json<OperationWorkshopScriptRunResponseDto>, ApiError> {
-    let project_id = project_id(&state, &user, &path.project_id).await?;
-    let host = resolve_host(&state, &user, project_id, request.context)
-        .await?
-        .operation_script(state.services.operation_script_engine.clone());
-    let output = host
-        .run(
-            program_from_dto(request.program)?,
-            token_from_dto(request.token)?,
-            CancellationToken::new(),
-        )
-        .await
-        .map_err(script_error)?;
-    Ok(Json(OperationWorkshopScriptRunResponseDto {
+    Ok(Json(OperationWorkshopScriptExecuteResponseDto {
         outcome: serde_json::to_value(output)
             .map_err(|error| ApiError::Internal(error.to_string()))?,
     }))
@@ -297,34 +264,6 @@ fn operation_ref_to_dto(value: &OperationRef) -> InteractionOperationRefDto {
     }
 }
 
-fn token_to_dto(token: OperationScriptPreflightToken) -> OperationScriptPreflightTokenDto {
-    OperationScriptPreflightTokenDto {
-        plan_id: token.plan_id.to_string(),
-        binding_digest: token.binding_digest,
-        issued_at: token.issued_at.to_rfc3339(),
-        expires_at: token.expires_at.to_rfc3339(),
-        signature: token.signature,
-    }
-}
-
-fn token_from_dto(
-    dto: OperationScriptPreflightTokenDto,
-) -> Result<OperationScriptPreflightToken, ApiError> {
-    Ok(OperationScriptPreflightToken {
-        plan_id: parse_uuid(&dto.plan_id, "plan_id")?,
-        binding_digest: dto.binding_digest,
-        issued_at: parse_time(&dto.issued_at, "issued_at")?,
-        expires_at: parse_time(&dto.expires_at, "expires_at")?,
-        signature: dto.signature,
-    })
-}
-
-fn parse_time(raw: &str, field: &'static str) -> Result<DateTime<Utc>, ApiError> {
-    DateTime::parse_from_rfc3339(raw)
-        .map(|value| value.with_timezone(&Utc))
-        .map_err(|_| ApiError::BadRequest(format!("{field} 必须为 RFC3339")))
-}
-
 fn parse_uuid(raw: &str, field: &'static str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("{field} 必须为 UUID")))
 }
@@ -337,9 +276,6 @@ fn script_error(
         OperationScriptError::CapacityExceeded
         | OperationScriptError::SurfaceUnavailable { .. } => {
             ApiError::ServiceUnavailable(error.to_string())
-        }
-        OperationScriptError::TokenExpired | OperationScriptError::InvalidPlan { .. } => {
-            ApiError::Conflict(error.to_string())
         }
         _ => ApiError::BadRequest(error.to_string()),
     }

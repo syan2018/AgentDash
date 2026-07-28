@@ -1,16 +1,13 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::operation_script::{
-    OperationScriptAllowedOperation, OperationScriptEngine, OperationScriptError,
-    OperationScriptLimits, OperationScriptPreflightRequest, OperationScriptPreflightResult,
-    OperationScriptPreflightToken, OperationScriptProgram, OperationScriptRunOutcome,
-    OperationScriptRunRequest,
+    OperationScriptEngine, OperationScriptError, OperationScriptExecuteRequest,
+    OperationScriptLimits, OperationScriptOutcome, OperationScriptProgram,
 };
 use agentdash_domain::operation::OperationRef;
 use agentdash_platform_spi::AuthIdentity;
 use chrono::{Duration, Utc};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -185,31 +182,15 @@ impl BoundOperationHost {
 }
 
 impl BoundOperationScriptHost {
-    pub async fn preflight(
+    pub async fn execute(
         &self,
         program: HostOperationScriptProgram,
         cancel: CancellationToken,
-    ) -> Result<OperationScriptPreflightResult, OperationScriptError> {
+    ) -> Result<OperationScriptOutcome, OperationScriptError> {
         let (program, context) = self.resolve(program, cancel.clone()).await?;
         self.engine
-            .preflight(OperationScriptPreflightRequest { program, context }, cancel)
-            .await
-    }
-
-    pub async fn run(
-        &self,
-        program: HostOperationScriptProgram,
-        token: OperationScriptPreflightToken,
-        cancel: CancellationToken,
-    ) -> Result<OperationScriptRunOutcome, OperationScriptError> {
-        let (program, context) = self.resolve(program, cancel.clone()).await?;
-        self.engine
-            .run(
-                OperationScriptRunRequest {
-                    program,
-                    context,
-                    token,
-                },
+            .execute(
+                OperationScriptExecuteRequest { program, context },
                 self.executor.clone(),
                 cancel,
             )
@@ -255,17 +236,7 @@ impl BoundOperationScriptHost {
                     }
                     _ => operation_script_surface_error(error),
                 })?;
-            let encoded =
-                serde_json::to_vec(descriptor).map_err(|_| OperationScriptError::Internal {
-                    code: "descriptor_serialization_failed",
-                })?;
-            allowed_operations.push(OperationScriptAllowedOperation {
-                operation_ref: descriptor.operation_ref.clone(),
-                descriptor_digest: format!("sha256:{:x}", Sha256::digest(encoded)),
-                effect: descriptor.effect.clone(),
-                replay_policy: descriptor.replay_policy,
-                recursive_operation_script: false,
-            });
+            allowed_operations.push(descriptor.operation_ref.clone());
         }
         Ok((
             OperationScriptProgram {

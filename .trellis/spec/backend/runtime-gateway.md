@@ -60,7 +60,7 @@ pub struct PlatformToolBinding {
   `anyOf`、`minimum`、`maximum` 执行真实输入校验，`description` 可存在于任意 schema 节点、
   必须是字符串且不参与 admission，原因是原生工具的可见参数合同和执行准入需要保持同源，同时
   参数说明需要无损进入 Agent discovery。
-- `operation_script` 只有一个顶层 Runtime ToolCall Item；服务端内部顺序执行 engine preflight/run，
+- `operation_script` 只有一个顶层 Runtime ToolCall Item；服务端通过 engine execute 完成校验与执行，
   nested call 使用
   `GatewayOperationScriptExecutor` 重新进入 canonical admission，并继承父 tool call trace。
 - Agent-facing program 只提交 source 与可选 input；dialect、host API、limits、allowed Operation
@@ -70,7 +70,7 @@ pub struct PlatformToolBinding {
   dynamic Platform/MCP/Extension provider、Workspace Module 与执行 core 使用同一个值，不对同一
   facts 集合另行 hash。
 - Gateway 生成 actor surface 时统一应用 actor visibility 与 required capabilities。provider
-  discovery 失败可以在宽表面中隔离为 diagnostic；当 exact invoke 或 OperationScript preflight
+  discovery 失败可以在宽表面中隔离为 diagnostic；当 exact invoke 或 OperationScript execute
   请求属于该 provider 的 Operation 时，必须恢复 typed unavailable，而不是误报 OperationRef
   不存在。
 - applied tool-set revision 与 binding generation 仍由 Tool Broker 校验；业务 tool adapter 不复制这套状态机。

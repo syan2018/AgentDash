@@ -661,12 +661,8 @@ async fn execute_interaction_component_event(
             )
             .map_err(|error| ApiError::BadRequest(error.to_string()))?
             .operation_script(state.services.operation_script_engine.clone());
-            let preflight = host
-                .preflight(program.clone(), CancellationToken::new())
-                .await
-                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
             let outcome = host
-                .run(program, preflight.token, CancellationToken::new())
+                .execute(program, CancellationToken::new())
                 .await
                 .map_err(|error| ApiError::BadRequest(error.to_string()))?;
             InteractionComponentEventResponseDto {

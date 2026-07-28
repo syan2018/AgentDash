@@ -6,19 +6,16 @@ use agentdash_application_operation_gateway::{
     OperationPrincipal, OperationPrincipalRef, OperationScopeRef,
 };
 use agentdash_application_ports::operation_script::{
-    OperationScriptAllowedOperation, OperationScriptEngine, OperationScriptError,
-    OperationScriptLimits, OperationScriptPreflightRequest, OperationScriptPreflightResult,
-    OperationScriptPreflightToken, OperationScriptProgram, OperationScriptRunOutcome,
-    OperationScriptRunRequest,
+    OperationScriptEngine, OperationScriptError, OperationScriptExecuteRequest,
+    OperationScriptLimits, OperationScriptOutcome, OperationScriptProgram,
 };
 use agentdash_domain::operation::OperationRef;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 /// Trusted Workflow-owned coordinates. Authority and the executable manifest are deliberately
-/// absent and are rebuilt from the canonical gateway surface for every preflight and run.
+/// absent and are rebuilt from the canonical gateway surface for every execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkflowOperationScriptCallContext {
     pub principal: OperationPrincipalRef,
@@ -44,8 +41,6 @@ pub enum WorkflowOperationScriptCallerError {
     Surface(#[source] OperationExecutionError),
     #[error("Workflow OperationScript 请求的 Operation 不在当前 surface: {operation_ref}")]
     OperationUnavailable { operation_ref: String },
-    #[error("Workflow OperationScript descriptor 无法序列化")]
-    DescriptorSerialization(#[source] serde_json::Error),
     #[error(transparent)]
     Script(#[from] OperationScriptError),
 }
@@ -80,38 +75,18 @@ impl WorkflowOperationScriptCaller {
         }
     }
 
-    pub async fn preflight(
+    pub async fn execute(
         &self,
         program: WorkflowOperationScriptProgram,
         context: WorkflowOperationScriptCallContext,
         cancel: CancellationToken,
-    ) -> Result<OperationScriptPreflightResult, WorkflowOperationScriptCallerError> {
+    ) -> Result<OperationScriptOutcome, WorkflowOperationScriptCallerError> {
         let (program, context) = self
             .resolve_request(program, context, cancel.clone())
             .await?;
         self.engine
-            .preflight(OperationScriptPreflightRequest { program, context }, cancel)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub async fn run(
-        &self,
-        program: WorkflowOperationScriptProgram,
-        context: WorkflowOperationScriptCallContext,
-        token: OperationScriptPreflightToken,
-        cancel: CancellationToken,
-    ) -> Result<OperationScriptRunOutcome, WorkflowOperationScriptCallerError> {
-        let (program, context) = self
-            .resolve_request(program, context, cancel.clone())
-            .await?;
-        self.engine
-            .run(
-                OperationScriptRunRequest {
-                    program,
-                    context,
-                    token,
-                },
+            .execute(
+                OperationScriptExecuteRequest { program, context },
                 self.operation_executor.clone(),
                 cancel,
             )
@@ -144,13 +119,7 @@ impl WorkflowOperationScriptCaller {
                     operation_ref: operation_key(operation_ref),
                 }
             })?;
-            allowed_operations.push(OperationScriptAllowedOperation {
-                operation_ref: descriptor.operation_ref.clone(),
-                descriptor_digest: descriptor_digest(descriptor)?,
-                effect: descriptor.effect.clone(),
-                replay_policy: descriptor.replay_policy,
-                recursive_operation_script: false,
-            });
+            allowed_operations.push(descriptor.operation_ref.clone());
         }
         Ok((
             OperationScriptProgram {
@@ -172,14 +141,6 @@ impl WorkflowOperationScriptCaller {
             },
         ))
     }
-}
-
-fn descriptor_digest(
-    descriptor: &agentdash_application_operation_gateway::OperationDescriptor,
-) -> Result<String, WorkflowOperationScriptCallerError> {
-    let encoded = serde_json::to_vec(descriptor)
-        .map_err(WorkflowOperationScriptCallerError::DescriptorSerialization)?;
-    Ok(format!("sha256:{:x}", Sha256::digest(encoded)))
 }
 
 fn operation_key(operation_ref: &OperationRef) -> String {
@@ -349,8 +310,7 @@ mod tests {
             .expect("gateway"),
         );
         let engine = Arc::new(
-            RhaiOperationScriptEngine::new(&[9; 32], RhaiOperationScriptConfig::default())
-                .expect("engine"),
+            RhaiOperationScriptEngine::new(RhaiOperationScriptConfig::default()).expect("engine"),
         );
         (
             WorkflowOperationScriptCaller::new(engine, gateway),
@@ -386,18 +346,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preflight_and_run_rebuild_trusted_surface_and_dispatch_nested_operation() {
+    async fn execution_rebuilds_trusted_surface_and_dispatches_nested_operation() {
         let (caller, provider) = caller(usize::MAX, false);
-        let program = program();
-        let context = context();
-        let preflight = caller
-            .preflight(program.clone(), context.clone(), CancellationToken::new())
-            .await
-            .expect("preflight");
         let outcome = caller
-            .run(program, context, preflight.token, CancellationToken::new())
+            .execute(program(), context(), CancellationToken::new())
             .await
-            .expect("run");
+            .expect("execute");
 
         let OperationScriptResultValue::Inline { value } = outcome.value else {
             panic!("expected inline result")
@@ -407,39 +361,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn nested_operation_reenters_admission_after_run_context_resolution() {
-        let (caller, provider) = caller(2, false);
-        let program = program();
-        let context = context();
-        let preflight = caller
-            .preflight(program.clone(), context.clone(), CancellationToken::new())
-            .await
-            .expect("preflight");
+    async fn nested_operation_reenters_admission_after_execution_context_resolution() {
+        let (caller, provider) = caller(1, false);
         let error = caller
-            .run(program, context, preflight.token, CancellationToken::new())
+            .execute(program(), context(), CancellationToken::new())
             .await
             .expect_err("nested admission must observe revoked capability");
 
-        assert!(matches!(
-            error,
-            WorkflowOperationScriptCallerError::Script(
-                OperationScriptError::ExecutionFailed { ref calls, .. }
-            ) if calls.len() == 1 && calls[0].error_code.as_deref() == Some("denied")
-        ));
+        assert!(
+            matches!(
+                error,
+                WorkflowOperationScriptCallerError::Script(
+                    OperationScriptError::ExecutionFailed { ref calls, .. }
+                ) if calls.len() == 1 && calls[0].error_code.as_deref() == Some("unavailable")
+            ),
+            "unexpected error: {error:?}"
+        );
         assert_eq!(provider.invocations.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
     async fn caller_cancellation_reaches_nested_gateway_dispatch() {
         let (caller, provider) = caller(usize::MAX, true);
-        let program = program();
-        let context = context();
-        let preflight = caller
-            .preflight(program.clone(), context.clone(), CancellationToken::new())
-            .await
-            .expect("preflight");
         let cancel = CancellationToken::new();
-        let run = caller.run(program, context, preflight.token, cancel.clone());
+        let run = caller.execute(program(), context(), cancel.clone());
         tokio::pin!(run);
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => cancel.cancel(),
@@ -458,12 +403,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_preflight_does_not_enter_script_engine() {
+    async fn cancelled_execution_does_not_enter_script_engine() {
         let (caller, _) = caller(usize::MAX, false);
         let cancel = CancellationToken::new();
         cancel.cancel();
         let error = caller
-            .preflight(program(), context(), cancel)
+            .execute(program(), context(), cancel)
             .await
             .expect_err("cancelled surface resolution");
         assert!(matches!(
@@ -478,7 +423,7 @@ mod tests {
         let mut program = program();
         program.requested_operations.push(operation_ref());
         let error = caller
-            .preflight(program, context(), CancellationToken::new())
+            .execute(program, context(), CancellationToken::new())
             .await
             .expect_err("duplicate exact refs must be rejected");
         assert!(matches!(

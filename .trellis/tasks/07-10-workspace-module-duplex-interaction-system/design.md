@@ -79,7 +79,7 @@ Runtime catalog registration 不隐式产生 Operation。暴露项逐个固定 e
 与 capability；Broker 继续拥有 Product binding、applied surface、permission 和 resource grant。
 server-side nested invocation 不伪造 Complete Agent callback delivery evidence。
 
-`operation_ref` 必须携带 exact provider identity/version；Extension protocol 不再按全局 key 首个命中。discovery、preflight、direct invoke 与 OperationScript nested invoke 使用同一个 actor-specific catalog。
+`operation_ref` 必须携带 exact provider identity/version；Extension protocol 不再按全局 key 首个命中。discovery、direct invoke、OperationScript execute 与 nested invoke 使用同一个 actor-specific catalog。
 
 ### 2.2 Runtime invocation envelope
 
@@ -186,14 +186,14 @@ OperationScriptProgram {
 }
 ```
 
-Agent 只控制脚本业务逻辑与输入。Agent host 固定 dialect、host API 和运行上限，并从 current actor surface 构造 `allowed_operations`；UserWorkshop、Canvas 与 Workflow 等受信 application caller 可显式提交完整 `OperationScriptProgram`。script 中的 `ops.invoke()`/`ops.invoke_all()` 只能使用 manifest 内的 exact ref；engine preflight 解析当前 descriptor、capability/effect/replay summary，并生成 execution plan digest。V1 不允许 allowed manifest 包含 OperationScript 自身，避免递归 evaluator。
+Agent 只控制脚本业务逻辑与输入。Agent host 固定 dialect、host API 和运行上限，并从 current actor surface 构造 `allowed_operations`；UserWorkshop、Canvas 与 Workflow 等受信 application caller 可显式提交完整 `OperationScriptProgram`。script 中的 `ops.invoke()`/`ops.invoke_all()` 只能使用 manifest 内的 exact ref；engine 在一次 execute 中校验 program/context、编译并执行。V1 不允许 allowed manifest 包含 OperationScript 自身，避免递归 evaluator。
 
-engine preflight 返回短期 opaque token，绑定 `language/host_api_version + source_digest + input_digest + descriptor/effect_manifest_digest + normalized_limits + principal/scope + expiry`。engine run 对任一不匹配都拒绝，并在每个 nested invoke 重新读取当前 surface，避免 approval substitution 与 TOCTOU。
+OperationScript 没有可独立消费的 execution plan，因此 caller 不编排内部阶段。host 在 execute 前解析一次 current surface；每个 nested invoke 再读取当前 surface并重新准入，权限变化在真实调用点生效。
 
 入口：
 
-- Agent Runtime 只暴露 `operation_script(source, input?)`：服务端补全 current-surface manifest 与运行策略，在一次调用内顺序完成 engine preflight 与 run，只返回最终 output、call evidence 和 diagnostics；短期 plan token 不进入模型上下文。
-- UserWorkshop/Canvas 与 Workflow application caller 可继续显式调用 engine preflight/run，以支持独立校验 UI 或 durable node admission，但两者复用同一 engine 与 Gateway executor。
+- Agent Runtime 只暴露 `operation_script(source, input?)`：服务端补全 current-surface manifest 与运行策略，通过 engine execute 返回最终 output、call evidence 和 diagnostics。
+- UserWorkshop/Canvas 与 Workflow application caller 使用同一个 engine execute；调用方不复制校验、编译或执行阶段。
 
 ### 3.3 Engine boundary
 
@@ -466,7 +466,7 @@ Interaction definition 保存 logical component contract ref、layout/slot、pro
 
 - AgentRun 与 standalone UserWorkshop 分别运行同一 inline Rhai source。
 - script 调用两个 Operations，对第一个结果 filter/map 后构造第二个 input，最终清理输出。
-- 验证 plan token binding、manifest、nested admission、capability revocation、worker admission、CPU/host-call timeout/cancel、call/parallel/output limits、root/child trace 与 scoped result ref。
+- 验证 program/context validation、manifest、nested admission、capability revocation、worker admission、CPU/host-call timeout/cancel、call/parallel/output limits、root/child trace 与 scoped result ref。
 
 ### Interaction
 

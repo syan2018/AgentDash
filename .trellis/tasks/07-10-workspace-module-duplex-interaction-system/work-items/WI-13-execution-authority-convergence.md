@@ -197,4 +197,4 @@ Operation catalog 投影，不混入权限实体；失败通过关联同一次 a
   Operation revision/capability 的唯一投影。
 - 2026-07-27：Actor visibility/capability 过滤收回 OperationGateway；Workspace Module 与
   OperationScript 不再各自解释 catalog。dynamic provider 失败在 list surface 保持 diagnostic，
-  exact invoke/preflight 保留 typed unavailable，不再降级为 Operation 不存在。
+  exact invoke/script surface resolution 保留 typed unavailable，不再降级为 Operation 不存在。

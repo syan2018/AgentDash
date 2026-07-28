@@ -67,7 +67,7 @@ Surface 解析与局部状态漂移由 WI-13 统一收束。
 - 抽出 execution-scoped evaluator factory：复用 AST cache/limits/JSON bridge，每次 run 注入 `ops` capability、progress/cancellation/deadline 与 counters；禁止依赖全局 helper context。
 - evaluator 在受 `max_concurrent_scripts` admission 的专用 worker pool 中运行，通过有界 request/response bridge 调用 async OperationExecutionCore；Tokio core worker 不同步阻塞。
 - 暴露 `ops.invoke` 隐式等待与有界 `ops.invoke_all` structured concurrency；脚本只能调用请求允许清单中的 canonical Operation，并禁止递归 OperationScript。
-- preflight token 绑定 dialect/host API、source/input/manifest/limits/principal/scope/expiry；run 生成 ephemeral execution id，返回 partial/outcome-unknown call evidence。
+- engine execute 统一完成 dialect/host API、source/input/manifest/limits/principal/scope 校验、编译与执行；生成 ephemeral execution id，返回 partial/outcome-unknown call evidence。
 - 实现调用次数/并行度/timeout/输出上限、CPU progress cancellation、caller cancellation、root/child trace 和 scoped result ref。
 - Agent、UserWorkshop/Canvas 与 Workflow 调用同一 executor；每个嵌套 Operation 重新进入 WI-01 execution core。
 - 不复制 Workflow durable runtime、human gate、retry、recovery 或 compensation。
@@ -143,7 +143,7 @@ Surface 解析与局部状态漂移由 WI-13 统一收束。
   actor-visible module 与可信 presentation，不再为没有独立 authority/port 的 projection 保留 crate。
 - 让 `list/describe/invoke/present` 统一消费当前 RuntimeThread Product binding、immutable AgentFrame、applied resource surface 与 actor-specific Operation catalog。
 - `workspace_module_present` 只接受 `module_id`、`view_key` 和可选 payload；renderer、URI、title、Interaction attachment 与 diagnostics 由服务端根据当前 descriptor/definition 解析，不接受 Agent 自行构造可信 presentation。
-- 保持 `workspace_module_invoke` 只调用一个 exact OperationRef；Agent-facing `operation_script` 只接收 source/input，由服务端固定 dialect、host API、运行上限并从 current actor surface 构造 allowed Operation manifest，再完成 engine preflight/run、绑定与 admission。
+- 保持 `workspace_module_invoke` 只调用一个 exact OperationRef；Agent-facing `operation_script` 只接收 source/input，由服务端固定 dialect、host API、运行上限并从 current actor surface 构造 allowed Operation manifest，再通过 engine execute 完成校验与执行。
 - 为 `InteractionDefinitionRevision` 补齐显式 V1 Agent state projection contract；只投影 allowlisted
   state，并在 AgentRun attachment surface 暴露 `interaction:{instance_id}` runtime module、pinned
   command Operations 与 state revision。
@@ -184,7 +184,7 @@ Surface 解析与局部状态漂移由 WI-13 统一收束。
 
 ## 3. 验证策略
 
-- OperationScript：`rhai_v1`/host API discriminator、AST/evaluator factory、plan-token mismatch、`ops` host surface、recursive-script rejection、worker exhaustion、CPU/host-call cancellation、nested admission、调用/并行/输出上限、partial outcome 和 scoped result ref。
+- OperationScript：`rhai_v1`/host API discriminator、AST/evaluator factory、program/context validation、`ops` host surface、recursive-script rejection、worker exhaustion、CPU/host-call cancellation、nested admission、调用/并行/输出上限、partial outcome 和 scoped result ref。
 - Interaction：SourceBundle/changeset CAS、`state_patch_v1` path/schema/size、expected-revision conflict、command idempotency、event ordering/state rebuild、OperationEffectIntent replay、direct/human_only、owner/lifetime、User/Agent projection 和 secret isolation。
 - Runtime access：无 AgentRun/AgentFrame/RuntimeSession 的 Canvas/Extension invocation；拒绝客户端 authority injection；placement 从 Project/workspace/provider binding 解析。
 - Component：CSP/origin/MessagePort/props/events schema/rate/size、artifact pinning、disable/upgrade readiness。

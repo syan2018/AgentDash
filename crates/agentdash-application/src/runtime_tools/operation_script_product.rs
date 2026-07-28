@@ -81,13 +81,8 @@ impl ApplicationOperationScriptRuntimeToolService {
         )
         .map_err(|error| failed("operation_script_host_binding_failed", error.to_string()))?
         .operation_script(self.engine.clone());
-        let cancel = CancellationToken::new();
-        let preflight = host
-            .preflight(program.clone(), cancel.clone())
-            .await
-            .map_err(map_script_error)?;
         let result = host
-            .run(program, preflight.token, cancel)
+            .execute(program, CancellationToken::new())
             .await
             .and_then(serialize_result);
         result.map_err(map_script_error)
@@ -123,8 +118,6 @@ fn map_script_error(error: OperationScriptError) -> ProductRuntimeToolOutcome {
         OperationScriptError::InvalidRequest { .. } => {
             "operation_script_invalid_request".to_string()
         }
-        OperationScriptError::InvalidPlan { .. } => "operation_script_invalid_plan".to_string(),
-        OperationScriptError::TokenExpired => "operation_script_token_expired".to_string(),
         OperationScriptError::OperationDenied { .. } => {
             "operation_script_operation_denied".to_string()
         }
@@ -156,8 +149,6 @@ fn map_script_error(error: OperationScriptError) -> ProductRuntimeToolOutcome {
     };
     match error {
         OperationScriptError::InvalidRequest { .. }
-        | OperationScriptError::InvalidPlan { .. }
-        | OperationScriptError::TokenExpired
         | OperationScriptError::OperationDenied { .. }
         | OperationScriptError::Compile { .. } => rejected(code, error.to_string()),
         _ => failed(code, error.to_string()),
@@ -180,7 +171,155 @@ fn failed(code: impl Into<String>, message: impl Into<String>) -> ProductRuntime
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use agentdash_agent_runtime_contract::RuntimeThreadId;
+    use agentdash_application_operation_gateway::{
+        EphemeralOperationResultStore, OperationActorKind, OperationAuthorityGrant,
+        OperationAuthorityResolver, OperationAuthorizationScope, OperationDescriptor,
+        OperationDispatch, OperationExecutionError, OperationExecutionPolicy,
+        OperationInvocationEnvelope, OperationOriginRef, OperationPlacement, OperationPrincipal,
+        OperationProvenance, OperationProvider, OperationReadiness, TracingOperationAuditSink,
+    };
+    use agentdash_application_ports::product_runtime_tool::{
+        ProductRuntimeToolContext, ProductRuntimeToolTarget,
+    };
+    use agentdash_domain::operation::{
+        OperationEffect, OperationProviderRef, OperationRef, OperationReplayPolicy,
+    };
+    use agentdash_infrastructure::{RhaiOperationScriptConfig, RhaiOperationScriptEngine};
+
     use super::*;
+
+    struct AllowAuthority;
+
+    #[async_trait]
+    impl OperationAuthorityResolver for AllowAuthority {
+        async fn resolve(
+            &self,
+            _: &OperationPrincipal,
+            _: &OperationAuthorizationScope,
+            _: &OperationOriginRef,
+            _: CancellationToken,
+        ) -> Result<
+            OperationAuthorityGrant,
+            agentdash_application_operation_gateway::OperationExecutionError,
+        > {
+            Ok(OperationAuthorityGrant {
+                authority_revision: "test-revision".to_owned(),
+                capabilities: BTreeSet::new(),
+            })
+        }
+    }
+
+    struct FixtureProvider {
+        provider_ref: OperationProviderRef,
+        operation_ref: OperationRef,
+        output: Value,
+    }
+
+    #[async_trait]
+    impl OperationProvider for FixtureProvider {
+        fn provider_ref(&self) -> &OperationProviderRef {
+            &self.provider_ref
+        }
+
+        async fn discover(
+            &self,
+            _: &OperationPrincipal,
+            _: &OperationAuthorizationScope,
+            _: &OperationOriginRef,
+            _: CancellationToken,
+        ) -> Result<Vec<OperationDescriptor>, OperationExecutionError> {
+            Ok(vec![OperationDescriptor {
+                operation_ref: self.operation_ref.clone(),
+                title: self.operation_ref.operation_key.clone(),
+                description: None,
+                input_schema: json!({"type": "object"}),
+                output_schema: json!({}),
+                effect: OperationEffect::Read,
+                replay_policy: OperationReplayPolicy::ReplaySafe,
+                required_capabilities: BTreeSet::new(),
+                actor_visibility: BTreeSet::from([OperationActorKind::Agent]),
+                execution_policy: OperationExecutionPolicy::default(),
+                readiness: OperationReadiness::Ready,
+                provenance: OperationProvenance {
+                    source: "product-operation-script-test".to_owned(),
+                    artifact_digest: None,
+                },
+                dispatch: OperationDispatch {
+                    provider: self.provider_ref.clone(),
+                    route: self.operation_ref.operation_key.clone(),
+                },
+            }])
+        }
+
+        async fn resolve_placement(
+            &self,
+            _: &OperationDescriptor,
+            _: &OperationPrincipal,
+            _: &OperationAuthorizationScope,
+            _: &OperationOriginRef,
+            _: CancellationToken,
+        ) -> Result<OperationPlacement, OperationExecutionError> {
+            Ok(OperationPlacement::Cloud)
+        }
+
+        async fn invoke(
+            &self,
+            _: &OperationDescriptor,
+            _: OperationInvocationEnvelope,
+            _: CancellationToken,
+        ) -> Result<Value, OperationExecutionError> {
+            Ok(self.output.clone())
+        }
+    }
+
+    fn provider(
+        provider_key: &str,
+        operation_key: &str,
+        output: Value,
+    ) -> Arc<dyn OperationProvider> {
+        let operation_ref =
+            OperationRef::new("platform", provider_key, operation_key, 1).expect("operation ref");
+        Arc::new(FixtureProvider {
+            provider_ref: operation_ref.provider.clone(),
+            operation_ref,
+            output,
+        })
+    }
+
+    fn gateway(providers: Vec<Arc<dyn OperationProvider>>) -> Arc<OperationGateway> {
+        Arc::new(
+            OperationGateway::try_new(
+                Arc::new(AllowAuthority),
+                providers,
+                [],
+                Arc::new(EphemeralOperationResultStore::default()),
+                Arc::new(TracingOperationAuditSink),
+            )
+            .expect("gateway"),
+        )
+    }
+
+    fn request(source: &str) -> ProductRuntimeToolRequest {
+        ProductRuntimeToolRequest {
+            context: ProductRuntimeToolContext {
+                runtime_thread_id: RuntimeThreadId::new("runtime-thread").expect("runtime thread"),
+                target: ProductRuntimeToolTarget {
+                    project_id: uuid::Uuid::new_v4(),
+                    run_id: uuid::Uuid::new_v4(),
+                    agent_id: uuid::Uuid::new_v4(),
+                },
+                turn_id: "turn-1".to_owned(),
+                item_id: Some("item-1".to_owned()),
+                effect_id: "effect-1".to_owned(),
+                invocation_id: "invocation-1".to_owned(),
+                deadline_at_ms: u64::MAX,
+            },
+            arguments: json!({"source": source}),
+        }
+    }
 
     #[test]
     fn schema_exposes_only_source_and_input() {
@@ -191,5 +330,41 @@ mod tests {
         property_names.sort_unstable();
         assert_eq!(property_names, vec!["input", "source"]);
         assert_eq!(schema["required"], json!(["source"]));
+    }
+
+    #[tokio::test]
+    async fn composes_current_surface_operations_through_the_product_tool() {
+        let engine = Arc::new(
+            RhaiOperationScriptEngine::new(RhaiOperationScriptConfig::default()).expect("engine"),
+        );
+        let service = ApplicationOperationScriptRuntimeToolService::new(
+            gateway(vec![
+                provider("vfs", "mounts_list", json!(["workspace"])),
+                provider("task", "task_read", json!({"status": "ready"})),
+            ]),
+            engine,
+        );
+
+        let outcome = service
+            .execute(request(
+                r#"let results = ops.invoke_all([
+                    #{ operation: "platform:vfs:mounts_list:v1", input: #{} },
+                    #{ operation: "platform:task:task_read:v1", input: #{ mode: "overview" } }
+                ]);
+                #{ mounts: results[0], tasks: results[1] }"#,
+            ))
+            .await;
+
+        let ProductRuntimeToolOutcome::Completed { output } = outcome else {
+            panic!("unexpected outcome: {outcome:?}");
+        };
+        assert_eq!(
+            output["value"]["value"],
+            json!({
+                "mounts": ["workspace"],
+                "tasks": {"status": "ready"}
+            })
+        );
+        assert_eq!(output["calls"].as_array().map(Vec::len), Some(2));
     }
 }

@@ -671,14 +671,10 @@ impl AppState {
         operation_gateway_handle
             .set(operation_gateway.clone())
             .await;
-        let mut operation_script_secret = [0_u8; 32];
-        operation_script_secret[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
-        operation_script_secret[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
         let operation_script_engine: Arc<
             dyn agentdash_application_ports::operation_script::OperationScriptEngine,
         > = Arc::new(
             agentdash_infrastructure::RhaiOperationScriptEngine::new(
-                &operation_script_secret,
                 agentdash_infrastructure::RhaiOperationScriptConfig::default(),
             )
             .map_err(|error| anyhow::anyhow!(error.to_string()))?,

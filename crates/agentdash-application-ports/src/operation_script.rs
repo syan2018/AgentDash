@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use agentdash_domain::operation::OperationRef;
 pub use agentdash_domain::operation::{
-    OperationEffect, OperationOriginRef, OperationPrincipalRef, OperationReplayPolicy,
-    OperationScopeRef,
+    OperationOriginRef, OperationPrincipalRef, OperationScopeRef,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -27,28 +26,6 @@ pub struct OperationScriptExecutionContext {
     pub origin: OperationOriginRef,
     pub trace_id: String,
     pub attachment_ref: Option<String>,
-}
-
-/// Resolved from the caller's current canonical Operation surface, never client-authored.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct OperationScriptAllowedOperation {
-    pub operation_ref: OperationRef,
-    pub descriptor_digest: String,
-    pub effect: OperationEffect,
-    pub replay_policy: OperationReplayPolicy,
-    pub recursive_operation_script: bool,
-}
-
-impl OperationScriptAllowedOperation {
-    pub fn script_key(&self) -> String {
-        format!(
-            "{}:{}:{}:v{}",
-            self.operation_ref.provider.namespace,
-            self.operation_ref.provider.provider_key,
-            self.operation_ref.operation_key,
-            self.operation_ref.contract_version
-        )
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,37 +67,14 @@ pub struct OperationScriptProgram {
     pub host_api_version: u16,
     pub source: String,
     pub input: Value,
-    pub allowed_operations: Vec<OperationScriptAllowedOperation>,
+    pub allowed_operations: Vec<OperationRef>,
     pub limits: OperationScriptLimits,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct OperationScriptPreflightRequest {
+pub struct OperationScriptExecuteRequest {
     pub program: OperationScriptProgram,
     pub context: OperationScriptExecutionContext,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OperationScriptPreflightToken {
-    pub plan_id: Uuid,
-    pub binding_digest: String,
-    pub issued_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-    pub signature: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct OperationScriptPreflightResult {
-    pub token: OperationScriptPreflightToken,
-    pub source_digest: String,
-    pub manifest_digest: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct OperationScriptRunRequest {
-    pub program: OperationScriptProgram,
-    pub context: OperationScriptExecutionContext,
-    pub token: OperationScriptPreflightToken,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -166,9 +120,8 @@ pub enum OperationScriptResultValue {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct OperationScriptRunOutcome {
+pub struct OperationScriptOutcome {
     pub execution_id: Uuid,
-    pub plan_id: Uuid,
     pub value: OperationScriptResultValue,
     pub calls: Vec<OperationScriptCallEvidence>,
     pub partial: bool,
@@ -198,10 +151,6 @@ pub struct OperationScriptOperationResult {
 pub enum OperationScriptError {
     #[error("OperationScript 请求无效: {field}: {reason}")]
     InvalidRequest { field: &'static str, reason: String },
-    #[error("OperationScript preflight plan 无效: {reason}")]
-    InvalidPlan { reason: &'static str },
-    #[error("OperationScript preflight token 已过期")]
-    TokenExpired,
     #[error("OperationScript worker capacity 已满")]
     CapacityExceeded,
     #[error("OperationScript 已取消")]
@@ -269,18 +218,12 @@ pub trait OperationScriptOperationExecutor: Send + Sync {
 
 #[async_trait]
 pub trait OperationScriptEngine: Send + Sync {
-    async fn preflight(
+    async fn execute(
         &self,
-        request: OperationScriptPreflightRequest,
-        cancel: CancellationToken,
-    ) -> Result<OperationScriptPreflightResult, OperationScriptError>;
-
-    async fn run(
-        &self,
-        request: OperationScriptRunRequest,
+        request: OperationScriptExecuteRequest,
         operation_executor: Arc<dyn OperationScriptOperationExecutor>,
         cancel: CancellationToken,
-    ) -> Result<OperationScriptRunOutcome, OperationScriptError>;
+    ) -> Result<OperationScriptOutcome, OperationScriptError>;
 
     /// Resolves a scoped result after a trusted host rebuilds current authority.
     async fn resolve_result(

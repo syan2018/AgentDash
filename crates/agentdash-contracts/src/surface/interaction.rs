@@ -550,35 +550,12 @@ pub struct OperationScriptProgramDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct OperationScriptPreflightTokenDto {
-    pub plan_id: String,
-    pub binding_digest: String,
-    pub issued_at: String,
-    pub expires_at: String,
-    pub signature: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct OperationWorkshopScriptPreflightRequestDto {
+pub struct OperationWorkshopScriptExecuteRequestDto {
     pub context: OperationWorkshopContextDto,
     pub program: OperationScriptProgramDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct OperationWorkshopScriptPreflightResponseDto {
-    pub token: OperationScriptPreflightTokenDto,
-    pub source_digest: String,
-    pub manifest_digest: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct OperationWorkshopScriptRunRequestDto {
-    pub context: OperationWorkshopContextDto,
-    pub program: OperationScriptProgramDto,
-    pub token: OperationScriptPreflightTokenDto,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct OperationWorkshopScriptRunResponseDto {
+pub struct OperationWorkshopScriptExecuteResponseDto {
     pub outcome: Value,
 }

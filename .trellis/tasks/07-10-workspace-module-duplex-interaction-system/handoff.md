@@ -27,7 +27,7 @@
 - Infrastructure 复用现有 Rhai limits/JSON bridge/AST cache 设计，通过 evaluator factory + bounded worker pool + async request/response bridge 执行；纯 CPU loop 与 nested Operation 均响应 cancellation/deadline。
 - Agent、Canvas/UserWorkshop 与 Workflow 调用同一 executor。Canvas 可保存 `.rhai` 或 inline source，但完整脚本交给服务端执行，iframe 不解释脚本。
 - Rhai 只获得受控 `invoke` / `invoke_all` host functions。每个 nested Operation 都重新进入 canonical execution core，重新校验 provider、schema、capability、effect、readiness 和 limits。
-- preflight token 绑定 dialect/host API、source/input/manifest/limits/principal/scope/expiry；execution 受 worker/caller cancellation、timeout、调用数、并行度和输出上限约束，并禁止递归脚本。
+- engine execute 统一校验 dialect/host API、source/input/manifest/limits/principal/scope；execution 受 worker/caller cancellation、timeout、调用数、并行度和输出上限约束，并禁止递归脚本。
 - 不建设 script asset、background job、durable execution aggregate、跨调用 REPL state、Workflow retry/gate/recovery 或隐式 LLM 调用。
 
 ### InteractionInstance

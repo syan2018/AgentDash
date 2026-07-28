@@ -352,8 +352,7 @@ resource grants 与 revision/digest evidence，不再包一层 AgentRun binding 
   module surface 构造。
 - OperationScript 的脚本使用 describe 得到的 exact OperationRef 字符串；Agent 不提交 manifest、
   dialect、host API 或 limits。服务端从 current actor surface 构造完整 manifest 并应用平台运行
-  策略；内部 engine preflight/run token 绑定 source/input/limits/current descriptors/principal/
-  scope/authority 且不暴露给模型，run 和 nested calls 继续重新准入。
+  策略；engine execute 统一校验 program/context 并执行，nested calls 继续重新准入。
 - `platform:*` nested call 通过 OperationGateway 后重新进入 PlatformToolBroker，从 current applied
   resource grants 生成 VFS/Task grant；Workspace Module projection 不持有 executor。
 - dynamic provider discovery failure 进入 `surface_diagnostics`。`ready + module_count=0` 才表示
@@ -371,7 +370,7 @@ resource grants 与 revision/digest evidence，不再包一层 AgentRun binding 
 | Agent 提交 renderer/URI/title/diagnostics | schema validation error |
 | attachment detached 或 capability allowlist 撤销 | `interaction:*` 不再投影 |
 | Agent projection path 在 current state 缺失 | projection failure，不暴露完整 state |
-| 内部 token 过期或 descriptor/authority/limits 漂移 | OperationScript plan rejection |
+| execute 前 descriptor/authority/limits 无效 | OperationScript request rejection |
 | nested call 部分成功后失败 | 返回 call evidence、partial 与 outcome_unknown |
 | binding/frame/applied evidence revision 或 digest 不一致 | `execution_authority_evidence_mismatch` |
 | 未提交的 latest AgentFrame 比 binding frame 更新 | 仍使用 binding-pinned revision |
@@ -393,7 +392,7 @@ resource grants 与 revision/digest evidence，不再包一层 AgentRun binding 
 
 - Capability catalog test asserts WorkspaceModule cluster 包含 list/describe/invoke/present 和单一
   `operation_script`。
-- Product tool test覆盖可信 present 参数、exact ref、内部 token 与 current surface re-admission。
+- Product tool test覆盖可信 present 参数、exact ref、完整 Rhai execute 与 current surface re-admission。
 - ExecutionAuthority contract test断言 binding-pinned revision 胜过未提交的 latest frame，
   cluster-backed capability 会同时产生 native Operation/module，并拒绝 evidence mismatch。
 - Operation provider test断言 discovery failure 返回 provider/code/message diagnostic，成功空集合

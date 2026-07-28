@@ -60,14 +60,13 @@ workspace_module_list
 
 ### 3. Agent OperationScript composition
 
-- 暴露单一 Agent-facing `operation_script`，复用 WI-03 的 `OperationScriptEngine`、内部 preflight
-  token、limits、result ref 和 Gateway nested executor；服务端在同一 tool request 内完成
-  preflight 与 run，token 不进入 Agent 上下文。
+- 暴露单一 Agent-facing `operation_script`，复用 WI-03 的 `OperationScriptEngine`、limits、
+  result ref 和 Gateway nested executor；服务端在同一 tool request 内通过 execute 完成校验与执行。
 - Agent 只提交 source 与可选 input，并在脚本中使用一个或多个 `workspace_module_describe` 返回的
   exact OperationRef 字符串；服务端固定 dialect、host API、运行上限，并从 current actor surface
   构造完整 manifest、descriptor、effect、replay policy、authority revision 与 granted capabilities。
-- engine preflight token继续绑定 dialect/host API、source、input、allowed descriptors、limits、
-  principal/scope 和 expiry；内部 run 与每个 nested call 都重新 admission。
+- engine execute 统一校验 dialect/host API、source、input、allowed exact OperationRefs、limits 与
+  principal/scope；每个 nested call 都重新 admission。
 - 即时组合失败返回 bounded diagnostic、partial/outcome-unknown 与 call evidence；需要 durable
   retry、human gate、recovery 或跨会话状态的编排必须进入 Workflow。
 
@@ -137,7 +136,7 @@ resolve current module surface
 - panel-only、agent-and-panel、readiness、effect、replay policy、schema、permission、provenance 的含义。
 - 单次 invoke、OperationScript 即时组合和 Workflow durable orchestration 的选择边界。
 - 脚本中的 exact OperationRef 必须来自 describe；Agent 不提交 manifest 或运行 limits，
-  `operation_script` 的内部 preflight/run 以服务端 current surface 与平台运行策略为准。
+  `operation_script` execute 以服务端 current surface 与平台运行策略为准。
 - surface 变化后重新 describe，不缓存或重建 exact ref/presentation。
 
 ## Write Set
@@ -180,7 +179,7 @@ resolve current module surface
 - [x] Component event 可以按 tagged contract 触发 platform command、single Operation 或
       OperationScript；Canvas 保存的 `.rhai`/inline source 可经 host 调用同一 UserWorkshop
       OperationScript engine，iframe 不执行脚本或持有 authority。
-- [x] capability/readiness 撤销、descriptor/token drift、schema 错误、timeout/cancel 和 partial
+- [x] capability/readiness 撤销、descriptor drift、schema 错误、timeout/cancel 和 partial
       side effect 均在正确层失败。
 - [x] Extension runtime action、protocol method、backend service 均只通过 canonical Operation 暴露；
       没有新增第二套 dispatch 或编排事实源。
@@ -190,7 +189,7 @@ resolve current module surface
 ## Validation
 
 - Workspace Module projection、Product runtime tool 和 Native Agent tool projection focused tests。
-- OperationScript Agent caller 的内部 preflight/run、双 Operation、parallel limit、cancel/timeout、
+- OperationScript Agent caller 的 execute、双 Operation、parallel limit、cancel/timeout、
   descriptor drift、partial evidence tests。
 - Canvas definition presentation、Interaction attachment、Extension webview presentation 与 stale
   descriptor rejection tests。
@@ -221,7 +220,7 @@ resolve current module surface
 - 2026-07-27：按 Skill 渐进披露合同重写 `workspace-module-system`：description 同时覆盖能力与
   Canvas/Interaction/Extension、单次调用、UI presentation 和即时组合触发场景；正文收束为
   list/describe/invoke/present/OperationScript 的可执行决策与 exact 参数示例。
-- 2026-07-27：Agent 工具面收敛为单一 `operation_script`；服务端内部继续执行 engine
-  preflight/run 并保留 token/TOCTOU 校验，模型通过一次工具调用提交脚本并接收最终执行结果。
+- 2026-07-27：Agent 工具面收敛为单一 `operation_script`，模型通过一次工具调用提交脚本并接收
+  最终执行结果。
 - 2026-07-28：进一步深化 Agent 工具接口为 `source + input`；current actor manifest、dialect、
   host API 与 limits 全部由服务端持有，并在 Skill 中增加 VFS + Task 的完整并行查询示例。

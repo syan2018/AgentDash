@@ -506,7 +506,7 @@ impl AgentTool for TaskReadTool {
             .read(&scope, params.into_query())
             .await
             .map_err(workspace_error)?;
-        Ok(result_with_view("Task view 已读取", view, false))
+        Ok(result_with_view(view, false))
     }
 }
 
@@ -547,8 +547,7 @@ impl AgentTool for TaskWriteTool {
             .apply(&scope, params.into_changeset()?)
             .await
             .map_err(workspace_error)?;
-        let message = format!("Task 写入完成，变更 {} 个 Task。", result.changes.len());
-        Ok(result_with_view(&message, result.view, false))
+        Ok(result_with_view(result.view, false))
     }
 }
 
@@ -616,7 +615,7 @@ impl ApplicationRuntimeTaskToolService {
             .read(&scope, params.into_query())
             .await
         {
-            Ok(view) => runtime_result_with_view("Task view 已读取", view),
+            Ok(view) => runtime_result_with_view(view),
             Err(error) => RuntimeTaskToolOutcome::Failed {
                 code: "task_read_failed".to_owned(),
                 message: error.to_string(),
@@ -654,10 +653,7 @@ impl ApplicationRuntimeTaskToolService {
             .apply(&scope, changeset)
             .await
         {
-            Ok(result) => runtime_result_with_view(
-                &format!("Task 写入完成，变更 {} 个 Task。", result.changes.len()),
-                result.view,
-            ),
+            Ok(result) => runtime_result_with_view(result.view),
             Err(error) => RuntimeTaskToolOutcome::Failed {
                 code: "task_write_failed".to_owned(),
                 message: error.to_string(),
@@ -778,17 +774,17 @@ fn convert_context_refs(
     refs.into_iter().map(ContextSourceRef::try_from).collect()
 }
 
-fn result_with_view(summary: &str, view: serde_json::Value, is_error: bool) -> AgentToolResult {
+fn result_with_view(view: serde_json::Value, is_error: bool) -> AgentToolResult {
     let body = serde_json::to_string_pretty(&view).unwrap_or_else(|_| view.to_string());
     AgentToolResult {
-        content: vec![ContentPart::text(format!("{summary}\n{body}"))],
+        content: vec![ContentPart::text(body)],
         is_error,
         details: Some(view),
     }
 }
 
-fn runtime_result_with_view(summary: &str, view: serde_json::Value) -> RuntimeTaskToolOutcome {
-    match serde_json::to_value(result_with_view(summary, view, false)) {
+fn runtime_result_with_view(view: serde_json::Value) -> RuntimeTaskToolOutcome {
+    match serde_json::to_value(result_with_view(view, false)) {
         Ok(output) => RuntimeTaskToolOutcome::Completed { output },
         Err(error) => RuntimeTaskToolOutcome::Failed {
             code: "task_result_serialization_failed".to_owned(),
@@ -819,7 +815,7 @@ mod tests {
     #[test]
     fn result_with_view_puts_json_into_content_for_model() {
         let view = serde_json::json!({ "mode": "list", "tasks": [{ "title": "示例 Task" }] });
-        let result = result_with_view("Task view 已读取", view, false);
+        let result = result_with_view(view, false);
         let text = match &result.content[0] {
             ContentPart::Text { text } => text,
             other => panic!("expected text content, got {other:?}"),
@@ -828,7 +824,7 @@ mod tests {
             text.contains("示例 Task"),
             "content 应包含 Task 数据: {text}"
         );
-        assert!(text.starts_with("Task view 已读取"));
+        assert!(text.starts_with('{'));
         assert!(result.details.is_some(), "details 仍保留供持久化");
     }
 
@@ -838,9 +834,7 @@ mod tests {
             "mode": "list",
             "tasks": [{ "title": "Runtime Task", "status": "active" }]
         });
-        let RuntimeTaskToolOutcome::Completed { output } =
-            runtime_result_with_view("Task view 已读取", view)
-        else {
+        let RuntimeTaskToolOutcome::Completed { output } = runtime_result_with_view(view) else {
             panic!("runtime task result should complete");
         };
         let decoded: AgentToolResult =
@@ -849,7 +843,7 @@ mod tests {
             .extract_text()
             .expect("task presentation should contain text");
 
-        assert!(text.starts_with("Task view 已读取\n{"));
+        assert!(text.starts_with('{'));
         assert!(text.contains("\"mode\": \"list\""));
         assert_eq!(decoded.details.expect("task view details")["mode"], "list");
     }

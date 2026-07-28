@@ -9,15 +9,15 @@ use crate::workspace_module::{
     project_workspace_module_visibility,
 };
 use agentdash_application_operation_gateway::{
-    OperationGateway, OperationInvocationCommand, OperationPrincipal, OperationSurfaceDiagnostic,
-    OperationTraceContext,
+    OperationGateway, OperationInvocationCommand, OperationPrincipal, OperationResultValue,
+    OperationSurfaceDiagnostic, OperationTraceContext,
 };
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
     ProductRuntimeToolService,
 };
 use agentdash_contracts::workspace_module::{
-    WorkspaceModuleDescriptor, WorkspaceModuleOperationRef,
+    WorkspaceModuleDescriptor, WorkspaceModuleKind, WorkspaceModuleOperationRef,
 };
 use agentdash_domain::interaction::{
     AttachmentCapabilityProjection, AttachmentSubject, InteractionAttachment,
@@ -421,7 +421,7 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
         completed(json!({
             "module_count": surface.modules.len(),
             "surface_readiness": if surface.diagnostics.is_empty() { "ready" } else { "degraded" },
-            "surface_diagnostics": surface.diagnostics,
+            "surface_diagnostics": compact_diagnostics(surface.diagnostics),
             "modules": surface
                 .modules
                 .into_iter()
@@ -459,9 +459,9 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             );
         };
         completed(json!({
-            "module": module,
+            "module": compact_module_descriptor(module),
             "surface_readiness": if surface.diagnostics.is_empty() { "ready" } else { "degraded" },
-            "surface_diagnostics": surface.diagnostics,
+            "surface_diagnostics": compact_diagnostics(surface.diagnostics),
         }))
     }
 
@@ -524,13 +524,7 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             )
             .await
         {
-            Ok(result) => match serde_json::to_value(result) {
-                Ok(value) => completed(value),
-                Err(error) => failed(
-                    "workspace_module_result_serialization_failed",
-                    error.to_string(),
-                ),
-            },
+            Ok(result) => completed(compact_operation_result(result)),
             Err(error) => failed("workspace_module_operation_failed", error.to_string()),
         }
     }
@@ -776,6 +770,72 @@ struct WorkspaceModulePresentationTarget {
 
 fn completed(output: Value) -> ProductRuntimeToolOutcome {
     ProductRuntimeToolOutcome::Completed { output }
+}
+
+fn compact_module_descriptor(module: WorkspaceModuleDescriptor) -> Value {
+    let builtin = module.summary.kind == WorkspaceModuleKind::Builtin;
+    json!({
+        "summary": module.summary,
+        "ui_entries": module.ui_entries,
+        "operations": module.operations.into_iter().map(|operation| {
+            let input_contract = if builtin {
+                json!({
+                    "same_as_agent_tool": operation.operation_key,
+                    "note": "Builtin Operation input is identical to the corresponding Agent tool parameters; use the Agent tool schema already visible in this session."
+                })
+            } else {
+                json!({ "input_schema": operation.input_schema })
+            };
+            let mut value = json!({
+                "operation_ref": operation.operation_ref,
+                "operation_key": operation.operation_key,
+                "description": operation.description,
+                "effect": operation.effect,
+                "replay_policy": operation.replay_policy,
+                "readiness": operation.readiness,
+            });
+            if let Some(map) = value.as_object_mut() {
+                if let Some(input_map) = input_contract.as_object() {
+                    for (key, value) in input_map {
+                        map.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            value
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn compact_operation_result(
+    result: agentdash_application_operation_gateway::OperationExecutionResult,
+) -> Value {
+    let value = match result.value {
+        OperationResultValue::Inline { value } => value,
+        OperationResultValue::Ref { result_ref } => json!({ "result_ref": result_ref }),
+    };
+    json!({
+        "value": value,
+        "operation": operation_ref_label(&result.operation_ref),
+        "output_bytes": result.output_bytes,
+    })
+}
+
+fn compact_diagnostics(diagnostics: Vec<OperationSurfaceDiagnostic>) -> Value {
+    if diagnostics.is_empty() {
+        json!([])
+    } else {
+        json!(diagnostics)
+    }
+}
+
+fn operation_ref_label(operation_ref: &OperationRef) -> String {
+    format!(
+        "{}:{}:{}:v{}",
+        operation_ref.provider.namespace,
+        operation_ref.provider.provider_key,
+        operation_ref.operation_key,
+        operation_ref.contract_version
+    )
 }
 
 fn rejected(code: impl Into<String>, message: impl Into<String>) -> ProductRuntimeToolOutcome {

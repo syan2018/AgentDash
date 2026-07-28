@@ -5,8 +5,9 @@ use agentdash_application_operation_gateway::{
     OperationGateway,
 };
 use agentdash_application_ports::operation_script::{
-    OPERATION_SCRIPT_HOST_API_V1, OperationScriptEngine, OperationScriptError,
-    OperationScriptLimits, RHAI_V1_DIALECT,
+    OPERATION_SCRIPT_HOST_API_V1, OperationScriptCallEvidence, OperationScriptCallStatus,
+    OperationScriptEngine, OperationScriptError, OperationScriptLimits, OperationScriptOutcome,
+    OperationScriptResultValue, RHAI_V1_DIALECT,
 };
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
@@ -84,15 +85,60 @@ impl ApplicationOperationScriptRuntimeToolService {
         let result = host
             .execute(program, CancellationToken::new())
             .await
-            .and_then(serialize_result);
+            .and_then(serialize_agent_result);
         result.map_err(map_script_error)
     }
 }
 
-fn serialize_result<T: serde::Serialize>(result: T) -> Result<Value, OperationScriptError> {
-    serde_json::to_value(result).map_err(|_| OperationScriptError::Internal {
-        code: "result_serialization_failed",
+fn serialize_agent_result(outcome: OperationScriptOutcome) -> Result<Value, OperationScriptError> {
+    let value = match outcome.value {
+        OperationScriptResultValue::Inline { value } => value,
+        OperationScriptResultValue::Ref { result_ref } => json!({ "result_ref": result_ref }),
+    };
+    let call_summary = summarize_calls(&outcome.calls);
+    let mut output = json!({
+        "value": value,
+        "calls": call_summary,
+    });
+    let has_failed_call = outcome
+        .calls
+        .iter()
+        .any(|call| call.status != OperationScriptCallStatus::Succeeded);
+    if outcome.outcome_unknown || has_failed_call {
+        output["partial"] = json!(outcome.partial);
+        output["outcome_unknown"] = json!(outcome.outcome_unknown);
+        output["execution_id"] = json!(outcome.execution_id);
+    }
+    Ok(output)
+}
+
+fn summarize_calls(calls: &[OperationScriptCallEvidence]) -> Value {
+    let failed = calls
+        .iter()
+        .filter(|call| call.status != OperationScriptCallStatus::Succeeded)
+        .map(|call| {
+            json!({
+                "index": call.call_index,
+                "operation": operation_ref_label(&call.operation_ref),
+                "status": call.status,
+                "error_code": call.error_code,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "total": calls.len(),
+        "failed": failed,
     })
+}
+
+fn operation_ref_label(operation_ref: &agentdash_domain::operation::OperationRef) -> String {
+    format!(
+        "{}:{}:{}:v{}",
+        operation_ref.provider.namespace,
+        operation_ref.provider.provider_key,
+        operation_ref.operation_key,
+        operation_ref.contract_version
+    )
 }
 
 #[async_trait]
@@ -359,12 +405,14 @@ mod tests {
             panic!("unexpected outcome: {outcome:?}");
         };
         assert_eq!(
-            output["value"]["value"],
+            output["value"],
             json!({
                 "mounts": ["workspace"],
                 "tasks": {"status": "ready"}
             })
         );
-        assert_eq!(output["calls"].as_array().map(Vec::len), Some(2));
+        assert_eq!(output["calls"], json!({"total": 2, "failed": []}));
+        assert!(output.get("result_access").is_none());
+        assert!(output.get("execution_id").is_none());
     }
 }

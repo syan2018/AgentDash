@@ -105,7 +105,7 @@ impl AppExecutionHookProvider {
     /// Evaluates one typed Product-owned event against the immutable requirements selected for
     /// the current AgentFrame.
     ///
-    /// Tool Broker and Managed Runtime events are Product boundaries, not Agent callbacks. Their
+    /// Tool Broker and Agent Runtime events are Product boundaries, not Agent callbacks. Their
     /// caller supplies the requirements pinned in the frame HookPlan; this owner resolves and
     /// executes only definitions whose exact Product trigger matches the event.
     pub async fn evaluate_product_hook_event(

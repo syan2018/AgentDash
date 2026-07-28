@@ -35,8 +35,8 @@ pub fn build_agent_run_lifecycle_mount(
         id: "lifecycle".to_string(),
         provider: PROVIDER_LIFECYCLE_VFS.to_string(),
         // AppliedResourceSurface requires a stable backing identity for every mount. The
-        // canonical history is backed by the Managed Runtime thread rather than a filesystem.
-        backend_id: format!("managed-runtime:{runtime_thread_id}"),
+        // canonical history is backed by the Agent Runtime thread rather than a filesystem.
+        backend_id: format!("agent-runtime:{runtime_thread_id}"),
         root_ref: format!(
             "lifecycle://run/{run_id}/agent/{agent_id}/thread/{}",
             encode_lifecycle_uri_segment(runtime_thread_id)

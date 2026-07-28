@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeContextAuthority, ManagedRuntimeInitialContextContribution,
-    ManagedRuntimeInitialContextContributionContent, ManagedRuntimeInitialContextContributionKind,
-    ManagedRuntimeInitialContextMode, ManagedRuntimeInitialContextPackage, RuntimePayloadDigest,
+    AgentRuntimeContextAuthority, AgentRuntimeInitialContextContribution,
+    AgentRuntimeInitialContextContributionContent, AgentRuntimeInitialContextContributionKind,
+    AgentRuntimeInitialContextMode, AgentRuntimeInitialContextPackage, RuntimePayloadDigest,
     RuntimeThreadId,
 };
 use agentdash_agent_service_api::{
@@ -20,14 +20,14 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ManagedRuntimeAgentBinding {
+pub struct AgentRuntimeAgentBinding {
     pub source: AgentSourceCoordinate,
     pub generation: AgentBindingGeneration,
     pub applied_surface: AppliedAgentSurface,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ManagedRuntimeDispatchContext {
+pub struct AgentRuntimeDispatchContext {
     pub runtime_thread_id: RuntimeThreadId,
     pub effect_id: AgentEffectIdentity,
     pub dispatch_owner: String,
@@ -36,48 +36,48 @@ pub struct ManagedRuntimeDispatchContext {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ManagedRuntimeCreateOutcome {
+pub struct AgentRuntimeCreateOutcome {
     pub receipt: AgentCommandReceipt,
-    pub binding: ManagedRuntimeAgentBinding,
+    pub binding: AgentRuntimeAgentBinding,
     pub initial_context: Option<AppliedInitialContextEvidence>,
     pub contribution_fidelity:
         BTreeMap<InitialContextContributionKind, InitialContextDeliveryFidelity>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ManagedRuntimeResumeOutcome {
+pub struct AgentRuntimeResumeOutcome {
     pub receipt: AgentCommandReceipt,
-    pub binding: ManagedRuntimeAgentBinding,
+    pub binding: AgentRuntimeAgentBinding,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ManagedRuntimeRebindOutcome {
+pub struct AgentRuntimeRebindOutcome {
     pub receipt: AgentCommandReceipt,
-    pub previous_binding: ManagedRuntimeAgentBinding,
-    pub binding: ManagedRuntimeAgentBinding,
+    pub previous_binding: AgentRuntimeAgentBinding,
+    pub binding: AgentRuntimeAgentBinding,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ManagedRuntimeForkOutcome {
+pub struct AgentRuntimeForkOutcome {
     pub receipt: ForkAgentReceipt,
-    pub child_binding: ManagedRuntimeAgentBinding,
+    pub child_binding: AgentRuntimeAgentBinding,
     pub child_history_digest: AgentPayloadDigest,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ManagedRuntimeLifecycleInspection {
+pub enum AgentRuntimeLifecycleInspection {
     NotApplied,
     Accepted,
-    CreateApplied(ManagedRuntimeCreateOutcome),
-    ResumeApplied(ManagedRuntimeResumeOutcome),
-    RebindApplied(ManagedRuntimeRebindOutcome),
-    ForkApplied(ManagedRuntimeForkOutcome),
+    CreateApplied(AgentRuntimeCreateOutcome),
+    ResumeApplied(AgentRuntimeResumeOutcome),
+    RebindApplied(AgentRuntimeRebindOutcome),
+    ForkApplied(AgentRuntimeForkOutcome),
     CommandApplied(AgentCommandReceipt),
     Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum ManagedRuntimeLifecycleError {
+pub enum AgentRuntimeLifecycleError {
     #[error("managed Runtime lifecycle target was not found")]
     NotFound,
     #[error("managed Runtime lifecycle target generation is stale")]
@@ -105,70 +105,70 @@ pub enum ManagedRuntimeLifecycleError {
 }
 
 #[async_trait]
-pub trait ManagedRuntimeLifecyclePort: Send + Sync {
+pub trait AgentRuntimeLifecyclePort: Send + Sync {
     async fn create(
         &self,
-        context: ManagedRuntimeDispatchContext,
+        context: AgentRuntimeDispatchContext,
         initial_context: Option<InitialAgentContextPackage>,
-    ) -> Result<ManagedRuntimeCreateOutcome, ManagedRuntimeLifecycleError>;
+    ) -> Result<AgentRuntimeCreateOutcome, AgentRuntimeLifecycleError>;
 
     async fn resume(
         &self,
-        context: ManagedRuntimeDispatchContext,
-        binding: ManagedRuntimeAgentBinding,
-    ) -> Result<ManagedRuntimeResumeOutcome, ManagedRuntimeLifecycleError>;
+        context: AgentRuntimeDispatchContext,
+        binding: AgentRuntimeAgentBinding,
+    ) -> Result<AgentRuntimeResumeOutcome, AgentRuntimeLifecycleError>;
 
     async fn rebind(
         &self,
-        context: ManagedRuntimeDispatchContext,
-        previous_binding: ManagedRuntimeAgentBinding,
-    ) -> Result<ManagedRuntimeRebindOutcome, ManagedRuntimeLifecycleError>;
+        context: AgentRuntimeDispatchContext,
+        previous_binding: AgentRuntimeAgentBinding,
+    ) -> Result<AgentRuntimeRebindOutcome, AgentRuntimeLifecycleError>;
 
     async fn fork(
         &self,
-        context: ManagedRuntimeDispatchContext,
-        parent: ManagedRuntimeAgentBinding,
+        context: AgentRuntimeDispatchContext,
+        parent: AgentRuntimeAgentBinding,
         child_thread_id: RuntimeThreadId,
         cutoff: AgentForkPoint,
-    ) -> Result<ManagedRuntimeForkOutcome, ManagedRuntimeLifecycleError>;
+    ) -> Result<AgentRuntimeForkOutcome, AgentRuntimeLifecycleError>;
 
     async fn execute(
         &self,
-        context: ManagedRuntimeDispatchContext,
-        binding: ManagedRuntimeAgentBinding,
+        context: AgentRuntimeDispatchContext,
+        binding: AgentRuntimeAgentBinding,
         command: AgentCommandEnvelope,
-    ) -> Result<AgentCommandReceipt, ManagedRuntimeLifecycleError>;
+    ) -> Result<AgentCommandReceipt, AgentRuntimeLifecycleError>;
 
     async fn inspect(
         &self,
-        context: ManagedRuntimeDispatchContext,
-        binding: Option<ManagedRuntimeAgentBinding>,
-    ) -> Result<ManagedRuntimeLifecycleInspection, ManagedRuntimeLifecycleError>;
+        context: AgentRuntimeDispatchContext,
+        binding: Option<AgentRuntimeAgentBinding>,
+    ) -> Result<AgentRuntimeLifecycleInspection, AgentRuntimeLifecycleError>;
 
     async fn read(
         &self,
         runtime_thread_id: RuntimeThreadId,
-        binding: ManagedRuntimeAgentBinding,
+        binding: AgentRuntimeAgentBinding,
         query: AgentReadQuery,
-    ) -> Result<AgentSnapshot, ManagedRuntimeLifecycleError>;
+    ) -> Result<AgentSnapshot, AgentRuntimeLifecycleError>;
 
     async fn changes(
         &self,
         runtime_thread_id: RuntimeThreadId,
-        binding: ManagedRuntimeAgentBinding,
+        binding: AgentRuntimeAgentBinding,
         query: AgentChangesQuery,
-    ) -> Result<AgentChangePage, ManagedRuntimeLifecycleError>;
+    ) -> Result<AgentChangePage, AgentRuntimeLifecycleError>;
 
     async fn is_ready(
         &self,
         runtime_thread_id: RuntimeThreadId,
-        binding: ManagedRuntimeAgentBinding,
-    ) -> Result<bool, ManagedRuntimeLifecycleError>;
+        binding: AgentRuntimeAgentBinding,
+    ) -> Result<bool, AgentRuntimeLifecycleError>;
 }
 
 pub fn map_initial_context_package(
-    package: ManagedRuntimeInitialContextPackage,
-) -> Result<InitialAgentContextPackage, ManagedRuntimeLifecycleError> {
+    package: AgentRuntimeInitialContextPackage,
+) -> Result<InitialAgentContextPackage, AgentRuntimeLifecycleError> {
     if !package.validate() {
         return Err(invalid(
             "initial context package or contribution digest is invalid",
@@ -181,9 +181,9 @@ pub fn map_initial_context_package(
     }
     let schema_version = AgentContextSchemaVersion(package.schema_version.into());
     let mode = match package.mode {
-        ManagedRuntimeInitialContextMode::Compact => InitialContextMode::Compact,
-        ManagedRuntimeInitialContextMode::WorkflowOnly => InitialContextMode::WorkflowOnly,
-        ManagedRuntimeInitialContextMode::ConstraintsOnly => InitialContextMode::ConstraintsOnly,
+        AgentRuntimeInitialContextMode::Compact => InitialContextMode::Compact,
+        AgentRuntimeInitialContextMode::WorkflowOnly => InitialContextMode::WorkflowOnly,
+        AgentRuntimeInitialContextMode::ConstraintsOnly => InitialContextMode::ConstraintsOnly,
     };
     let contributions = package
         .contributions
@@ -208,40 +208,40 @@ pub fn map_initial_context_package(
 }
 
 pub fn context_contribution_kind(
-    contribution: &ManagedRuntimeInitialContextContribution,
-) -> ManagedRuntimeInitialContextContributionKind {
+    contribution: &AgentRuntimeInitialContextContribution,
+) -> AgentRuntimeInitialContextContributionKind {
     match contribution.content {
-        ManagedRuntimeInitialContextContributionContent::CompactSummary { .. } => {
-            ManagedRuntimeInitialContextContributionKind::CompactSummary
+        AgentRuntimeInitialContextContributionContent::CompactSummary { .. } => {
+            AgentRuntimeInitialContextContributionKind::CompactSummary
         }
-        ManagedRuntimeInitialContextContributionContent::WorkflowContext { .. } => {
-            ManagedRuntimeInitialContextContributionKind::WorkflowContext
+        AgentRuntimeInitialContextContributionContent::WorkflowContext { .. } => {
+            AgentRuntimeInitialContextContributionKind::WorkflowContext
         }
-        ManagedRuntimeInitialContextContributionContent::ConstraintSet { .. } => {
-            ManagedRuntimeInitialContextContributionKind::ConstraintSet
+        AgentRuntimeInitialContextContributionContent::ConstraintSet { .. } => {
+            AgentRuntimeInitialContextContributionKind::ConstraintSet
         }
     }
 }
 
 pub fn runtime_payload_digest(
     digest: &AgentPayloadDigest,
-) -> Result<RuntimePayloadDigest, ManagedRuntimeLifecycleError> {
+) -> Result<RuntimePayloadDigest, AgentRuntimeLifecycleError> {
     RuntimePayloadDigest::new(digest.as_str().to_owned())
         .map_err(|error| invalid(error.to_string()))
 }
 
 fn map_initial_context_contribution(
-    contribution: ManagedRuntimeInitialContextContribution,
-) -> Result<InitialContextContribution, ManagedRuntimeLifecycleError> {
+    contribution: AgentRuntimeInitialContextContribution,
+) -> Result<InitialContextContribution, AgentRuntimeLifecycleError> {
     Ok(match contribution.content {
-        ManagedRuntimeInitialContextContributionContent::CompactSummary {
+        AgentRuntimeInitialContextContributionContent::CompactSummary {
             summary,
             provenance,
         } => InitialContextContribution::CompactSummary {
             summary,
             provenance: map_context_provenance(provenance)?,
         },
-        ManagedRuntimeInitialContextContributionContent::WorkflowContext {
+        AgentRuntimeInitialContextContributionContent::WorkflowContext {
             schema,
             value,
             provenance,
@@ -249,7 +249,7 @@ fn map_initial_context_contribution(
             payload: TypedContextPayload { schema, value },
             provenance: map_context_provenance(provenance)?,
         },
-        ManagedRuntimeInitialContextContributionContent::ConstraintSet {
+        AgentRuntimeInitialContextContributionContent::ConstraintSet {
             schema,
             value,
             provenance,
@@ -261,14 +261,14 @@ fn map_initial_context_contribution(
 }
 
 fn map_context_provenance(
-    provenance: agentdash_agent_runtime_contract::ManagedRuntimeContextProvenance,
-) -> Result<ContextProvenance, ManagedRuntimeLifecycleError> {
+    provenance: agentdash_agent_runtime_contract::AgentRuntimeContextProvenance,
+) -> Result<ContextProvenance, AgentRuntimeLifecycleError> {
     Ok(ContextProvenance {
         authority: match provenance.authority {
-            ManagedRuntimeContextAuthority::AgentHistory => ContextAuthorityKind::AgentHistory,
-            ManagedRuntimeContextAuthority::AgentSnapshot => ContextAuthorityKind::AgentSnapshot,
-            ManagedRuntimeContextAuthority::Workflow => ContextAuthorityKind::Workflow,
-            ManagedRuntimeContextAuthority::Constraint => ContextAuthorityKind::Constraint,
+            AgentRuntimeContextAuthority::AgentHistory => ContextAuthorityKind::AgentHistory,
+            AgentRuntimeContextAuthority::AgentSnapshot => ContextAuthorityKind::AgentSnapshot,
+            AgentRuntimeContextAuthority::Workflow => ContextAuthorityKind::Workflow,
+            AgentRuntimeContextAuthority::Constraint => ContextAuthorityKind::Constraint,
         },
         source: AgentContextSourceCoordinate::new(provenance.source.into_inner())
             .map_err(|error| invalid(error.to_string()))?,
@@ -279,8 +279,8 @@ fn map_context_provenance(
     })
 }
 
-fn invalid(reason: impl Into<String>) -> ManagedRuntimeLifecycleError {
-    ManagedRuntimeLifecycleError::Invalid {
+fn invalid(reason: impl Into<String>) -> AgentRuntimeLifecycleError {
+    AgentRuntimeLifecycleError::Invalid {
         reason: reason.into(),
     }
 }

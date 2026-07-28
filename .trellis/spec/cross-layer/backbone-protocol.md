@@ -32,15 +32,18 @@ pub struct AgentLiveEvent {
 ```
 
 ```http
-GET /agent-runs/{run_id}/agents/{agent_id}/runtime
-GET /agent-runs/{run_id}/agents/{agent_id}/runtime/live
+GET /agent-runs/{run_id}/agents/{agent_id}/runtime/view
+GET /agent-runs/{run_id}/agents/{agent_id}/runtime/updates
 ```
 
 ```ts
-type AgentLiveEvent = {
-  source: AgentSourceCoordinate;
-  sequence: AgentServiceU64;
-  record: CanonicalConversationRecord;
+type AgentRuntimeUpdate = {
+  lane_sequence: RuntimeU64;
+  view_revision: RuntimeProjectionRevision;
+  execution: AgentRuntimeExecutionView;
+  command_availability: AgentRuntimeCommandAvailabilityMap;
+  interactions: AgentRuntimeInteraction[];
+  presentations: CanonicalConversationRecord[];
 };
 ```
 
@@ -58,11 +61,12 @@ type AgentLiveEvent = {
   provider round、`payload.kind`、独立 `turn_id/item_id` 等平行 telemetry 形态。
 - `presentation_id` 是同一 presentation 在 baseline/live 合并时的稳定 identity；收到相同 id 时
   替换记录，收到新 id 时追加。不得派生 `agent-turn:`、`agent-item:` 或 renderer-local tool id。
-- hydration baseline由transport的`onBaseline`时刻一次性确定；随后收到的durable record仍属于live
+- hydration baseline由connection的`onBaseline`时刻一次性确定；随后收到的durable record仍属于update
   lane。只有重新读取authoritative snapshot时才更新baseline集合，因此历史恢复不触发命令式副作用，
   已提交的实时记录仍能驱动当前观察者。
-- `TurnStarted`/`TurnCompleted` 是运行状态的唯一边界。第一个 message/tool/item 输出不结束 turn；
-  只有对应 `TurnCompleted` 才移除 active turn。
+- `TurnStarted`/`TurnCompleted` 是 conversation presentation 的 turn 边界；第一个
+  message/tool/item 输出不结束展示轮次。浏览器的执行控制只读取同一
+  `AgentRuntimeView/AgentRuntimeUpdate.execution`，不扫描这些 records。
 - `ItemStarted`/`ItemUpdated`/`ItemCompleted` 的 `AgentDashThreadItem` discriminant 决定 UI 形态。
   `agentMessage` 与 `reasoning` 进入消息卡，其余 item 进入对应工具/资源卡；未知 discriminant 是
   协议错误，不降级为“TOOL 未知”。
@@ -107,8 +111,8 @@ type AgentLiveEvent = {
 | live payload 使用旧 `turn_id/item_id/payload.kind` | 拒绝；producer/consumer 必须升级到 canonical record |
 | 同一 `presentation_id` 再次出现 | 原位替换 presentation，不重复渲染 |
 | ephemeral output早于输入/TurnStarted | producer顺序错误；不得靠前端延迟插入修正 |
-| 首个 delta/item 到达但没有 `TurnCompleted` | 会话保持 receiving/active |
-| `TurnCompleted` 到达 | turn 进入唯一终态；消息、工具和错误按 canonical history 渲染 |
+| 首个 delta/item 到达但 update.execution 仍 active | 会话保持 receiving/active |
+| update.execution 进入 idle | Composer退出运行态；消息、工具和错误仍按 canonical history 渲染 |
 | live 断开或 sequence gap | 丢弃 partial lane并重新 `read` authoritative snapshot |
 | terminal turn 没有 assistant item | 保留 terminal-only segment，并展示 `turn.error` |
 | PTY terminal 退出 | 只更新 terminal resource，不改变 Agent turn |
@@ -133,7 +137,7 @@ type AgentLiveEvent = {
 - Base：live 中途断开，临时 delta 消失；重新 `read` 后完整 assistant/tool history 恢复。
 - Bad：transport 校验 `{turn_id,item_id,payload.kind}`，后端发送 `{record}`；所有合法输出会被
   静默吞掉。
-- Bad：Managed Runtime 再维护 `turns[]/items[]/active_turn_id`，然后与 canonical history 比较
+- Bad：Agent Runtime 再维护 `turns[]/items[]/active_turn_id`，然后与 canonical history 比较
   currentness；这会把纯视图变成第二事实源。
 
 ## 6. Tests Required
@@ -142,11 +146,13 @@ type AgentLiveEvent = {
   items。
 - Complete Agent integration test 覆盖 source-scoped live canonical records，且 live lane 不持久化
   为第二份 tail。
-- transport test 断言当前 `{source,sequence,record}` 通过、旧 telemetry payload 被拒绝。
+- Runtime以下的 Complete Agent transport test 断言 `{source,sequence,record}`；浏览器 transport
+  test 断言 `AgentRuntimeUpdate` 通过且旧 `AgentLiveEvent` 被拒绝。
 - frontend projection test 断言相同 `presentation_id` 替换、新 id 追加。
 - frontend hydration测试断言初始durable records属于baseline，而同一连接追加的durable record属于live；
   浏览器tracer断言展示面板早于`TurnCompleted`打开，重载后不重放命令。
-- liveness test 断言 `TurnStarted + first output` 仍 active，加入 `TurnCompleted` 后才 inactive。
+- control test 断言 presentation history变化不会改变 execution，只有 Runtime update
+  control字段改变时 Composer 状态才变化。
 - ordering test断言用户输入与`TurnStarted`先于第一个ephemeral output；ContextFrame test断言直接
   消费`Platform(ContextFrameChanged)`并保留typed frame。
 - ContextFrame frontend tests覆盖added/removed/changed tool渲染、added/changed完整schema展开，
@@ -167,20 +173,20 @@ if (event.payload.kind === "tool_call_completed") {
 }
 
 // Correct: merge the one canonical record by its stable presentation identity.
-const index = snapshot.conversation_history.findIndex(
-  (record) => record.presentation_id === event.record.presentation_id,
+const index = view.conversation.findIndex(
+  (record) => record.presentation_id === update.presentations[0].presentation_id,
 );
 index >= 0
-  ? snapshot.conversation_history.splice(index, 1, event.record)
-  : snapshot.conversation_history.push(event.record);
+  ? view.conversation.splice(index, 1, update.presentations[0])
+  : view.conversation.push(update.presentations[0]);
 ```
 
 ```ts
-// Wrong: any output implies the Agent stopped receiving.
-const isReceiving = lastEvent.type === "agent_message_delta";
+// Wrong: presentation history is not the control owner.
+const isReceiving = hasActiveCanonicalTurn(view.conversation);
 
-// Correct: only canonical turn boundaries define execution liveness.
-const isReceiving = hasActiveCanonicalTurn(snapshot.conversation_history);
+// Correct: execution arrives with the Runtime view/update.
+const isReceiving = view.execution.status === "active";
 ```
 
 ```rust

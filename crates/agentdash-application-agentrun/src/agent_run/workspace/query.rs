@@ -1,4 +1,3 @@
-use agentdash_agent_service_api::{AgentLifecycleStatus, AgentObservation};
 use agentdash_application_vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, VfsSurfaceRuntimeProjection,
     build_surface_summary,
@@ -17,15 +16,15 @@ use crate::agent_run::lifecycle_read_model_facade::{
     SubjectRefView,
 };
 use crate::agent_run::{
-    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentRunExecutionState,
-    AgentRunOwnershipModel, AgentRunProductProjectionQueryPort, AgentRunProductRuntimeBinding,
-    AgentRunProductRuntimeExecutionObservation, ConversationModelConfigInput,
-    ConversationModelConfigResolver, ConversationModelConfigSourceModel,
-    ConversationWaitingItemModel, ValidationSeverityModel, resolve_agent_run_display_title,
+    AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentRunOwnershipModel,
+    AgentRunProductProjectionQueryPort, AgentRunProductRuntimeBinding,
+    ConversationModelConfigInput, ConversationModelConfigResolver,
+    ConversationModelConfigSourceModel, ConversationWaitingItemModel, ValidationSeverityModel,
+    resolve_agent_run_display_title,
 };
 use crate::error::WorkflowApplicationError;
 
-use super::state::{derive_workspace_state, is_terminal_agent_status};
+use super::state::derive_workspace_delivery_status;
 use super::types::{
     AgentRunListItem, AgentRunResourceSurfaceCoordinateModel,
     AgentRunResourceSurfaceSourceAnchorModel, AgentRunWorkspaceFrameRefModel,
@@ -74,15 +73,10 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             viewer_user_id.as_deref(),
         );
 
-        let runtime = self.runtime_observation(&target).await?;
-        let binding = runtime.binding();
-        let runtime_execution = runtime.observation();
+        let binding = self.product_runtime_binding(&target).await?;
+        let binding = binding.as_ref();
         let runtime_thread_id = binding.map(|binding| binding.runtime_thread_id.to_string());
-        let execution_state = runtime_execution
-            .map(runtime_execution_state)
-            .unwrap_or(AgentRunExecutionState::Idle);
-        let workspace_state = derive_workspace_state(&execution_state);
-        let terminal_agent = is_terminal_agent_status(&agent.status);
+        let delivery_status = derive_workspace_delivery_status(&agent.status);
         let frame = self.resolve_frame(&agent, binding).await?;
         let frame_ref = frame.as_ref().map(|frame| (frame.id, frame.revision));
         let frame_execution_profile = frame.as_ref().and_then(|frame| {
@@ -110,13 +104,13 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 execution_authority_vfs,
             )
             .await?;
-        let resource_surface_coordinate = match (frame.as_ref(), binding, runtime_execution) {
-            (Some(frame), Some(binding), Some(_)) => Some(resource_surface_coordinate_model(
+        let resource_surface_coordinate = match (frame.as_ref(), binding) {
+            (Some(frame), Some(binding)) => Some(resource_surface_coordinate_model(
                 frame,
                 binding,
-                &execution_state,
+                &delivery_status,
             )),
-            (Some(frame), _, _) => Some(AgentRunResourceSurfaceCoordinateModel {
+            (Some(frame), _) => Some(AgentRunResourceSurfaceCoordinateModel {
                 surface_frame_ref: frame_ref_model(frame),
                 source_anchor: None,
             }),
@@ -124,7 +118,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         };
 
         let subject_associations = self.subject_associations(run.id, agent.id).await?;
-        let agent_view = Some(agent_view(&run, &agent, &workspace_state.delivery_status));
+        let agent_view = Some(agent_view(&run, &agent, &delivery_status));
         let open_wait_items = self
             .repos
             .lifecycle_gate_repo
@@ -159,10 +153,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 run_id: run.id,
                 agent_id: agent.id,
                 frame_ref,
-                runtime_thread_id: runtime_thread_id.clone(),
                 subject_associations: subject_associations.clone(),
-                execution_state: execution_state.clone(),
-                terminal_agent,
                 open_wait_items,
                 resource_surface: resource_surface.clone(),
                 resource_surface_coordinate: resource_surface_coordinate.clone(),
@@ -170,11 +161,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 model_config,
                 ownership: ownership.clone(),
             });
-        let shell = shell_model(
-            &agent,
-            &workspace_state,
-            workspace_state.last_turn_id.clone(),
-        );
+        let shell = shell_model(&agent, &delivery_status);
 
         Ok(AgentRunWorkspaceSnapshot {
             run,
@@ -182,7 +169,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             ownership,
             shell,
             runtime_thread_id,
-            state: workspace_state,
             agent_view,
             frame_runtime,
             subject_associations,
@@ -202,20 +188,12 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             run_id: run.id,
             agent_id: agent.id,
         };
-        let runtime = self.runtime_observation(&target).await?;
-        let runtime_thread_id = runtime
-            .binding()
+        let binding = self.product_runtime_binding(&target).await?;
+        let runtime_thread_id = binding
+            .as_ref()
             .map(|binding| binding.runtime_thread_id.to_string());
-        let execution_state = runtime
-            .observation()
-            .map(runtime_execution_state)
-            .unwrap_or(AgentRunExecutionState::Idle);
-        let workspace_state = derive_workspace_state(&execution_state);
-        let shell = shell_model(
-            &agent,
-            &workspace_state,
-            workspace_state.last_turn_id.clone(),
-        );
+        let delivery_status = derive_workspace_delivery_status(&agent.status);
+        let shell = shell_model(&agent, &delivery_status);
         let project_agent = self.load_project_agent(&run, &agent).await?;
         let association = self
             .repos
@@ -244,31 +222,15 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         })
     }
 
-    async fn runtime_observation(
+    async fn product_runtime_binding(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<WorkspaceRuntimeObservation, WorkflowApplicationError> {
-        let observation = match self
-            .repos
+    ) -> Result<Option<AgentRunProductRuntimeBinding>, WorkflowApplicationError> {
+        self.repos
             .product_projection
-            .runtime_execution_observation(target)
+            .runtime_product_binding(target)
             .await
-        {
-            Ok(observation) => observation,
-            Err(_) => return Ok(WorkspaceRuntimeObservation::Absent),
-        };
-        match observation {
-            AgentRunProductRuntimeExecutionObservation::Absent { .. } => {
-                Ok(WorkspaceRuntimeObservation::Absent)
-            }
-            AgentRunProductRuntimeExecutionObservation::Current {
-                product_binding,
-                observation,
-            } => Ok(WorkspaceRuntimeObservation::Current {
-                binding: product_binding,
-                observation,
-            }),
-        }
+            .map_err(|error| WorkflowApplicationError::Conflict(error.to_string()))
     }
 
     async fn resolve_frame(
@@ -370,86 +332,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
     }
 }
 
-enum WorkspaceRuntimeObservation {
-    Absent,
-    Current {
-        binding: AgentRunProductRuntimeBinding,
-        observation: AgentObservation,
-    },
-}
-
-impl WorkspaceRuntimeObservation {
-    fn binding(&self) -> Option<&AgentRunProductRuntimeBinding> {
-        match self {
-            Self::Absent => None,
-            Self::Current { binding, .. } => Some(binding),
-        }
-    }
-
-    fn observation(&self) -> Option<&AgentObservation> {
-        match self {
-            Self::Absent => None,
-            Self::Current { observation, .. } => Some(observation),
-        }
-    }
-}
-
-fn runtime_execution_state(observation: &AgentObservation) -> AgentRunExecutionState {
-    let active_turn_id = observation
-        .active_turn_id
-        .as_ref()
-        .map(|turn_id| turn_id.as_str().to_owned());
-    if active_turn_id.is_some() {
-        return AgentRunExecutionState::Running {
-            turn_id: active_turn_id,
-        };
-    }
-    let last_turn_id = observation
-        .latest_turn
-        .as_ref()
-        .map(|turn| turn.turn_id.as_str().to_owned());
-    match observation.lifecycle {
-        AgentLifecycleStatus::Creating => AgentRunExecutionState::Running { turn_id: None },
-        AgentLifecycleStatus::Active => {
-            match observation.latest_turn.as_ref().map(|turn| turn.status) {
-                Some(
-                    agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::InProgress,
-                ) => AgentRunExecutionState::Running {
-                    turn_id: last_turn_id.clone(),
-                },
-                _ => AgentRunExecutionState::Idle,
-            }
-        }
-        AgentLifecycleStatus::Suspended => AgentRunExecutionState::Interrupted {
-            turn_id: last_turn_id.clone(),
-            message: Some("Complete Agent 已挂起".to_string()),
-        },
-        AgentLifecycleStatus::Closed => {
-            match observation.latest_turn.as_ref().map(|turn| turn.status) {
-                Some(agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Failed) => {
-                    AgentRunExecutionState::Failed {
-                        turn_id: last_turn_id.clone().unwrap_or_else(|| "closed".to_string()),
-                        message: None,
-                    }
-                }
-                Some(
-                    agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Interrupted,
-                ) => AgentRunExecutionState::Interrupted {
-                    turn_id: last_turn_id.clone(),
-                    message: None,
-                },
-                _ => AgentRunExecutionState::Completed {
-                    turn_id: last_turn_id.clone().unwrap_or_else(|| "closed".to_string()),
-                },
-            }
-        }
-        AgentLifecycleStatus::Lost => AgentRunExecutionState::Lost {
-            turn_id: last_turn_id,
-            message: Some("Complete Agent Runtime 已丢失".to_string()),
-        },
-    }
-}
-
 fn agent_view(
     run: &LifecycleRun,
     agent: &LifecycleAgent,
@@ -497,11 +379,7 @@ fn project_agent_display_label(project_agent: &ProjectAgent) -> String {
         .unwrap_or_else(|| project_agent.name.clone())
 }
 
-fn shell_model(
-    agent: &LifecycleAgent,
-    workspace_state: &super::types::AgentRunWorkspaceStateModel,
-    last_turn_id: Option<String>,
-) -> AgentRunWorkspaceShellModel {
+fn shell_model(agent: &LifecycleAgent, delivery_status: &str) -> AgentRunWorkspaceShellModel {
     let title = resolve_agent_run_display_title(
         agent.workspace_title.as_deref(),
         agent.workspace_title_source.as_deref(),
@@ -509,8 +387,7 @@ fn shell_model(
     AgentRunWorkspaceShellModel {
         display_title: title.value,
         title_source: title.source,
-        delivery_status: workspace_state.delivery_status.clone(),
-        last_turn_id,
+        delivery_status: delivery_status.to_owned(),
         last_activity_at: agent.updated_at.to_rfc3339(),
     }
 }
@@ -572,7 +449,7 @@ fn frame_ref_model(frame: &AgentFrame) -> AgentRunWorkspaceFrameRefModel {
 fn resource_surface_coordinate_model(
     frame: &AgentFrame,
     binding: &AgentRunProductRuntimeBinding,
-    execution_state: &AgentRunExecutionState,
+    delivery_status: &str,
 ) -> AgentRunResourceSurfaceCoordinateModel {
     let observed_at = frame.created_at.to_rfc3339();
     AgentRunResourceSurfaceCoordinateModel {
@@ -583,23 +460,10 @@ fn resource_surface_coordinate_model(
             orchestration_id: None,
             node_path: None,
             node_attempt: None,
-            delivery_status: delivery_status_for_execution(execution_state),
+            delivery_status: delivery_status.to_owned(),
             observed_at,
         }),
     }
-}
-
-fn delivery_status_for_execution(state: &AgentRunExecutionState) -> String {
-    match state {
-        AgentRunExecutionState::Idle => "idle",
-        AgentRunExecutionState::Running { .. } => "running",
-        AgentRunExecutionState::Cancelling { .. } => "cancelling",
-        AgentRunExecutionState::Completed { .. } => "completed",
-        AgentRunExecutionState::Failed { .. } => "failed",
-        AgentRunExecutionState::Interrupted { .. } => "interrupted",
-        AgentRunExecutionState::Lost { .. } => "lost",
-    }
-    .to_string()
 }
 
 fn workspace_resource_diagnostics(

@@ -3,15 +3,15 @@
 //! Product repositories identify the LifecycleRun and AgentRun target. Runtime
 //! thread/source coordinates come exclusively from the committed Product
 //! binding, while execution availability comes exclusively from the canonical
-//! Managed Runtime snapshot.
+//! Agent Runtime snapshot.
 
 use std::cmp::Reverse;
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::ManagedRuntimeSnapshot;
+use agentdash_agent_runtime_contract::AgentRuntimeView;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductProjectionQueryPort, AgentRunProductRuntimeBinding,
-    AgentRunProductRuntimeSnapshotObservation,
+    AgentRunProductRuntimeViewObservation,
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -111,7 +111,7 @@ pub enum RuntimeExecutionTraceView {
     },
     Current {
         binding: AgentRunProductRuntimeBinding,
-        snapshot: ManagedRuntimeSnapshot,
+        view: AgentRuntimeView,
     },
 }
 
@@ -137,21 +137,21 @@ impl LifecycleRunViewQueryService {
         match self
             .deps
             .product_projection
-            .runtime_snapshot_observation(target)
+            .runtime_view_observation(target)
             .await
         {
-            Ok(AgentRunProductRuntimeSnapshotObservation::Absent { .. }) => {
+            Ok(AgentRunProductRuntimeViewObservation::Absent { .. }) => {
                 RuntimeExecutionTraceView::Absent {
                     target: target.clone(),
                     reason: RuntimeTraceAbsenceReason::ProductBindingMissing,
                 }
             }
-            Ok(AgentRunProductRuntimeSnapshotObservation::Current {
+            Ok(AgentRunProductRuntimeViewObservation::Current {
                 product_binding,
-                snapshot,
+                view,
             }) => RuntimeExecutionTraceView::Current {
                 binding: product_binding,
-                snapshot,
+                view,
             },
             Err(_) => RuntimeExecutionTraceView::Absent {
                 target: target.clone(),
@@ -593,10 +593,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use agentdash_agent_runtime_contract::{
-        ManagedRuntimeAvailabilityEvidence, ManagedRuntimeCommandAvailability,
-        ManagedRuntimeCommandKind, ManagedRuntimeLifecycleStatus,
-        ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
-        ManagedRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
+        AgentRuntimeAvailabilityEvidence, AgentRuntimeCommandAvailability, AgentRuntimeCommandKind,
+        AgentRuntimeExecutionStatus, AgentRuntimeExecutionView, AgentRuntimeLifecycleStatus,
+        AgentRuntimeProjectionAuthority, AgentRuntimeProjectionFidelity,
+        AgentRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
         RuntimeThreadId, SurfaceRevision,
     };
     use agentdash_application_agentrun::agent_run::{
@@ -617,16 +617,16 @@ mod tests {
 
     #[derive(Default)]
     struct ProjectionRepo {
-        snapshots: Mutex<BTreeMap<AgentRunTarget, ManagedRuntimeSnapshot>>,
+        snapshots: Mutex<BTreeMap<AgentRunTarget, AgentRuntimeView>>,
         bindings: Mutex<BTreeMap<AgentRunTarget, AgentRunProductRuntimeBinding>>,
     }
 
     #[async_trait]
     impl AgentRunProductProjectionQueryPort for ProjectionRepo {
-        async fn runtime_snapshot(
+        async fn runtime_view(
             &self,
             target: &AgentRunTarget,
-        ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError> {
+        ) -> Result<AgentRuntimeView, AgentRunProductProjectionError> {
             self.snapshots
                 .lock()
                 .await
@@ -635,13 +635,12 @@ mod tests {
                 .ok_or_else(|| AgentRunProductProjectionError::Runtime("snapshot missing".into()))
         }
 
-        async fn runtime_snapshot_observation(
+        async fn runtime_view_observation(
             &self,
             target: &AgentRunTarget,
-        ) -> Result<AgentRunProductRuntimeSnapshotObservation, AgentRunProductProjectionError>
-        {
+        ) -> Result<AgentRunProductRuntimeViewObservation, AgentRunProductProjectionError> {
             let Some(binding) = self.bindings.lock().await.get(target).cloned() else {
-                return Ok(AgentRunProductRuntimeSnapshotObservation::Absent {
+                return Ok(AgentRunProductRuntimeViewObservation::Absent {
                     requested_target: target.clone(),
                 });
             };
@@ -654,17 +653,17 @@ mod tests {
                 .ok_or_else(|| {
                     AgentRunProductProjectionError::Runtime("snapshot missing".into())
                 })?;
-            Ok(AgentRunProductRuntimeSnapshotObservation::Current {
+            Ok(AgentRunProductRuntimeViewObservation::Current {
                 product_binding: binding,
-                snapshot,
+                view: snapshot,
             })
         }
 
-        async fn runtime_live_events(
+        async fn runtime_updates(
             &self,
             _target: &AgentRunTarget,
         ) -> Result<
-            Box<dyn agentdash_agent_service_api::AgentLiveEventStream>,
+            Box<dyn agentdash_application_agentrun::agent_run::AgentRuntimeUpdateStream>,
             AgentRunProductProjectionError,
         > {
             Err(AgentRunProductProjectionError::Runtime("unused".into()))
@@ -717,7 +716,7 @@ mod tests {
             &self,
             target: AgentRunTarget,
             thread: &str,
-            source: ManagedRuntimeSourceBindingEvidence,
+            source: AgentRuntimeSourceBindingEvidence,
         ) {
             let execution_profile = execution_profile();
             let binding = AgentRunProductRuntimeBinding {
@@ -771,8 +770,8 @@ mod tests {
         profile
     }
 
-    fn source(name: &str) -> ManagedRuntimeSourceBindingEvidence {
-        ManagedRuntimeSourceBindingEvidence {
+    fn source(name: &str) -> AgentRuntimeSourceBindingEvidence {
+        AgentRuntimeSourceBindingEvidence {
             source_ref: RuntimeSourceRef::new(name).unwrap(),
             committed_at_revision: RuntimeProjectionRevision(2),
             applied_surface_revision: SurfaceRevision(3),
@@ -782,30 +781,35 @@ mod tests {
 
     fn snapshot(
         thread: &str,
-        source_binding: ManagedRuntimeSourceBindingEvidence,
-    ) -> ManagedRuntimeSnapshot {
-        let evidence = ManagedRuntimeAvailabilityEvidence {
+        source_binding: AgentRuntimeSourceBindingEvidence,
+    ) -> AgentRuntimeView {
+        let evidence = AgentRuntimeAvailabilityEvidence {
             blocking_operation_id: None,
             bound_surface_revision: Some(SurfaceRevision(3)),
             applied_surface_revision: Some(SurfaceRevision(3)),
         };
-        ManagedRuntimeSnapshot {
+        AgentRuntimeView {
             thread_id: RuntimeThreadId::new(thread).unwrap(),
             thread_name: None,
             thread_name_source: None,
-            revision: RuntimeProjectionRevision(7),
+            view_revision: RuntimeProjectionRevision(7),
             captured_at_ms: 10,
-            lifecycle: ManagedRuntimeLifecycleStatus::Active,
+            lifecycle: AgentRuntimeLifecycleStatus::Active,
+            execution: AgentRuntimeExecutionView {
+                status: AgentRuntimeExecutionStatus::Idle,
+                active_turn_id: None,
+                latest_turn_id: None,
+            },
             interactions: Vec::new(),
             operations: Vec::new(),
             source_binding: Some(source_binding),
-            authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
-            fidelity: ManagedRuntimeProjectionFidelity::Exact,
+            authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
+            fidelity: AgentRuntimeProjectionFidelity::Exact,
             command_availability: BTreeMap::from([(
-                ManagedRuntimeCommandKind::SubmitInput,
-                ManagedRuntimeCommandAvailability::Available { evidence },
+                AgentRuntimeCommandKind::SubmitInput,
+                AgentRuntimeCommandAvailability::Available { evidence },
             )]),
-            conversation_history: Vec::new(),
+            conversation: Vec::new(),
         }
     }
 
@@ -889,7 +893,10 @@ mod tests {
 
         let view = fixture.service().lifecycle_run_view(run.id).await.unwrap();
 
-        let RuntimeExecutionTraceView::Current { binding, snapshot } = &view.agents[0].runtime
+        let RuntimeExecutionTraceView::Current {
+            binding,
+            view: snapshot,
+        } = &view.agents[0].runtime
         else {
             panic!("expected current Runtime thread");
         };
@@ -897,7 +904,7 @@ mod tests {
         assert!(
             snapshot
                 .command_availability
-                .contains_key(&ManagedRuntimeCommandKind::SubmitInput)
+                .contains_key(&AgentRuntimeCommandKind::SubmitInput)
         );
         assert!(view.agents[0].current_attempt.is_none());
     }
@@ -936,7 +943,7 @@ mod tests {
         )));
         assert!(view.agents.iter().any(|view| matches!(
             &view.runtime,
-            RuntimeExecutionTraceView::Current { snapshot, .. }
+            RuntimeExecutionTraceView::Current { view: snapshot, .. }
                 if snapshot.thread_id.as_str() == "thread-stale"
         )));
         assert_eq!(view.agents.len(), 3);

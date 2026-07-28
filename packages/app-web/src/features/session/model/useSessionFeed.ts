@@ -9,6 +9,11 @@ import { useMemo } from "react";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import { useSessionStream } from "./useSessionStream";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type { AgentRunProductRuntimeCommandRequest } from "../../../services/agentRunRuntime";
+import type {
+  AgentRuntimeOperationReceipt,
+  AgentRuntimeView,
+} from "../../../generated/agent-runtime-validators";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { parseBoundedOutputText } from "./boundedOutput";
 import { getPlatformEventPolicy } from "./systemEventPolicy";
@@ -47,6 +52,10 @@ export interface UseSessionFeedResult {
   close: () => void;
   streamingEntryId: string | null;
   tokenUsage: TokenUsageInfo | null;
+  runtimeView: AgentRuntimeView | null;
+  executeRuntimeCommand: (
+    request: AgentRunProductRuntimeCommandRequest,
+  ) => Promise<AgentRuntimeOperationReceipt>;
 }
 
 function extractThreadItem(event: BackboneEvent): AgentDashThreadItem | null {
@@ -882,6 +891,8 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     isReceiving,
     error,
     tokenUsage,
+    runtimeView,
+    executeRuntimeCommand,
     refresh,
     reconnect,
     close,
@@ -927,6 +938,8 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     close,
     streamingEntryId,
     tokenUsage,
+    runtimeView,
+    executeRuntimeCommand,
   };
 }
 

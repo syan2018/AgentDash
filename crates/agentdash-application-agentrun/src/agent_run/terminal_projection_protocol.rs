@@ -1,5 +1,5 @@
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeSourceBindingEvidence, RuntimePayloadDigest, RuntimeThreadId,
+    AgentRuntimeSourceBindingEvidence, RuntimePayloadDigest, RuntimeThreadId,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
@@ -181,7 +181,7 @@ pub struct AgentRunTerminalOwnerFence {
     pub terminal_owner_epoch_id: AgentRunTerminalOwnerEpochId,
     pub target: AgentRunTarget,
     pub runtime_thread_id: RuntimeThreadId,
-    pub source_binding: ManagedRuntimeSourceBindingEvidence,
+    pub source_binding: AgentRuntimeSourceBindingEvidence,
     pub backend_id: String,
 }
 
@@ -970,7 +970,7 @@ mod tests {
                 agent_id: Uuid::max(),
             },
             runtime_thread_id: RuntimeThreadId::new("thread-1").expect("thread"),
-            source_binding: ManagedRuntimeSourceBindingEvidence {
+            source_binding: AgentRuntimeSourceBindingEvidence {
                 source_ref: agentdash_agent_runtime_contract::RuntimeSourceRef::new("source-1")
                     .expect("source"),
                 committed_at_revision: agentdash_agent_runtime_contract::RuntimeProjectionRevision(

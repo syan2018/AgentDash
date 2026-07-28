@@ -8,10 +8,9 @@ fn product_interaction_routes_are_mounted_on_the_production_router() {
     let _: fn(Arc<AppState>) -> Router = routes::create_router;
     let routes = format!("{:?}", routes::lifecycle_agents::router());
     for path in [
-        "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
         "/agent-runs/{run_id}/agents/{agent_id}/fork",
         "/agent-runs/{run_id}/agents/{agent_id}/fork-submit",
-        "/agent-runs/{run_id}/agents/{agent_id}/cancel",
+        "/agent-runs/{run_id}/agents/{agent_id}/runtime/commands",
     ] {
         assert!(
             routes.contains(path),

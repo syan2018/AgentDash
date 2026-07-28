@@ -1,46 +1,53 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
-  ManagedRuntimeSnapshot,
+  AgentRuntimeOperationReceipt,
+  AgentRuntimeView,
 } from "../../../generated/agent-runtime-validators";
-import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type {
+  AgentRunProductRuntimeCommandRequest,
+  AgentRunRuntimeTarget,
+} from "../../../services/agentRunRuntime";
 import {
-  connectManagedRuntimeFeed,
-  type ManagedRuntimeFeedConnection,
-} from "./managedRuntimeFeedConnection";
-import type { ManagedRuntimeFeedLifecycle } from "./managedRuntimeFeedTransport";
+  connectAgentRuntimeConnection,
+  type AgentRuntimeConnection,
+} from "./agentRuntimeConnection";
+import type { AgentRuntimeConnectionLifecycle } from "./agentRuntimeUpdateTransport";
 
-export interface UseManagedRuntimeFeedOptions {
+export interface UseAgentRuntimeConnectionOptions {
   agentRunTarget: AgentRunRuntimeTarget | null;
   enabled: boolean;
 }
 
-export interface UseManagedRuntimeFeedResult {
-  snapshot: ManagedRuntimeSnapshot | null;
+export interface UseAgentRuntimeConnectionResult {
+  view: AgentRuntimeView | null;
   baselinePresentationIds: ReadonlySet<string>;
   boundTargetKey: string | null;
-  lifecycle: ManagedRuntimeFeedLifecycle;
+  lifecycle: AgentRuntimeConnectionLifecycle;
   isLoading: boolean;
   error: Error | null;
   refresh: () => Promise<void>;
+  execute: (
+    request: AgentRunProductRuntimeCommandRequest,
+  ) => Promise<AgentRuntimeOperationReceipt>;
   reconnect: () => void;
   close: () => void;
 }
 
-export function useManagedRuntimeFeed({
+export function useAgentRuntimeConnection({
   agentRunTarget,
   enabled,
-}: UseManagedRuntimeFeedOptions): UseManagedRuntimeFeedResult {
-  const [snapshot, setSnapshot] = useState<ManagedRuntimeSnapshot | null>(null);
+}: UseAgentRuntimeConnectionOptions): UseAgentRuntimeConnectionResult {
+  const [view, setView] = useState<AgentRuntimeView | null>(null);
   const [baselinePresentationIds, setBaselinePresentationIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [boundTargetKey, setBoundTargetKey] = useState<string | null>(null);
   const [lifecycle, setLifecycle] =
-    useState<ManagedRuntimeFeedLifecycle>("closed");
+    useState<AgentRuntimeConnectionLifecycle>("closed");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const connectionRef = useRef<ManagedRuntimeFeedConnection | null>(null);
+  const connectionRef = useRef<AgentRuntimeConnection | null>(null);
 
   const close = useCallback(() => {
     connectionRef.current?.close();
@@ -51,7 +58,7 @@ export function useManagedRuntimeFeed({
 
   const connect = useCallback(() => {
     close();
-    setSnapshot(null);
+    setView(null);
     setBaselinePresentationIds(new Set());
     if (!enabled || !agentRunTarget) {
       setIsLoading(false);
@@ -62,19 +69,19 @@ export function useManagedRuntimeFeed({
     setError(null);
     setLifecycle("connecting");
 
-    const connection = connectManagedRuntimeFeed(agentRunTarget, {
+    const connection = connectAgentRuntimeConnection(agentRunTarget, {
       onBaseline: (loaded) => {
-        setSnapshot(loaded);
+        setView(loaded);
         setBaselinePresentationIds(new Set(
-          loaded.conversation_history.map((record) => record.presentation_id),
+          loaded.conversation.map((record) => record.presentation_id),
         ));
         setBoundTargetKey(
           `${agentRunTarget.runId}:${agentRunTarget.agentId}`,
         );
         setIsLoading(false);
       },
-      onProjection: (projected) => {
-        setSnapshot(projected);
+      onView: (projected) => {
+        setView(projected);
       },
       onLifecycleChange: setLifecycle,
       onError: (connectionError) => {
@@ -86,8 +93,14 @@ export function useManagedRuntimeFeed({
   }, [agentRunTarget, close, enabled]);
 
   useEffect(() => {
-    connect();
-    return close;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) connect();
+    });
+    return () => {
+      cancelled = true;
+      close();
+    };
   }, [close, connect]);
 
   const refresh = useCallback(async () => {
@@ -95,24 +108,35 @@ export function useManagedRuntimeFeed({
     if (!connection) return;
     setError(null);
     try {
-      await connection.reload();
+      await connection.refresh();
     } catch (refreshError) {
       setError(
         refreshError instanceof Error
           ? refreshError
-          : new Error("Agent authoritative snapshot 刷新失败"),
+          : new Error("Agent Runtime view 刷新失败"),
       );
     }
   }, []);
 
+  const execute = useCallback(async (
+    request: AgentRunProductRuntimeCommandRequest,
+  ): Promise<AgentRuntimeOperationReceipt> => {
+    const connection = connectionRef.current;
+    if (!connection) {
+      throw new Error("Agent Runtime connection 尚未建立");
+    }
+    return connection.execute(request);
+  }, []);
+
   return {
-    snapshot,
+    view,
     baselinePresentationIds,
     boundTargetKey,
     lifecycle,
     isLoading,
     error,
     refresh,
+    execute,
     reconnect: connect,
     close,
   };

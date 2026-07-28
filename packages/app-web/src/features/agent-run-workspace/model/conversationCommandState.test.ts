@@ -2,16 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type {
   AgentRunOwnershipView,
-  ConversationCommandPlacement,
   ConversationCommandView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
-import type {
-  ConversationCommandKind,
-  ConversationCommandStaleGuardView,
-} from "../../../generated/agent-run-interaction-contracts";
 import type { ProjectAgentSummary } from "../../../types";
-import { isAgentRunWorkspaceActionRunning } from "../../session/ui/SessionChatViewModel";
+import { agentRuntimeTestFixtures } from "../../agent-run-runtime/model/agentRuntimeTestFixtures";
+import { applyAgentRuntimeControlToChatCommandState } from "../../session/ui/SessionChatViewModel";
 import {
   buildAgentRunConversationCommandState,
   buildDraftConversationCommandState,
@@ -24,37 +20,22 @@ const ownership: AgentRunOwnershipView = {
   current_user_controls_run: true,
 };
 
-function staleGuard(commandId: string): ConversationCommandStaleGuardView {
+function command(
+  kind: ConversationCommandView["kind"],
+  commandId: string,
+): ConversationCommandView {
   return {
-    snapshot_id: "snapshot-1",
-    run_id: "run-1",
-    agent_id: "agent-1",
-    active_turn_id: commandId === "cancel" ? "turn-1" : undefined,
-  };
-}
-
-function command(input: {
-  kind: ConversationCommandKind;
-  command_id: string;
-  enabled?: boolean;
-  unavailable_reason?: string;
-  disabled_code?: string;
-  shortcut?: string;
-  requires_input?: boolean;
-  executor_config_policy?: string;
-  placement?: ConversationCommandPlacement[];
-}): ConversationCommandView {
-  return {
-    kind: input.kind,
-    command_id: input.command_id,
-    enabled: input.enabled ?? true,
-    unavailable_reason: input.unavailable_reason,
-    disabled_code: input.disabled_code,
-    shortcut: input.shortcut,
-    requires_input: input.requires_input ?? input.kind === "submit_message",
-    executor_config_policy: input.executor_config_policy ?? "optional",
-    placement: input.placement ?? ["composer_primary"],
-    stale_guard: staleGuard(input.kind),
+    kind,
+    command_id: commandId,
+    runtime_command: kind === "cancel"
+      ? "interrupt"
+      : kind === "compact_context"
+        ? "request_compaction"
+        : "submit_input",
+    shortcut: kind === "submit_message" ? "enter" : undefined,
+    requires_input: kind === "submit_message",
+    executor_config_policy: kind === "cancel" ? "forbidden" : "optional",
+    placement: kind === "cancel" ? ["header"] : ["composer_primary"],
   };
 }
 
@@ -72,138 +53,103 @@ function resolvedModelConfig(): ConversationModelConfigView {
 }
 
 describe("AgentRun conversation command state", () => {
-  it("projects runtime keyboard, primary command, cancel command, and helper text", () => {
-    const submit = command({
-      kind: "submit_message",
-      command_id: "cmd-submit",
-      shortcut: "enter",
-      placement: ["composer_primary"],
-    });
-    const cancel = command({
-      kind: "cancel",
-      command_id: "cmd-cancel",
-      enabled: false,
-      unavailable_reason: "当前没有运行中的 turn。",
-      disabled_code: "not_running",
-      requires_input: false,
-      executor_config_policy: "forbidden",
-      placement: ["header"],
-    });
-    const commandState = buildAgentRunConversationCommandState({
+  it("Workspace 只提供静态 Runtime command binding", () => {
+    const state = buildAgentRunConversationCommandState({
       conversation: {
-        execution: {
-          status: "running_active",
-          reason: "正在运行",
-        },
         commands: {
           ownership,
-          keyboard: {
-            enter: "cmd-submit",
-            ctrl_enter: "cmd-submit-steer",
-          },
-          commands: [cancel, submit],
+          keyboard: { enter: "cmd-submit" },
+          commands: [
+            command("submit_message", "cmd-submit"),
+            command("cancel", "cmd-cancel"),
+          ],
         },
         model_config: resolvedModelConfig(),
       },
       workspaceStateStatus: "ready",
       workspaceStateError: null,
     });
+    const model = projectAgentRunChatCommandState(state);
 
-    const model = projectAgentRunChatCommandState(commandState);
-
-    expect(model.mode).toBe("runtime");
-    expect(model.executionStatus).toBe("running_active");
-    expect(model.keyboard).toEqual({
-      enter: "cmd-submit",
-      ctrl_enter: "cmd-submit-steer",
-    });
-    expect(model.primaryCommandId).toBe("cmd-submit");
-    expect(model.cancelCommand).toEqual({
-      command_id: "cmd-cancel",
-      kind: "cancel",
+    expect(model.executionStatus).toBe("runtime");
+    expect(model.commands).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        command_id: "cmd-submit",
+        runtimeCommand: "submit_input",
+        enabled: false,
+      }),
+    ]));
+    expect(model.cancelCommand).toEqual(expect.objectContaining({
+      runtimeCommand: "interrupt",
       enabled: false,
-      unavailable_reason: "当前没有运行中的 turn。",
-      disabled_code: "not_running",
-      requires_input: false,
-      executor_config_policy: "forbidden",
-      shortcut: undefined,
-    });
-    expect(model.modelConfig.status).toBe("resolved");
-    expect(model.helperText).toBe("正在运行");
+    }));
   });
 
-  it("keeps workspace state loading and error states visible when conversation snapshot is missing", () => {
-    const commandState = buildAgentRunConversationCommandState({
-      conversation: null,
-      workspaceStateStatus: "error",
-      workspaceStateError: "工作台状态加载失败",
-    });
+  it("AgentRuntimeView 覆盖执行事实和命令可用性", () => {
+    const state = projectAgentRunChatCommandState(
+      buildAgentRunConversationCommandState({
+        conversation: {
+          commands: {
+            ownership,
+            keyboard: { enter: "cmd-submit" },
+            commands: [
+              command("submit_message", "cmd-submit"),
+              command("cancel", "cmd-cancel"),
+            ],
+          },
+          model_config: resolvedModelConfig(),
+        },
+        workspaceStateStatus: "ready",
+        workspaceStateError: null,
+      }),
+    );
 
-    const model = projectAgentRunChatCommandState(commandState);
+    const projected = applyAgentRuntimeControlToChatCommandState(
+      state,
+      agentRuntimeTestFixtures.snapshots.started,
+    );
+
+    expect(projected.executionStatus).toBe("running_active");
+    expect(projected.activeTurnId).toBe("turn-compaction");
+    expect(projected.cancelCommand?.enabled).toBe(true);
+    expect(projected.commands.find(
+      (item) => item.command_id === "cmd-submit",
+    )?.enabled).toBe(true);
+  });
+
+  it("Workspace refresh/error 不覆盖 Runtime 运行态与停止能力", () => {
+    const productError = projectAgentRunChatCommandState(
+      buildAgentRunConversationCommandState({
+        conversation: null,
+        workspaceStateStatus: "error",
+        workspaceStateError: "Workspace refresh failed",
+      }),
+    );
+
+    const projected = applyAgentRuntimeControlToChatCommandState(
+      productError,
+      agentRuntimeTestFixtures.snapshots.started,
+    );
+
+    expect(projected.executionStatus).toBe("running_active");
+    expect(projected.cancelCommand?.enabled).toBe(true);
+  });
+
+  it("Workspace 加载失败时保留 Product shell 错误", () => {
+    const model = projectAgentRunChatCommandState(
+      buildAgentRunConversationCommandState({
+        conversation: null,
+        workspaceStateStatus: "error",
+        workspaceStateError: "工作台状态加载失败",
+      }),
+    );
 
     expect(model.executionStatus).toBe("error");
     expect(model.commands).toEqual([]);
-    expect(model.modelConfig).toEqual({
-      status: "model_required",
-      missing_fields: [],
-      message: "工作台状态加载失败",
-    });
     expect(model.helperText).toBe("工作台状态加载失败");
   });
 
-  it("keeps the committed running conversation authoritative during a background refresh", () => {
-    const submit = command({
-      kind: "submit_message",
-      command_id: "cmd-submit",
-      shortcut: "enter",
-      placement: ["composer_primary"],
-    });
-    const cancel = command({
-      kind: "cancel",
-      command_id: "cmd-cancel",
-      enabled: true,
-      requires_input: false,
-      executor_config_policy: "forbidden",
-      placement: ["header"],
-    });
-    const commandState = buildAgentRunConversationCommandState({
-      conversation: {
-        execution: {
-          status: "running_active",
-          active_turn_id: "turn-1",
-          reason: "当前 AgentRun 正在执行中。",
-        },
-        commands: {
-          ownership,
-          keyboard: {
-            enter: "cmd-submit",
-          },
-          commands: [cancel, submit],
-        },
-        model_config: resolvedModelConfig(),
-      },
-      workspaceStateStatus: "refreshing",
-      workspaceStateError: null,
-    });
-
-    const model = projectAgentRunChatCommandState(commandState);
-
-    expect(model.executionStatus).toBe("running_active");
-    expect(model.commands.map((item) => item.command_id)).toEqual(["cmd-cancel", "cmd-submit"]);
-    expect(model.cancelCommand?.enabled).toBe(true);
-    expect(model.helperText).toBe("当前 AgentRun 正在执行中。");
-    expect(isAgentRunWorkspaceActionRunning({
-      executionStatus: model.executionStatus,
-    })).toBe(true);
-  });
-
-  it("does not show a disabled Stop from feed activity before the authoritative command snapshot is active", () => {
-    expect(isAgentRunWorkspaceActionRunning({
-      executionStatus: "ready",
-    })).toBe(false);
-  });
-
-  it("uses draft model policy as the local draft command authority", () => {
+  it("Draft 命令继续由本地模型配置事实控制", () => {
     const agent: ProjectAgentSummary = {
       key: "agent-key",
       display_name: "Draft Agent",
@@ -215,17 +161,12 @@ describe("AgentRun conversation command state", () => {
         model_id: null,
       },
     };
-
     const missingModel = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-key",
       agent,
       workspaceStateReady: true,
     });
-    expect(missingModel.executionStatus).toBe("model_required");
-    expect(missingModel.localDraftAction?.enabled).toBe(false);
-    expect(missingModel.localDraftAction?.disabled_code).toBe("model_required");
-
     const ready = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-key",
@@ -237,21 +178,9 @@ describe("AgentRun conversation command state", () => {
         model_id: "gpt-test",
       },
     });
-    const model = projectAgentRunChatCommandState(ready);
 
-    expect(ready.executionStatus).toBe("draft");
-    expect(ready.localDraftAction?.enabled).toBe(true);
-    expect(model.mode).toBe("draft");
-    expect(model.keyboard.enter).toBe("draft:start_local:resolved");
-    expect(model.primaryCommandId).toBe("draft:start_local:resolved");
-    expect(model.modelConfig.effective_executor_config).toEqual({
-      executor: "CODEX",
-      provider_id: "openai",
-      model_id: "gpt-test",
-      agent_id: undefined,
-      thinking_level: undefined,
-      source: "user_override",
-    });
+    expect(missingModel.localDraftAction?.enabled).toBe(false);
+    expect(projectAgentRunChatCommandState(ready).keyboard.enter)
+      .toBe("draft:start_local:resolved");
   });
-
 });

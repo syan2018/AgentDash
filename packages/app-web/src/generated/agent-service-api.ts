@@ -19,7 +19,7 @@ export type AgentServiceU64 = string & { readonly __agent_service_u64: "canonica
 /**
  * Schema root covering every public Complete Agent contract family.
  */
-export type AgentServiceApiSchema = { descriptor: AgentServiceDescriptor, create: CreateAgentCommand, resume: ResumeAgentCommand, fork: ForkAgentCommand, execute: AgentCommandEnvelope, receipt: AgentCommandReceipt, fork_receipt: ForkAgentReceipt, create_evidence: AgentCreateEvidence, read: AgentReadQuery, snapshot: AgentSnapshot, observe: AgentObservationQuery, observation: AgentObservation, changes: AgentChangesQuery, change_page: AgentChangePage, live_event: AgentLiveEvent, inspection: AgentEffectInspection, applied_effect_outcome: AgentAppliedEffectOutcome, desired_surface: AgentSurfaceSnapshot, surface_contribution_kind: AgentSurfaceContributionKind, offer: AgentRuntimeOffer, bound_surface: BoundAgentSurface, applied_surface: AppliedAgentSurface, apply_surface: ApplyBoundAgentSurface, revoke_surface: RevokeBoundAgentSurface, tool_invocation: AgentToolInvocation, tool_result: AgentToolResult, hook_invocation: AgentHookInvocation, hook_decision: AgentHookDecision, error: AgentServiceError, };
+export type AgentServiceApiSchema = { descriptor: AgentServiceDescriptor, create: CreateAgentCommand, resume: ResumeAgentCommand, fork: ForkAgentCommand, execute: AgentCommandEnvelope, receipt: AgentCommandReceipt, fork_receipt: ForkAgentReceipt, create_evidence: AgentCreateEvidence, read: AgentReadQuery, snapshot: AgentSnapshot, execution_snapshot: AgentExecutionSnapshot, observe: AgentObservationQuery, observation: AgentObservation, changes: AgentChangesQuery, change_page: AgentChangePage, live_event: AgentLiveEvent, inspection: AgentEffectInspection, applied_effect_outcome: AgentAppliedEffectOutcome, desired_surface: AgentSurfaceSnapshot, surface_contribution_kind: AgentSurfaceContributionKind, offer: AgentRuntimeOffer, bound_surface: BoundAgentSurface, applied_surface: AppliedAgentSurface, apply_surface: ApplyBoundAgentSurface, revoke_surface: RevokeBoundAgentSurface, tool_invocation: AgentToolInvocation, tool_result: AgentToolResult, hook_invocation: AgentHookInvocation, hook_decision: AgentHookDecision, error: AgentServiceError, };
 
 /**
  * 工具 owner 声明的 canonical conversation presentation family。
@@ -96,6 +96,8 @@ export type AgentEffectIdentity = string;
 export type AgentEffectInspection = { effect_id: AgentEffectIdentity, command_id: AgentCommandId | null, state: AgentEffectInspectionState, };
 
 export type AgentEffectInspectionState = { "kind": "not_applied" } | { "kind": "accepted", source: AgentSourceCoordinate, } | { "kind": "applied", outcome: AgentAppliedEffectOutcome, } | { "kind": "unknown" };
+
+export type AgentExecutionSnapshot = { active_turn_id: AgentTurnId | null, };
 
 export type AgentForkCapability = { cutoffs: { [key in AgentForkCutoffKind]?: SemanticFidelity }, lineage_fidelity: SemanticFidelity, native_durability: SemanticFidelity, };
 
@@ -185,7 +187,7 @@ export type AgentServiceErrorCode = "invalid_argument" | "not_found" | "conflict
 
 export type AgentServiceInstanceId = string;
 
-export type AgentSnapshot = { source: AgentSourceCoordinate, revision: AgentSnapshotRevision, lifecycle: AgentLifecycleStatus, interactions: Array<AgentInteractionSnapshot>, thread_name: AgentThreadNameSnapshot | null, source_info: AgentSnapshotSource, applied_surface: AppliedAgentSurface | null, initial_context: AppliedInitialContextEvidence | null, conversation_history: Array<CanonicalConversationRecord>, };
+export type AgentSnapshot = { source: AgentSourceCoordinate, revision: AgentSnapshotRevision, lifecycle: AgentLifecycleStatus, execution: AgentExecutionSnapshot, interactions: Array<AgentInteractionSnapshot>, thread_name: AgentThreadNameSnapshot | null, source_info: AgentSnapshotSource, applied_surface: AppliedAgentSurface | null, initial_context: AppliedInitialContextEvidence | null, conversation_history: Array<CanonicalConversationRecord>, };
 
 export type AgentSnapshotAuthority = "agent_authoritative" | "agent_observed" | "derived";
 

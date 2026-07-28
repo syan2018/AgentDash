@@ -2,7 +2,7 @@
 
 ## 1. Scope
 
-本规范约束 Complete Agent context、initial context package、compaction 与 Managed Runtime
+本规范约束 Complete Agent context、initial context package、compaction 与 Agent Runtime
 projection 的 owner 边界。
 
 ## 2. Ownership
@@ -11,7 +11,7 @@ projection 的 owner 边界。
 - Dash Agent 以 ordered history 维护 `AgentSession`；context materialization 和
   compaction 都是 history-derived lifecycle。
 - Codex 使用原生 ThreadStore、`thread/read`、`thread/compact` 与 history replacement。
-- Managed Runtime 只拥有 command admission、operation、normalized snapshot/change、
+- Agent Runtime 只拥有 command admission、operation、normalized snapshot/change、
   source evidence 与 availability，不保存可反向恢复外部 Agent 的 context head。
 - Product 只编译 initial context contribution 和 Agent Surface requirement，不读取或改写
   Agent 内部 repository。

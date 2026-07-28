@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::{ManagedRuntimeSnapshot, RuntimeThreadId};
+use agentdash_agent_runtime_contract::{AgentRuntimeView, RuntimeThreadId};
 use async_trait::async_trait;
 
 use super::{
@@ -11,10 +11,7 @@ use super::{
 /// Product 组合根所需的 concrete Agent 权威快照读取边界。
 #[async_trait]
 pub trait AgentRunRuntimeSnapshotPort: Send + Sync {
-    async fn load_snapshot(
-        &self,
-        thread_id: &RuntimeThreadId,
-    ) -> Result<ManagedRuntimeSnapshot, String>;
+    async fn load_snapshot(&self, thread_id: &RuntimeThreadId) -> Result<AgentRuntimeView, String>;
 }
 
 /// Product 协议的完整生产依赖；所有端口都必须由 composition root 显式注入。
@@ -25,7 +22,7 @@ pub struct AgentRunProductProtocolPorts {
     pub companion_fresh_sagas: Arc<dyn CompanionFreshSagaRepository>,
     pub companion_fresh_runtime: Arc<dyn CompanionFreshRuntimePort>,
     pub product_launch: Arc<crate::agent_run::AgentRunProductLaunchService>,
-    pub runtime_snapshot: Arc<dyn AgentRunRuntimeSnapshotPort>,
+    pub runtime_view: Arc<dyn AgentRunRuntimeSnapshotPort>,
 }
 
 impl AgentRunProductProtocolPorts {
@@ -36,7 +33,7 @@ impl AgentRunProductProtocolPorts {
         companion_fresh_sagas: Arc<dyn CompanionFreshSagaRepository>,
         companion_fresh_runtime: Arc<dyn CompanionFreshRuntimePort>,
         product_launch: Arc<crate::agent_run::AgentRunProductLaunchService>,
-        runtime_snapshot: Arc<dyn AgentRunRuntimeSnapshotPort>,
+        runtime_view: Arc<dyn AgentRunRuntimeSnapshotPort>,
     ) -> Self {
         Self {
             fork_sagas,
@@ -45,7 +42,7 @@ impl AgentRunProductProtocolPorts {
             companion_fresh_sagas,
             companion_fresh_runtime,
             product_launch,
-            runtime_snapshot,
+            runtime_view,
         }
     }
 }

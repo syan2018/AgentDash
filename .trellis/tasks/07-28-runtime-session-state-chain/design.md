@@ -30,7 +30,7 @@ AgentRun target 的可重建 read model，并向 Feed、Composer 和 Interaction
 - `RuntimeSession`：会制造新的公开 aggregate；
 - `ManagedRuntimeSnapshot`：`Managed` 来自已删除的 Runtime aggregate 设计，`Snapshot` 容易暗示
   Runtime 持有事实；
-- `ManagedRuntimeFeed`：实际是 Agent Runtime view/update connection。
+- `AgentRuntimeFeed`：实际是 Agent Runtime view/update connection。
 
 ## 3. Ownership and Dependency Direction
 
@@ -96,8 +96,9 @@ pub struct AgentRuntimeExecutionView {
 }
 ```
 
-`execution` 由 Runtime adapter 从同一次 Complete Agent read 显式投影。调用方不扫描
-conversation records 推断运行状态。
+Complete Agent adapter 从 source state 显式填充 `AgentSnapshot.execution.active_turn_id`；
+Runtime 从同一次 read 机械投影 `execution`。Runtime 与调用方都不扫描 conversation records
+推断运行状态。
 
 application-facing `ManagedRuntime*` 词汇统一改为 `AgentRuntime*`；`RuntimeThreadId` 等稳定坐标
 保持不变。crate 名 `agentdash-agent-runtime-contract` 保持，因为它描述的确是 Agent Runtime seam。
@@ -121,15 +122,17 @@ pub struct AgentRuntimeUpdate {
 
 要求：
 
-- 同一次 Complete Agent source observation 的 control state 与 presentation records 原子映射为
-  一个 update；
+- Complete Agent process-local live event 只负责唤醒 Runtime update lane；Application gateway
+  收到事件后立即读取同一 source 的 authoritative Agent snapshot，并把其中的 control state 与
+  本次 presentation record 组合成一个 update；
 - `lane_sequence` 只负责当前连接内排序和去重，不伪装成 durable revision；
 - reconnect、gap 或 lane replacement 必须重新读取 `AgentRuntimeView`；
-- durable change tail 只在 Complete Agent 支持时作为优化，baseline read 是最低恢复合同；
+- baseline read 是恢复合同；terminal presentation 会再触发一次 authoritative view convergence，
+  用于覆盖 durable record 早于紧随其后 snapshot 可见的边界；
 - frontend 不从 presentation event type 推断 execution 或 command availability。
 
-如果当前 adapter 的 live callback 尚不能给出原子 observation，先在 Complete Agent service seam
-补齐 source observation envelope，再由 Runtime normalize；不得在 API/前端重新扫描
+`AgentLiveEvent` 不向 API/UI 暴露，也不携带 control。Application gateway 的 authoritative read
+才是 update 中 execution、interaction 与 command availability 的来源；不得在 API/前端扫描
 `turn_started`。
 
 ### 4.3 Routes
@@ -248,8 +251,7 @@ diagnostics
   adapter；这是本任务最高风险。
 - Workspace command set 当前混合 Product presentation 与 Runtime availability，拆分时必须保持
   model requirement、ownership、keyboard 和 executor policy。
-- `ManagedRuntime*` 全量硬切会产生较大机械 diff；必须先修改 source contract，再统一生成 TS/schema，
+- `AgentRuntime*` 全量硬切会产生较大机械 diff；必须先修改 source contract，再统一生成 TS/schema，
   禁止手改生成物。
 - title、Task、Workspace Module 等 typed side effects 仍需稳定 live identity，不能随控制链删除而
   丢失。
-

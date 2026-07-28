@@ -96,10 +96,17 @@ impl AgentInteractionSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct AgentExecutionSnapshot {
+    pub active_turn_id: Option<AgentTurnId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct AgentSnapshot {
     pub source: AgentSourceCoordinate,
     pub revision: AgentSnapshotRevision,
     pub lifecycle: AgentLifecycleStatus,
+    pub execution: AgentExecutionSnapshot,
     pub interactions: Vec<AgentInteractionSnapshot>,
     pub thread_name: Option<AgentThreadNameSnapshot>,
     pub source_info: AgentSnapshotSource,
@@ -114,9 +121,10 @@ impl AgentSnapshot {
     }
 
     pub fn active_turn_id(&self) -> Option<&str> {
-        self.conversation()
-            .active_turn()
-            .map(|turn| turn.id.as_str())
+        self.execution
+            .active_turn_id
+            .as_ref()
+            .map(AgentTurnId::as_str)
     }
 }
 
@@ -153,11 +161,6 @@ pub struct AgentObservation {
 impl AgentObservation {
     pub fn from_snapshot(snapshot: &AgentSnapshot) -> Result<Self, String> {
         let conversation = snapshot.conversation();
-        let active_turn_id = conversation
-            .active_turn()
-            .map(|turn| AgentTurnId::new(turn.id.clone()))
-            .transpose()
-            .map_err(|error| error.to_string())?;
         let latest_turn = conversation
             .latest_turn()
             .map(|turn| -> Result<AgentTurnObservation, String> {
@@ -172,7 +175,7 @@ impl AgentObservation {
             source: snapshot.source.clone(),
             revision: snapshot.revision,
             lifecycle: snapshot.lifecycle,
-            active_turn_id,
+            active_turn_id: snapshot.execution.active_turn_id.clone(),
             latest_turn,
         })
     }

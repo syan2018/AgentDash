@@ -192,12 +192,13 @@ fn runtime_execution_trace_to_contract(
                 },
             }
         }
-        app::RuntimeExecutionTraceView::Current { binding, snapshot } => {
-            contract::LifecycleRuntimeExecutionTraceView::Current {
-                binding: runtime_binding_to_contract(binding),
-                snapshot,
-            }
-        }
+        app::RuntimeExecutionTraceView::Current {
+            binding,
+            view: snapshot,
+        } => contract::LifecycleRuntimeExecutionTraceView::Current {
+            binding: runtime_binding_to_contract(binding),
+            snapshot,
+        },
     }
 }
 

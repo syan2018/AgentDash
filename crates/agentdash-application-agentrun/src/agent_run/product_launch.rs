@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeContentBlock, ManagedRuntimeInitialContextPackage, ManagedRuntimeOperationReceipt,
+    AgentRuntimeContentBlock, AgentRuntimeInitialContextPackage, AgentRuntimeOperationReceipt,
 };
 use agentdash_agent_service_api::{AgentCommandReceipt, AgentEffectIdentity, AgentForkPoint};
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -18,15 +18,15 @@ use super::{
 #[derive(Debug, Clone)]
 pub struct AgentRunProductLaunchRequest {
     pub provisioning: AgentRunProductRuntimeProvisioningRequest,
-    pub initial_context: Option<ManagedRuntimeInitialContextPackage>,
-    pub initial_input: Vec<ManagedRuntimeContentBlock>,
+    pub initial_context: Option<AgentRuntimeInitialContextPackage>,
+    pub initial_input: Vec<AgentRuntimeContentBlock>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AgentRunProductLaunchOutcome {
     pub binding: AgentRunProductRuntimeBinding,
     pub create_receipt: AgentCommandReceipt,
-    pub input_receipt: Option<ManagedRuntimeOperationReceipt>,
+    pub input_receipt: Option<AgentRuntimeOperationReceipt>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -246,8 +246,8 @@ impl AgentRunProductLaunchService {
         &self,
         target: AgentRunTarget,
         client_command_id: String,
-        content: Vec<ManagedRuntimeContentBlock>,
-    ) -> Result<ManagedRuntimeOperationReceipt, AgentRunProductLaunchError> {
+        content: Vec<AgentRuntimeContentBlock>,
+    ) -> Result<AgentRuntimeOperationReceipt, AgentRunProductLaunchError> {
         self.commands
             .execute(AgentRunProductCommandRequest {
                 target,

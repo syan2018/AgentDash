@@ -2,7 +2,6 @@ import type { SessionChatCommandModel } from "../SessionChatViewTypes";
 
 interface ComposerSendButtonProps {
   isRunning: boolean;
-  hasInput: boolean;
   isSending: boolean;
   isCancelling: boolean;
   cancelDisabled: boolean;
@@ -31,7 +30,6 @@ function optionalCommandTitle(
 
 export function ComposerSendButton({
   isRunning,
-  hasInput,
   isSending,
   isCancelling,
   cancelDisabled,
@@ -39,11 +37,9 @@ export function ComposerSendButton({
   onSubmit,
   onCancel,
 }: ComposerSendButtonProps) {
-  const showStop = isRunning && !hasInput;
   const submitDisabled = isSending || !submitCommand?.enabled;
 
-  // Running + 无内容 → Stop
-  if (showStop) {
+  if (isRunning) {
     return (
       <button
         type="button"

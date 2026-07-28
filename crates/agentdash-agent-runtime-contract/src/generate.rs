@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, env, fs, path::Path};
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeContractSchema, ManagedRuntimeProjectionSchema, RuntimeU64,
+    AgentRuntimeContractSchema, AgentRuntimeProjectionSchema, RuntimeU64,
 };
 use schemars::schema_for;
 use ts_rs::TS;
@@ -15,10 +15,10 @@ fn main() {
     let validators_path = root.join("packages/app-web/src/generated/agent-runtime-validators.ts");
     let schema_path = root.join("schemas/agent-runtime-contract.schema.json");
     let temp = tempfile::tempdir().expect("create generation directory");
-    ManagedRuntimeContractSchema::export_all_to(temp.path())
-        .expect("export Managed Runtime contract types");
-    ManagedRuntimeProjectionSchema::export_all_to(temp.path())
-        .expect("export Managed Runtime projection types");
+    AgentRuntimeContractSchema::export_all_to(temp.path())
+        .expect("export Agent Runtime contract types");
+    AgentRuntimeProjectionSchema::export_all_to(temp.path())
+        .expect("export Agent Runtime projection types");
     RuntimeU64::export_all_to(temp.path()).expect("export canonical Runtime u64 wire scalar");
     let mut declarations = Vec::new();
     collect_typescript(temp.path(), &mut declarations);
@@ -35,8 +35,8 @@ fn main() {
     ensure_no_bigint(&typescript);
     let json_schema = format!(
         "{}\n",
-        serde_json::to_string_pretty(&schema_for!(ManagedRuntimeContractSchema))
-            .expect("serialize Managed Runtime JSON Schema")
+        serde_json::to_string_pretty(&schema_for!(AgentRuntimeContractSchema))
+            .expect("serialize Agent Runtime JSON Schema")
     );
     check_or_write(&ts_path, &typescript, check);
     check_or_write(&validators_path, MANAGED_RUNTIME_VALIDATORS, check);
@@ -48,7 +48,7 @@ fn ensure_no_bigint(source: &str) {
         .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .any(|token| token == "bigint")
     {
-        panic!("Managed Runtime TypeScript wire contract must not contain bigint");
+        panic!("Agent Runtime TypeScript wire contract must not contain bigint");
     }
 }
 
@@ -56,12 +56,13 @@ const MANAGED_RUNTIME_VALIDATORS: &str = include_str!("agent_runtime_validators.
 
 fn required_runtime_type_names() -> BTreeSet<String> {
     [
-        "ManagedRuntimeContractSchema",
-        "ManagedRuntimeProjectionSchema",
-        "ManagedRuntimeSnapshot",
-        "ManagedRuntimeInteractionRequest",
-        "ManagedRuntimeInteractionStatus",
-        "ManagedRuntimeInteractionResolution",
+        "AgentRuntimeContractSchema",
+        "AgentRuntimeProjectionSchema",
+        "AgentRuntimeView",
+        "AgentRuntimeUpdate",
+        "AgentRuntimeInteractionRequest",
+        "AgentRuntimeInteractionStatus",
+        "AgentRuntimeInteractionResolution",
         "RuntimeU64",
     ]
     .into_iter()
@@ -81,7 +82,7 @@ fn ensure_required_declarations(declarations: &[String], required: &BTreeSet<Str
         .collect::<Vec<_>>();
     if !missing.is_empty() {
         panic!(
-            "Managed Runtime export closure omitted declarations: {}",
+            "Agent Runtime export closure omitted declarations: {}",
             missing.join(", ")
         );
     }
@@ -189,9 +190,10 @@ mod tests {
     fn required_closure_covers_runtime_control_vocabulary() {
         let names = required_runtime_type_names();
         for required in [
-            "ManagedRuntimeInteractionRequest",
-            "ManagedRuntimeInteractionStatus",
-            "ManagedRuntimeInteractionResolution",
+            "AgentRuntimeInteractionRequest",
+            "AgentRuntimeInteractionStatus",
+            "AgentRuntimeInteractionResolution",
+            "AgentRuntimeUpdate",
         ] {
             assert!(names.contains(required), "missing {required}");
         }
@@ -201,8 +203,8 @@ mod tests {
     #[should_panic(expected = "omitted declarations")]
     fn missing_runtime_declaration_is_generation_failure() {
         let declarations =
-            vec!["export type ManagedRuntimeSnapshot = { revision: string };".to_owned()];
-        let required = ["ManagedRuntimeSnapshot", "ManagedRuntimeInteractionRequest"]
+            vec!["export type AgentRuntimeView = { view_revision: string };".to_owned()];
+        let required = ["AgentRuntimeView", "AgentRuntimeInteractionRequest"]
             .into_iter()
             .map(str::to_owned)
             .collect();

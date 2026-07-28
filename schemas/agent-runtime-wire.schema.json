@@ -3173,6 +3173,9 @@
         "lifecycle": {
           "$ref": "#/$defs/AgentLifecycleStatus"
         },
+        "execution": {
+          "$ref": "#/$defs/AgentExecutionSnapshot"
+        },
         "interactions": {
           "type": "array",
           "items": {
@@ -3223,6 +3226,7 @@
         "source",
         "revision",
         "lifecycle",
+        "execution",
         "interactions",
         "source_info",
         "conversation_history"
@@ -3237,6 +3241,17 @@
         "closed",
         "lost"
       ]
+    },
+    "AgentExecutionSnapshot": {
+      "type": "object",
+      "properties": {
+        "active_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     },
     "AgentInteractionSnapshot": {
       "type": "object",

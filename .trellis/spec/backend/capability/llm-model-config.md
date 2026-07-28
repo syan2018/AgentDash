@@ -263,7 +263,7 @@ AgentRun product command + AuthIdentity
   → Business Surface编译provider/model期望
   → Native service instance(config + credential scope)
   → trusted factory解析LlmBridge
-  → Host offer/binding + Managed Runtime operation
+  → Host offer/binding + Agent Runtime operation
   → Native Driver → AgentLoop → LLM API
 ```
 

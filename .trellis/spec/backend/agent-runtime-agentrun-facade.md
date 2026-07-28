@@ -22,7 +22,7 @@ pub struct DeliverAgentRunProductInput {
 
 pub struct AgentRunProductInputDelivery {
     pub handoff_id: Uuid,
-    pub operation_receipt: ManagedRuntimeOperationReceipt,
+    pub operation_receipt: AgentRuntimeOperationReceipt,
 }
 
 pub trait AgentRunProductInputDeliveryPort {
@@ -45,23 +45,23 @@ ProjectAgent Draft 创建与用户输入是两个明确命令：
 
 ```http
 POST /projects/{project_id}/agents/{project_agent_id}/agent-runs
-POST /agent-runs/{run_id}/agents/{agent_id}/composer
+POST /agent-runs/{run_id}/agents/{agent_id}/runtime/commands
 ```
 
 前者只返回已建立的 `run_id + agent_id + frame_id`；后者才携带
 `AgentInputContent[] + client_command_id` 并返回 concrete Agent receipt。
 
 ```rust
-pub enum AgentRunProductRuntimeSnapshotObservation {
+pub enum AgentRunProductRuntimeViewObservation {
     Absent { requested_target: AgentRunTarget },
     Current {
         product_binding: AgentRunProductRuntimeBinding,
-        snapshot: ManagedRuntimeSnapshot,
+        snapshot: AgentRuntimeView,
     },
 }
 ```
 
-`AgentRunProductProjectionGateway::runtime_snapshot` 从 binding 解析 service/source，调用
+`AgentRunProductProjectionGateway::runtime_view` 从 binding 解析 service/source，调用
 `CompleteAgentService::read` 并即时 normalize；它不读取 Runtime projection repository。
 
 ## 3. Contracts
@@ -70,7 +70,7 @@ pub enum AgentRunProductRuntimeSnapshotObservation {
   当前 Complete Agent，创建 source，最后把 stable association 写回 LifecycleAgent owner
   document。
 - ProjectAgent Draft launch只建立可读取、可订阅的Product/Agent target。首条用户输入在客户端进入
-  该target后使用标准composer command同步handoff，原因是live subscriber必须先拥有真实source
+  该target后使用标准 Runtime `submit_input` command同步handoff，原因是update subscriber必须先拥有真实source
   coordinate，才能观察user input → turn start → partial output的完整顺序。
 - `runtime_thread_id` 是 Product/Agent 桥接坐标；concrete source coordinate 仍由 Agent owner。
 - input handoff 是同步合同。`handoff_id` 从 target + client command id 确定性派生；成功返回
@@ -160,7 +160,7 @@ Ok(Accepted(receipt.operation_receipt))
 
 ```rust
 // Wrong: Project列表为每个Agent读取完整authoritative snapshot。
-let runtime = projection.runtime_presentation_snapshot(&target).await?;
+let runtime = projection.runtime_presentation_view(&target).await?;
 
 // Correct: Project列表只投影Product-owned列表事实。
 let item = AgentRunListEntryModel {
@@ -172,7 +172,7 @@ let item = AgentRunListEntryModel {
 
 ```rust
 // Wrong: 每次展示都把 Agent-native thread name 当作 AgentRun 标题读穿。
-let title = runtime_snapshot.thread_name.unwrap_or_else(|| "新会话".to_owned());
+let title = runtime_view.thread_name.unwrap_or_else(|| "新会话".to_owned());
 
 // Correct: 首次命名只初始化一次，之后展示读取 Product-owned LifecycleAgent。
 lifecycle_agents

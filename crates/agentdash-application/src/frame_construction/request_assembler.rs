@@ -999,7 +999,7 @@ async fn resolve_existing_runtime_surface_refs(
         },
         ports_lifecycle_surface::MessageStreamProjectionRef {
             runtime_thread_id: runtime_thread_id.to_string(),
-            trace_kind: ports_lifecycle_surface::MessageStreamTraceKind::ManagedRuntimeThread,
+            trace_kind: ports_lifecycle_surface::MessageStreamTraceKind::AgentRuntimeThread,
         },
     )))
 }

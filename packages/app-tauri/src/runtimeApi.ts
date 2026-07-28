@@ -45,7 +45,7 @@ async function profileDelete(): Promise<void> {
 
 async function runtimeSnapshot(): Promise<LocalRuntimeStatus | null> {
   if (!isTauriHost()) return null
-  return invoke('runtime_snapshot')
+  return invoke('runtime_view')
 }
 
 async function runtimeStart(request: RuntimeStartRequest): Promise<LocalRuntimeStatus> {

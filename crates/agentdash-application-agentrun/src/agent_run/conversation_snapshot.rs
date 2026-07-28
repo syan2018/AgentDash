@@ -1,21 +1,18 @@
 use uuid::Uuid;
 
+use agentdash_application_vfs::ResolvedVfsSurface;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::workflow::LifecycleGate;
 use agentdash_platform_spi::{AgentConfig, ThinkingLevel};
 
-use crate::agent_run::AgentRunExecutionState;
 use crate::agent_run::lifecycle_read_model_facade::LifecycleSubjectAssociationView;
 use crate::agent_run::workspace::types::AgentRunResourceSurfaceCoordinateModel;
 use crate::error::WorkflowApplicationError;
-use agentdash_application_vfs::ResolvedVfsSurface;
 
 #[derive(Debug, Clone)]
 pub struct AgentConversationSnapshotModel {
-    pub snapshot_id: String,
     pub identity: AgentConversationIdentityModel,
     pub lifecycle_context: AgentConversationLifecycleContextModel,
-    pub execution: ConversationExecutionModel,
     pub model_config: ConversationModelConfigModel,
     pub commands: ConversationCommandSetModel,
     pub waiting_items: Vec<ConversationWaitingItemModel>,
@@ -34,7 +31,6 @@ pub struct AgentConversationIdentityModel {
 #[derive(Debug, Clone)]
 pub struct AgentConversationLifecycleContextModel {
     pub frame_ref: Option<AgentConversationFrameRefModel>,
-    pub runtime_thread_id: Option<String>,
     pub subject_associations: Vec<LifecycleSubjectAssociationView>,
 }
 
@@ -43,19 +39,6 @@ pub struct AgentConversationFrameRefModel {
     pub agent_id: String,
     pub frame_id: String,
     pub revision: Option<i32>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConversationExecutionStatusModel {
-    Draft,
-    ModelRequired,
-    Ready,
-    StartingClaimed,
-    RunningActive,
-    Cancelling,
-    Terminal,
-    FrameMissing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,34 +114,14 @@ pub enum ConversationCommandPlacementModel {
     Header,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ConversationCommandStaleGuardModel {
-    pub snapshot_id: String,
-    pub run_id: String,
-    pub agent_id: String,
-    pub frame_id: Option<String>,
-    pub active_turn_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunCommandPreconditionModel {
-    pub command_id: String,
-    pub command_kind: ConversationCommandKindModel,
-    pub stale_guard: ConversationCommandStaleGuardModel,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConversationCommandModel {
     pub kind: ConversationCommandKindModel,
     pub command_id: String,
-    pub enabled: bool,
-    pub unavailable_reason: Option<String>,
-    pub disabled_code: Option<String>,
     pub shortcut: Option<String>,
     pub requires_input: bool,
     pub executor_config_policy: String,
     pub placement: Vec<ConversationCommandPlacementModel>,
-    pub stale_guard: ConversationCommandStaleGuardModel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,14 +135,6 @@ pub struct ConversationCommandSetModel {
     pub ownership: AgentRunOwnershipModel,
     pub commands: Vec<ConversationCommandModel>,
     pub keyboard: ConversationKeyboardMapModel,
-}
-
-#[derive(Debug, Clone)]
-pub struct ConversationExecutionModel {
-    pub status: ConversationExecutionStatusModel,
-    pub runtime_thread_id: Option<String>,
-    pub active_turn_id: Option<String>,
-    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -279,11 +234,8 @@ impl ConversationModelConfigResolver {
         } else {
             ConversationModelConfigStatusModel::ModelRequired
         };
-        let message = if status == ConversationModelConfigStatusModel::ModelRequired {
-            Some(model_required_message(&config, &missing_fields))
-        } else {
-            None
-        };
+        let message = (status == ConversationModelConfigStatusModel::ModelRequired)
+            .then(|| model_required_message(&config, &missing_fields));
         let effective_executor_config = Some(effective_executor_config_view(&config, source));
 
         ConversationModelConfigResolution {
@@ -412,10 +364,10 @@ fn missing_required_model_fields(config: &AgentConfig) -> Vec<String> {
 }
 
 fn model_required_message(config: &AgentConfig, missing_fields: &[String]) -> String {
-    let fields = missing_fields.join(", ");
     format!(
-        "执行器 {} 缺少必需模型配置: {fields}。请先选择 provider 和 model。",
-        config.executor
+        "执行器 {} 缺少必需模型配置: {}。请先选择 provider 和 model。",
+        config.executor,
+        missing_fields.join(", ")
     )
 }
 
@@ -451,85 +403,12 @@ fn thinking_level_string(level: ThinkingLevel) -> String {
     .to_string()
 }
 
-#[derive(Debug, Clone)]
-pub struct ConversationCommandAvailabilityInput {
-    pub run_id: Uuid,
-    pub agent_id: Uuid,
-    pub frame_ref: Option<(Uuid, i32)>,
-    pub runtime_thread_id: Option<String>,
-    pub execution_state: AgentRunExecutionState,
-    pub terminal_agent: bool,
-    pub model_config_status: ConversationModelConfigStatusModel,
-    pub ownership: AgentRunOwnershipModel,
-}
-
-impl ConversationCommandAvailabilityInput {
-    fn from_snapshot_input(input: &AgentConversationSnapshotInput) -> Self {
-        Self {
-            run_id: input.run_id,
-            agent_id: input.agent_id,
-            frame_ref: input.frame_ref,
-            runtime_thread_id: input.runtime_thread_id.clone(),
-            execution_state: input.execution_state.clone(),
-            terminal_agent: input.terminal_agent,
-            model_config_status: input.model_config.status,
-            ownership: input.ownership.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ConversationCommandAvailability {
-    pub snapshot_id: String,
-    pub execution_status: ConversationExecutionStatusModel,
-    pub frame_id: Option<String>,
-    pub runtime_thread_id: Option<String>,
-    pub active_turn_id: Option<String>,
-    pub terminal_agent: bool,
-    pub commands: ConversationCommandSetModel,
-}
-
-pub struct ConversationCommandAvailabilityResolver;
-
-impl ConversationCommandAvailabilityResolver {
-    pub fn resolve(input: ConversationCommandAvailabilityInput) -> ConversationCommandAvailability {
-        let active_turn_id = active_turn_id(&input.execution_state);
-        let execution_status = conversation_execution_status(&input);
-        let snapshot_id = conversation_snapshot_id(
-            input.run_id,
-            input.agent_id,
-            input.frame_ref,
-            &input.execution_state,
-            input.terminal_agent,
-        );
-        let commands = conversation_commands(
-            &input,
-            execution_status,
-            active_turn_id.as_deref(),
-            &snapshot_id,
-        );
-
-        ConversationCommandAvailability {
-            snapshot_id,
-            execution_status,
-            frame_id: input.frame_ref.map(|(frame_id, _)| frame_id.to_string()),
-            runtime_thread_id: input.runtime_thread_id,
-            active_turn_id,
-            terminal_agent: input.terminal_agent,
-            commands,
-        }
-    }
-}
-
 pub struct AgentConversationSnapshotInput {
     pub project_id: Uuid,
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub frame_ref: Option<(Uuid, i32)>,
-    pub runtime_thread_id: Option<String>,
     pub subject_associations: Vec<LifecycleSubjectAssociationView>,
-    pub execution_state: AgentRunExecutionState,
-    pub terminal_agent: bool,
     pub open_wait_items: Vec<ConversationWaitingItemModel>,
     pub resource_surface: Option<ResolvedVfsSurface>,
     pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateModel>,
@@ -542,19 +421,10 @@ pub struct AgentConversationSnapshotResolver;
 
 impl AgentConversationSnapshotResolver {
     pub fn resolve(input: AgentConversationSnapshotInput) -> AgentConversationSnapshotModel {
-        let availability = ConversationCommandAvailabilityResolver::resolve(
-            ConversationCommandAvailabilityInput::from_snapshot_input(&input),
-        );
-        let execution = conversation_execution_view(
-            &input,
-            availability.execution_status,
-            availability.active_turn_id.clone(),
-        );
-        let commands = availability.commands;
+        let commands = conversation_commands(input.ownership.clone());
         let diagnostics = conversation_diagnostics(&input.model_config, input.resource_diagnostics);
 
         AgentConversationSnapshotModel {
-            snapshot_id: availability.snapshot_id.clone(),
             identity: AgentConversationIdentityModel {
                 run_id: input.run_id.to_string(),
                 agent_id: input.agent_id.to_string(),
@@ -568,10 +438,8 @@ impl AgentConversationSnapshotResolver {
                         revision: Some(revision),
                     }
                 }),
-                runtime_thread_id: input.runtime_thread_id.clone(),
                 subject_associations: input.subject_associations,
             },
-            execution,
             model_config: input.model_config,
             commands,
             waiting_items: input.open_wait_items,
@@ -582,222 +450,54 @@ impl AgentConversationSnapshotResolver {
     }
 }
 
-fn conversation_execution_view(
-    input: &AgentConversationSnapshotInput,
-    status: ConversationExecutionStatusModel,
-    active_turn_id: Option<String>,
-) -> ConversationExecutionModel {
-    let reason = match status {
-        ConversationExecutionStatusModel::Terminal => Some("当前 AgentRun 已结束。".to_string()),
-        ConversationExecutionStatusModel::FrameMissing => {
-            Some("当前 AgentRun 没有可投递的 runtime frame。".to_string())
-        }
-        ConversationExecutionStatusModel::ModelRequired => input.model_config.message.clone(),
-        ConversationExecutionStatusModel::StartingClaimed => {
-            Some("当前 AgentRun 正在启动中，等待 active turn 建立。".to_string())
-        }
-        ConversationExecutionStatusModel::RunningActive => {
-            Some("当前 AgentRun 正在执行中。".to_string())
-        }
-        ConversationExecutionStatusModel::Cancelling => {
-            Some("当前 AgentRun 正在取消中，等待执行器收口。".to_string())
-        }
-        ConversationExecutionStatusModel::Draft | ConversationExecutionStatusModel::Ready => None,
-    };
-    ConversationExecutionModel {
-        status,
-        runtime_thread_id: input.runtime_thread_id.clone(),
-        active_turn_id,
-        reason,
-    }
-}
-
-fn conversation_execution_status(
-    input: &ConversationCommandAvailabilityInput,
-) -> ConversationExecutionStatusModel {
-    if input.terminal_agent {
-        ConversationExecutionStatusModel::Terminal
-    } else if input.frame_ref.is_none() {
-        ConversationExecutionStatusModel::FrameMissing
-    } else if input.model_config_status == ConversationModelConfigStatusModel::ModelRequired {
-        ConversationExecutionStatusModel::ModelRequired
-    } else {
-        match input.execution_state {
-            AgentRunExecutionState::Running { turn_id: None } => {
-                ConversationExecutionStatusModel::StartingClaimed
-            }
-            AgentRunExecutionState::Running { turn_id: Some(_) } => {
-                ConversationExecutionStatusModel::RunningActive
-            }
-            AgentRunExecutionState::Cancelling { .. } => {
-                ConversationExecutionStatusModel::Cancelling
-            }
-            _ => ConversationExecutionStatusModel::Ready,
-        }
-    }
-}
-
-fn conversation_commands(
-    input: &ConversationCommandAvailabilityInput,
-    status: ConversationExecutionStatusModel,
-    active_turn_id: Option<&str>,
-    snapshot_id: &str,
-) -> ConversationCommandSetModel {
-    let model_ready = input.model_config_status == ConversationModelConfigStatusModel::Resolved;
-    let submit_message = !matches!(
-        status,
-        ConversationExecutionStatusModel::Draft
-            | ConversationExecutionStatusModel::Terminal
-            | ConversationExecutionStatusModel::FrameMissing
-            | ConversationExecutionStatusModel::ModelRequired
-    ) && model_ready;
-    let running_active =
-        status == ConversationExecutionStatusModel::RunningActive && active_turn_id.is_some();
-    let compact_context = model_ready
-        && input.frame_ref.is_some()
-        && input.runtime_thread_id.is_some()
-        && (status == ConversationExecutionStatusModel::Ready || running_active);
-    let cancel = matches!(
-        status,
-        ConversationExecutionStatusModel::StartingClaimed
-            | ConversationExecutionStatusModel::RunningActive
-            | ConversationExecutionStatusModel::Cancelling
-    );
-    let commands = vec![
-        command_view(
-            input,
-            ConversationCommandKindModel::SubmitMessage,
-            snapshot_id,
-            submit_message,
-            unavailable_reason_for_submit(status, model_ready),
-            Some(disabled_code_for_status(status)),
-            Some("enter"),
-            true,
-            "allowed",
-            vec![ConversationCommandPlacementModel::ComposerPrimary],
-        ),
-        command_view(
-            input,
-            ConversationCommandKindModel::Cancel,
-            snapshot_id,
-            cancel,
-            "当前 AgentRun 没有正在执行的 turn。",
-            Some("command_unavailable"),
-            None,
-            false,
-            "ignored",
-            vec![ConversationCommandPlacementModel::Header],
-        ),
-        command_view(
-            input,
-            ConversationCommandKindModel::CompactContext,
-            snapshot_id,
-            compact_context,
-            unavailable_reason_for_compact_context(
-                status,
-                model_ready,
-                input.frame_ref.is_some(),
-                input.runtime_thread_id.is_some(),
-            ),
-            Some(disabled_code_for_compact_context(
-                status,
-                model_ready,
-                input.frame_ref.is_some(),
-                input.runtime_thread_id.is_some(),
-            )),
-            None,
-            false,
-            "ignored",
-            vec![ConversationCommandPlacementModel::Header],
-        ),
-    ];
-
+fn conversation_commands(ownership: AgentRunOwnershipModel) -> ConversationCommandSetModel {
+    let submit_id = conversation_command_id_for(ConversationCommandKindModel::SubmitMessage);
     ConversationCommandSetModel {
-        ownership: input.ownership.clone(),
+        ownership,
+        commands: vec![
+            command_binding(
+                ConversationCommandKindModel::SubmitMessage,
+                Some("enter"),
+                true,
+                "allowed",
+                vec![ConversationCommandPlacementModel::ComposerPrimary],
+            ),
+            command_binding(
+                ConversationCommandKindModel::Cancel,
+                None,
+                false,
+                "ignored",
+                vec![ConversationCommandPlacementModel::Header],
+            ),
+            command_binding(
+                ConversationCommandKindModel::CompactContext,
+                None,
+                false,
+                "ignored",
+                vec![ConversationCommandPlacementModel::Header],
+            ),
+        ],
         keyboard: ConversationKeyboardMapModel {
-            enter: if submit_message {
-                Some(command_id_for(ConversationCommandKindModel::SubmitMessage))
-            } else {
-                None
-            },
-            ctrl_enter: if submit_message {
-                Some(command_id_for(ConversationCommandKindModel::SubmitMessage))
-            } else {
-                None
-            },
+            enter: Some(submit_id.to_string()),
+            ctrl_enter: Some(submit_id.to_string()),
         },
-        commands,
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn command_view(
-    input: &ConversationCommandAvailabilityInput,
+fn command_binding(
     kind: ConversationCommandKindModel,
-    snapshot_id: &str,
-    enabled: bool,
-    unavailable_reason: impl Into<String>,
-    disabled_code: Option<&str>,
     shortcut: Option<&str>,
     requires_input: bool,
-    executor_config_policy: impl Into<String>,
+    executor_config_policy: &str,
     placement: Vec<ConversationCommandPlacementModel>,
 ) -> ConversationCommandModel {
     ConversationCommandModel {
         kind,
-        command_id: command_id_for(kind),
-        enabled,
-        unavailable_reason: if enabled {
-            None
-        } else {
-            Some(unavailable_reason.into())
-        },
-        disabled_code: if enabled {
-            None
-        } else {
-            disabled_code.map(str::to_string)
-        },
+        command_id: conversation_command_id_for(kind).to_string(),
         shortcut: shortcut.map(str::to_string),
         requires_input,
-        executor_config_policy: executor_config_policy.into(),
+        executor_config_policy: executor_config_policy.to_string(),
         placement,
-        stale_guard: ConversationCommandStaleGuardModel {
-            snapshot_id: snapshot_id.to_string(),
-            run_id: input.run_id.to_string(),
-            agent_id: input.agent_id.to_string(),
-            frame_id: input.frame_ref.map(|(frame_id, _)| frame_id.to_string()),
-            active_turn_id: active_turn_id(&input.execution_state),
-        },
-    }
-}
-
-pub fn conversation_snapshot_id(
-    run_id: Uuid,
-    agent_id: Uuid,
-    frame_ref: Option<(Uuid, i32)>,
-    execution_state: &AgentRunExecutionState,
-    terminal_agent: bool,
-) -> String {
-    let frame = frame_ref
-        .map(|(frame_id, revision)| format!("{frame_id}:{revision}"))
-        .unwrap_or_else(|| "none".to_string());
-    let turn = active_turn_id(execution_state).unwrap_or_else(|| "none".to_string());
-    format!(
-        "agentrun:{run_id}:{agent_id}:frame:{frame}:state:{}:turn:{turn}:terminal:{terminal_agent}",
-        conversation_execution_state_code(execution_state)
-    )
-}
-
-pub fn conversation_execution_state_code(execution_state: &AgentRunExecutionState) -> &'static str {
-    match execution_state {
-        AgentRunExecutionState::Idle => "idle",
-        AgentRunExecutionState::Running { turn_id: None } => "starting_claimed",
-        AgentRunExecutionState::Running { turn_id: Some(_) } => "running_active",
-        AgentRunExecutionState::Cancelling { .. } => "cancelling",
-        AgentRunExecutionState::Completed { .. } => "completed",
-        AgentRunExecutionState::Failed { .. } => "failed",
-        AgentRunExecutionState::Interrupted { .. } => "interrupted",
-        AgentRunExecutionState::Lost { .. } => "lost",
     }
 }
 
@@ -806,119 +506,6 @@ pub fn conversation_command_id_for(kind: ConversationCommandKindModel) -> &'stat
         ConversationCommandKindModel::SubmitMessage => "submit_message",
         ConversationCommandKindModel::Cancel => "cancel",
         ConversationCommandKindModel::CompactContext => "compact_context",
-    }
-}
-
-fn command_id_for(kind: ConversationCommandKindModel) -> String {
-    conversation_command_id_for(kind).to_string()
-}
-
-fn disabled_code_for_status(status: ConversationExecutionStatusModel) -> &'static str {
-    match status {
-        ConversationExecutionStatusModel::Draft => "draft",
-        ConversationExecutionStatusModel::ModelRequired => "model_required",
-        ConversationExecutionStatusModel::Ready => "command_unavailable",
-        ConversationExecutionStatusModel::StartingClaimed => "starting_claimed",
-        ConversationExecutionStatusModel::RunningActive => "running_active",
-        ConversationExecutionStatusModel::Cancelling => "cancelling",
-        ConversationExecutionStatusModel::Terminal => "terminal",
-        ConversationExecutionStatusModel::FrameMissing => "missing_frame",
-    }
-}
-
-fn unavailable_reason_for_submit(
-    status: ConversationExecutionStatusModel,
-    model_ready: bool,
-) -> &'static str {
-    if !model_ready {
-        return "当前 AgentRun 缺少模型选择。";
-    }
-    match status {
-        ConversationExecutionStatusModel::StartingClaimed => {
-            "当前 AgentRun 正在启动中，等待 active turn 建立。"
-        }
-        ConversationExecutionStatusModel::RunningActive => {
-            "当前 AgentRun 正在执行中，新消息将交给当前 Agent 处理。"
-        }
-        ConversationExecutionStatusModel::Cancelling => {
-            "当前 AgentRun 正在取消中，暂不可提交新消息。"
-        }
-        ConversationExecutionStatusModel::Terminal => "当前 AgentRun 已结束，不能继续发送消息。",
-        ConversationExecutionStatusModel::FrameMissing => {
-            "当前 AgentRun 没有可投递的 runtime frame。"
-        }
-        ConversationExecutionStatusModel::ModelRequired => "当前 AgentRun 缺少模型选择。",
-        ConversationExecutionStatusModel::Draft | ConversationExecutionStatusModel::Ready => {
-            "当前 AgentRun 暂不可提交消息。"
-        }
-    }
-}
-
-fn disabled_code_for_compact_context(
-    status: ConversationExecutionStatusModel,
-    model_ready: bool,
-    has_frame: bool,
-    has_runtime_thread: bool,
-) -> &'static str {
-    if !has_frame {
-        return "frame_missing";
-    }
-    if !model_ready {
-        return "model_required";
-    }
-    if !has_runtime_thread {
-        return "runtime_thread_missing";
-    }
-    match status {
-        ConversationExecutionStatusModel::Ready
-        | ConversationExecutionStatusModel::RunningActive => "command_unavailable",
-        ConversationExecutionStatusModel::Draft => "draft",
-        ConversationExecutionStatusModel::StartingClaimed => "starting_claimed",
-        ConversationExecutionStatusModel::Cancelling => "cancelling",
-        ConversationExecutionStatusModel::Terminal => "terminal",
-        ConversationExecutionStatusModel::FrameMissing => "frame_missing",
-        ConversationExecutionStatusModel::ModelRequired => "model_required",
-    }
-}
-
-fn unavailable_reason_for_compact_context(
-    status: ConversationExecutionStatusModel,
-    model_ready: bool,
-    has_frame: bool,
-    has_runtime_thread: bool,
-) -> &'static str {
-    if !has_frame {
-        return "当前 AgentRun 缺少可用 frame。";
-    }
-    if !model_ready {
-        return "当前 AgentRun 缺少模型选择。";
-    }
-    if !has_runtime_thread {
-        return "当前 AgentRun 缺少可压缩的 RuntimeThread。";
-    }
-    match status {
-        ConversationExecutionStatusModel::StartingClaimed => {
-            "当前 AgentRun 正在启动中，等待 active turn 建立。"
-        }
-        ConversationExecutionStatusModel::Cancelling => "当前 AgentRun 正在取消中。",
-        ConversationExecutionStatusModel::Terminal => "当前 AgentRun 已结束。",
-        ConversationExecutionStatusModel::FrameMissing => "当前 AgentRun 缺少可用 frame。",
-        ConversationExecutionStatusModel::ModelRequired => "当前 AgentRun 缺少模型选择。",
-        ConversationExecutionStatusModel::Draft => "当前 AgentRun 尚未启动。",
-        ConversationExecutionStatusModel::Ready
-        | ConversationExecutionStatusModel::RunningActive => "当前 AgentRun 不可压缩上下文。",
-    }
-}
-
-fn active_turn_id(execution_state: &AgentRunExecutionState) -> Option<String> {
-    match execution_state {
-        AgentRunExecutionState::Running { turn_id }
-        | AgentRunExecutionState::Cancelling { turn_id } => turn_id.clone(),
-        AgentRunExecutionState::Idle
-        | AgentRunExecutionState::Completed { .. }
-        | AgentRunExecutionState::Failed { .. }
-        | AgentRunExecutionState::Interrupted { .. }
-        | AgentRunExecutionState::Lost { .. } => None,
     }
 }
 
@@ -951,11 +538,6 @@ fn conversation_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_run::workspace::AgentRunResourceSurfaceSourceAnchorModel;
-    use agentdash_application_vfs::{
-        ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary,
-        ResolvedVfsSurfaceSource,
-    };
 
     fn resolved_model_config() -> ConversationModelConfigModel {
         ConversationModelConfigModel {
@@ -966,575 +548,107 @@ mod tests {
         }
     }
 
-    fn snapshot_input(execution_state: AgentRunExecutionState) -> AgentConversationSnapshotInput {
+    fn snapshot_input() -> AgentConversationSnapshotInput {
         AgentConversationSnapshotInput {
             project_id: Uuid::new_v4(),
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
-            frame_ref: Some((Uuid::new_v4(), 1)),
-            runtime_thread_id: Some("runtime-1".to_string()),
+            frame_ref: Some((Uuid::new_v4(), 2)),
             subject_associations: Vec::new(),
-            execution_state,
-            terminal_agent: false,
             open_wait_items: Vec::new(),
             resource_surface: None,
             resource_surface_coordinate: None,
             resource_diagnostics: Vec::new(),
             model_config: resolved_model_config(),
             ownership: AgentRunOwnershipModel::from_owner_fields(
-                "owner-user",
-                "owner-user",
-                Some("owner-user"),
+                "owner",
+                "agent-owner",
+                Some("owner"),
             ),
         }
-    }
-
-    fn command(
-        snapshot: &AgentConversationSnapshotModel,
-        kind: ConversationCommandKindModel,
-    ) -> &ConversationCommandModel {
-        snapshot
-            .commands
-            .commands
-            .iter()
-            .find(|command| command.kind == kind)
-            .expect("command exists")
     }
 
     #[test]
     fn ownership_model_marks_only_run_owner_as_controller() {
         let owner = AgentRunOwnershipModel::from_owner_fields(
-            "owner-user",
+            "run-owner",
             "agent-owner",
-            Some("owner-user"),
+            Some("run-owner"),
         );
+        let viewer =
+            AgentRunOwnershipModel::from_owner_fields("run-owner", "agent-owner", Some("viewer"));
         assert!(owner.current_user_controls_run);
-        assert_eq!(owner.run_created_by_user_id, "owner-user");
-        assert_eq!(owner.agent_created_by_user_id, "agent-owner");
-
-        let collaborator = AgentRunOwnershipModel::from_owner_fields(
-            "owner-user",
-            "agent-owner",
-            Some("collaborator"),
-        );
-        assert!(!collaborator.current_user_controls_run);
-    }
-
-    fn lifecycle_surface() -> ResolvedVfsSurface {
-        let run_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        ResolvedVfsSurface {
-            surface_ref: format!("agent-run:{run_id}:{agent_id}"),
-            source: ResolvedVfsSurfaceSource::AgentRun { run_id, agent_id },
-            mounts: vec![ResolvedMountSummary {
-                id: "lifecycle".to_string(),
-                display_name: "Lifecycle".to_string(),
-                provider: "lifecycle_vfs".to_string(),
-                backend_id: "lifecycle".to_string(),
-                capabilities: vec!["read".to_string(), "list".to_string()],
-                default_write: false,
-                purpose: ResolvedMountPurpose::Lifecycle,
-                backend_online: None,
-                file_count: None,
-                edit_capabilities: ResolvedMountEditCapabilities::default(),
-            }],
-            default_mount_id: Some("lifecycle".to_string()),
-        }
-    }
-
-    #[test]
-    fn executor_only_override_keeps_preset_provider_and_model() {
-        let preset = AgentConfig {
-            executor: "PI_AGENT".to_string(),
-            provider_id: Some("openai".to_string()),
-            model_id: Some("gpt-5".to_string()),
-            agent_id: None,
-            thinking_level: None,
-            system_prompt: Some("preset prompt".to_string()),
-        };
-        let user = AgentConfig::new("PI_AGENT");
-
-        let resolved = ConversationModelConfigResolver::resolve(ConversationModelConfigInput {
-            project_agent_preset: Some(&preset),
-            user_override: Some(&user),
-            ..Default::default()
-        });
-
-        assert_eq!(resolved.config.provider_id.as_deref(), Some("openai"));
-        assert_eq!(resolved.config.model_id.as_deref(), Some("gpt-5"));
-        assert_eq!(
-            resolved.config.system_prompt.as_deref(),
-            Some("preset prompt")
-        );
-        assert_eq!(
-            resolved.view.status,
-            ConversationModelConfigStatusModel::Resolved
-        );
+        assert!(!viewer.current_user_controls_run);
     }
 
     #[test]
     fn cloud_native_without_model_is_model_required() {
-        let preset = AgentConfig::new("PI_AGENT");
-
-        let resolved = ConversationModelConfigResolver::resolve(ConversationModelConfigInput {
-            project_agent_preset: Some(&preset),
+        let config = AgentConfig::new("PI_AGENT");
+        let resolution = ConversationModelConfigResolver::resolve(ConversationModelConfigInput {
+            project_agent_preset: Some(&config),
             ..Default::default()
         });
-
         assert_eq!(
-            resolved.view.status,
+            resolution.view.status,
             ConversationModelConfigStatusModel::ModelRequired
         );
         assert_eq!(
-            resolved.view.missing_fields,
-            vec!["provider_id".to_string(), "model_id".to_string()]
-        );
-        assert!(
-            resolved
-                .view
-                .message
-                .as_deref()
-                .unwrap()
-                .contains("PI_AGENT")
+            resolution.view.missing_fields,
+            vec!["provider_id", "model_id"]
         );
     }
 
     #[test]
-    fn discovery_default_fills_missing_model_fields() {
-        let preset = AgentConfig::new("PI_AGENT");
-        let discovery = AgentConfig {
-            executor: "PI_AGENT".to_string(),
+    fn executor_override_preserves_unspecified_model_coordinates() {
+        let base = AgentConfig {
+            executor: "CODEX".to_string(),
             provider_id: Some("openai".to_string()),
             model_id: Some("gpt-5".to_string()),
-            agent_id: None,
-            thinking_level: None,
-            system_prompt: None,
-        };
-
-        let resolved = ConversationModelConfigResolver::resolve(ConversationModelConfigInput {
-            project_agent_preset: Some(&preset),
-            executor_discovery_default: Some(&discovery),
             ..Default::default()
-        });
-
-        assert_eq!(
-            resolved.view.status,
-            ConversationModelConfigStatusModel::Resolved
-        );
-        assert_eq!(resolved.config.provider_id.as_deref(), Some("openai"));
-        assert_eq!(resolved.config.model_id.as_deref(), Some("gpt-5"));
+        };
+        let override_config = AgentConfig {
+            executor: "CLAUDE_CODE".to_string(),
+            ..Default::default()
+        };
+        let merged = merge_executor_config_fields(base, &override_config);
+        assert_eq!(merged.executor, "CLAUDE_CODE");
+        assert_eq!(merged.provider_id.as_deref(), Some("openai"));
+        assert_eq!(merged.model_id.as_deref(), Some("gpt-5"));
     }
 
     #[test]
-    fn starting_claimed_exposes_submit_without_active_turn() {
-        let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            AgentRunExecutionState::Running { turn_id: None },
-        ));
-
+    fn workspace_conversation_exposes_only_static_runtime_command_bindings() {
+        let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input());
         assert_eq!(
-            snapshot.execution.status,
-            ConversationExecutionStatusModel::StartingClaimed
-        );
-        assert_eq!(
-            snapshot.commands.keyboard.enter.as_deref(),
-            Some("submit_message")
-        );
-        assert_eq!(snapshot.execution.active_turn_id, None);
-    }
-
-    #[test]
-    fn running_active_exposes_submit_for_the_current_agent() {
-        let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            AgentRunExecutionState::Running {
-                turn_id: Some("turn-1".to_string()),
-            },
-        ));
-
-        assert_eq!(
-            snapshot.execution.status,
-            ConversationExecutionStatusModel::RunningActive
-        );
-        assert_eq!(
-            snapshot.commands.keyboard.enter.as_deref(),
-            Some("submit_message")
-        );
-        assert!(snapshot.commands.commands.iter().any(|command| command.kind
-            == ConversationCommandKindModel::SubmitMessage
-            && command.enabled
-            && command.stale_guard.active_turn_id.as_deref() == Some("turn-1")));
-    }
-
-    #[test]
-    fn compact_context_is_available_when_ready_or_running_active() {
-        let ready = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            AgentRunExecutionState::Idle,
-        ));
-        let running = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            AgentRunExecutionState::Running {
-                turn_id: Some("turn-1".to_string()),
-            },
-        ));
-
-        let ready_compact = command(&ready, ConversationCommandKindModel::CompactContext);
-        assert!(ready_compact.enabled);
-        assert_eq!(ready_compact.command_id, "compact_context");
-        assert_eq!(ready_compact.stale_guard.active_turn_id, None);
-
-        let running_compact = command(&running, ConversationCommandKindModel::CompactContext);
-        assert!(running_compact.enabled);
-        assert_eq!(
-            running_compact.stale_guard.active_turn_id.as_deref(),
-            Some("turn-1")
-        );
-    }
-
-    #[test]
-    fn compact_context_disabled_states_explain_current_blocker() {
-        let starting = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            AgentRunExecutionState::Running { turn_id: None },
-        ));
-        assert_eq!(
-            command(&starting, ConversationCommandKindModel::CompactContext)
-                .disabled_code
-                .as_deref(),
-            Some("starting_claimed")
-        );
-
-        let cancelling = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            AgentRunExecutionState::Cancelling {
-                turn_id: Some("turn-1".to_string()),
-            },
-        ));
-        assert_eq!(
-            command(&cancelling, ConversationCommandKindModel::CompactContext)
-                .disabled_code
-                .as_deref(),
-            Some("cancelling")
-        );
-
-        let mut model_required = snapshot_input(AgentRunExecutionState::Idle);
-        model_required.model_config.status = ConversationModelConfigStatusModel::ModelRequired;
-        let model_required = AgentConversationSnapshotResolver::resolve(model_required);
-        assert_eq!(
-            command(
-                &model_required,
-                ConversationCommandKindModel::CompactContext
-            )
-            .disabled_code
-            .as_deref(),
-            Some("model_required")
-        );
-
-        let mut frame_missing = snapshot_input(AgentRunExecutionState::Idle);
-        frame_missing.frame_ref = None;
-        let frame_missing = AgentConversationSnapshotResolver::resolve(frame_missing);
-        assert_eq!(
-            command(&frame_missing, ConversationCommandKindModel::CompactContext)
-                .disabled_code
-                .as_deref(),
-            Some("frame_missing")
-        );
-
-        let mut runtime_missing = snapshot_input(AgentRunExecutionState::Idle);
-        runtime_missing.runtime_thread_id = None;
-        let runtime_missing = AgentConversationSnapshotResolver::resolve(runtime_missing);
-        assert_eq!(
-            command(
-                &runtime_missing,
-                ConversationCommandKindModel::CompactContext
-            )
-            .disabled_code
-            .as_deref(),
-            Some("runtime_thread_missing")
-        );
-    }
-
-    #[test]
-    fn ready_keyboard_maps_enter_and_ctrl_enter_to_submit_message() {
-        let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            AgentRunExecutionState::Idle,
-        ));
-
-        assert_eq!(
-            snapshot.execution.status,
-            ConversationExecutionStatusModel::Ready
-        );
-        assert_eq!(
-            snapshot.commands.keyboard.enter.as_deref(),
-            Some("submit_message")
-        );
-        assert_eq!(
-            snapshot.commands.keyboard.ctrl_enter.as_deref(),
-            Some("submit_message")
-        );
-    }
-
-    #[test]
-    fn runtime_snapshot_does_not_emit_draft_start_command() {
-        let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            AgentRunExecutionState::Idle,
-        ));
-
-        assert!(
             snapshot
                 .commands
                 .commands
                 .iter()
-                .all(|command| command.command_id != "start_draft")
+                .map(|command| command.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                ConversationCommandKindModel::SubmitMessage,
+                ConversationCommandKindModel::Cancel,
+                ConversationCommandKindModel::CompactContext,
+            ]
         );
-    }
-
-    #[test]
-    fn command_guards_share_snapshot_id() {
-        let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            AgentRunExecutionState::Running {
-                turn_id: Some("turn-1".to_string()),
-            },
-        ));
-
-        assert!(!snapshot.snapshot_id.is_empty());
-        assert!(
-            snapshot
-                .commands
-                .commands
-                .iter()
-                .all(|command| { command.stale_guard.snapshot_id == snapshot.snapshot_id })
-        );
-    }
-
-    #[test]
-    fn snapshot_id_is_derived_from_canonical_conversation() {
-        let input = ConversationCommandAvailabilityInput::from_snapshot_input(&snapshot_input(
-            AgentRunExecutionState::Running {
-                turn_id: Some("turn-1".to_string()),
-            },
-        ));
-        let mut rotated_runtime = input.clone();
-        rotated_runtime.runtime_thread_id = Some("runtime-2".to_string());
-
-        let first = ConversationCommandAvailabilityResolver::resolve(input);
-        let second = ConversationCommandAvailabilityResolver::resolve(rotated_runtime);
-
-        assert_eq!(first.snapshot_id, second.snapshot_id);
-        assert!(!first.snapshot_id.contains(":runtime:"));
-    }
-
-    #[test]
-    fn completed_turn_changes_snapshot_and_keyboard_stays_submit_message() {
-        let running = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            AgentRunExecutionState::Running {
-                turn_id: Some("turn-1".to_string()),
-            },
-        ));
-        let completed = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            AgentRunExecutionState::Completed {
-                turn_id: "turn-1".to_string(),
-            },
-        ));
-
-        assert_ne!(running.snapshot_id, completed.snapshot_id);
         assert_eq!(
-            running.commands.keyboard.enter.as_deref(),
+            snapshot.commands.keyboard.enter.as_deref(),
             Some("submit_message")
         );
-        assert_eq!(
-            completed.commands.keyboard.enter.as_deref(),
-            Some("submit_message")
-        );
-        assert_eq!(
-            completed.commands.keyboard.ctrl_enter.as_deref(),
-            Some("submit_message")
-        );
-        assert_eq!(completed.execution.active_turn_id, None);
-        assert!(
-            completed
-                .commands
-                .commands
-                .iter()
-                .all(|command| command.stale_guard.active_turn_id.is_none())
-        );
     }
 
     #[test]
-    fn snapshot_preserves_typed_resource_surface() {
-        let mut input = snapshot_input(AgentRunExecutionState::Idle);
-        input.resource_surface = Some(lifecycle_surface());
-
+    fn model_required_diagnostic_remains_a_product_fact() {
+        let mut input = snapshot_input();
+        input.model_config = ConversationModelConfigModel {
+            status: ConversationModelConfigStatusModel::ModelRequired,
+            effective_executor_config: None,
+            missing_fields: vec!["model_id".to_string()],
+            message: Some("请选择模型".to_string()),
+        };
         let snapshot = AgentConversationSnapshotResolver::resolve(input);
-
-        let surface = snapshot.resource_surface.expect("resource surface");
-        assert!(matches!(
-            surface.source,
-            ResolvedVfsSurfaceSource::AgentRun { .. }
-        ));
-        assert!(
-            surface
-                .mounts
-                .iter()
-                .any(|mount| mount.id == "lifecycle" && mount.provider == "lifecycle_vfs")
-        );
-    }
-
-    #[test]
-    fn snapshot_preserves_resource_surface_coordinate() {
-        let mut input = snapshot_input(AgentRunExecutionState::Idle);
-        let frame_id = input.frame_ref.expect("frame ref").0;
-        input.resource_surface = Some(lifecycle_surface());
-        input.resource_surface_coordinate = Some(AgentRunResourceSurfaceCoordinateModel {
-            surface_frame_ref: crate::agent_run::workspace::types::AgentRunWorkspaceFrameRefModel {
-                agent_id: input.agent_id.to_string(),
-                frame_id: frame_id.to_string(),
-                revision: Some(1),
-            },
-            source_anchor: Some(AgentRunResourceSurfaceSourceAnchorModel {
-                runtime_thread_id: "runtime-1".to_string(),
-                launch_frame_id: "launch-frame-1".to_string(),
-                orchestration_id: Some("orchestration-1".to_string()),
-                node_path: Some("root.review".to_string()),
-                node_attempt: Some(2),
-                delivery_status: "running".to_string(),
-                observed_at: "2026-06-21T00:00:00+00:00".to_string(),
-            }),
-        });
-
-        let snapshot = AgentConversationSnapshotResolver::resolve(input);
-
-        let coordinate = snapshot
-            .resource_surface_coordinate
-            .expect("resource surface coordinate");
-        assert_eq!(coordinate.surface_frame_ref.frame_id, frame_id.to_string());
-        let source_anchor = coordinate.source_anchor.expect("source anchor");
-        assert_eq!(source_anchor.runtime_thread_id, "runtime-1");
-        assert_eq!(source_anchor.launch_frame_id, "launch-frame-1");
-        assert_eq!(source_anchor.node_attempt, Some(2));
-    }
-
-    #[test]
-    fn snapshot_includes_resource_diagnostics() {
-        let mut input = snapshot_input(AgentRunExecutionState::Idle);
-        input.resource_diagnostics = vec![ConversationDiagnosticModel {
-            code: "resource_surface_lifecycle_mount_missing".to_string(),
-            severity: ValidationSeverityModel::Error,
-            message: "missing lifecycle mount".to_string(),
-            detail: None,
-        }];
-
-        let snapshot = AgentConversationSnapshotResolver::resolve(input);
-
-        assert!(snapshot.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "resource_surface_lifecycle_mount_missing"
-                && diagnostic.severity == ValidationSeverityModel::Error
-        }));
-    }
-
-    #[test]
-    fn open_companion_and_human_gates_are_projected_as_waiting_items() {
-        let run_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        let child_gate = LifecycleGate::open(
-            run_id,
-            Some(agent_id),
-            Some(Uuid::new_v4()),
-            "companion_wait_follow_up",
-            "dispatch-1",
-            Some(serde_json::json!({
-                "companion_label": "reviewer",
-                "summary": "Review the implementation",
-                "dispatch_id": "dispatch-1"
-            })),
-        );
-        let human_gate = LifecycleGate::open(
-            run_id,
-            Some(agent_id),
-            None,
-            "companion_human_request",
-            "human-request",
-            Some(serde_json::json!({
-                "request_type": "approval",
-                "payload": {
-                    "message": "Approve the release?"
-                }
-            })),
-        );
-        let blocking_human_gate = LifecycleGate::open(
-            run_id,
-            Some(agent_id),
-            None,
-            "companion_wait",
-            "human-wait-request",
-            Some(serde_json::json!({
-                "request_type": "approval",
-                "summary": "Waiting for approval"
-            })),
-        );
-
-        let mut input = snapshot_input(AgentRunExecutionState::Running {
-            turn_id: Some("turn-1".to_string()),
-        });
-        input.open_wait_items = vec![
-            ConversationWaitingItemModel::from_lifecycle_gate(&child_gate),
-            ConversationWaitingItemModel::from_lifecycle_gate(&human_gate),
-            ConversationWaitingItemModel::from_lifecycle_gate(&blocking_human_gate),
-        ];
-
-        let snapshot = AgentConversationSnapshotResolver::resolve(input);
-
-        assert_eq!(snapshot.waiting_items.len(), 3);
-        let child_wait = &snapshot.waiting_items[0];
-        assert_eq!(child_wait.wait_id, child_gate.id.to_string());
-        assert_eq!(child_wait.gate_id, child_gate.id.to_string());
-        assert_eq!(child_wait.kind, "subagent");
-        assert_eq!(child_wait.status, "open");
-        assert_eq!(child_wait.correlation_ref.as_deref(), Some("dispatch-1"));
-        assert_eq!(child_wait.source_label.as_deref(), Some("reviewer"));
-        assert_eq!(
-            child_wait.preview.as_deref(),
-            Some("Review the implementation")
-        );
-
-        let human_wait = &snapshot.waiting_items[1];
-        assert_eq!(human_wait.kind, "human");
-        assert_eq!(human_wait.source_label.as_deref(), Some("approval"));
-        assert_eq!(human_wait.preview.as_deref(), Some("Approve the release?"));
-        assert!(human_wait.resolved_at.is_none());
-
-        let blocking_human_wait = &snapshot.waiting_items[2];
-        assert_eq!(blocking_human_wait.kind, "human");
-        assert_eq!(
-            blocking_human_wait.preview.as_deref(),
-            Some("Waiting for approval")
-        );
-    }
-
-    #[test]
-    fn resolved_gate_waiting_item_uses_payload_status() {
-        let mut gate = LifecycleGate::open(
-            Uuid::new_v4(),
-            Some(Uuid::new_v4()),
-            Some(Uuid::new_v4()),
-            "companion_wait_follow_up",
-            "dispatch-failed",
-            Some(serde_json::json!({
-                "status": "failed",
-                "summary": "provider model unsupported",
-                "companion_label": "reviewer"
-            })),
-        );
-        gate.resolve("runtime_terminal");
-
-        let item = ConversationWaitingItemModel::from_lifecycle_gate(&gate);
-        let projection = gate.waiting_projection();
-
-        assert_eq!(item.kind, projection.kind);
-        assert_eq!(item.status, "failed");
-        assert_eq!(item.source_label, projection.source_label);
-        assert_eq!(item.preview, projection.preview);
-        assert_eq!(projection.kind, "subagent");
-        assert_eq!(projection.source_label.as_deref(), Some("reviewer"));
-        assert_eq!(
-            projection.preview.as_deref(),
-            Some("provider model unsupported")
-        );
-        assert!(item.resolved_at.is_some());
+        assert_eq!(snapshot.diagnostics.len(), 1);
+        assert_eq!(snapshot.diagnostics[0].code, "model_required");
     }
 }

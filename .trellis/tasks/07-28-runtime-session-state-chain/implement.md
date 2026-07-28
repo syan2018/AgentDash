@@ -14,68 +14,69 @@
 
 ### Slice 1 — Contract vocabulary and explicit control view
 
-- [ ] 运行 `trellis-before-dev`，加载 backend/frontend/package specs。
-- [ ] 将 application-facing `ManagedRuntime*` 词汇硬切为 `AgentRuntime*`。
-- [ ] 将 `ManagedRuntimeSnapshot` 改为 `AgentRuntimeView`。
-- [ ] 增加显式 `AgentRuntimeExecutionView`，不再要求调用方扫描 conversation。
-- [ ] 定义 `AgentRuntimeUpdate`，区分 connection-local lane sequence 与 view revision。
-- [ ] 更新 Rust schema/TS generator source；暂不手改生成物。
-- [ ] 为 view/update roundtrip、execution 和 availability 增加 contract tests。
+- [x] 运行 `trellis-before-dev`，加载 backend/frontend/package specs。
+- [x] 将 application-facing `ManagedRuntime*` 词汇硬切为 `AgentRuntime*`。
+- [x] 将 `ManagedRuntimeSnapshot` 改为 `AgentRuntimeView`。
+- [x] 增加显式 `AgentRuntimeExecutionView`，不再要求调用方扫描 conversation。
+- [x] 将 active turn 提升为 `AgentSnapshot.execution.active_turn_id`，由 Complete Agent adapter
+  显式填充，Runtime projector 不再扫描 conversation。
+- [x] 定义 `AgentRuntimeUpdate`，区分 connection-local lane sequence 与 view revision。
+- [x] 更新 Rust schema/TS generator source；暂不手改生成物。
+- [x] 为 view/update roundtrip、execution 和 availability 增加 contract tests。
 
 ### Slice 2 — Runtime observation/update production path
 
-- [ ] 检查 Complete Agent live seam，建立 state + presentation 原子 observation envelope。
-- [ ] Codex、Native、Remote adapter 通过同一 seam 输出 observation；不让 API 推断
-  `turn_started`。
-- [ ] AgentRun Product projection gateway 将 hidden Complete Agent observation normalize 为
-  `AgentRuntimeUpdate`。
-- [ ] 将 API 从 `/runtime/snapshot`、`/runtime/live` 硬切到 `/runtime/view`、
+- [x] 检查 Complete Agent live seam，确认 live event 只作为 Application authoritative read 的唤醒信号。
+- [x] AgentRun Product projection gateway 在每个 live signal 后读取 hidden Complete Agent authority，
+  normalize 为 `AgentRuntimeUpdate`。
+- [x] 将 API 从 `/runtime/snapshot`、`/runtime/live` 硬切到 `/runtime/view`、
   `/runtime/updates`。
-- [ ] 保持 reconnect/gap → authoritative view reload；删除 presentation-only API contract。
-- [ ] 增加 backend tracer，覆盖 idle → running → interrupting/terminal 的 view/update 顺序。
+- [x] 保持 reconnect/gap → authoritative view reload；删除 presentation-only API contract。
+- [x] 以 Runtime contract roundtrip、API route test 和 Connection 顺序测试覆盖
+  idle → running → terminal / next-turn 收敛。
 
 ### Slice 3 — Workspace contract owner split
 
-- [ ] 从 Workspace conversation response 删除 execution、active turn、dynamic command enabled
+- [x] 从 Workspace conversation response 删除 execution、active turn、dynamic command enabled
   和 Runtime stale guard。
-- [ ] 保留 Product composer support，并将 UI command 显式绑定到
+- [x] 保留 Product composer support，并将 UI command 显式绑定到
   `AgentRuntimeCommandKind`。
-- [ ] Workspace query 不再把 Runtime view还原成 `AgentObservation` 后重复派生 execution。
-- [ ] 保持 Product shell、Frame、resource surface、waiting items、model config、ownership、
+- [x] Workspace query 不再把 Runtime view还原成 `AgentObservation` 后重复派生 execution。
+- [x] 保持 Product shell、Frame、resource surface、waiting items、model config、ownership、
   keyboard/placement 和 diagnostics。
-- [ ] 增加 Workspace contract tests，证明 Agent unavailable/refreshing 时 Product facts仍成立，
+- [x] 增加 Workspace contract tests，证明 Agent unavailable/refreshing 时 Product facts仍成立，
   且 response 不复制 Runtime control。
 
 ### Slice 4 — Frontend AgentRuntimeConnection
 
-- [ ] 将 `managedRuntimeFeedConnection` 重塑为 `AgentRuntimeConnection`。
-- [ ] 将 `useManagedRuntimeFeed` 替换为单一 connection owner/provider。
-- [ ] 实现 view baseline、update lane、target fence、reconnect/gap reload、terminal convergence。
-- [ ] 提供 conversation/control/interaction/connection selectors。
-- [ ] `useSessionStream` 只消费 conversation selector，不自行建立 connection 或合成控制
+- [x] 将旧 feed connection 重塑为 `AgentRuntimeConnection`。
+- [x] 将旧 feed hook 替换为单一 `useAgentRuntimeConnection` owner。
+- [x] 实现 view baseline、update lane、target fence、reconnect/gap reload、terminal convergence。
+- [x] 提供 conversation/control/interaction/connection read model。
+- [x] `useSessionStream` 只消费 conversation，不自行建立第二条 connection 或合成控制
   `event_seq`。
-- [ ] 删除 `SessionChatView.lastLiveEventSeqRef` 对 Runtime control 的副作用派发。
-- [ ] Product/Task/title typed invalidation改用稳定 update lane/presentation identity。
+- [x] 删除 `SessionChatView.lastLiveEventSeqRef` 对 Runtime control 的副作用派发。
+- [x] Product/Task/title typed invalidation改用稳定 presentation identity。
 
 ### Slice 5 — Composer and command cutover
 
-- [ ] Composer execution、active turn、submit/interrupt availability只读 control selector。
-- [ ] Product composer support 与 Runtime availability按声明式 command binding组合。
-- [ ] submit/interrupt 统一调用 connection command interface。
-- [ ] 删除 `TurnStarted/TurnCompleted -> refreshWorkspaceState` 控制链。
-- [ ] 保持 Workspace Module、Task、title 等各自 typed owner invalidation。
-- [ ] 增加“history 收缩后下一轮开始仍显示停止按钮”的回归测试。
-- [ ] 增加 Workspace refresh/error 不改变运行中停止按钮的测试。
+- [x] Composer execution、active turn、submit/interrupt availability只读 Runtime control。
+- [x] Product composer support 与 Runtime availability按声明式 command binding组合。
+- [x] submit/interrupt 统一调用 connection command interface。
+- [x] 删除 `TurnStarted/TurnCompleted -> refreshWorkspaceState` 控制链。
+- [x] 保持 Workspace Module、Task、title 等各自 typed owner invalidation。
+- [x] 增加“history 收缩后下一轮开始仍显示停止按钮”的回归测试。
+- [x] 增加 Workspace refresh/error 不改变运行中停止按钮的测试。
 
 ### Slice 6 — Generation, specs and cleanup
 
-- [ ] 重新生成 Rust schema、TypeScript contracts/validators。
-- [ ] 删除旧 Managed Runtime/Runtime Session 名称、旧 route 和旧 feed实现。
-- [ ] 修正 `CONTEXT.md`、`project-overview.md`、frontend state-management 与 Agent Runtime facade
+- [x] 重新生成 Rust schema、TypeScript contracts/validators。
+- [x] 删除旧 Managed Runtime 名称、旧 route 和旧 feed实现。
+- [x] 修正 `project-overview.md`、frontend architecture/type-safety 与 Agent Runtime facade
   specs，记录最终 owner理由。
-- [ ] 负向搜索旧 `ManagedRuntimeSnapshot`、`useManagedRuntimeFeed`、
+- [x] 负向搜索旧 `ManagedRuntimeSnapshot`、`useManagedRuntimeFeed`、
   `lastLiveEventSeqRef` 控制链和 Workspace execution副本。
-- [ ] 检查是否实际涉及数据库 schema；无变化则明确记录无需 migration。
+- [x] 检查是否实际涉及数据库 schema；本次无数据库 schema 变化，无需 migration。
 
 ## Validation
 
@@ -110,4 +111,3 @@ git diff --check
 - 不手改生成 contract；只改 generator source并统一生成。
 - Rust命令若等待 Cargo锁，先观察 rust-analyzer/cargo进程，不强制终止。
 - 如果 contract hard cut需要数据库字段变化，先增加新的 forward migration，再继续调用方切换。
-

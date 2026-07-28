@@ -6,12 +6,10 @@ import type {
   BackendSelectionRequestDto,
   SessionMessageRefDto,
 } from "../../../generated/agent-run-interaction-contracts";
-import type {
-  ConversationCommandView,
-  ConversationWaitingItemView,
-} from "../../../generated/workflow-contracts";
+import type { ConversationWaitingItemView } from "../../../generated/workflow-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type { AgentRuntimeCommandKind } from "../../../generated/agent-runtime-contracts";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { ImageAttachment } from "./composer/useImageAttachments";
@@ -34,6 +32,7 @@ export interface SessionChatModelConfig {
 export interface SessionChatCommandModel {
   command_id: string;
   kind: string;
+  runtimeCommand?: AgentRuntimeCommandKind;
   enabled: boolean;
   unavailable_reason?: string;
   disabled_code?: string;
@@ -66,7 +65,6 @@ export interface SessionChatModel {
   executorStateKey?: string | null;
   showExecutorSelector?: boolean;
   commandState: SessionChatCommandState;
-  compactContextCommand?: ConversationCommandView;
   waitingItems: ConversationWaitingItemView[];
   statusBarRunId?: string | null;
   statusBarAgentId?: string | null;

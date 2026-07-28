@@ -287,7 +287,7 @@ pub trait HookRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn revision(&self) -> u64;
     fn trace(&self) -> Vec<HookTraceEntry>;
     fn pending_actions(&self) -> Vec<HookPendingAction>;
-    fn runtime_snapshot(&self) -> AgentFrameRuntimeSnapshot;
+    fn runtime_view(&self) -> AgentFrameRuntimeSnapshot;
 
     async fn refresh_from_provenance(
         &self,

@@ -42,6 +42,8 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 - `postgresql_embedded` 测试若并发复用同一 data root，多个 PostgreSQL 启动流程可能在初始化阶段相互竞争并失败，且不会进入业务断言；需要让共享 data root 的 embedded PostgreSQL 测试串行启动，或为测试分配隔离的数据目录。
 - `cargo fmt --all` 会解析 workspace 内所有 crate；若 `agentdash-agent-runtime-test-support` 的 `#[path]` 指向本机不存在的 `AgentDash-main-reference` checkout，格式化会在读取模块前失败。此时应先确认 reference checkout 配置，任务内文件可使用相同 toolchain 的 `rustfmt --edition 2024 <files>` 做定向格式化。
 - Windows 上 `cargo fmt --all` 可能因源码文件被用户映射区域短暂占用而报 `os error 1224`；未格式化文件可使用相同 toolchain 的 `rustfmt --edition 2024 <files>` 定向完成，随后再用 diff 与编译检查确认结果。
+- 对 crate root 或声明了子模块的文件直接运行 `rustfmt` 时，默认可能继续格式化其 child modules；
+  共享脏工作区中做定向检查应使用 `--config skip_children=true`，避免改写其他会话拥有的子模块。
 - Windows 工作区中的 Playwright skill wrapper 可能以 CRLF 保存，直接交给 WSL `bash` 会在 `set -o pipefail` 处把 `\r` 识别为选项名；本机已有 Node/npm 时可直接使用 `npx --yes --package @playwright/cli playwright-cli ...`，保持同一 CLI session 语义且不改写共享 skill 文件。
 - `lifecycle_agents.runtime_binding` 与 concrete Agent authority（例如 `dash_complete_source`）共同构成可打开会话的 owner invariant；重塑或重置 concrete Agent authority 的迁移需要在同一迁移链中收敛对应 Product owner，因为 Runtime snapshot 与 live subscription 会严格沿 committed binding 解析 source。
 - Dash Surface 在撤销后可以用相同 revision/digest 再次绑定，因此 Surface 历史条目 ID 需要包含本次发生位置；revision/digest 只标识 Surface 内容，不能单独充当历史事件身份。

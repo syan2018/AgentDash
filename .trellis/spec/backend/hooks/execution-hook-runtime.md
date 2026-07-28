@@ -4,7 +4,7 @@
 
 - Business Agent Surface 编译 `HookDefinition` / requirement 与 immutable `HookPlanSnapshot`。
 - Runtime admission 将实际 Driver `HookProfile` 与计划求交为 `BoundHookPlan`。
-- Managed Runtime 拥有 durable `HookRun`、decision、failure policy 与 effect outbox。
+- Agent Runtime 拥有 durable `HookRun`、decision、failure policy 与 effect outbox。
 - Tool Broker 执行同步 before/after-tool policy；Driver adapter只materialize被绑定的 native hook route。
 - Infrastructure 实现事务、lease、CAS 与 effect exactly-once。
 

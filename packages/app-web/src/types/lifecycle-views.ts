@@ -17,8 +17,6 @@ export type {
   LifecycleExecutionAttemptView,
   LifecycleNodePortValueView,
   AgentRunView,
-  AgentRunWorkspaceControlPlaneStatus,
-  AgentRunWorkspaceControlPlaneView,
   AgentRunWorkspaceView,
   LifecycleRunView,
   LifecycleRuntimeExecutionTraceView,

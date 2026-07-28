@@ -13,13 +13,13 @@ vi.mock("../api/client", () => ({
 }));
 
 import {
-  compactAgentRunContext,
+  executeAgentRunRuntimeCommand,
   fetchAgentRunRuntimeContextProjection,
-  fetchManagedRuntimeSnapshot,
+  fetchAgentRuntimeView,
   respondAgentRunInteraction,
 } from "./agentRunRuntime";
-import { managedRuntimeTestFixtures } from "../features/agent-run-runtime/model/managedRuntimeTestFixtures";
-import { encodeManagedRuntimeSnapshot } from "../generated/agent-runtime-validators";
+import { agentRuntimeTestFixtures } from "../features/agent-run-runtime/model/agentRuntimeTestFixtures";
+import { encodeAgentRuntimeView } from "../generated/agent-runtime-validators";
 
 describe("AgentRun runtime service", () => {
   beforeEach(() => {
@@ -37,7 +37,7 @@ describe("AgentRun runtime service", () => {
 
   it("submits context compaction through the typed Product Runtime command", async () => {
     mocks.apiGetMock.mockResolvedValue(
-      encodeManagedRuntimeSnapshot(managedRuntimeTestFixtures.snapshots.completed),
+      encodeAgentRuntimeView(agentRuntimeTestFixtures.snapshots.completed),
     );
     mocks.apiPostMock.mockResolvedValue({
       operation_id: "operation-compaction",
@@ -47,9 +47,12 @@ describe("AgentRun runtime service", () => {
       duplicate: false,
     });
 
-    await compactAgentRunContext(
+    await executeAgentRunRuntimeCommand(
       { runId: "run/1", agentId: "agent/1" },
-      "command-compact",
+      {
+        client_command_id: "command-compact",
+        command: { kind: "request_compaction" },
+      },
     );
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
@@ -61,22 +64,22 @@ describe("AgentRun runtime service", () => {
     );
   });
 
-  it("loads the canonical Managed Runtime snapshot from the AgentRun target", async () => {
+  it("loads the canonical Agent Runtime snapshot from the AgentRun target", async () => {
     mocks.apiGetMock.mockResolvedValue(
-      encodeManagedRuntimeSnapshot(managedRuntimeTestFixtures.snapshots.started),
+      encodeAgentRuntimeView(agentRuntimeTestFixtures.snapshots.started),
     );
     await expect(
-      fetchManagedRuntimeSnapshot({ runId: "run/1", agentId: "agent/1" }),
-    ).resolves.toEqual(managedRuntimeTestFixtures.snapshots.started);
+      fetchAgentRuntimeView({ runId: "run/1", agentId: "agent/1" }),
+    ).resolves.toEqual(agentRuntimeTestFixtures.snapshots.started);
     expect(mocks.apiGetMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/runtime/snapshot",
+      "/agent-runs/run%2F1/agents/agent%2F1/runtime/view",
     );
   });
 
   it("loads context projection from the required AgentRun Runtime route", async () => {
     const projection = {
       session_id: "thread-1",
-      projection_kind: "managed_runtime_canonical_context",
+      projection_kind: "agent_runtime_canonical_context",
       projection_version: 7,
       head_event_seq: 7,
       token_estimate: 12,
@@ -114,13 +117,13 @@ describe("AgentRun runtime service", () => {
     ["overflow", "18446744073709551616"],
   ])("rejects a non-canonical Runtime u64 encoded as %s", async (_case, revision) => {
     mocks.apiGetMock.mockResolvedValue({
-      ...encodeManagedRuntimeSnapshot(managedRuntimeTestFixtures.snapshots.started),
-      revision,
+      ...encodeAgentRuntimeView(agentRuntimeTestFixtures.snapshots.started),
+      view_revision: revision,
     });
 
     await expect(
-      fetchManagedRuntimeSnapshot({ runId: "run/1", agentId: "agent/1" }),
-    ).rejects.toThrow("$.revision");
+      fetchAgentRuntimeView({ runId: "run/1", agentId: "agent/1" }),
+    ).rejects.toThrow("$.view_revision");
   });
 
   it("rejects a response that is not the canonical Runtime projection", async () => {
@@ -130,7 +133,7 @@ describe("AgentRun runtime service", () => {
     });
 
     await expect(
-      fetchManagedRuntimeSnapshot({ runId: "run/1", agentId: "agent/1" }),
+      fetchAgentRuntimeView({ runId: "run/1", agentId: "agent/1" }),
     ).rejects.toThrow("expected");
   });
 

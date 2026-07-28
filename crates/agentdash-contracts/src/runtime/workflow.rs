@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use agentdash_agent_runtime_contract::{ManagedRuntimeSnapshot, RuntimeThreadId};
+use agentdash_agent_runtime_contract::{
+    AgentRuntimeCommandKind, AgentRuntimeView, RuntimeThreadId,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1010,8 +1012,8 @@ pub enum LifecycleRuntimeExecutionTraceView {
     },
     Current {
         binding: LifecycleAgentRuntimeBindingView,
-        #[ts(type = "ManagedRuntimeSnapshot")]
-        snapshot: ManagedRuntimeSnapshot,
+        #[ts(type = "AgentRuntimeView")]
+        snapshot: AgentRuntimeView,
     },
 }
 
@@ -1192,30 +1194,7 @@ pub struct AgentRunWorkspaceShell {
     pub display_title: String,
     pub title_source: String,
     pub delivery_status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub last_turn_id: Option<String>,
     pub last_activity_at: String,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRunWorkspaceControlPlaneStatus {
-    Ready,
-    Running,
-    Cancelling,
-    Terminal,
-    FrameMissing,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunWorkspaceControlPlaneView {
-    pub status: AgentRunWorkspaceControlPlaneStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub reason: Option<String>,
-    pub ownership: AgentRunOwnershipView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1247,19 +1226,6 @@ pub struct AgentRunResourceSurfaceCoordinateView {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ConversationExecutionStatus {
-    Draft,
-    ModelRequired,
-    Ready,
-    StartingClaimed,
-    RunningActive,
-    Cancelling,
-    Terminal,
-    FrameMissing,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub enum ConversationCommandKind {
     SubmitMessage,
     Cancel,
@@ -1284,38 +1250,10 @@ pub struct AgentRunOwnershipView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct ConversationCommandStaleGuardView {
-    pub snapshot_id: String,
-    pub run_id: String,
-    pub agent_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub frame_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub active_turn_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunCommandPreconditionView {
-    pub command_id: String,
-    pub command_kind: ConversationCommandKind,
-    pub stale_guard: ConversationCommandStaleGuardView,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub struct ConversationCommandView {
     pub kind: ConversationCommandKind,
     pub command_id: String,
-    pub enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub unavailable_reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub disabled_code: Option<String>,
+    pub runtime_command: AgentRuntimeCommandKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub shortcut: Option<String>,
@@ -1323,7 +1261,6 @@ pub struct ConversationCommandView {
     pub executor_config_policy: String,
     #[serde(default)]
     pub placement: Vec<ConversationCommandPlacement>,
-    pub stale_guard: ConversationCommandStaleGuardView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -1344,21 +1281,6 @@ pub struct ConversationCommandSetView {
     #[serde(default)]
     pub commands: Vec<ConversationCommandView>,
     pub keyboard: ConversationKeyboardMapView,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ConversationExecutionView {
-    pub status: ConversationExecutionStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub runtime_thread_ref: Option<RuntimeThreadRefDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub active_turn_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1389,10 +1311,8 @@ pub struct ConversationWaitingItemView {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentConversationSnapshot {
-    pub snapshot_id: String,
     pub identity: AgentConversationIdentity,
     pub lifecycle_context: AgentConversationLifecycleContext,
-    pub execution: ConversationExecutionView,
     pub model_config: ConversationModelConfigView,
     pub commands: ConversationCommandSetView,
     #[serde(default)]
@@ -1455,7 +1375,6 @@ pub struct AgentRunWorkspaceView {
     pub agent_ref: AgentRunRefDto,
     pub project_id: String,
     pub shell: AgentRunWorkspaceShell,
-    pub control_plane: AgentRunWorkspaceControlPlaneView,
     #[serde(default)]
     pub workspace_modules: Vec<WorkspaceModuleDescriptor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

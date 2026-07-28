@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeContentBlock, ManagedRuntimeInteractionResponse, ManagedRuntimeOperationReceipt,
-    ManagedRuntimeOperationStatus, RuntimeInteractionId, RuntimeOperationId,
+    AgentRuntimeContentBlock, AgentRuntimeInteractionResponse, AgentRuntimeOperationReceipt,
+    AgentRuntimeOperationStatus, RuntimeInteractionId, RuntimeOperationId,
 };
 use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentCommand, AgentCommandEnvelope, AgentCommandId,
@@ -22,14 +22,14 @@ use super::{AgentRunCompleteAgentResolverPort, AgentRunProductRuntimeBindingRepo
 pub enum AgentRunProductCommand {
     Resume,
     SubmitInput {
-        content: Vec<ManagedRuntimeContentBlock>,
+        content: Vec<AgentRuntimeContentBlock>,
     },
     Interrupt,
     RequestCompaction,
     Rebind,
     ResolveInteraction {
         interaction_id: RuntimeInteractionId,
-        response: ManagedRuntimeInteractionResponse,
+        response: AgentRuntimeInteractionResponse,
     },
     Close,
 }
@@ -84,7 +84,7 @@ impl AgentRunProductCommandFacade {
     pub async fn execute(
         &self,
         request: AgentRunProductCommandRequest,
-    ) -> Result<ManagedRuntimeOperationReceipt, AgentRunProductCommandError> {
+    ) -> Result<AgentRuntimeOperationReceipt, AgentRunProductCommandError> {
         let client_command_id = validate_client_command_id(&request.client_command_id)?;
         let binding = self
             .bindings
@@ -107,7 +107,7 @@ impl AgentRunProductCommandFacade {
             return Ok(operation_receipt(
                 stable_product_command_operation_id(&request.target, client_command_id)?,
                 binding.runtime_thread_id,
-                ManagedRuntimeOperationStatus::Succeeded,
+                AgentRuntimeOperationStatus::Succeeded,
                 false,
             ));
         }
@@ -157,7 +157,7 @@ impl AgentRunProductCommandFacade {
                 Ok(operation_receipt(
                     operation_id,
                     binding.runtime_thread_id,
-                    ManagedRuntimeOperationStatus::Accepted,
+                    AgentRuntimeOperationStatus::Accepted,
                     true,
                 ))
             }
@@ -229,7 +229,7 @@ impl AgentRunProductCommandFacade {
         target: &AgentRunTarget,
         client_command_id: &str,
         command: &AgentRunProductCommand,
-    ) -> Result<Option<ManagedRuntimeOperationReceipt>, AgentRunProductCommandError> {
+    ) -> Result<Option<AgentRuntimeOperationReceipt>, AgentRunProductCommandError> {
         self.execute(AgentRunProductCommandRequest {
             target: target.clone(),
             client_command_id: client_command_id.to_owned(),
@@ -342,35 +342,35 @@ fn source_interaction_id(
 }
 
 fn map_interaction_response(
-    response: ManagedRuntimeInteractionResponse,
+    response: AgentRuntimeInteractionResponse,
 ) -> Result<AgentInteractionResponse, AgentRunProductCommandError> {
     Ok(match response {
-        ManagedRuntimeInteractionResponse::Approved => AgentInteractionResponse::Approved,
-        ManagedRuntimeInteractionResponse::Denied { reason } => {
+        AgentRuntimeInteractionResponse::Approved => AgentInteractionResponse::Approved,
+        AgentRuntimeInteractionResponse::Denied { reason } => {
             AgentInteractionResponse::Denied { reason }
         }
-        ManagedRuntimeInteractionResponse::UserInput { content } => {
+        AgentRuntimeInteractionResponse::UserInput { content } => {
             AgentInteractionResponse::UserInput {
                 input: AgentInput {
                     content: map_input(content)?,
                 },
             }
         }
-        ManagedRuntimeInteractionResponse::Structured { value, .. } => {
+        AgentRuntimeInteractionResponse::Structured { value, .. } => {
             AgentInteractionResponse::McpElicitation { response: value }
         }
     })
 }
 
 fn map_input(
-    content: Vec<ManagedRuntimeContentBlock>,
+    content: Vec<AgentRuntimeContentBlock>,
 ) -> Result<Vec<AgentInputContent>, AgentRunProductCommandError> {
     content
         .into_iter()
         .map(|block| {
             Ok(match block {
-                ManagedRuntimeContentBlock::Text { text } => AgentInputContent::Text { text },
-                ManagedRuntimeContentBlock::Image {
+                AgentRuntimeContentBlock::Text { text } => AgentInputContent::Text { text },
+                AgentRuntimeContentBlock::Image {
                     media_type,
                     source,
                     digest,
@@ -381,7 +381,7 @@ fn map_input(
                         AgentRunProductCommandError::InvalidCommand(error.to_string())
                     })?,
                 },
-                ManagedRuntimeContentBlock::Resource {
+                AgentRuntimeContentBlock::Resource {
                     uri,
                     media_type,
                     digest,
@@ -395,7 +395,7 @@ fn map_input(
                             AgentRunProductCommandError::InvalidCommand(error.to_string())
                         })?,
                 },
-                ManagedRuntimeContentBlock::Structured { schema, value } => {
+                AgentRuntimeContentBlock::Structured { schema, value } => {
                     AgentInputContent::Structured { schema, value }
                 }
             })
@@ -403,36 +403,36 @@ fn map_input(
         .collect()
 }
 
-fn receipt_status(receipt: &AgentCommandReceipt) -> ManagedRuntimeOperationStatus {
+fn receipt_status(receipt: &AgentCommandReceipt) -> AgentRuntimeOperationStatus {
     match &receipt.state {
-        AgentReceiptState::Accepted => ManagedRuntimeOperationStatus::Accepted,
-        AgentReceiptState::Rejected { .. } => ManagedRuntimeOperationStatus::Failed,
+        AgentReceiptState::Accepted => AgentRuntimeOperationStatus::Accepted,
+        AgentReceiptState::Rejected { .. } => AgentRuntimeOperationStatus::Failed,
         AgentReceiptState::AlreadyApplied { terminal } => terminal
             .map(terminal_status)
-            .unwrap_or(ManagedRuntimeOperationStatus::Succeeded),
+            .unwrap_or(AgentRuntimeOperationStatus::Succeeded),
         AgentReceiptState::Terminal { outcome } => terminal_status(*outcome),
-        AgentReceiptState::Unknown => ManagedRuntimeOperationStatus::Lost,
+        AgentReceiptState::Unknown => AgentRuntimeOperationStatus::Lost,
     }
 }
 
-fn terminal_status(outcome: AgentTerminalOutcome) -> ManagedRuntimeOperationStatus {
+fn terminal_status(outcome: AgentTerminalOutcome) -> AgentRuntimeOperationStatus {
     match outcome {
         AgentTerminalOutcome::Succeeded | AgentTerminalOutcome::Closed => {
-            ManagedRuntimeOperationStatus::Succeeded
+            AgentRuntimeOperationStatus::Succeeded
         }
-        AgentTerminalOutcome::Failed => ManagedRuntimeOperationStatus::Failed,
-        AgentTerminalOutcome::Interrupted => ManagedRuntimeOperationStatus::Interrupted,
-        AgentTerminalOutcome::Lost => ManagedRuntimeOperationStatus::Lost,
+        AgentTerminalOutcome::Failed => AgentRuntimeOperationStatus::Failed,
+        AgentTerminalOutcome::Interrupted => AgentRuntimeOperationStatus::Interrupted,
+        AgentTerminalOutcome::Lost => AgentRuntimeOperationStatus::Lost,
     }
 }
 
 fn operation_receipt(
     operation_id: RuntimeOperationId,
     thread_id: agentdash_agent_runtime_contract::RuntimeThreadId,
-    status: ManagedRuntimeOperationStatus,
+    status: AgentRuntimeOperationStatus,
     duplicate: bool,
-) -> ManagedRuntimeOperationReceipt {
-    ManagedRuntimeOperationReceipt {
+) -> AgentRuntimeOperationReceipt {
+    AgentRuntimeOperationReceipt {
         operation_id,
         thread_id,
         status,

@@ -165,6 +165,8 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   receipt 属于 Dash Complete Agent，用于 `inspect`，不进入 Runtime/Host/Product。
 - `create/fork/execute/apply_surface` 使用稳定 effect identity。相同 identity + 相同 request
   返回原 receipt；不同 request 返回 typed conflict。
+- `read` 必须把 source state 的 active turn 显式写入 `AgentSnapshot.execution.active_turn_id`；
+  canonical conversation 是 presentation，不承担执行状态推断。
 - 普通 `SubmitInput` 在 `InputAccepted + TurnStarted`、active execution 与 effect `Accepted`
   原子提交后立即返回；provider/tool loop由source owner后台推进。后台错误或panic必须提交typed
   terminal，Interrupt必须原子终结原effect并取消同turn的pending interaction，因此HTTP生命周期、

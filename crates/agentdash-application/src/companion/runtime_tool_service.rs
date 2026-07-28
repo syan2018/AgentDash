@@ -367,7 +367,7 @@ impl HookRuntimeAccess for ProductCompanionHookRuntime {
         self.lock().pending_actions.clone()
     }
 
-    fn runtime_snapshot(&self) -> AgentFrameRuntimeSnapshot {
+    fn runtime_view(&self) -> AgentFrameRuntimeSnapshot {
         let state = self.lock();
         AgentFrameRuntimeSnapshot {
             runtime_adapter_runtime_thread_id: self.runtime_thread_id.clone(),

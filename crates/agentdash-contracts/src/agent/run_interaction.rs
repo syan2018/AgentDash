@@ -4,9 +4,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::session::SessionMessageRefDto;
-use crate::workflow::{
-    AgentFrameRefDto, AgentRunCommandPreconditionView, AgentRunRefDto, LifecycleRunRefDto,
-};
+use crate::workflow::{AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -83,25 +81,6 @@ pub struct AgentRunAcceptedRefs {
     pub turn_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunComposerSubmitRequest {
-    /// canonical 用户输入，由后端同步交给具体 Agent。
-    pub input: Vec<AgentInputContent>,
-    pub client_command_id: String,
-    pub command: AgentRunCommandPreconditionView,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "JsonValue")]
-    pub executor_config: Option<Value>,
-    /// 投递意图：`"steer"` 表示用户明确要求注入 active turn。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub delivery_intent: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub backend_selection: Option<BackendSelectionRequestDto>,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRunMessageCommandOutcome {
@@ -119,43 +98,6 @@ pub struct AgentRunMessageCommandResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub fork: Option<AgentRunForkOutcomeView>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunCommandOnlyRequest {
-    pub client_command_id: String,
-    pub command: AgentRunCommandPreconditionView,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRunContextCompactionCommandOutcome {
-    ScheduledNextTurn,
-    LaunchedCompactionTurn,
-    Completed,
-    NoEligibleMessages,
-    Blocked,
-    Failed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunContextCompactionCommandResponse {
-    pub command_receipt: AgentRunCommandReceipt,
-    pub outcome: AgentRunContextCompactionCommandOutcome,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub runtime_thread_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub request_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub turn_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -236,35 +178,6 @@ pub struct AgentRunForkResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn composer_submit_preserves_existing_run_execution_override() {
-        let payload = serde_json::json!({
-            "input": [{ "kind": "text", "text": "hello" }],
-            "client_command_id": "command-1",
-            "executor_config": { "model_id": "other-model" }
-        });
-
-        let request = serde_json::from_value::<AgentRunComposerSubmitRequest>(payload)
-            .expect("existing AgentRun composer accepts an explicit execution override");
-        assert_eq!(
-            request.executor_config,
-            Some(serde_json::json!({ "model_id": "other-model" }))
-        );
-    }
-
-    #[test]
-    fn composer_submit_accepts_enqueue_delivery_intent() {
-        let payload = serde_json::json!({
-            "input": [{ "kind": "text", "text": "hello" }],
-            "client_command_id": "command-1",
-            "delivery_intent": "enqueue"
-        });
-
-        let request = serde_json::from_value::<AgentRunComposerSubmitRequest>(payload)
-            .expect("unknown delivery values remain forward compatible");
-        assert_eq!(request.delivery_intent.as_deref(), Some("enqueue"));
-    }
 
     #[test]
     fn launched_message_response_exposes_command_receipt() {

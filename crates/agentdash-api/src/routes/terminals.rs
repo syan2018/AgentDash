@@ -115,12 +115,12 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
     let runtime = state
         .services
         .agent_run_product_projection
-        .runtime_snapshot(&target_ref)
+        .runtime_view(&target_ref)
         .await
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
-    let source_binding = runtime.source_binding.ok_or_else(|| {
-        ApiError::Conflict("Terminal 缺少 Managed Runtime source evidence".into())
-    })?;
+    let source_binding = runtime
+        .source_binding
+        .ok_or_else(|| ApiError::Conflict("Terminal 缺少 Agent Runtime source evidence".into()))?;
     let payload = TerminalPreparePayload {
         terminal_id: terminal_id.clone(),
         session_id: runtime_thread_id.to_string(),

@@ -23,7 +23,6 @@ pub struct AgentRunWorkspaceSnapshot {
     pub ownership: AgentRunOwnershipModel,
     pub shell: AgentRunWorkspaceShellModel,
     pub runtime_thread_id: Option<String>,
-    pub state: AgentRunWorkspaceStateModel,
     pub agent_view: Option<AgentRunView>,
     pub frame_runtime: Option<AgentRunWorkspaceFrameRuntimeModel>,
     pub subject_associations: Vec<LifecycleSubjectAssociationView>,
@@ -61,7 +60,6 @@ pub struct AgentRunWorkspaceShellModel {
     pub display_title: String,
     pub title_source: String,
     pub delivery_status: String,
-    pub last_turn_id: Option<String>,
     pub last_activity_at: String,
 }
 
@@ -99,39 +97,4 @@ pub struct AgentRunResourceSurfaceSourceAnchorModel {
     pub node_attempt: Option<u32>,
     pub delivery_status: String,
     pub observed_at: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentRunWorkspaceStateCode {
-    Ready,
-    StartingClaimed,
-    RunningActive,
-    Cancelling,
-    Completed,
-    Failed,
-    Interrupted,
-    Lost,
-}
-
-impl AgentRunWorkspaceStateCode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ready => "ready",
-            Self::StartingClaimed => "starting_claimed",
-            Self::RunningActive => "running_active",
-            Self::Cancelling => "cancelling",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Interrupted => "interrupted",
-            Self::Lost => "lost",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunWorkspaceStateModel {
-    pub state_code: AgentRunWorkspaceStateCode,
-    pub active_turn_id: Option<String>,
-    pub last_turn_id: Option<String>,
-    pub delivery_status: String,
 }

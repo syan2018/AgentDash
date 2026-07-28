@@ -1,32 +1,26 @@
-import type { ManagedRuntimeOperationStatus } from "../../../generated/agent-runtime-contracts";
+import type { AgentRuntimeOperationStatus } from "../../../generated/agent-runtime-contracts";
 import type {
-  ManagedRuntimeCommandAvailability,
-  ManagedRuntimeSnapshot,
+  AgentRuntimeCommandAvailability,
+  AgentRuntimeView,
 } from "../../../generated/agent-runtime-validators";
 
 type FixtureStatus = "running" | "completed" | "failed" | "lost";
 
-function operationStatus(status: FixtureStatus): ManagedRuntimeOperationStatus {
+function operationStatus(status: FixtureStatus): AgentRuntimeOperationStatus {
   if (status === "completed") return "succeeded";
   return status;
 }
 
 function availability(
   status: FixtureStatus,
-): ManagedRuntimeCommandAvailability {
+  available: boolean,
+): AgentRuntimeCommandAvailability {
   const evidence = {
     blocking_operation_id:
       status === "running" ? "operation-compaction" : null,
     bound_surface_revision: null,
     applied_surface_revision: null,
   };
-  if (status === "running") {
-    return {
-      status: "unavailable",
-      reason: "operation_in_flight",
-      evidence,
-    };
-  }
   if (status === "lost") {
     return {
       status: "unavailable",
@@ -34,19 +28,33 @@ function availability(
       evidence,
     };
   }
-  return { status: "available", evidence };
+  return available
+    ? { status: "available", evidence }
+    : {
+      status: "unavailable",
+      reason: status === "running"
+        ? "operation_in_flight"
+        : "active_turn_required",
+      evidence,
+    };
 }
 
 function runtimeSnapshot(
   status: FixtureStatus,
   revision: bigint,
-): ManagedRuntimeSnapshot {
+): AgentRuntimeView {
+  const active = status === "running";
   return {
     thread_id: "runtime-thread-child",
-    revision,
+    view_revision: revision,
     captured_at_ms: 1000n + revision,
     lifecycle: "active",
-    conversation_history: [],
+    execution: {
+      status: active ? "active" : "idle",
+      active_turn_id: active ? "turn-compaction" : null,
+      latest_turn_id: "turn-compaction",
+    },
+    conversation: [],
     interactions: [],
     thread_name: null,
     thread_name_source: null,
@@ -62,9 +70,11 @@ function runtimeSnapshot(
     authority: "source_authoritative",
     fidelity: "exact",
     command_availability: {
-      submit_input: availability(status),
-      request_compaction: availability(status),
-      resolve_interaction: availability(status),
+      submit_input: availability(status, !active),
+      steer: availability(status, active),
+      interrupt: availability(status, active),
+      request_compaction: availability(status, !active),
+      resolve_interaction: availability(status, false),
     },
   };
 }
@@ -74,6 +84,6 @@ const completed = runtimeSnapshot("completed", 6n);
 const failed = runtimeSnapshot("failed", 7n);
 const lost = runtimeSnapshot("lost", 8n);
 
-export const managedRuntimeTestFixtures = {
+export const agentRuntimeTestFixtures = {
   snapshots: { started, completed, failed, lost },
 };

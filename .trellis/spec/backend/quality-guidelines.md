@@ -105,7 +105,7 @@ pub struct StoryMcpServer {
 
 ## Agent Runtime 恢复质量
 
-canonical Runtime event cursor、operation/turn terminal、context head与binding generation只能通过Managed Runtime事务/CAS推进。恢复worker消费typed lease queue；产品状态和Backbone不能重建或覆盖Runtime snapshot。
+canonical Runtime event cursor、operation/turn terminal、context head与binding generation只能通过Agent Runtime事务/CAS推进。恢复worker消费typed lease queue；产品状态和Backbone不能重建或覆盖Runtime snapshot。
 
 ---
 

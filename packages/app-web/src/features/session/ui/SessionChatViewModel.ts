@@ -5,6 +5,7 @@ import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { SessionEventEnvelope } from "../model/types";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type { AgentRuntimeView } from "../../../generated/agent-runtime-validators";
 import {
   extractContextFrameValue,
   extractPlatformEventType,
@@ -13,38 +14,86 @@ import {
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 import type {
   SessionChatCommandModel,
+  SessionChatCommandState,
   SessionChatInitialSubmit,
   SessionChatSubmitIntent,
 } from "./SessionChatViewTypes";
 
-/**
- * Snapshot hydration is not eligible for live Product side effects.
- *
- * A gap reload may advance the replay boundary while the page and its refs stay mounted, so the
- * previous live cursor must always be fenced by the latest baseline boundary.
- */
-export function liveSideEffectCursor(
-  previous: number | null,
-  historyReplayBoundarySeq: number,
-): number {
-  return Math.max(previous ?? historyReplayBoundarySeq, historyReplayBoundarySeq);
+function runtimeCommandAvailable(
+  view: AgentRuntimeView,
+  command: "submit_input" | "steer" | "interrupt" | "request_compaction",
+): boolean {
+  return view.command_availability[command]?.status === "available";
 }
 
-export function dispatchLiveSessionEvents(
-  rawEvents: SessionEventEnvelope[],
-  previous: number | null,
-  historyReplayBoundarySeq: number,
-  dispatch: (event: BackboneEvent) => void,
-): number {
-  let lastSeenSeq = liveSideEffectCursor(previous, historyReplayBoundarySeq);
-  const liveEvents = rawEvents
-    .filter((event) => event.event_seq > lastSeenSeq)
-    .sort((left, right) => left.event_seq - right.event_seq);
-  for (const event of liveEvents) {
-    dispatch(event.notification.event);
-    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+function runtimeCommandReason(
+  view: AgentRuntimeView,
+  command: "submit_input" | "steer" | "interrupt" | "request_compaction",
+): string | undefined {
+  const availability = view.command_availability[command];
+  return availability?.status === "unavailable"
+    ? availability.reason
+    : undefined;
+}
+
+export function applyAgentRuntimeControlToChatCommandState(
+  productState: SessionChatCommandState,
+  view: AgentRuntimeView | null,
+): SessionChatCommandState {
+  if (!view || productState.mode !== "runtime") return productState;
+  const active = view.execution.status === "active";
+  const availabilityKey = (
+    command: SessionChatCommandModel,
+  ): "submit_input" | "steer" | "interrupt" | "request_compaction" | null => {
+    if (command.runtimeCommand === "interrupt") return "interrupt";
+    if (command.runtimeCommand === "request_compaction") return "request_compaction";
+    if (command.runtimeCommand === "submit_input") {
+      return active ? "steer" : "submit_input";
+    }
+    if (command.kind === "submit_message") return active ? "steer" : "submit_input";
+    if (command.kind === "cancel") return "interrupt";
+    if (command.kind === "compact_context") return "request_compaction";
+    return null;
+  };
+  const projectCommand = (
+    command: SessionChatCommandModel,
+  ): SessionChatCommandModel => {
+    const key = availabilityKey(command);
+    if (!key) return command;
+    const enabled = runtimeCommandAvailable(view, key);
+    return {
+      ...command,
+      enabled,
+      unavailable_reason: enabled ? undefined : runtimeCommandReason(view, key),
+      disabled_code: enabled ? undefined : "runtime_command_unavailable",
+    };
+  };
+  const commands = productState.commands.map(projectCommand);
+  let cancelCommand = productState.cancelCommand
+    ? projectCommand(productState.cancelCommand)
+    : undefined;
+  if (!cancelCommand) {
+    const enabled = runtimeCommandAvailable(view, "interrupt");
+    cancelCommand = {
+      command_id: "runtime:interrupt",
+      kind: "cancel",
+      enabled,
+      unavailable_reason: enabled
+        ? undefined
+        : runtimeCommandReason(view, "interrupt"),
+      disabled_code: enabled ? undefined : "runtime_command_unavailable",
+      requires_input: false,
+      executor_config_policy: "forbidden",
+    };
+    commands.push(cancelCommand);
   }
-  return lastSeenSeq;
+  return {
+    ...productState,
+    executionStatus: active ? "running_active" : "ready",
+    activeTurnId: view.execution.active_turn_id,
+    commands,
+    cancelCommand,
+  };
 }
 
 export function resolveSessionInitialSubmit(input: {
@@ -78,14 +127,6 @@ export type SessionTurnLifecycleEventType =
   | "turn_completed"
   | "turn_failed"
   | "turn_interrupted";
-
-export function isAgentRunWorkspaceActionRunning(input: {
-  executionStatus: string;
-}): boolean {
-  return input.executionStatus === "starting_claimed" ||
-    input.executionStatus === "running_active" ||
-    input.executionStatus === "cancelling";
-}
 
 export function rawEventsBelongToRuntimeStreamTarget(input: {
   rawEvents: SessionEventEnvelope[];

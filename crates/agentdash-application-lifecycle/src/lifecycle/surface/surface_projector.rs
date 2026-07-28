@@ -14,7 +14,7 @@ use crate::lifecycle::vfs_mount::{
 
 /// Converts immutable Product frame coordinates into a Lifecycle VFS projection.
 ///
-/// Conversation content is resolved later through Product binding -> Managed Runtime canonical
+/// Conversation content is resolved later through Product binding -> Agent Runtime canonical
 /// history. This component only projects the mount and provisioned SkillAsset references.
 pub struct AgentRunLifecycleSurfaceProjector {
     skill_assets: Arc<dyn SkillAssetRepository>,

@@ -1,29 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ManagedRuntimeContractSchema",
+  "title": "AgentRuntimeContractSchema",
   "type": "object",
   "properties": {
     "initial_context": {
-      "$ref": "#/$defs/ManagedRuntimeInitialContextPackage"
+      "$ref": "#/$defs/AgentRuntimeInitialContextPackage"
     },
     "interaction_response": {
-      "$ref": "#/$defs/ManagedRuntimeInteractionResponse"
+      "$ref": "#/$defs/AgentRuntimeInteractionResponse"
     },
     "operation_receipt": {
-      "$ref": "#/$defs/ManagedRuntimeOperationReceipt"
+      "$ref": "#/$defs/AgentRuntimeOperationReceipt"
     },
-    "snapshot": {
-      "$ref": "#/$defs/ManagedRuntimeSnapshot"
+    "view": {
+      "$ref": "#/$defs/AgentRuntimeView"
     }
   },
   "required": [
     "initial_context",
     "interaction_response",
     "operation_receipt",
-    "snapshot"
+    "view"
   ],
   "$defs": {
-    "ManagedRuntimeInitialContextPackage": {
+    "AgentRuntimeInitialContextPackage": {
       "type": "object",
       "properties": {
         "package_id": {
@@ -35,12 +35,12 @@
           "minimum": 0
         },
         "mode": {
-          "$ref": "#/$defs/ManagedRuntimeInitialContextMode"
+          "$ref": "#/$defs/AgentRuntimeInitialContextMode"
         },
         "contributions": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/ManagedRuntimeInitialContextContribution"
+            "$ref": "#/$defs/AgentRuntimeInitialContextContribution"
           }
         },
         "digest": {
@@ -55,7 +55,7 @@
         "digest"
       ]
     },
-    "ManagedRuntimeInitialContextMode": {
+    "AgentRuntimeInitialContextMode": {
       "type": "string",
       "enum": [
         "compact",
@@ -63,7 +63,7 @@
         "constraints_only"
       ]
     },
-    "ManagedRuntimeInitialContextContribution": {
+    "AgentRuntimeInitialContextContribution": {
       "type": "object",
       "properties": {
         "contribution_id": {
@@ -73,7 +73,7 @@
           "type": "string"
         },
         "content": {
-          "$ref": "#/$defs/ManagedRuntimeInitialContextContributionContent"
+          "$ref": "#/$defs/AgentRuntimeInitialContextContributionContent"
         }
       },
       "required": [
@@ -82,7 +82,7 @@
         "content"
       ]
     },
-    "ManagedRuntimeInitialContextContributionContent": {
+    "AgentRuntimeInitialContextContributionContent": {
       "oneOf": [
         {
           "type": "object",
@@ -91,7 +91,7 @@
               "type": "string"
             },
             "provenance": {
-              "$ref": "#/$defs/ManagedRuntimeContextProvenance"
+              "$ref": "#/$defs/AgentRuntimeContextProvenance"
             },
             "kind": {
               "type": "string",
@@ -112,7 +112,7 @@
             },
             "value": true,
             "provenance": {
-              "$ref": "#/$defs/ManagedRuntimeContextProvenance"
+              "$ref": "#/$defs/AgentRuntimeContextProvenance"
             },
             "kind": {
               "type": "string",
@@ -134,7 +134,7 @@
             },
             "value": true,
             "provenance": {
-              "$ref": "#/$defs/ManagedRuntimeContextProvenance"
+              "$ref": "#/$defs/AgentRuntimeContextProvenance"
             },
             "kind": {
               "type": "string",
@@ -150,11 +150,11 @@
         }
       ]
     },
-    "ManagedRuntimeContextProvenance": {
+    "AgentRuntimeContextProvenance": {
       "type": "object",
       "properties": {
         "authority": {
-          "$ref": "#/$defs/ManagedRuntimeContextAuthority"
+          "$ref": "#/$defs/AgentRuntimeContextAuthority"
         },
         "source": {
           "type": "string"
@@ -173,7 +173,7 @@
         "digest"
       ]
     },
-    "ManagedRuntimeContextAuthority": {
+    "AgentRuntimeContextAuthority": {
       "type": "string",
       "enum": [
         "agent_history",
@@ -182,7 +182,7 @@
         "constraint"
       ]
     },
-    "ManagedRuntimeInteractionResponse": {
+    "AgentRuntimeInteractionResponse": {
       "oneOf": [
         {
           "type": "object",
@@ -220,7 +220,7 @@
             "content": {
               "type": "array",
               "items": {
-                "$ref": "#/$defs/ManagedRuntimeContentBlock"
+                "$ref": "#/$defs/AgentRuntimeContentBlock"
               }
             },
             "kind": {
@@ -253,7 +253,7 @@
         }
       ]
     },
-    "ManagedRuntimeContentBlock": {
+    "AgentRuntimeContentBlock": {
       "description": "Application command input blocks are intentionally narrower than presentation blocks.",
       "oneOf": [
         {
@@ -344,7 +344,7 @@
         }
       ]
     },
-    "ManagedRuntimeOperationReceipt": {
+    "AgentRuntimeOperationReceipt": {
       "type": "object",
       "properties": {
         "operation_id": {
@@ -354,12 +354,12 @@
           "type": "string"
         },
         "status": {
-          "$ref": "#/$defs/ManagedRuntimeOperationStatus"
+          "$ref": "#/$defs/AgentRuntimeOperationStatus"
         },
         "evidence": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ManagedRuntimeOperationEvidence"
+              "$ref": "#/$defs/AgentRuntimeOperationEvidence"
             },
             {
               "type": "null"
@@ -377,7 +377,7 @@
         "duplicate"
       ]
     },
-    "ManagedRuntimeOperationStatus": {
+    "AgentRuntimeOperationStatus": {
       "type": "string",
       "enum": [
         "accepted",
@@ -388,18 +388,18 @@
         "lost"
       ]
     },
-    "ManagedRuntimeOperationEvidence": {
+    "AgentRuntimeOperationEvidence": {
       "oneOf": [
         {
           "type": "object",
           "properties": {
             "binding": {
-              "$ref": "#/$defs/ManagedRuntimeSourceBindingEvidence"
+              "$ref": "#/$defs/AgentRuntimeSourceBindingEvidence"
             },
             "initial_context": {
               "anyOf": [
                 {
-                  "$ref": "#/$defs/ManagedRuntimeAppliedInitialContextEvidence"
+                  "$ref": "#/$defs/AgentRuntimeAppliedInitialContextEvidence"
                 },
                 {
                   "type": "null"
@@ -420,7 +420,7 @@
           "type": "object",
           "properties": {
             "binding": {
-              "$ref": "#/$defs/ManagedRuntimeSourceBindingEvidence"
+              "$ref": "#/$defs/AgentRuntimeSourceBindingEvidence"
             },
             "kind": {
               "type": "string",
@@ -436,10 +436,10 @@
           "type": "object",
           "properties": {
             "previous_binding": {
-              "$ref": "#/$defs/ManagedRuntimeSourceBindingEvidence"
+              "$ref": "#/$defs/AgentRuntimeSourceBindingEvidence"
             },
             "binding": {
-              "$ref": "#/$defs/ManagedRuntimeSourceBindingEvidence"
+              "$ref": "#/$defs/AgentRuntimeSourceBindingEvidence"
             },
             "kind": {
               "type": "string",
@@ -456,10 +456,10 @@
           "type": "object",
           "properties": {
             "parent_binding": {
-              "$ref": "#/$defs/ManagedRuntimeSourceBindingEvidence"
+              "$ref": "#/$defs/AgentRuntimeSourceBindingEvidence"
             },
             "progress": {
-              "$ref": "#/$defs/ManagedRuntimeForkProgressEvidence"
+              "$ref": "#/$defs/AgentRuntimeForkProgressEvidence"
             },
             "kind": {
               "type": "string",
@@ -476,7 +476,7 @@
           "type": "object",
           "properties": {
             "binding": {
-              "$ref": "#/$defs/ManagedRuntimeSourceBindingEvidence"
+              "$ref": "#/$defs/AgentRuntimeSourceBindingEvidence"
             },
             "kind": {
               "type": "string",
@@ -490,7 +490,7 @@
         }
       ]
     },
-    "ManagedRuntimeSourceBindingEvidence": {
+    "AgentRuntimeSourceBindingEvidence": {
       "type": "object",
       "properties": {
         "source_ref": {
@@ -531,7 +531,7 @@
     "SurfaceRevision": {
       "$ref": "#/$defs/RuntimeU64"
     },
-    "ManagedRuntimeAppliedInitialContextEvidence": {
+    "AgentRuntimeAppliedInitialContextEvidence": {
       "type": "object",
       "properties": {
         "package_id": {
@@ -543,7 +543,7 @@
         "contributions": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/ManagedRuntimeInitialContextContributionEvidence"
+            "$ref": "#/$defs/AgentRuntimeInitialContextContributionEvidence"
           }
         }
       },
@@ -553,23 +553,23 @@
         "contributions"
       ]
     },
-    "ManagedRuntimeInitialContextContributionEvidence": {
+    "AgentRuntimeInitialContextContributionEvidence": {
       "type": "object",
       "properties": {
         "contribution_id": {
           "type": "string"
         },
         "kind": {
-          "$ref": "#/$defs/ManagedRuntimeInitialContextContributionKind"
+          "$ref": "#/$defs/AgentRuntimeInitialContextContributionKind"
         },
         "contribution_digest": {
           "type": "string"
         },
         "provenance": {
-          "$ref": "#/$defs/ManagedRuntimeAppliedContextProvenance"
+          "$ref": "#/$defs/AgentRuntimeAppliedContextProvenance"
         },
         "fidelity": {
-          "$ref": "#/$defs/ManagedRuntimeInitialContextAppliedFidelity"
+          "$ref": "#/$defs/AgentRuntimeInitialContextAppliedFidelity"
         }
       },
       "required": [
@@ -580,7 +580,7 @@
         "fidelity"
       ]
     },
-    "ManagedRuntimeInitialContextContributionKind": {
+    "AgentRuntimeInitialContextContributionKind": {
       "type": "string",
       "enum": [
         "compact_summary",
@@ -588,11 +588,11 @@
         "constraint_set"
       ]
     },
-    "ManagedRuntimeAppliedContextProvenance": {
+    "AgentRuntimeAppliedContextProvenance": {
       "type": "object",
       "properties": {
         "authority": {
-          "$ref": "#/$defs/ManagedRuntimeContextAuthority"
+          "$ref": "#/$defs/AgentRuntimeContextAuthority"
         },
         "source": {
           "type": "string"
@@ -611,7 +611,7 @@
         "digest"
       ]
     },
-    "ManagedRuntimeInitialContextAppliedFidelity": {
+    "AgentRuntimeInitialContextAppliedFidelity": {
       "oneOf": [
         {
           "type": "object",
@@ -659,7 +659,7 @@
         }
       ]
     },
-    "ManagedRuntimeForkProgressEvidence": {
+    "AgentRuntimeForkProgressEvidence": {
       "oneOf": [
         {
           "type": "object",
@@ -671,7 +671,7 @@
               "type": "string"
             },
             "cutoff": {
-              "$ref": "#/$defs/ManagedRuntimeForkCutoff"
+              "$ref": "#/$defs/AgentRuntimeForkCutoff"
             },
             "child_history_digest": {
               "type": [
@@ -698,10 +698,10 @@
               "type": "string"
             },
             "child_binding": {
-              "$ref": "#/$defs/ManagedRuntimeSourceBindingEvidence"
+              "$ref": "#/$defs/AgentRuntimeSourceBindingEvidence"
             },
             "cutoff": {
-              "$ref": "#/$defs/ManagedRuntimeForkCutoff"
+              "$ref": "#/$defs/AgentRuntimeForkCutoff"
             },
             "child_history_digest": {
               "type": "string"
@@ -721,7 +721,7 @@
         }
       ]
     },
-    "ManagedRuntimeForkCutoff": {
+    "AgentRuntimeForkCutoff": {
       "oneOf": [
         {
           "type": "object",
@@ -753,25 +753,28 @@
         }
       ]
     },
-    "ManagedRuntimeSnapshot": {
+    "AgentRuntimeView": {
       "type": "object",
       "properties": {
         "thread_id": {
           "type": "string"
         },
-        "revision": {
+        "view_revision": {
           "$ref": "#/$defs/RuntimeProjectionRevision"
         },
         "captured_at_ms": {
           "$ref": "#/$defs/RuntimeU64"
         },
         "lifecycle": {
-          "$ref": "#/$defs/ManagedRuntimeLifecycleStatus"
+          "$ref": "#/$defs/AgentRuntimeLifecycleStatus"
+        },
+        "execution": {
+          "$ref": "#/$defs/AgentRuntimeExecutionView"
         },
         "interactions": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/ManagedRuntimeInteraction"
+            "$ref": "#/$defs/AgentRuntimeInteraction"
           }
         },
         "thread_name": {
@@ -783,7 +786,7 @@
         "thread_name_source": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ManagedRuntimeThreadNameSource"
+              "$ref": "#/$defs/AgentRuntimeThreadNameSource"
             },
             {
               "type": "null"
@@ -793,13 +796,13 @@
         "operations": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/ManagedRuntimeOperation"
+            "$ref": "#/$defs/AgentRuntimeOperation"
           }
         },
         "source_binding": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ManagedRuntimeSourceBindingEvidence"
+              "$ref": "#/$defs/AgentRuntimeSourceBindingEvidence"
             },
             {
               "type": "null"
@@ -807,51 +810,51 @@
           ]
         },
         "authority": {
-          "$ref": "#/$defs/ManagedRuntimeProjectionAuthority"
+          "$ref": "#/$defs/AgentRuntimeProjectionAuthority"
         },
         "fidelity": {
-          "$ref": "#/$defs/ManagedRuntimeProjectionFidelity"
+          "$ref": "#/$defs/AgentRuntimeProjectionFidelity"
         },
         "command_availability": {
           "type": "object",
           "properties": {
             "activate": {
-              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+              "$ref": "#/$defs/AgentRuntimeCommandAvailability"
             },
             "close": {
-              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+              "$ref": "#/$defs/AgentRuntimeCommandAvailability"
             },
             "create": {
-              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+              "$ref": "#/$defs/AgentRuntimeCommandAvailability"
             },
             "fork": {
-              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+              "$ref": "#/$defs/AgentRuntimeCommandAvailability"
             },
             "interrupt": {
-              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+              "$ref": "#/$defs/AgentRuntimeCommandAvailability"
             },
             "rebind": {
-              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+              "$ref": "#/$defs/AgentRuntimeCommandAvailability"
             },
             "request_compaction": {
-              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+              "$ref": "#/$defs/AgentRuntimeCommandAvailability"
             },
             "resolve_interaction": {
-              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+              "$ref": "#/$defs/AgentRuntimeCommandAvailability"
             },
             "resume": {
-              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+              "$ref": "#/$defs/AgentRuntimeCommandAvailability"
             },
             "steer": {
-              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+              "$ref": "#/$defs/AgentRuntimeCommandAvailability"
             },
             "submit_input": {
-              "$ref": "#/$defs/ManagedRuntimeCommandAvailability"
+              "$ref": "#/$defs/AgentRuntimeCommandAvailability"
             }
           },
           "additionalProperties": false
         },
-        "conversation_history": {
+        "conversation": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/CanonicalConversationRecord"
@@ -860,18 +863,19 @@
       },
       "required": [
         "thread_id",
-        "revision",
+        "view_revision",
         "captured_at_ms",
         "lifecycle",
+        "execution",
         "interactions",
         "operations",
         "authority",
         "fidelity",
         "command_availability",
-        "conversation_history"
+        "conversation"
       ]
     },
-    "ManagedRuntimeLifecycleStatus": {
+    "AgentRuntimeLifecycleStatus": {
       "type": "string",
       "enum": [
         "provisioning",
@@ -881,7 +885,37 @@
         "lost"
       ]
     },
-    "ManagedRuntimeInteraction": {
+    "AgentRuntimeExecutionView": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/AgentRuntimeExecutionStatus"
+        },
+        "active_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "latest_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "AgentRuntimeExecutionStatus": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "active"
+      ]
+    },
+    "AgentRuntimeInteraction": {
       "type": "object",
       "properties": {
         "id": {
@@ -897,15 +931,15 @@
           ]
         },
         "request": {
-          "$ref": "#/$defs/ManagedRuntimeInteractionRequest"
+          "$ref": "#/$defs/AgentRuntimeInteractionRequest"
         },
         "status": {
-          "$ref": "#/$defs/ManagedRuntimeInteractionStatus"
+          "$ref": "#/$defs/AgentRuntimeInteractionStatus"
         },
         "resolution": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ManagedRuntimeInteractionResolution"
+              "$ref": "#/$defs/AgentRuntimeInteractionResolution"
             },
             {
               "type": "null"
@@ -920,7 +954,7 @@
         "status"
       ]
     },
-    "ManagedRuntimeInteractionRequest": {
+    "AgentRuntimeInteractionRequest": {
       "oneOf": [
         {
           "type": "object",
@@ -954,7 +988,7 @@
             "questions": {
               "type": "array",
               "items": {
-                "$ref": "#/$defs/ManagedRuntimeInteractionQuestion"
+                "$ref": "#/$defs/AgentRuntimeInteractionQuestion"
               }
             },
             "kind": {
@@ -1020,7 +1054,7 @@
         }
       ]
     },
-    "ManagedRuntimeInteractionQuestion": {
+    "AgentRuntimeInteractionQuestion": {
       "type": "object",
       "properties": {
         "id": {
@@ -1046,7 +1080,7 @@
         "allows_free_form"
       ]
     },
-    "ManagedRuntimeInteractionStatus": {
+    "AgentRuntimeInteractionStatus": {
       "type": "string",
       "enum": [
         "pending",
@@ -1056,7 +1090,7 @@
         "lost"
       ]
     },
-    "ManagedRuntimeInteractionResolution": {
+    "AgentRuntimeInteractionResolution": {
       "oneOf": [
         {
           "type": "object",
@@ -1178,14 +1212,14 @@
         }
       ]
     },
-    "ManagedRuntimeThreadNameSource": {
+    "AgentRuntimeThreadNameSource": {
       "type": "object",
       "properties": {
         "authority": {
-          "$ref": "#/$defs/ManagedRuntimeProjectionAuthority"
+          "$ref": "#/$defs/AgentRuntimeProjectionAuthority"
         },
         "fidelity": {
-          "$ref": "#/$defs/ManagedRuntimeProjectionFidelity"
+          "$ref": "#/$defs/AgentRuntimeProjectionFidelity"
         },
         "source_identity_digest": {
           "type": "string"
@@ -1207,7 +1241,7 @@
         "observed_at_ms"
       ]
     },
-    "ManagedRuntimeProjectionAuthority": {
+    "AgentRuntimeProjectionAuthority": {
       "type": "string",
       "enum": [
         "source_authoritative",
@@ -1215,7 +1249,7 @@
         "runtime_derived"
       ]
     },
-    "ManagedRuntimeProjectionFidelity": {
+    "AgentRuntimeProjectionFidelity": {
       "type": "string",
       "enum": [
         "unsupported",
@@ -1224,7 +1258,7 @@
         "exact"
       ]
     },
-    "ManagedRuntimeOperation": {
+    "AgentRuntimeOperation": {
       "type": "object",
       "properties": {
         "id": {
@@ -1237,12 +1271,12 @@
           ]
         },
         "status": {
-          "$ref": "#/$defs/ManagedRuntimeOperationStatus"
+          "$ref": "#/$defs/AgentRuntimeOperationStatus"
         },
         "evidence": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ManagedRuntimeOperationEvidence"
+              "$ref": "#/$defs/AgentRuntimeOperationEvidence"
             },
             {
               "type": "null"
@@ -1255,13 +1289,13 @@
         "status"
       ]
     },
-    "ManagedRuntimeCommandAvailability": {
+    "AgentRuntimeCommandAvailability": {
       "oneOf": [
         {
           "type": "object",
           "properties": {
             "evidence": {
-              "$ref": "#/$defs/ManagedRuntimeAvailabilityEvidence"
+              "$ref": "#/$defs/AgentRuntimeAvailabilityEvidence"
             },
             "status": {
               "type": "string",
@@ -1277,10 +1311,10 @@
           "type": "object",
           "properties": {
             "reason": {
-              "$ref": "#/$defs/ManagedRuntimeUnavailabilityReason"
+              "$ref": "#/$defs/AgentRuntimeUnavailabilityReason"
             },
             "evidence": {
-              "$ref": "#/$defs/ManagedRuntimeAvailabilityEvidence"
+              "$ref": "#/$defs/AgentRuntimeAvailabilityEvidence"
             },
             "status": {
               "type": "string",
@@ -1295,7 +1329,7 @@
         }
       ]
     },
-    "ManagedRuntimeAvailabilityEvidence": {
+    "AgentRuntimeAvailabilityEvidence": {
       "type": "object",
       "properties": {
         "blocking_operation_id": {
@@ -1326,7 +1360,7 @@
         }
       }
     },
-    "ManagedRuntimeUnavailabilityReason": {
+    "AgentRuntimeUnavailabilityReason": {
       "type": "string",
       "enum": [
         "runtime_not_active",

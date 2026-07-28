@@ -889,6 +889,16 @@ impl CompleteAgentService for DashAgentCompleteService {
             } else {
                 AgentLifecycleStatus::Active
             },
+            execution: agentdash_agent_service_api::AgentExecutionSnapshot {
+                active_turn_id: history_state
+                    .active_turn
+                    .as_ref()
+                    .map(|turn_id| {
+                        agentdash_agent_service_api::AgentTurnId::new(turn_id.0.clone())
+                            .map_err(internal)
+                    })
+                    .transpose()?,
+            },
             interactions: history_state
                 .interactions
                 .iter()

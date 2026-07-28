@@ -3,22 +3,19 @@ import type {
   SessionProjectionSegmentViewResponse,
   SessionProjectionViewResponse,
 } from "../../../generated/session-contracts";
-import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import {
-  compactAgentRunContext,
   fetchAgentRunRuntimeContextProjection,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
 import type { TokenUsageInfo } from "../model/types";
-import {
-  newClientCommandId,
-} from "./sessionProjectionCompactionAction";
+import type { SessionChatCommandModel } from "./SessionChatViewTypes";
 
 export interface SessionProjectionViewProps {
   agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey?: number | bigint;
   tokenUsage?: TokenUsageInfo | null;
-  compactContextCommand?: ConversationCommandView;
+  compactContextCommand?: SessionChatCommandModel;
+  onCompactContext?: () => Promise<void>;
   /** 浮层模式：去掉整页内联的外层留白/边框，适配 popover 容器 */
   embedded?: boolean;
 }
@@ -27,7 +24,8 @@ export interface SessionProjectionViewPanelProps {
   projection: SessionProjectionViewResponse | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   tokenUsage?: TokenUsageInfo | null;
-  compactContextCommand?: ConversationCommandView;
+  compactContextCommand?: SessionChatCommandModel;
+  onCompactContext?: () => Promise<void>;
   isLoading?: boolean;
   error?: string | null;
   onRefresh?: () => void;
@@ -243,6 +241,7 @@ export function SessionProjectionViewPanel({
   agentRunTarget = null,
   tokenUsage,
   compactContextCommand,
+  onCompactContext,
   isLoading = false,
   error = null,
   onRefresh,
@@ -261,6 +260,7 @@ export function SessionProjectionViewPanel({
   const compactDisabled =
     !agentRunTarget
     || !compactContextCommand
+    || !onCompactContext
     || !compactContextCommand.enabled
     || compactPending;
   const compactButtonTitle = compactPending
@@ -279,17 +279,10 @@ export function SessionProjectionViewPanel({
     }
     setCompactAction({ kind: "pending", message: "提交中" });
     try {
-      const response = await compactAgentRunContext(
-        agentRunTarget,
-        newClientCommandId(),
-      );
-      const failedOutcome =
-        response.status === "failed"
-        || response.status === "interrupted"
-        || response.status === "lost";
+      await onCompactContext?.();
       setCompactAction({
-        kind: failedOutcome ? "error" : "success",
-        message: failedOutcome ? "压缩请求失败" : "压缩请求已接受",
+        kind: "success",
+        message: "压缩请求已接受",
       });
       onRefresh?.();
     } catch (err) {
@@ -303,6 +296,7 @@ export function SessionProjectionViewPanel({
     compactContextCommand,
     compactPending,
     compactUnavailableReason,
+    onCompactContext,
     onRefresh,
   ]);
   const card = (
@@ -473,6 +467,7 @@ export function SessionProjectionView({
   refreshKey = 0,
   tokenUsage = null,
   compactContextCommand,
+  onCompactContext,
   embedded = false,
 }: SessionProjectionViewProps) {
   const [projection, setProjection] = useState<SessionProjectionViewResponse | null>(null);
@@ -514,6 +509,7 @@ export function SessionProjectionView({
       agentRunTarget={agentRunTarget}
       tokenUsage={tokenUsage}
       compactContextCommand={compactContextCommand}
+      onCompactContext={onCompactContext}
       isLoading={isLoading}
       error={error}
       onRefresh={() => void refresh()}

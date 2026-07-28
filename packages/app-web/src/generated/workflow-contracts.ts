@@ -2,8 +2,8 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto } from "./agent-run-interaction-contracts";
-import type { ManagedRuntimeSnapshot, RuntimeThreadId } from "./agent-runtime-contracts";
+import type { AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto } from "./agent-run-interaction-contracts";
+import type { AgentRuntimeView, RuntimeThreadId } from "./agent-runtime-contracts";
 import type { ConversationEffectiveExecutorConfigView, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";
 import type { ResolvedVfsSurface } from "./vfs-contracts";
@@ -31,7 +31,7 @@ export type AgentConversationIdentity = { run_ref: LifecycleRunRefDto, agent_ref
 
 export type AgentConversationLifecycleContext = { frame_ref?: AgentFrameRefDto, subject_associations: Array<LifecycleSubjectAssociationDto>, };
 
-export type AgentConversationSnapshot = { snapshot_id: string, identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, waiting_items: Array<ConversationWaitingItemView>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, diagnostics: Array<ConversationDiagnosticView>, };
+export type AgentConversationSnapshot = { identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, waiting_items: Array<ConversationWaitingItemView>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, diagnostics: Array<ConversationDiagnosticView>, };
 
 export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_thread_refs: Array<RuntimeThreadRefDto>, execution_profile?: JsonValue, effective_executor_config?: ConversationEffectiveExecutorConfigView, };
 
@@ -65,13 +65,11 @@ source: string, project_agent_id?: string, status: string,
  */
 last_delivery_status?: string, created_at: string, updated_at: string, };
 
-export type AgentRunWorkspaceControlPlaneStatus = "ready" | "running" | "cancelling" | "terminal" | "frame_missing";
+export type AgentRunWorkspaceShell = { display_title: string, title_source: string, delivery_status: string, last_activity_at: string, };
 
-export type AgentRunWorkspaceControlPlaneView = { status: AgentRunWorkspaceControlPlaneStatus, reason?: string, ownership: AgentRunOwnershipView, };
+export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, workspace_modules: Array<WorkspaceModuleDescriptor>, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, conversation?: AgentConversationSnapshot, parent?: AgentRunLineageRef, children: Array<AgentRunLineageRef>, };
 
-export type AgentRunWorkspaceShell = { display_title: string, title_source: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
-
-export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, control_plane: AgentRunWorkspaceControlPlaneView, workspace_modules: Array<WorkspaceModuleDescriptor>, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, conversation?: AgentConversationSnapshot, parent?: AgentRunLineageRef, children: Array<AgentRunLineageRef>, };
+export type AgentRuntimeCommandKind = "create" | "resume" | "rebind" | "activate" | "submit_input" | "steer" | "interrupt" | "request_compaction" | "resolve_interaction" | "close" | "fork";
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 
@@ -93,17 +91,15 @@ export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
 
 export type ContinueLifecycleRunResponse = { run: LifecycleRunView, drain_result: OrchestrationExecutorDrainResultDto, };
 
+export type ConversationCommandKind = "submit_message" | "cancel" | "compact_context";
+
 export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "header";
 
 export type ConversationCommandSetView = { ownership: AgentRunOwnershipView, commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
 
-export type ConversationCommandView = { kind: ConversationCommandKind, command_id: string, enabled: boolean, unavailable_reason?: string, disabled_code?: string, shortcut?: string, requires_input: boolean, executor_config_policy: string, placement: Array<ConversationCommandPlacement>, stale_guard: ConversationCommandStaleGuardView, };
+export type ConversationCommandView = { kind: ConversationCommandKind, command_id: string, runtime_command: AgentRuntimeCommandKind, shortcut?: string, requires_input: boolean, executor_config_policy: string, placement: Array<ConversationCommandPlacement>, };
 
 export type ConversationDiagnosticView = { code: string, severity: ValidationSeverity, message: string, detail?: JsonValue, };
-
-export type ConversationExecutionStatus = "draft" | "model_required" | "ready" | "starting_claimed" | "running_active" | "cancelling" | "terminal" | "frame_missing";
-
-export type ConversationExecutionView = { status: ConversationExecutionStatus, runtime_thread_ref?: RuntimeThreadRefDto, active_turn_id?: string, reason?: string, };
 
 export type ConversationKeyboardMapView = { enter?: string, ctrl_enter?: string, };
 
@@ -161,7 +157,7 @@ export type LifecycleRunTopology = "plain" | "workflow_graph";
 
 export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string, topology: LifecycleRunTopology, status: LifecycleRunStatus, orchestrations: Array<OrchestrationInstanceView>, active_runtime_node_refs: Array<ActiveRuntimeNodeRefDto>, agents: Array<LifecycleAgentExecutionView>, subject_associations: Array<LifecycleSubjectAssociationDto>, execution_log: Array<LifecycleExecutionEntry>, created_at: string, updated_at: string, last_activity_at: string, };
 
-export type LifecycleRuntimeExecutionTraceView = { "state": "absent", target: AgentRunRefDto, reason: LifecycleRuntimeTraceAbsenceReason, } | { "state": "current", binding: LifecycleAgentRuntimeBindingView, snapshot: ManagedRuntimeSnapshot, };
+export type LifecycleRuntimeExecutionTraceView = { "state": "absent", target: AgentRunRefDto, reason: LifecycleRuntimeTraceAbsenceReason, } | { "state": "current", binding: LifecycleAgentRuntimeBindingView, snapshot: AgentRuntimeView, };
 
 export type LifecycleRuntimeNodeErrorView = { code: string, message: string, retryable: boolean, detail: JsonValue | null, };
 

@@ -1,22 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { SessionProjectionViewResponse } from "../../../generated/session-contracts";
-import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import { SessionProjectionViewPanel } from "./SessionProjectionView";
-import { contextCompactionOutcomeMessage } from "./sessionProjectionCompactionAction";
+import type { SessionChatCommandModel } from "./SessionChatViewTypes";
 
 const mocks = vi.hoisted(() => ({
-  compactAgentRunContext: vi.fn(),
   fetchAgentRunRuntimeContextProjection: vi.fn(),
 }));
 
 vi.mock("../../../services/agentRunRuntime", () => ({
-  compactAgentRunContext: mocks.compactAgentRunContext,
   fetchAgentRunRuntimeContextProjection: mocks.fetchAgentRunRuntimeContextProjection,
 }));
 
 beforeEach(() => {
-  mocks.compactAgentRunContext.mockReset();
   mocks.fetchAgentRunRuntimeContextProjection.mockReset();
 });
 
@@ -98,21 +94,14 @@ describe("SessionProjectionViewPanel", () => {
     expect(markup).toContain("disabled");
   });
 
-  it("点击手动压缩提交 canonical Product Runtime command", async () => {
-    vi.stubGlobal("crypto", { randomUUID: () => "command-compact-1" });
-    mocks.compactAgentRunContext.mockResolvedValue({
-      command_receipt: {
-        client_command_id: "command-compact-1",
-        status: "accepted",
-        duplicate: false,
-      },
-      outcome: "launched_compaction_turn",
-    });
+  it("点击手动压缩委托给 AgentRuntimeConnection action", async () => {
+    const onCompactContext = vi.fn().mockResolvedValue(undefined);
     const { SessionProjectionViewPanel: Panel } = await importProjectionViewWithImmediateEffects();
     const element = Panel({
       projection: sampleProjection(),
       agentRunTarget: { runId: "run/1", agentId: "agent/1" },
       compactContextCommand: sampleCompactCommand(),
+      onCompactContext,
       embedded: true,
     });
     const button = findButtonByAriaLabel(element, "手动压缩上下文");
@@ -127,48 +116,7 @@ describe("SessionProjectionViewPanel", () => {
     onClick();
     await flushPromises();
 
-    expect(mocks.compactAgentRunContext).toHaveBeenCalledWith(
-      { runId: "run/1", agentId: "agent/1" },
-      "command-compact-1",
-    );
-  });
-});
-
-describe("context compaction helpers", () => {
-  it("maps compact command outcomes to short UI status text", () => {
-    expect(contextCompactionOutcomeMessage({
-      command_receipt: {
-        client_command_id: "cmd-1",
-        status: "accepted",
-        duplicate: false,
-      },
-      outcome: "scheduled_next_turn",
-    })).toBe("已排队");
-    expect(contextCompactionOutcomeMessage({
-      command_receipt: {
-        client_command_id: "cmd-2",
-        status: "accepted",
-        duplicate: false,
-      },
-      outcome: "launched_compaction_turn",
-    })).toBe("已启动");
-    expect(contextCompactionOutcomeMessage({
-      command_receipt: {
-        client_command_id: "cmd-3",
-        status: "accepted",
-        duplicate: false,
-      },
-      outcome: "no_eligible_messages",
-    })).toBe("暂无可压缩内容");
-    expect(contextCompactionOutcomeMessage({
-      command_receipt: {
-        client_command_id: "cmd-4",
-        status: "accepted",
-        duplicate: false,
-      },
-      outcome: "failed",
-      message: "summary provider failed",
-    })).toBe("summary provider failed");
+    expect(onCompactContext).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -255,21 +203,16 @@ function findButtonByAriaLabel(
   return null;
 }
 
-function sampleCompactCommand(overrides: Partial<ConversationCommandView> = {}): ConversationCommandView {
+function sampleCompactCommand(
+  overrides: Partial<SessionChatCommandModel> = {},
+): SessionChatCommandModel {
   return {
     kind: "compact_context",
     command_id: "compact_context",
+    runtimeCommand: "request_compaction",
     enabled: true,
     requires_input: false,
     executor_config_policy: "forbidden",
-    placement: ["header"],
-    stale_guard: {
-      snapshot_id: "snapshot-1",
-      run_id: "run/1",
-      agent_id: "agent/1",
-      frame_id: "frame-1",
-      active_turn_id: "turn-1",
-    },
     ...overrides,
   };
 }

@@ -3076,7 +3076,7 @@ async fn compile_durable_companion_plan(
             })?;
     let snapshot = services
         .product_protocols
-        .runtime_snapshot
+        .runtime_view
         .load_snapshot(&parent_runtime_thread_id)
         .await
         .map_err(|error| {
@@ -3084,13 +3084,10 @@ async fn compile_durable_companion_plan(
                 "读取父 Agent Runtime canonical snapshot 失败: {error}"
             ))
         })?;
-    let through_turn_id =
-        agentdash_agent_protocol::CanonicalConversationView::new(&snapshot.conversation_history)
-            .completed_turn(None)
-            .map(|turn| {
-                agentdash_agent_runtime_contract::RuntimeTurnId::new(turn.id.clone())
-                    .expect("canonical turn ids are valid Runtime turn ids")
-            });
+    let through_turn_id = snapshot.conversation().completed_turn(None).map(|turn| {
+        agentdash_agent_runtime_contract::RuntimeTurnId::new(turn.id.clone())
+            .expect("canonical turn ids are valid Runtime turn ids")
+    });
 
     let non_constraints = plan
         .slice
@@ -3104,7 +3101,7 @@ async fn compile_durable_companion_plan(
         .iter()
         .filter(|injection| injection.slot == "constraint")
         .collect::<Vec<_>>();
-    let revision = format!("{:?}", snapshot.revision);
+    let revision = format!("{:?}", snapshot.view_revision);
     let provenance = |authority, kind: &str, value: &serde_json::Value| {
         let canonical = serde_json::to_vec(value).expect("companion context must serialize");
         CompanionContextSourceDraft {

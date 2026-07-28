@@ -4,9 +4,8 @@ use agentdash_agent_protocol::{
     CanonicalConversationRecord, CanonicalConversationView, CompletedConversationItem,
 };
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeInteraction, ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
-    ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot, RuntimeProjectionRevision,
-    RuntimeThreadId,
+    AgentRuntimeInteraction, AgentRuntimeLifecycleStatus, AgentRuntimeProjectionAuthority,
+    AgentRuntimeProjectionFidelity, AgentRuntimeView, RuntimeProjectionRevision, RuntimeThreadId,
 };
 use agentdash_application_agentrun::agent_run::AgentRunProductProjectionQueryPort;
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -16,7 +15,7 @@ use thiserror::Error;
 
 /// Lifecycle-owned, rebuildable view of one Complete Agent conversation.
 ///
-/// This is deliberately a read model. Its only input is the canonical Managed Runtime
+/// This is deliberately a read model. Its only input is the canonical Agent Runtime
 /// projection, so deleting this value never loses Agent or Product authority.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LifecycleHistoryProjection {
@@ -24,28 +23,28 @@ pub struct LifecycleHistoryProjection {
     pub runtime_thread_id: RuntimeThreadId,
     pub projection_revision: RuntimeProjectionRevision,
     pub captured_at_ms: u64,
-    pub lifecycle: ManagedRuntimeLifecycleStatus,
+    pub lifecycle: AgentRuntimeLifecycleStatus,
     pub thread_name: Option<String>,
-    pub authority: ManagedRuntimeProjectionAuthority,
-    pub fidelity: ManagedRuntimeProjectionFidelity,
-    pub interactions: Vec<ManagedRuntimeInteraction>,
+    pub authority: AgentRuntimeProjectionAuthority,
+    pub fidelity: AgentRuntimeProjectionFidelity,
+    pub interactions: Vec<AgentRuntimeInteraction>,
     /// Exact source-ordered App Server-shaped history used by events.json and reconnect readers.
     pub conversation_history: Vec<CanonicalConversationRecord>,
 }
 
 impl LifecycleHistoryProjection {
-    pub fn from_runtime(target: AgentRunTarget, snapshot: ManagedRuntimeSnapshot) -> Self {
+    pub fn from_runtime(target: AgentRunTarget, snapshot: AgentRuntimeView) -> Self {
         Self {
             target,
             runtime_thread_id: snapshot.thread_id,
-            projection_revision: snapshot.revision,
+            projection_revision: snapshot.view_revision,
             captured_at_ms: snapshot.captured_at_ms,
             lifecycle: snapshot.lifecycle,
             thread_name: snapshot.thread_name,
             authority: snapshot.authority,
             fidelity: snapshot.fidelity,
             interactions: snapshot.interactions,
-            conversation_history: snapshot.conversation_history,
+            conversation_history: snapshot.conversation,
         }
     }
 
@@ -131,7 +130,7 @@ impl LifecycleHistoryQueryPort for ProductRuntimeLifecycleHistoryQuery {
     ) -> Result<LifecycleHistoryProjection, LifecycleHistoryQueryError> {
         let snapshot = self
             .product_projection
-            .runtime_snapshot(target)
+            .runtime_view(target)
             .await
             .map_err(|error| LifecycleHistoryQueryError::Projection(error.to_string()))?;
         Ok(LifecycleHistoryProjection::from_runtime(

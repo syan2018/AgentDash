@@ -8,14 +8,12 @@ use agentdash_contracts::workflow::{
     AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
     AgentFrameRefDto, AgentFrameRuntimeView, AgentRunLineageRef, AgentRunOwnershipView,
     AgentRunRefDto, AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView,
-    AgentRunView, AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
-    AgentRunWorkspaceShell, AgentRunWorkspaceView, ConversationCommandKind,
-    ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandStaleGuardView,
-    ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
-    ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
-    ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
-    ConversationWaitingItemView, LifecycleRunRefDto, LifecycleSubjectAssociationDto,
-    RuntimeThreadRefDto, SubjectRefDto, ValidationSeverity,
+    AgentRunView, AgentRunWorkspaceShell, AgentRunWorkspaceView, ConversationCommandKind,
+    ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandView,
+    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
+    ConversationKeyboardMapView, ConversationModelConfigSource, ConversationModelConfigStatus,
+    ConversationModelConfigView, ConversationWaitingItemView, LifecycleRunRefDto,
+    LifecycleSubjectAssociationDto, RuntimeThreadRefDto, SubjectRefDto, ValidationSeverity,
 };
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use uuid::Uuid;
@@ -182,10 +180,8 @@ fn workspace_to_contract(
             display_title: snapshot.shell.display_title,
             title_source: snapshot.shell.title_source,
             delivery_status: snapshot.shell.delivery_status,
-            last_turn_id: snapshot.shell.last_turn_id,
             last_activity_at: snapshot.shell.last_activity_at,
         },
-        control_plane: workspace_control_plane(&conversation),
         workspace_modules,
         agent: snapshot.agent_view.map(|agent| AgentRunView {
             agent_ref: AgentRunRefDto {
@@ -222,7 +218,6 @@ fn conversation_to_contract(
     conversation: app_agent_run::AgentConversationSnapshotModel,
 ) -> AgentConversationSnapshot {
     AgentConversationSnapshot {
-        snapshot_id: conversation.snapshot_id,
         identity: AgentConversationIdentity {
             run_ref: LifecycleRunRefDto {
                 run_id: conversation.identity.run_id.clone(),
@@ -249,7 +244,6 @@ fn conversation_to_contract(
                 .map(subject_association_to_contract)
                 .collect(),
         },
-        execution: execution_to_contract(conversation.execution),
         model_config: model_config_to_contract(conversation.model_config),
         commands: command_set_to_contract(conversation.commands),
         waiting_items: conversation
@@ -268,44 +262,6 @@ fn conversation_to_contract(
             .into_iter()
             .map(diagnostic_to_contract)
             .collect(),
-    }
-}
-
-fn execution_to_contract(
-    execution: app_agent_run::ConversationExecutionModel,
-) -> ConversationExecutionView {
-    ConversationExecutionView {
-        status: match execution.status {
-            app_agent_run::ConversationExecutionStatusModel::Draft => {
-                ConversationExecutionStatus::Draft
-            }
-            app_agent_run::ConversationExecutionStatusModel::ModelRequired => {
-                ConversationExecutionStatus::ModelRequired
-            }
-            app_agent_run::ConversationExecutionStatusModel::Ready => {
-                ConversationExecutionStatus::Ready
-            }
-            app_agent_run::ConversationExecutionStatusModel::StartingClaimed => {
-                ConversationExecutionStatus::StartingClaimed
-            }
-            app_agent_run::ConversationExecutionStatusModel::RunningActive => {
-                ConversationExecutionStatus::RunningActive
-            }
-            app_agent_run::ConversationExecutionStatusModel::Cancelling => {
-                ConversationExecutionStatus::Cancelling
-            }
-            app_agent_run::ConversationExecutionStatusModel::Terminal => {
-                ConversationExecutionStatus::Terminal
-            }
-            app_agent_run::ConversationExecutionStatusModel::FrameMissing => {
-                ConversationExecutionStatus::FrameMissing
-            }
-        },
-        runtime_thread_ref: execution
-            .runtime_thread_id
-            .map(|runtime_thread_id| RuntimeThreadRefDto { runtime_thread_id }),
-        active_turn_id: execution.active_turn_id,
-        reason: execution.reason,
     }
 }
 
@@ -399,9 +355,17 @@ fn command_to_contract(
             }
         },
         command_id: command.command_id,
-        enabled: command.enabled,
-        unavailable_reason: command.unavailable_reason,
-        disabled_code: command.disabled_code,
+        runtime_command: match command.kind {
+            app_agent_run::ConversationCommandKindModel::SubmitMessage => {
+                agentdash_agent_runtime_contract::AgentRuntimeCommandKind::SubmitInput
+            }
+            app_agent_run::ConversationCommandKindModel::Cancel => {
+                agentdash_agent_runtime_contract::AgentRuntimeCommandKind::Interrupt
+            }
+            app_agent_run::ConversationCommandKindModel::CompactContext => {
+                agentdash_agent_runtime_contract::AgentRuntimeCommandKind::RequestCompaction
+            }
+        },
         shortcut: command.shortcut,
         requires_input: command.requires_input,
         executor_config_policy: command.executor_config_policy,
@@ -420,13 +384,6 @@ fn command_to_contract(
                 }
             })
             .collect(),
-        stale_guard: ConversationCommandStaleGuardView {
-            snapshot_id: command.stale_guard.snapshot_id,
-            run_id: command.stale_guard.run_id,
-            agent_id: command.stale_guard.agent_id,
-            frame_id: command.stale_guard.frame_id,
-            active_turn_id: command.stale_guard.active_turn_id,
-        },
     }
 }
 
@@ -527,29 +484,5 @@ fn frame_runtime_to_contract(
         effective_executor_config: frame
             .effective_executor_config
             .map(effective_executor_config_to_contract),
-    }
-}
-
-fn workspace_control_plane(
-    conversation: &AgentConversationSnapshot,
-) -> AgentRunWorkspaceControlPlaneView {
-    let status = match conversation.execution.status {
-        ConversationExecutionStatus::Draft
-        | ConversationExecutionStatus::ModelRequired
-        | ConversationExecutionStatus::Ready => AgentRunWorkspaceControlPlaneStatus::Ready,
-        ConversationExecutionStatus::StartingClaimed
-        | ConversationExecutionStatus::RunningActive => {
-            AgentRunWorkspaceControlPlaneStatus::Running
-        }
-        ConversationExecutionStatus::Cancelling => AgentRunWorkspaceControlPlaneStatus::Cancelling,
-        ConversationExecutionStatus::Terminal => AgentRunWorkspaceControlPlaneStatus::Terminal,
-        ConversationExecutionStatus::FrameMissing => {
-            AgentRunWorkspaceControlPlaneStatus::FrameMissing
-        }
-    };
-    AgentRunWorkspaceControlPlaneView {
-        status,
-        reason: conversation.execution.reason.clone(),
-        ownership: conversation.commands.ownership.clone(),
     }
 }

@@ -1,4 +1,4 @@
-//! Canonical cross-process framing for Managed Runtime and Complete Agent traffic.
+//! Canonical cross-process framing for Agent Runtime and Complete Agent traffic.
 
 mod complete_agent;
 mod placement;

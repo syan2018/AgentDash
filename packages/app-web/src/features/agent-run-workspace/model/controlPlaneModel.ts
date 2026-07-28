@@ -86,17 +86,11 @@ export function planAgentRunProjectEvent(
 }
 
 export function planAgentRunTurnEnded(): AgentRunControlPlaneEffectPlan {
-  return {
-    refreshWorkspaceState: true,
-    refreshAgentRunListReason: "turn_ended",
-  };
+  return {};
 }
 
 export function planAgentRunTurnStarted(): AgentRunControlPlaneEffectPlan {
-  return {
-    refreshWorkspaceState: true,
-    refreshAgentRunListReason: "turn_started",
-  };
+  return {};
 }
 
 function projectionRefreshReason(change: ControlPlaneProjectionChanged): string {

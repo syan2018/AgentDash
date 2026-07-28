@@ -1218,10 +1218,12 @@ impl CompleteAgentService for CodexCompleteAgentService {
                     ))
                 },
             )?;
+        let active_turn_id = response_active_turn_id(&result)?;
         Ok(AgentSnapshot {
             source: query.source,
             revision: AgentSnapshotRevision(source.revision),
             lifecycle: source.lifecycle,
+            execution: agentdash_agent_service_api::AgentExecutionSnapshot { active_turn_id },
             interactions,
             thread_name: Some(agentdash_agent_service_api::AgentThreadNameSnapshot {
                 thread_name,
@@ -1711,6 +1713,30 @@ fn response_thread_name(result: &Value) -> Result<Option<String>, AgentServiceEr
             "thread/read returned a non-string thread name",
         )),
     }
+}
+
+fn response_active_turn_id(result: &Value) -> Result<Option<AgentTurnId>, AgentServiceError> {
+    let turns = result
+        .pointer("/thread/turns")
+        .and_then(Value::as_array)
+        .ok_or_else(|| protocol_violation("thread/read response misses thread.turns"))?;
+    let mut active_turn_id = None;
+    for turn in turns {
+        if turn.get("status").and_then(Value::as_str) != Some("inProgress") {
+            continue;
+        }
+        if active_turn_id.is_some() {
+            return Err(protocol_violation(
+                "thread/read returned more than one in-progress turn",
+            ));
+        }
+        let turn_id = turn
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| protocol_violation("thread/read active turn misses id"))?;
+        active_turn_id = Some(AgentTurnId::new(turn_id).map_err(internal_error)?);
+    }
+    Ok(active_turn_id)
 }
 
 fn codex_thread_history_digest(result: &Value) -> Result<AgentPayloadDigest, AgentServiceError> {
@@ -2252,6 +2278,41 @@ mod tests {
             codex_thread_history_digest(&first).expect("first digest"),
             codex_thread_history_digest(&repeated).expect("repeated digest")
         );
+    }
+
+    #[test]
+    fn active_turn_comes_directly_from_thread_read_state() {
+        let result = json!({
+            "thread": {
+                "turns": [
+                    {"id": "turn-completed", "status": "completed"},
+                    {"id": "turn-active", "status": "inProgress"}
+                ]
+            }
+        });
+
+        assert_eq!(
+            response_active_turn_id(&result)
+                .expect("active turn")
+                .as_ref()
+                .map(AgentTurnId::as_str),
+            Some("turn-active")
+        );
+    }
+
+    #[test]
+    fn thread_read_rejects_multiple_active_turns() {
+        let result = json!({
+            "thread": {
+                "turns": [
+                    {"id": "turn-1", "status": "inProgress"},
+                    {"id": "turn-2", "status": "inProgress"}
+                ]
+            }
+        });
+
+        let error = response_active_turn_id(&result).expect_err("invalid execution state");
+        assert_eq!(error.code, AgentServiceErrorCode::ProtocolViolation);
     }
 
     #[test]

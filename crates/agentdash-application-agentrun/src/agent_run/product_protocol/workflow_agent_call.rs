@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeContextAuthority, ManagedRuntimeContextProvenance,
-    ManagedRuntimeInitialContextContribution, ManagedRuntimeInitialContextContributionContent,
-    ManagedRuntimeInitialContextMode, ManagedRuntimeInitialContextPackage,
+    AgentRuntimeContextAuthority, AgentRuntimeContextProvenance,
+    AgentRuntimeInitialContextContribution, AgentRuntimeInitialContextContributionContent,
+    AgentRuntimeInitialContextMode, AgentRuntimeInitialContextPackage,
     RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
     RuntimeContextSourceRevision, RuntimePayloadDigest, RuntimeThreadId,
 };
@@ -206,11 +206,11 @@ fn runtime_thread_id(
 
 fn initial_context(
     request: &WorkflowAgentCallRequest,
-) -> Result<ManagedRuntimeInitialContextPackage, WorkflowAgentCallDispatchError> {
+) -> Result<AgentRuntimeInitialContextPackage, WorkflowAgentCallDispatchError> {
     let payload_digest = RuntimePayloadDigest::new(request.payload_digest.clone())
         .map_err(|error| permanent("agent_call_context_invalid", error.to_string()))?;
-    let provenance = ManagedRuntimeContextProvenance {
-        authority: ManagedRuntimeContextAuthority::Workflow,
+    let provenance = AgentRuntimeContextProvenance {
+        authority: AgentRuntimeContextAuthority::Workflow,
         source: RuntimeContextSourceRef::new(format!(
             "workflow-agent-call:{}",
             request.identity.request_id
@@ -220,11 +220,11 @@ fn initial_context(
             .map_err(|error| permanent("agent_call_context_invalid", error.to_string()))?,
         digest: payload_digest,
     };
-    let mut contribution = ManagedRuntimeInitialContextContribution {
+    let mut contribution = AgentRuntimeInitialContextContribution {
         contribution_id: RuntimeContextContributionId::new("workflow-agent-call-procedure")
             .map_err(|error| permanent("agent_call_context_invalid", error.to_string()))?,
         digest: RuntimePayloadDigest::new("pending").expect("non-empty digest placeholder"),
-        content: ManagedRuntimeInitialContextContributionContent::WorkflowContext {
+        content: AgentRuntimeInitialContextContributionContent::WorkflowContext {
             schema: "agentdash.workflow.agent-call.procedure.v1".to_owned(),
             value: serde_json::json!({
                 "procedure_key": request.procedure_key,
@@ -235,14 +235,14 @@ fn initial_context(
         },
     };
     contribution.digest = contribution.calculated_digest();
-    let mut package = ManagedRuntimeInitialContextPackage {
+    let mut package = AgentRuntimeInitialContextPackage {
         package_id: RuntimeContextPackageId::new(format!(
             "workflow-agent-call-context:{}",
             request.identity.request_id
         ))
         .map_err(|error| permanent("agent_call_context_invalid", error.to_string()))?,
         schema_version: 1,
-        mode: ManagedRuntimeInitialContextMode::WorkflowOnly,
+        mode: AgentRuntimeInitialContextMode::WorkflowOnly,
         contributions: vec![contribution],
         digest: RuntimePayloadDigest::new("pending").expect("non-empty digest placeholder"),
     };

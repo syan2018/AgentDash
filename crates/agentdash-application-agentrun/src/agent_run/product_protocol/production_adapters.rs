@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime::project_authoritative_agent_snapshot;
+use agentdash_agent_runtime::project_authoritative_agent_view;
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeContentBlock, ManagedRuntimeContextAuthority, ManagedRuntimeContextProvenance,
-    ManagedRuntimeInitialContextContribution, ManagedRuntimeInitialContextContributionContent,
-    ManagedRuntimeInitialContextMode, ManagedRuntimeInitialContextPackage, ManagedRuntimeSnapshot,
+    AgentRuntimeContentBlock, AgentRuntimeContextAuthority, AgentRuntimeContextProvenance,
+    AgentRuntimeInitialContextContribution, AgentRuntimeInitialContextContributionContent,
+    AgentRuntimeInitialContextMode, AgentRuntimeInitialContextPackage, AgentRuntimeView,
     RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
     RuntimeContextSourceRevision, RuntimePayloadDigest, RuntimeThreadId,
 };
@@ -59,10 +59,7 @@ impl ProductAgentRunRuntimeSnapshotAdapter {
 
 #[async_trait]
 impl AgentRunRuntimeSnapshotPort for ProductAgentRunRuntimeSnapshotAdapter {
-    async fn load_snapshot(
-        &self,
-        thread_id: &RuntimeThreadId,
-    ) -> Result<ManagedRuntimeSnapshot, String> {
+    async fn load_snapshot(&self, thread_id: &RuntimeThreadId) -> Result<AgentRuntimeView, String> {
         let binding = self
             .bindings
             .load_product_binding_by_runtime_thread(thread_id)
@@ -77,7 +74,7 @@ impl AgentRunRuntimeSnapshotPort for ProductAgentRunRuntimeSnapshotAdapter {
             })
             .await
             .map_err(|error| error.to_string())?;
-        project_authoritative_agent_snapshot(thread_id.clone(), snapshot)
+        project_authoritative_agent_view(thread_id.clone(), snapshot)
             .map_err(|error| error.to_string())
     }
 }
@@ -284,7 +281,7 @@ impl ProductCompanionFreshRuntimeAdapter {
                     .submit_input(
                         saga.provisioning().target.clone(),
                         identity.runtime_operation_id.as_str().to_owned(),
-                        vec![ManagedRuntimeContentBlock::Text {
+                        vec![AgentRuntimeContentBlock::Text {
                             text: saga.plan().first_submit_input.text.clone(),
                         }],
                     )
@@ -361,7 +358,7 @@ fn map_agent_initial_context_evidence(
 
 fn compile_runtime_initial_context(
     package: &CompiledInitialContextPackage,
-) -> Result<ManagedRuntimeInitialContextPackage, String> {
+) -> Result<AgentRuntimeInitialContextPackage, String> {
     if !package.digest_matches() {
         return Err("Product initial-context package digest is invalid".to_owned());
     }
@@ -378,7 +375,7 @@ fn compile_runtime_initial_context(
         ))
         .map_err(|error| error.to_string())?;
         let content = compile_runtime_contribution(contribution)?;
-        let mut contribution = ManagedRuntimeInitialContextContribution {
+        let mut contribution = AgentRuntimeInitialContextContribution {
             contribution_id,
             digest: RuntimePayloadDigest::new("pending").map_err(|error| error.to_string())?,
             content,
@@ -386,16 +383,14 @@ fn compile_runtime_initial_context(
         contribution.digest = contribution.calculated_digest();
         contributions.push(contribution);
     }
-    let mut runtime_package = ManagedRuntimeInitialContextPackage {
+    let mut runtime_package = AgentRuntimeInitialContextPackage {
         package_id,
         schema_version,
         mode: match package.mode {
-            CompiledFreshContextMode::Compact => ManagedRuntimeInitialContextMode::Compact,
-            CompiledFreshContextMode::WorkflowOnly => {
-                ManagedRuntimeInitialContextMode::WorkflowOnly
-            }
+            CompiledFreshContextMode::Compact => AgentRuntimeInitialContextMode::Compact,
+            CompiledFreshContextMode::WorkflowOnly => AgentRuntimeInitialContextMode::WorkflowOnly,
             CompiledFreshContextMode::ConstraintsOnly => {
-                ManagedRuntimeInitialContextMode::ConstraintsOnly
+                AgentRuntimeInitialContextMode::ConstraintsOnly
             }
         },
         contributions,
@@ -410,19 +405,19 @@ fn compile_runtime_initial_context(
 
 fn compile_runtime_contribution(
     contribution: &CompiledInitialContextContribution,
-) -> Result<ManagedRuntimeInitialContextContributionContent, String> {
+) -> Result<AgentRuntimeInitialContextContributionContent, String> {
     Ok(match contribution {
         CompiledInitialContextContribution::CompactSummary {
             summary,
             provenance,
-        } => ManagedRuntimeInitialContextContributionContent::CompactSummary {
+        } => AgentRuntimeInitialContextContributionContent::CompactSummary {
             summary: summary.clone(),
             provenance: compile_runtime_provenance(provenance)?,
         },
         CompiledInitialContextContribution::WorkflowContext {
             payload,
             provenance,
-        } => ManagedRuntimeInitialContextContributionContent::WorkflowContext {
+        } => AgentRuntimeInitialContextContributionContent::WorkflowContext {
             schema: payload.schema.clone(),
             value: payload.value.clone(),
             provenance: compile_runtime_provenance(provenance)?,
@@ -430,7 +425,7 @@ fn compile_runtime_contribution(
         CompiledInitialContextContribution::ConstraintSet {
             payload,
             provenance,
-        } => ManagedRuntimeInitialContextContributionContent::ConstraintSet {
+        } => AgentRuntimeInitialContextContributionContent::ConstraintSet {
             schema: payload.schema.clone(),
             value: payload.value.clone(),
             provenance: compile_runtime_provenance(provenance)?,
@@ -440,15 +435,13 @@ fn compile_runtime_contribution(
 
 fn compile_runtime_provenance(
     provenance: &super::CompiledContextProvenance,
-) -> Result<ManagedRuntimeContextProvenance, String> {
-    Ok(ManagedRuntimeContextProvenance {
+) -> Result<AgentRuntimeContextProvenance, String> {
+    Ok(AgentRuntimeContextProvenance {
         authority: match provenance.authority {
-            CompiledContextAuthority::AgentHistory => ManagedRuntimeContextAuthority::AgentHistory,
-            CompiledContextAuthority::AgentSnapshot => {
-                ManagedRuntimeContextAuthority::AgentSnapshot
-            }
-            CompiledContextAuthority::Workflow => ManagedRuntimeContextAuthority::Workflow,
-            CompiledContextAuthority::Constraint => ManagedRuntimeContextAuthority::Constraint,
+            CompiledContextAuthority::AgentHistory => AgentRuntimeContextAuthority::AgentHistory,
+            CompiledContextAuthority::AgentSnapshot => AgentRuntimeContextAuthority::AgentSnapshot,
+            CompiledContextAuthority::Workflow => AgentRuntimeContextAuthority::Workflow,
+            CompiledContextAuthority::Constraint => AgentRuntimeContextAuthority::Constraint,
         },
         source: RuntimeContextSourceRef::new(provenance.source.clone())
             .map_err(|error| error.to_string())?,

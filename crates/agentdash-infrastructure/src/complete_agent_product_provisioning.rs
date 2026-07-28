@@ -10,10 +10,10 @@ use agentdash_agent_protocol::{
     AgentSurfaceInstructionPresentation,
 };
 use agentdash_agent_runtime::{
-    ManagedRuntimeDispatchContext, ManagedRuntimeLifecyclePort, PlatformToolBroker,
+    AgentRuntimeDispatchContext, AgentRuntimeLifecyclePort, PlatformToolBroker,
     RuntimeToolDefinition, map_initial_context_package,
 };
-use agentdash_agent_runtime_contract::{ManagedRuntimeInitialContextPackage, RuntimeThreadId};
+use agentdash_agent_runtime_contract::{AgentRuntimeInitialContextPackage, RuntimeThreadId};
 use agentdash_agent_runtime_host::{
     CompleteAgentBindingTarget, CompleteAgentHost, CompleteAgentHostError,
     CompleteAgentRuntimeTargetProvisioningRequest, CompleteAgentRuntimeTargetRecoveryRequest,
@@ -384,7 +384,7 @@ impl AgentRunProductRuntimeProvisioningPort for CompleteAgentProductRuntimeProvi
     async fn create_agent_source(
         &self,
         request: &AgentRunProductRuntimeProvisioningRequest,
-        initial_context: Option<ManagedRuntimeInitialContextPackage>,
+        initial_context: Option<AgentRuntimeInitialContextPackage>,
     ) -> Result<AgentRunProductAgentCreateEvidence, AgentRunProductRuntimeProvisioningError> {
         request.validate()?;
         let identity = format!(
@@ -405,9 +405,9 @@ impl AgentRunProductRuntimeProvisioningPort for CompleteAgentProductRuntimeProvi
             .map(map_initial_context_package)
             .transpose()
             .map_err(|error| invalid(error.to_string()))?;
-        let outcome = ManagedRuntimeLifecyclePort::create(
+        let outcome = AgentRuntimeLifecyclePort::create(
             self.host.as_ref(),
-            ManagedRuntimeDispatchContext {
+            AgentRuntimeDispatchContext {
                 runtime_thread_id: request.runtime_thread_id.clone(),
                 effect_id,
                 dispatch_owner: "product-agent-create".to_owned(),
@@ -1249,7 +1249,7 @@ fn hook_requirement(
     let route = match source.site {
         HookExecutionSite::AgentCoreCallback => AgentSurfaceRoute::AgentNativeCallback,
         HookExecutionSite::DriverNative => AgentSurfaceRoute::AgentNativeRegistry,
-        HookExecutionSite::ManagedRuntime
+        HookExecutionSite::AgentRuntime
         | HookExecutionSite::ToolBroker
         | HookExecutionSite::ObservedEventReaction => return Ok(None),
     };

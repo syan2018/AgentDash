@@ -4,14 +4,14 @@ use sha2::{Digest, Sha256};
 use ts_rs::TS;
 
 use crate::{
-    ManagedRuntimeContentBlock, ManagedRuntimeOperationStatus, ManagedRuntimeSnapshot,
+    AgentRuntimeContentBlock, AgentRuntimeOperationStatus, AgentRuntimeView,
     RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
     RuntimeContextSourceRevision, RuntimeOperationId, RuntimePayloadDigest, RuntimeThreadId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub enum ManagedRuntimeInitialContextMode {
+pub enum AgentRuntimeInitialContextMode {
     Compact,
     WorkflowOnly,
     ConstraintsOnly,
@@ -19,7 +19,7 @@ pub enum ManagedRuntimeInitialContextMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub enum ManagedRuntimeContextAuthority {
+pub enum AgentRuntimeContextAuthority {
     AgentHistory,
     AgentSnapshot,
     Workflow,
@@ -28,8 +28,8 @@ pub enum ManagedRuntimeContextAuthority {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeContextProvenance {
-    pub authority: ManagedRuntimeContextAuthority,
+pub struct AgentRuntimeContextProvenance {
+    pub authority: AgentRuntimeContextAuthority,
     pub source: RuntimeContextSourceRef,
     pub revision: RuntimeContextSourceRevision,
     pub digest: RuntimePayloadDigest,
@@ -37,32 +37,32 @@ pub struct ManagedRuntimeContextProvenance {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ManagedRuntimeInitialContextContributionContent {
+pub enum AgentRuntimeInitialContextContributionContent {
     CompactSummary {
         summary: String,
-        provenance: ManagedRuntimeContextProvenance,
+        provenance: AgentRuntimeContextProvenance,
     },
     WorkflowContext {
         schema: String,
         value: serde_json::Value,
-        provenance: ManagedRuntimeContextProvenance,
+        provenance: AgentRuntimeContextProvenance,
     },
     ConstraintSet {
         schema: String,
         value: serde_json::Value,
-        provenance: ManagedRuntimeContextProvenance,
+        provenance: AgentRuntimeContextProvenance,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeInitialContextContribution {
+pub struct AgentRuntimeInitialContextContribution {
     pub contribution_id: RuntimeContextContributionId,
     pub digest: RuntimePayloadDigest,
-    pub content: ManagedRuntimeInitialContextContributionContent,
+    pub content: AgentRuntimeInitialContextContributionContent,
 }
 
-impl ManagedRuntimeInitialContextContribution {
+impl AgentRuntimeInitialContextContribution {
     pub fn calculated_digest(&self) -> RuntimePayloadDigest {
         let canonical = serde_json::to_vec(&(&self.contribution_id, &self.content))
             .expect("Runtime initial context contribution is serializable");
@@ -77,15 +77,15 @@ impl ManagedRuntimeInitialContextContribution {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeInitialContextPackage {
+pub struct AgentRuntimeInitialContextPackage {
     pub package_id: RuntimeContextPackageId,
     pub schema_version: u32,
-    pub mode: ManagedRuntimeInitialContextMode,
-    pub contributions: Vec<ManagedRuntimeInitialContextContribution>,
+    pub mode: AgentRuntimeInitialContextMode,
+    pub contributions: Vec<AgentRuntimeInitialContextContribution>,
     pub digest: RuntimePayloadDigest,
 }
 
-impl ManagedRuntimeInitialContextPackage {
+impl AgentRuntimeInitialContextPackage {
     pub fn calculated_digest(&self) -> RuntimePayloadDigest {
         let contents = self
             .contributions
@@ -115,13 +115,13 @@ impl ManagedRuntimeInitialContextPackage {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ManagedRuntimeInteractionResponse {
+pub enum AgentRuntimeInteractionResponse {
     Approved,
     Denied {
         reason: Option<String>,
     },
     UserInput {
-        content: Vec<ManagedRuntimeContentBlock>,
+        content: Vec<AgentRuntimeContentBlock>,
     },
     Structured {
         schema: String,
@@ -131,21 +131,21 @@ pub enum ManagedRuntimeInteractionResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeOperationReceipt {
+pub struct AgentRuntimeOperationReceipt {
     pub operation_id: RuntimeOperationId,
     pub thread_id: RuntimeThreadId,
-    pub status: ManagedRuntimeOperationStatus,
-    pub evidence: Option<crate::ManagedRuntimeOperationEvidence>,
+    pub status: AgentRuntimeOperationStatus,
+    pub evidence: Option<crate::AgentRuntimeOperationEvidence>,
     pub duplicate: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct ManagedRuntimeContractSchema {
-    pub initial_context: ManagedRuntimeInitialContextPackage,
-    pub interaction_response: ManagedRuntimeInteractionResponse,
-    pub operation_receipt: ManagedRuntimeOperationReceipt,
-    pub snapshot: ManagedRuntimeSnapshot,
+pub struct AgentRuntimeContractSchema {
+    pub initial_context: AgentRuntimeInitialContextPackage,
+    pub interaction_response: AgentRuntimeInteractionResponse,
+    pub operation_receipt: AgentRuntimeOperationReceipt,
+    pub view: AgentRuntimeView,
 }
 
 #[cfg(test)]
@@ -153,37 +153,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn contract_schema_contains_product_handoff_and_snapshot_families() {
-        let schema = schemars::schema_for!(ManagedRuntimeContractSchema);
+    fn contract_schema_contains_product_handoff_and_view_families() {
+        let schema = schemars::schema_for!(AgentRuntimeContractSchema);
         let schema = serde_json::to_string(&schema).expect("serialize Runtime schema");
         for family in [
-            "ManagedRuntimeInitialContextPackage",
-            "ManagedRuntimeInteractionResponse",
-            "ManagedRuntimeOperationReceipt",
-            "ManagedRuntimeSnapshot",
+            "AgentRuntimeInitialContextPackage",
+            "AgentRuntimeInteractionResponse",
+            "AgentRuntimeOperationReceipt",
+            "AgentRuntimeView",
         ] {
             assert!(schema.contains(family), "missing {family}");
         }
-        assert!(schema.contains("ManagedRuntimeOperationEvidence"));
+        assert!(schema.contains("AgentRuntimeOperationEvidence"));
         assert!(!schema.contains("binding_generation"));
         assert!(!schema.contains("AgentSourceCoordinate"));
-        assert!(!schema.contains("ManagedRuntimeGatewayError"));
-        assert!(!schema.contains("ManagedRuntimeCommandEnvelope"));
+        assert!(!schema.contains("AgentRuntimeGatewayError"));
+        assert!(!schema.contains("AgentRuntimeCommandEnvelope"));
     }
 
     #[test]
     fn initial_context_package_validates_typed_provenance_and_nested_digests() {
-        let provenance = ManagedRuntimeContextProvenance {
-            authority: ManagedRuntimeContextAuthority::Workflow,
+        let provenance = AgentRuntimeContextProvenance {
+            authority: AgentRuntimeContextAuthority::Workflow,
             source: RuntimeContextSourceRef::new("workflow:primary").expect("source"),
             revision: RuntimeContextSourceRevision::new("workflow-revision:7").expect("revision"),
             digest: RuntimePayloadDigest::new("sha256:workflow").expect("digest"),
         };
-        let mut contribution = ManagedRuntimeInitialContextContribution {
+        let mut contribution = AgentRuntimeInitialContextContribution {
             contribution_id: RuntimeContextContributionId::new("workflow-context")
                 .expect("contribution"),
             digest: RuntimePayloadDigest::new("pending").expect("digest"),
-            content: ManagedRuntimeInitialContextContributionContent::WorkflowContext {
+            content: AgentRuntimeInitialContextContributionContent::WorkflowContext {
                 schema: "agentdash.workflow/v1".to_owned(),
                 value: serde_json::json!({"step": "implement"}),
                 provenance,
@@ -191,10 +191,10 @@ mod tests {
         };
         contribution.digest = contribution.calculated_digest();
         assert!(contribution.validate());
-        let mut package = ManagedRuntimeInitialContextPackage {
+        let mut package = AgentRuntimeInitialContextPackage {
             package_id: RuntimeContextPackageId::new("initial-package").expect("package"),
             schema_version: 1,
-            mode: ManagedRuntimeInitialContextMode::WorkflowOnly,
+            mode: AgentRuntimeInitialContextMode::WorkflowOnly,
             contributions: vec![contribution],
             digest: RuntimePayloadDigest::new("pending").expect("digest"),
         };

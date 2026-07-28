@@ -274,9 +274,9 @@
       "fixture_sha256": "0f574c4dffe42accfcf060d25d583ad50681d9f36ee5767eb13163ae5d8212d4",
       "main_capture": "fixture_provenance",
       "test_source": "crates/agentdash-agent-runtime/tests/tool_broker.rs",
-      "test_function": "managed_runtime_journal_preserves_true_mcp_owner_lifecycle",
+      "test_function": "agent_runtime_journal_preserves_true_mcp_owner_lifecycle",
       "strength": "exact_current_mcp_lifecycle_contract",
-      "cargo_args": ["test", "-p", "agentdash-agent-runtime", "--test", "tool_broker", "managed_runtime_journal_preserves_true_mcp_owner_lifecycle"],
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime", "--test", "tool_broker", "agent_runtime_journal_preserves_true_mcp_owner_lifecycle"],
       "complete_scenarios": [],
       "partial_scenarios": ["tool_mcp_dynamic"]
     },

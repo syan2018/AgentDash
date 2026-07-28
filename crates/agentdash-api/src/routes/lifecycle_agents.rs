@@ -11,11 +11,10 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunProductForkError, AgentRunProductForkMessageRef, AgentRunProductForkRequest,
     AgentRunProductForkResult, AgentRunProductForkService, AgentRunProductInputDeliveryError,
     AgentRunProductProjectionError, AgentRunTerminalChangeSequence, DeliverAgentRunProductInput,
-    project_managed_runtime_context,
+    project_agent_runtime_context,
 };
 use agentdash_contracts::agent_run_interaction::{
-    AgentRunCommandOnlyRequest, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
-    AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkResponse,
+    AgentRunCommandReceipt, AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkResponse,
     AgentRunForkSubmitRequest, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
     AgentRunMessageCommandResponse,
 };
@@ -51,20 +50,20 @@ pub struct ProductProjectionChangesQuery {
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/snapshot",
-            axum::routing::get(get_managed_runtime_snapshot),
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/view",
+            axum::routing::get(get_agent_runtime_view),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection",
-            axum::routing::get(get_managed_runtime_context_projection),
+            axum::routing::get(get_agent_runtime_context_projection),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/live",
-            axum::routing::get(get_agent_run_live_events),
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/updates",
+            axum::routing::get(get_agent_runtime_updates),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/commands",
-            axum::routing::post(execute_managed_runtime_command),
+            axum::routing::post(execute_agent_runtime_command),
         )
         .route(
             "/projects/{project_id}/agent-runs/{run_id}",
@@ -79,20 +78,12 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_agent_run_workspace),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
-            axum::routing::post(submit_agent_run_composer_input),
-        )
-        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/fork",
             axum::routing::post(fork_agent_run),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/fork-submit",
             axum::routing::post(fork_submit_agent_run),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/cancel",
-            axum::routing::post(cancel_agent_run),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals/snapshot",
@@ -325,79 +316,6 @@ fn agent_run_child_message_refs(result: &AgentRunProductForkResult) -> AgentRunM
     }
 }
 
-async fn cancel_agent_run(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Json(body): Json<AgentRunCommandOnlyRequest>,
-) -> Result<Json<AgentRunCommandReceipt>, ApiError> {
-    let target = authorize_agent_run_target(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let receipt = state
-        .services
-        .agent_run_product_projection_composition
-        .commands
-        .execute(AgentRunProductCommandRequest {
-            target,
-            client_command_id: body.client_command_id.clone(),
-            command: AgentRunProductCommand::Interrupt,
-        })
-        .await
-        .map_err(agent_run_product_command_error)?;
-    Ok(Json(AgentRunCommandReceipt {
-        client_command_id: body.client_command_id,
-        status: receipt.status.as_str().to_owned(),
-        duplicate: receipt.duplicate,
-        message: None,
-    }))
-}
-
-async fn submit_agent_run_composer_input(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-    Json(body): Json<AgentRunComposerSubmitRequest>,
-) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
-    let target = authorize_agent_run_target(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let delivery = state
-        .services
-        .agent_run_product_input_delivery
-        .deliver(DeliverAgentRunProductInput {
-            target: target.clone(),
-            content: body.input,
-            source: agentdash_domain::agent_input::AgentInputSourceIdentity::composer(),
-            origin: agentdash_domain::agent_input::AgentInputOrigin::User,
-            client_command_id: body.client_command_id.clone(),
-        })
-        .await
-        .map_err(product_input_delivery_error)?;
-    let duplicate = delivery.operation_receipt.duplicate;
-    Ok(Json(AgentRunMessageCommandResponse {
-        command_receipt: AgentRunCommandReceipt {
-            client_command_id: body.client_command_id,
-            status: delivery.operation_receipt.status.as_str().to_owned(),
-            duplicate,
-            message: None,
-        },
-        outcome: AgentRunMessageCommandOutcome::Launched,
-        accepted_refs: Some(agent_run_message_refs(&target)),
-        fork: None,
-    }))
-}
-
 fn agent_run_message_refs(target: &AgentRunTarget) -> AgentRunMessageAcceptedRefs {
     AgentRunMessageAcceptedRefs {
         run_ref: LifecycleRunRefDto {
@@ -611,11 +529,11 @@ async fn get_agent_run_workspace(
     Ok(Json(workspace))
 }
 
-async fn get_managed_runtime_snapshot(
+async fn get_agent_runtime_view(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<agentdash_agent_runtime_contract::ManagedRuntimeSnapshot>, ApiError> {
+) -> Result<Json<agentdash_agent_runtime_contract::AgentRuntimeView>, ApiError> {
     let target = authorize_agent_run_target(
         state.as_ref(),
         &current_user,
@@ -627,13 +545,13 @@ async fn get_managed_runtime_snapshot(
     state
         .services
         .agent_run_product_projection
-        .runtime_snapshot(&target)
+        .runtime_view(&target)
         .await
         .map(Json)
         .map_err(agent_run_product_projection_error)
 }
 
-async fn get_managed_runtime_context_projection(
+async fn get_agent_runtime_context_projection(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
@@ -649,13 +567,13 @@ async fn get_managed_runtime_context_projection(
     let snapshot = state
         .services
         .agent_run_product_projection
-        .runtime_snapshot(&target)
+        .runtime_view(&target)
         .await
         .map_err(agent_run_product_projection_error)?;
-    Ok(Json(project_managed_runtime_context(&snapshot)))
+    Ok(Json(project_agent_runtime_context(&snapshot)))
 }
 
-async fn get_agent_run_live_events(
+async fn get_agent_runtime_updates(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
@@ -668,10 +586,10 @@ async fn get_agent_run_live_events(
         ProjectPermission::Use,
     )
     .await?;
-    let mut live = state
+    let mut updates = state
         .services
         .agent_run_product_projection
-        .runtime_live_events(&target)
+        .runtime_updates(&target)
         .await
         .map_err(agent_run_product_projection_error)?;
     let stream = async_stream::stream! {
@@ -679,14 +597,16 @@ async fn get_agent_run_live_events(
         // before the first Agent event. Empty NDJSON lines carry no domain fact.
         yield Ok::<Bytes, std::convert::Infallible>(Bytes::from_static(b"\n"));
         loop {
-            match live.next().await {
-                Ok(Some(event)) => match serde_json::to_vec(&event) {
+            match updates.next().await {
+                Ok(Some(update)) => {
+                    match serde_json::to_vec(&update) {
                     Ok(mut raw) => {
                         raw.push(b'\n');
                         yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(raw));
                     }
                     Err(_) => break,
-                },
+                    }
+                }
                 Ok(None) | Err(_) => break,
             }
         }
@@ -702,12 +622,12 @@ async fn get_agent_run_live_events(
     ))
 }
 
-async fn execute_managed_runtime_command(
+async fn execute_agent_runtime_command(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
     Json(body): Json<product_projection_contract::AgentRunProductRuntimeCommandRequest>,
-) -> Result<Json<agentdash_agent_runtime_contract::ManagedRuntimeOperationReceipt>, ApiError> {
+) -> Result<Json<agentdash_agent_runtime_contract::AgentRuntimeOperationReceipt>, ApiError> {
     let target = authorize_agent_run_target(
         state.as_ref(),
         &current_user,

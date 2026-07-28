@@ -2,15 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import type {
   AgentRunOwnershipView,
+  ConversationCommandKind,
   ConversationCommandPlacement,
   ConversationCommandView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
 import type { ProjectEventStreamEnvelope } from "../../../generated/project-contracts";
-import type {
-  ConversationCommandKind,
-  ConversationCommandStaleGuardView,
-} from "../../../generated/agent-run-interaction-contracts";
 import type { ProjectAgentSummary } from "../../../types";
 import {
   type AgentRunChatSubmitIntent,
@@ -26,29 +23,23 @@ import {
 } from "./controlPlaneModel";
 import { applyAgentRunControlPlaneEffectPlan } from "./useAgentRunWorkspaceControlPlane";
 
-function staleGuard(commandId: string): ConversationCommandStaleGuardView {
-  return {
-    snapshot_id: "snapshot-1",
-    run_id: "run-1",
-    agent_id: "agent-1",
-    active_turn_id: commandId === "cancel" ? "turn-1" : undefined,
-  };
-}
-
 function command(input: {
   kind: ConversationCommandKind;
   command_id: string;
-  enabled?: boolean;
   placement?: ConversationCommandPlacement[];
 }): ConversationCommandView {
+  const runtimeCommand = input.kind === "cancel"
+    ? "interrupt"
+    : input.kind === "compact_context"
+      ? "request_compaction"
+      : "submit_input";
   return {
     kind: input.kind,
     command_id: input.command_id,
-    enabled: input.enabled ?? true,
+    runtime_command: runtimeCommand,
     requires_input: input.kind === "submit_message",
     executor_config_policy: "optional",
     placement: input.placement ?? ["composer_primary"],
-    stale_guard: staleGuard(input.kind),
   };
 }
 
@@ -86,7 +77,6 @@ describe("AgentRun control-plane model", () => {
     });
     const commandState = buildAgentRunConversationCommandState({
       conversation: {
-        execution: { status: "ready" },
         commands: {
           ownership,
           keyboard: { enter: "cmd-submit" },
@@ -137,7 +127,6 @@ describe("AgentRun control-plane model", () => {
   it("rejects submit intent when command id came from a stale snapshot", () => {
     const commandState = buildAgentRunConversationCommandState({
       conversation: {
-        execution: { status: "ready" },
         commands: {
           ownership,
           keyboard: {},
@@ -158,15 +147,9 @@ describe("AgentRun control-plane model", () => {
     });
   });
 
-  it("uses canonical turn boundaries as the only execution refresh source", () => {
-    expect(planAgentRunTurnStarted()).toEqual({
-      refreshWorkspaceState: true,
-      refreshAgentRunListReason: "turn_started",
-    });
-    expect(planAgentRunTurnEnded()).toEqual({
-      refreshWorkspaceState: true,
-      refreshAgentRunListReason: "turn_ended",
-    });
+  it("keeps Runtime turn boundaries out of Workspace refresh", () => {
+    expect(planAgentRunTurnStarted()).toEqual({});
+    expect(planAgentRunTurnEnded()).toEqual({});
   });
 
   it("refreshes workspace and list after a standard thread name update", () => {
@@ -219,7 +202,7 @@ describe("AgentRun control-plane model", () => {
     expect(plan).toEqual({ effects: {} });
   });
 
-  it("refreshes execution state once for each canonical turn boundary", () => {
+  it("does not project Runtime execution through Workspace live effects", () => {
     expect(planAgentRunLiveEvent({
       type: "turn_started",
       payload: {
@@ -232,10 +215,7 @@ describe("AgentRun control-plane model", () => {
           error: null,
         },
       },
-    }).effects).toEqual({
-      refreshWorkspaceState: true,
-      refreshAgentRunListReason: "turn_started",
-    });
+    }).effects).toEqual({});
 
     expect(planAgentRunLiveEvent({
       type: "turn_completed",
@@ -249,10 +229,7 @@ describe("AgentRun control-plane model", () => {
           error: null,
         },
       },
-    }).effects).toEqual({
-      refreshWorkspaceState: true,
-      refreshAgentRunListReason: "turn_ended",
-    });
+    }).effects).toEqual({});
   });
 
   it("keeps Agent-native ContextFrame changes inside the canonical feed lane", () => {

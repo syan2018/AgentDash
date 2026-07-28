@@ -34,6 +34,9 @@
     "snapshot": {
       "$ref": "#/$defs/AgentSnapshot"
     },
+    "execution_snapshot": {
+      "$ref": "#/$defs/AgentExecutionSnapshot"
+    },
     "observe": {
       "$ref": "#/$defs/AgentObservationQuery"
     },
@@ -103,6 +106,7 @@
     "create_evidence",
     "read",
     "snapshot",
+    "execution_snapshot",
     "observe",
     "observation",
     "changes",
@@ -1502,6 +1506,9 @@
         "lifecycle": {
           "$ref": "#/$defs/AgentLifecycleStatus"
         },
+        "execution": {
+          "$ref": "#/$defs/AgentExecutionSnapshot"
+        },
         "interactions": {
           "type": "array",
           "items": {
@@ -1552,6 +1559,7 @@
         "source",
         "revision",
         "lifecycle",
+        "execution",
         "interactions",
         "source_info",
         "conversation_history"
@@ -1566,6 +1574,17 @@
         "closed",
         "lost"
       ]
+    },
+    "AgentExecutionSnapshot": {
+      "type": "object",
+      "properties": {
+        "active_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     },
     "AgentInteractionSnapshot": {
       "type": "object",

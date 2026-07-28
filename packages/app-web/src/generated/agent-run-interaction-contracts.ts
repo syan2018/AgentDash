@@ -11,25 +11,7 @@ export type AgentPayloadDigest = string;
 
 export type AgentRunAcceptedRefs = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref?: AgentFrameRefDto, turn_id?: string, };
 
-export type AgentRunCommandOnlyRequest = { client_command_id: string, command: AgentRunCommandPreconditionView, };
-
-export type AgentRunCommandPreconditionView = { command_id: string, command_kind: ConversationCommandKind, stale_guard: ConversationCommandStaleGuardView, };
-
 export type AgentRunCommandReceipt = { client_command_id: string, status: string, duplicate: boolean, message?: string, };
-
-export type AgentRunComposerSubmitRequest = {
-/**
- * canonical 用户输入，由后端同步交给具体 Agent。
- */
-input: Array<AgentInputContent>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue,
-/**
- * 投递意图：`"steer"` 表示用户明确要求注入 active turn。
- */
-delivery_intent?: string, backend_selection?: BackendSelectionRequestDto, };
-
-export type AgentRunContextCompactionCommandOutcome = "scheduled_next_turn" | "launched_compaction_turn" | "completed" | "no_eligible_messages" | "blocked" | "failed";
-
-export type AgentRunContextCompactionCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunContextCompactionCommandOutcome, runtime_thread_id?: string, request_id?: string, turn_id?: string, message?: string, };
 
 export type AgentRunForkLineageView = { id: string, parent: AgentRunMessageAcceptedRefs, child: AgentRunMessageAcceptedRefs, relation_kind: string, fork_point_event_seq?: bigint, fork_point_ref?: SessionMessageRefDto, forked_by_user_id: string, created_at: string, };
 
@@ -56,10 +38,6 @@ export type AgentRunToolCallRejectionResponse = { rejected: boolean, run_ref: Li
 export type BackendSelectionModeDto = "explicit" | "auto_idle" | "workspace_binding";
 
 export type BackendSelectionRequestDto = { mode: BackendSelectionModeDto, backend_id?: string, };
-
-export type ConversationCommandKind = "submit_message" | "cancel" | "compact_context";
-
-export type ConversationCommandStaleGuardView = { snapshot_id: string, run_id: string, agent_id: string, frame_id?: string, active_turn_id?: string, };
 
 export type LifecycleRunRefDto = { run_id: string, };
 

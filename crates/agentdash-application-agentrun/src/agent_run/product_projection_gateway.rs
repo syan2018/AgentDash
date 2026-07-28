@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime::project_authoritative_agent_snapshot;
-use agentdash_agent_runtime_contract::{ManagedRuntimeSnapshot, RuntimeThreadId};
+use agentdash_agent_runtime::project_authoritative_agent_view;
+use agentdash_agent_runtime_contract::{AgentRuntimeUpdate, AgentRuntimeView, RuntimeThreadId};
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentLifecycleStatus, AgentLiveEventStream, AgentObservation,
-    AgentObservationQuery, AgentReadQuery, AgentServiceError, AgentSnapshotRevision, AgentTurnId,
-    AgentTurnObservation, CompleteAgentService,
+    AgentBindingGeneration, AgentLiveEventStream, AgentReadQuery, AgentServiceError,
+    AgentSourceCoordinate, CompleteAgentService,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
@@ -22,6 +21,53 @@ use super::{ProductAgentFrameRef, ProductExecutionProfileRef};
 pub struct AgentRunResolvedCompleteAgent {
     pub service: Arc<dyn CompleteAgentService>,
     pub binding_generation: AgentBindingGeneration,
+}
+
+#[async_trait]
+pub trait AgentRuntimeUpdateStream: Send {
+    async fn next(&mut self) -> Result<Option<AgentRuntimeUpdate>, AgentRunProductProjectionError>;
+}
+
+struct CompleteAgentRuntimeUpdateStream {
+    service: Arc<dyn CompleteAgentService>,
+    source: AgentSourceCoordinate,
+    runtime_thread_id: RuntimeThreadId,
+    live: Box<dyn AgentLiveEventStream>,
+}
+
+#[async_trait]
+impl AgentRuntimeUpdateStream for CompleteAgentRuntimeUpdateStream {
+    async fn next(&mut self) -> Result<Option<AgentRuntimeUpdate>, AgentRunProductProjectionError> {
+        let Some(event) = self
+            .live
+            .next()
+            .await
+            .map_err(AgentRunProductProjectionError::Agent)?
+        else {
+            return Ok(None);
+        };
+        if event.source != self.source {
+            return Err(AgentRunProductProjectionError::TargetMismatch);
+        }
+        let snapshot = self
+            .service
+            .read(AgentReadQuery {
+                source: self.source.clone(),
+                at_revision: None,
+            })
+            .await
+            .map_err(AgentRunProductProjectionError::Agent)?;
+        let view = project_authoritative_agent_view(self.runtime_thread_id.clone(), snapshot)
+            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
+        Ok(Some(AgentRuntimeUpdate {
+            lane_sequence: event.sequence.0,
+            view_revision: view.view_revision,
+            execution: view.execution,
+            command_availability: view.command_availability,
+            interactions: view.interactions,
+            presentations: vec![event.record],
+        }))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,24 +120,13 @@ pub struct AgentRunCommittedProductRuntimeBinding {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum AgentRunProductRuntimeSnapshotObservation {
+pub enum AgentRunProductRuntimeViewObservation {
     Absent {
         requested_target: AgentRunTarget,
     },
     Current {
         product_binding: AgentRunProductRuntimeBinding,
-        snapshot: ManagedRuntimeSnapshot,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentRunProductRuntimeExecutionObservation {
-    Absent {
-        requested_target: AgentRunTarget,
-    },
-    Current {
-        product_binding: AgentRunProductRuntimeBinding,
-        observation: AgentObservation,
+        view: AgentRuntimeView,
     },
 }
 
@@ -169,10 +204,10 @@ impl AgentRunProductProjectionGateway {
         Ok(binding)
     }
 
-    pub async fn runtime_snapshot(
+    pub async fn runtime_view(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError> {
+    ) -> Result<AgentRuntimeView, AgentRunProductProjectionError> {
         let binding = self.binding(target).await?;
         let resolved = self
             .agents
@@ -187,115 +222,73 @@ impl AgentRunProductProjectionGateway {
             })
             .await
             .map_err(AgentRunProductProjectionError::Agent)?;
-        project_authoritative_agent_snapshot(binding.runtime_thread_id, snapshot)
+        project_authoritative_agent_view(binding.runtime_thread_id, snapshot)
             .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))
     }
 
-    pub async fn runtime_snapshot_observation(
+    pub async fn runtime_product_binding(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<AgentRunProductRuntimeSnapshotObservation, AgentRunProductProjectionError> {
+    ) -> Result<Option<AgentRunProductRuntimeBinding>, AgentRunProductProjectionError> {
+        let binding = self
+            .runtime_bindings
+            .load_product_binding(target)
+            .await
+            .map_err(AgentRunProductProjectionError::Binding)?;
+        if binding
+            .as_ref()
+            .is_some_and(|binding| binding.target != *target)
+        {
+            return Err(AgentRunProductProjectionError::TargetMismatch);
+        }
+        Ok(binding)
+    }
+
+    pub async fn runtime_view_observation(
+        &self,
+        target: &AgentRunTarget,
+    ) -> Result<AgentRunProductRuntimeViewObservation, AgentRunProductProjectionError> {
         let Some(binding) = self
             .runtime_bindings
             .load_product_binding(target)
             .await
             .map_err(AgentRunProductProjectionError::Binding)?
         else {
-            return Ok(AgentRunProductRuntimeSnapshotObservation::Absent {
+            return Ok(AgentRunProductRuntimeViewObservation::Absent {
                 requested_target: target.clone(),
             });
         };
         if binding.target != *target {
             return Err(AgentRunProductProjectionError::TargetMismatch);
         }
-        let snapshot = self.runtime_snapshot(target).await?;
-        Ok(AgentRunProductRuntimeSnapshotObservation::Current {
+        let view = self.runtime_view(target).await?;
+        Ok(AgentRunProductRuntimeViewObservation::Current {
             product_binding: binding,
-            snapshot,
+            view,
         })
     }
 
-    pub async fn runtime_execution_observation(
+    pub async fn runtime_updates(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<AgentRunProductRuntimeExecutionObservation, AgentRunProductProjectionError> {
-        let Some(binding) = self
-            .runtime_bindings
-            .load_product_binding(target)
-            .await
-            .map_err(AgentRunProductProjectionError::Binding)?
-        else {
-            return Ok(AgentRunProductRuntimeExecutionObservation::Absent {
-                requested_target: target.clone(),
-            });
-        };
-        if binding.target != *target {
-            return Err(AgentRunProductProjectionError::TargetMismatch);
-        }
-        let resolved = self
-            .agents
-            .resolve(&binding)
-            .await
-            .map_err(AgentRunProductProjectionError::Runtime)?;
-        let observation = resolved
-            .service
-            .observe(AgentObservationQuery {
-                source: binding.agent.source.clone(),
-            })
-            .await
-            .map_err(AgentRunProductProjectionError::Agent)?;
-        if observation.source != binding.agent.source {
-            return Err(AgentRunProductProjectionError::TargetMismatch);
-        }
-        Ok(AgentRunProductRuntimeExecutionObservation::Current {
-            product_binding: binding,
-            observation,
-        })
-    }
-
-    /// Reads the current Runtime thread strictly as optional presentation data.
-    ///
-    /// Product-to-thread identity is required to locate the thread. Source binding evidence is a
-    /// command/recovery fence and is deliberately not part of this read boundary.
-    pub async fn runtime_presentation_snapshot(
-        &self,
-        target: &AgentRunTarget,
-    ) -> Result<Option<ManagedRuntimeSnapshot>, AgentRunProductProjectionError> {
-        let Some(binding) = self
-            .runtime_bindings
-            .load_product_binding(target)
-            .await
-            .map_err(AgentRunProductProjectionError::Binding)?
-        else {
-            return Ok(None);
-        };
-        if binding.target != *target {
-            return Ok(None);
-        }
-        match self.runtime_snapshot(target).await {
-            Ok(snapshot) => Ok(Some(snapshot)),
-            Err(AgentRunProductProjectionError::Runtime(_))
-            | Err(AgentRunProductProjectionError::Agent(_))
-            | Err(AgentRunProductProjectionError::TargetNotBound) => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-
-    pub async fn runtime_live_events(
-        &self,
-        target: &AgentRunTarget,
-    ) -> Result<Box<dyn AgentLiveEventStream>, AgentRunProductProjectionError> {
+    ) -> Result<Box<dyn AgentRuntimeUpdateStream>, AgentRunProductProjectionError> {
         let binding = self.binding(target).await?;
         let resolved = self
             .agents
             .resolve(&binding)
             .await
             .map_err(AgentRunProductProjectionError::Runtime)?;
-        resolved
+        let live = resolved
             .service
-            .live_events(binding.agent.source)
+            .live_events(binding.agent.source.clone())
             .await
-            .map_err(AgentRunProductProjectionError::Agent)
+            .map_err(AgentRunProductProjectionError::Agent)?;
+        Ok(Box::new(CompleteAgentRuntimeUpdateStream {
+            service: resolved.service,
+            source: binding.agent.source,
+            runtime_thread_id: binding.runtime_thread_id,
+            live,
+        }))
     }
 
     pub async fn terminal_snapshot(
@@ -343,44 +336,29 @@ impl AgentRunProductProjectionGateway {
 
 #[async_trait]
 pub trait AgentRunProductProjectionQueryPort: Send + Sync {
-    async fn runtime_snapshot(
+    async fn runtime_product_binding(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError>;
-    async fn runtime_snapshot_observation(
-        &self,
-        target: &AgentRunTarget,
-    ) -> Result<AgentRunProductRuntimeSnapshotObservation, AgentRunProductProjectionError>;
-    async fn runtime_execution_observation(
-        &self,
-        target: &AgentRunTarget,
-    ) -> Result<AgentRunProductRuntimeExecutionObservation, AgentRunProductProjectionError> {
-        Ok(match self.runtime_snapshot_observation(target).await? {
-            AgentRunProductRuntimeSnapshotObservation::Absent { requested_target } => {
-                AgentRunProductRuntimeExecutionObservation::Absent { requested_target }
-            }
-            AgentRunProductRuntimeSnapshotObservation::Current {
-                product_binding,
-                snapshot,
-            } => AgentRunProductRuntimeExecutionObservation::Current {
-                observation: observation_from_managed_snapshot(&product_binding, &snapshot)?,
-                product_binding,
-            },
+    ) -> Result<Option<AgentRunProductRuntimeBinding>, AgentRunProductProjectionError> {
+        Ok(match self.runtime_view_observation(target).await? {
+            AgentRunProductRuntimeViewObservation::Absent { .. } => None,
+            AgentRunProductRuntimeViewObservation::Current {
+                product_binding, ..
+            } => Some(product_binding),
         })
     }
-    async fn runtime_presentation_snapshot(
+    async fn runtime_view(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<Option<ManagedRuntimeSnapshot>, AgentRunProductProjectionError> {
-        Ok(match self.runtime_snapshot_observation(target).await? {
-            AgentRunProductRuntimeSnapshotObservation::Absent { .. } => None,
-            AgentRunProductRuntimeSnapshotObservation::Current { snapshot, .. } => Some(snapshot),
-        })
-    }
-    async fn runtime_live_events(
+    ) -> Result<AgentRuntimeView, AgentRunProductProjectionError>;
+    async fn runtime_view_observation(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<Box<dyn AgentLiveEventStream>, AgentRunProductProjectionError>;
+    ) -> Result<AgentRunProductRuntimeViewObservation, AgentRunProductProjectionError>;
+    async fn runtime_updates(
+        &self,
+        target: &AgentRunTarget,
+    ) -> Result<Box<dyn AgentRuntimeUpdateStream>, AgentRunProductProjectionError>;
     async fn terminal_snapshot(
         &self,
         target: &AgentRunTarget,
@@ -393,86 +371,34 @@ pub trait AgentRunProductProjectionQueryPort: Send + Sync {
     ) -> Result<AgentRunTerminalChangePage, AgentRunProductProjectionError>;
 }
 
-fn observation_from_managed_snapshot(
-    binding: &AgentRunProductRuntimeBinding,
-    snapshot: &ManagedRuntimeSnapshot,
-) -> Result<AgentObservation, AgentRunProductProjectionError> {
-    let conversation = snapshot.conversation();
-    let active_turn_id = conversation
-        .active_turn()
-        .map(|turn| AgentTurnId::new(turn.id.clone()))
-        .transpose()
-        .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
-    let latest_turn = conversation
-        .latest_turn()
-        .map(|turn| {
-            Ok(AgentTurnObservation {
-                turn_id: AgentTurnId::new(turn.id.clone())
-                    .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?,
-                status: turn.status,
-            })
-        })
-        .transpose()?;
-    Ok(AgentObservation {
-        source: binding.agent.source.clone(),
-        revision: AgentSnapshotRevision(snapshot.revision.0),
-        lifecycle: match snapshot.lifecycle {
-            agentdash_agent_runtime_contract::ManagedRuntimeLifecycleStatus::Provisioning => {
-                AgentLifecycleStatus::Creating
-            }
-            agentdash_agent_runtime_contract::ManagedRuntimeLifecycleStatus::Active => {
-                AgentLifecycleStatus::Active
-            }
-            agentdash_agent_runtime_contract::ManagedRuntimeLifecycleStatus::Suspended => {
-                AgentLifecycleStatus::Suspended
-            }
-            agentdash_agent_runtime_contract::ManagedRuntimeLifecycleStatus::Closed => {
-                AgentLifecycleStatus::Closed
-            }
-            agentdash_agent_runtime_contract::ManagedRuntimeLifecycleStatus::Lost => {
-                AgentLifecycleStatus::Lost
-            }
-        },
-        active_turn_id,
-        latest_turn,
-    })
-}
-
 #[async_trait]
 impl AgentRunProductProjectionQueryPort for AgentRunProductProjectionGateway {
-    async fn runtime_snapshot(
+    async fn runtime_product_binding(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<ManagedRuntimeSnapshot, AgentRunProductProjectionError> {
-        AgentRunProductProjectionGateway::runtime_snapshot(self, target).await
+    ) -> Result<Option<AgentRunProductRuntimeBinding>, AgentRunProductProjectionError> {
+        AgentRunProductProjectionGateway::runtime_product_binding(self, target).await
     }
 
-    async fn runtime_snapshot_observation(
+    async fn runtime_view(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<AgentRunProductRuntimeSnapshotObservation, AgentRunProductProjectionError> {
-        AgentRunProductProjectionGateway::runtime_snapshot_observation(self, target).await
+    ) -> Result<AgentRuntimeView, AgentRunProductProjectionError> {
+        AgentRunProductProjectionGateway::runtime_view(self, target).await
     }
 
-    async fn runtime_execution_observation(
+    async fn runtime_view_observation(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<AgentRunProductRuntimeExecutionObservation, AgentRunProductProjectionError> {
-        AgentRunProductProjectionGateway::runtime_execution_observation(self, target).await
+    ) -> Result<AgentRunProductRuntimeViewObservation, AgentRunProductProjectionError> {
+        AgentRunProductProjectionGateway::runtime_view_observation(self, target).await
     }
 
-    async fn runtime_presentation_snapshot(
+    async fn runtime_updates(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<Option<ManagedRuntimeSnapshot>, AgentRunProductProjectionError> {
-        AgentRunProductProjectionGateway::runtime_presentation_snapshot(self, target).await
-    }
-
-    async fn runtime_live_events(
-        &self,
-        target: &AgentRunTarget,
-    ) -> Result<Box<dyn AgentLiveEventStream>, AgentRunProductProjectionError> {
-        AgentRunProductProjectionGateway::runtime_live_events(self, target).await
+    ) -> Result<Box<dyn AgentRuntimeUpdateStream>, AgentRunProductProjectionError> {
+        AgentRunProductProjectionGateway::runtime_updates(self, target).await
     }
 
     async fn terminal_snapshot(
@@ -498,9 +424,9 @@ pub enum AgentRunProductProjectionError {
     Binding(String),
     #[error("AgentRun target has no committed Runtime binding")]
     TargetNotBound,
-    #[error("Managed Runtime projection load failed: {0}")]
+    #[error("Agent Runtime projection load failed: {0}")]
     Runtime(String),
-    #[error("Managed Runtime Agent service failed: {0}")]
+    #[error("Agent Runtime Agent service failed: {0}")]
     Agent(AgentServiceError),
     #[error("Product projection returned a different AgentRun target")]
     TargetMismatch,

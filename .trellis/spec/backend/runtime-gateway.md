@@ -8,14 +8,14 @@ Runtime Gateway 是 application-facing typed execution seam。AgentRun 使用具
 Application product command
   -> AgentRunRuntime facade
   -> AgentRuntimeGateway execute/snapshot/events
-  -> Managed Runtime
+  -> Agent Runtime
   -> Integration Driver Host
 ```
 
 - product coordinate只解析为 `AgentRunRuntimeBinding`；不存在字符串 connector/executor分支。
 - extension/Canvas/VFS调用从 `run_id + agent_id` 获取canonical binding与Business Surface resource facts。
 - command availability、stale guard与typed unsupported在Driver副作用前验证。
-- Gateway implementation无持久状态；operation/snapshot/events由Managed Runtime repository持有。
+- Gateway implementation无持久状态；operation/snapshot/events由Agent Runtime repository持有。
 - Remote placement走RuntimeWire，不能经generic Backbone/JSON command transport。
 
 必须测试无binding、stale guard、unsupported、duplicate operation、cross-project authorization与remote Lost。

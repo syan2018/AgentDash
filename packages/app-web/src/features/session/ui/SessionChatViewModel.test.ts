@@ -1,73 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  dispatchLiveSessionEvents,
-  isAgentRunWorkspaceActionRunning,
-  liveSideEffectCursor,
   rawEventsBelongToRuntimeStreamTarget,
   resolveSessionInitialSubmit,
 } from "./SessionChatViewModel";
-
-describe("SessionChatView action state", () => {
-  it("only shows the stop action from the authoritative workspace execution state", () => {
-    expect(isAgentRunWorkspaceActionRunning({
-      executionStatus: "running_active",
-    })).toBe(true);
-    expect(isAgentRunWorkspaceActionRunning({
-      executionStatus: "ready",
-    })).toBe(false);
-  });
-});
-
-describe("SessionChatView live side-effect cursor", () => {
-  it("starts after the hydrated snapshot baseline", () => {
-    expect(liveSideEffectCursor(null, 12)).toBe(12);
-  });
-
-  it("keeps an already advanced live cursor", () => {
-    expect(liveSideEffectCursor(15, 12)).toBe(15);
-  });
-
-  it("advances past records rehydrated by a gap snapshot reload", () => {
-    expect(liveSideEffectCursor(15, 31)).toBe(31);
-  });
-});
-
-describe("SessionChatView canonical live event dispatch", () => {
-  it("dispatches every event after the hydration boundary in sequence order", () => {
-    const received: string[] = [];
-    const event = (eventSeq: number, type: string) => ({
-      event_seq: eventSeq,
-      notification: { event: { type } },
-    }) as never;
-
-    const cursor = dispatchLiveSessionEvents(
-      [event(14, "turn_completed"), event(11, "item_updated"), event(12, "platform")],
-      null,
-      11,
-      (value) => received.push(value.type),
-    );
-
-    expect(received).toEqual(["platform", "turn_completed"]);
-    expect(cursor).toBe(14);
-  });
-
-  it("does not replay hydrated or already dispatched events", () => {
-    const received: string[] = [];
-    const cursor = dispatchLiveSessionEvents(
-      [{
-        event_seq: 20,
-        notification: { event: { type: "platform" } },
-      } as never],
-      20,
-      18,
-      (value) => received.push(value.type),
-    );
-
-    expect(received).toEqual([]);
-    expect(cursor).toBe(20);
-  });
-});
 
 describe("SessionChatView Draft transition", () => {
   const initialSubmit = {

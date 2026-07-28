@@ -79,7 +79,7 @@ fn requirement_from_rule(
             actions,
             minimum_strength: match site {
                 HookExecutionSite::ObservedEventReaction => SemanticStrength::ObservedOnly,
-                HookExecutionSite::ManagedRuntime | HookExecutionSite::ToolBroker => {
+                HookExecutionSite::AgentRuntime | HookExecutionSite::ToolBroker => {
                     SemanticStrength::ExactDurableBoundary
                 }
                 HookExecutionSite::AgentCoreCallback | HookExecutionSite::DriverNative => {
@@ -115,7 +115,7 @@ fn site_for_trigger(trigger: WorkflowHookTrigger) -> HookExecutionSite {
     match trigger {
         WorkflowHookTrigger::UserPromptSubmit
         | WorkflowHookTrigger::BeforeCompact
-        | WorkflowHookTrigger::AfterCompact => HookExecutionSite::ManagedRuntime,
+        | WorkflowHookTrigger::AfterCompact => HookExecutionSite::AgentRuntime,
         WorkflowHookTrigger::BeforeSubagentDispatch
         | WorkflowHookTrigger::AfterSubagentDispatch
         | WorkflowHookTrigger::CompanionResult => HookExecutionSite::ToolBroker,

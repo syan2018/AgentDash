@@ -1,7 +1,6 @@
 mod applied_resource_surface;
 mod conversation_snapshot;
 mod display_title;
-mod execution_state;
 pub mod frame;
 pub(crate) mod lifecycle_read_model_facade;
 mod product_command_facade;
@@ -25,20 +24,16 @@ pub use applied_resource_surface::*;
 pub use conversation_snapshot::{
     AgentConversationFrameRefModel, AgentConversationIdentityModel,
     AgentConversationLifecycleContextModel, AgentConversationSnapshotInput,
-    AgentConversationSnapshotModel, AgentConversationSnapshotResolver,
-    AgentRunCommandPreconditionModel, AgentRunOwnershipModel, ConversationCommandAvailability,
-    ConversationCommandAvailabilityInput, ConversationCommandAvailabilityResolver,
+    AgentConversationSnapshotModel, AgentConversationSnapshotResolver, AgentRunOwnershipModel,
     ConversationCommandKindModel, ConversationCommandModel, ConversationCommandPlacementModel,
-    ConversationCommandSetModel, ConversationCommandStaleGuardModel, ConversationDiagnosticModel,
-    ConversationEffectiveExecutorConfigModel, ConversationExecutionModel,
-    ConversationExecutionStatusModel, ConversationKeyboardMapModel, ConversationModelConfigInput,
-    ConversationModelConfigModel, ConversationModelConfigResolution,
+    ConversationCommandSetModel, ConversationDiagnosticModel,
+    ConversationEffectiveExecutorConfigModel, ConversationKeyboardMapModel,
+    ConversationModelConfigInput, ConversationModelConfigModel, ConversationModelConfigResolution,
     ConversationModelConfigResolver, ConversationModelConfigSourceModel,
     ConversationModelConfigStatusModel, ConversationWaitingItemModel, ValidationSeverityModel,
-    conversation_command_id_for, conversation_execution_state_code, conversation_snapshot_id,
+    conversation_command_id_for,
 };
 pub use display_title::{AgentRunDisplayTitle, resolve_agent_run_display_title};
-pub use execution_state::AgentRunExecutionState;
 pub use frame::{
     AgentFrameSurfaceExt, PromptLaunchPath, RuntimeTraceLaunchState,
     SessionRepositoryRehydrateMode, TerminalHookEffectBinding, resolve_prompt_launch_path,
@@ -56,6 +51,6 @@ pub use project_agent_context::{
     ResolvedProjectAgentContext, build_project_agent_context, merge_executor_config_fields,
     resolve_project_workspace,
 };
-pub use session_context_projection::project_managed_runtime_context;
+pub use session_context_projection::project_agent_runtime_context;
 pub use terminal_projection_protocol::*;
 pub use terminal_registry::*;

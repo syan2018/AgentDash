@@ -3,15 +3,15 @@
 ## Store Ownership
 
 - Project/Story/Task/Lifecycle stores保存产品read model。
-- AgentRun workspace state按`run_id + agent_id`保存当前产品shell、AgentFrame resource surface与Runtime inspect结果。
-- Runtime feed hook保存authoritative snapshot baseline、当前 live connection lane与连接状态；
-  它不复制后端或 concrete Agent state machine。Snapshot entries是committed baseline，live
-  partial delta只在当前lane聚合。
-- Runtime feed的`historyReplayBoundarySeq`由当前target第一次成功完成journal history load时建立，
-  并在同target重连期间保持不变。source state是否需要reset只决定read model隔离，不决定
-  history load是否已经成功；这样React StrictMode取消第一次effect setup后，第二次真正完成的
-  load仍会发布boundary。boundary以内只恢复feed/read model，boundary以后才进入唯一的
-  typed live-event副作用dispatcher。
+- AgentRun workspace state按`run_id + agent_id`保存当前Product shell、AgentFrame resource surface、
+  model configuration、waiting items与静态Runtime command binding，不保存execution、active turn或
+  动态command availability。
+- `AgentRuntimeConnection`保存authoritative `AgentRuntimeView` baseline、当前update lane、
+  presentation overlay与连接状态。Feed、Composer与Interaction UI从同一个connection读取selectors，
+  因而history收缩与Workspace刷新不会形成第二条控制状态链。
+- 初次连接、重连和lane gap恢复都把权威view中的presentation identity登记为hydration baseline；
+  只有当前lane直接交付、且不属于恢复baseline的presentation才进入typed副作用dispatcher。副作用按
+  `presentation_id`去重，数组位置不承担跨快照identity。
 - Workspace tab/layout store按AgentRun product key持久化用户布局，concrete presentation URI作为tab identity。
 - 命令式 Tab 展示必须携带目标 workspace key，并通过
   `openOrActivateInWorkspace(workspaceKey, typeId, uri, options)` 在一次 store 操作中先绑定
@@ -21,19 +21,18 @@
 
 ## Runtime Rules
 
-- command enabled只来自canonical Runtime snapshot availability。
-- target变化立即隔离旧snapshot/feed/resource surface；loading期间不泄漏前一target状态。
-- reconnect先重新读取authoritative snapshot，再建立新的live lane；duplicate event不重复reduce，
+- command enabled只来自`AgentRuntimeView.command_availability`。
+- target变化立即隔离旧view/update lane/resource surface；loading期间不泄漏前一target状态。
+- reconnect和lane gap先重新读取authoritative view，再归约当前连接的新lane；duplicate update不重复reduce，
   connection/source变化删除旧lane partial贡献。failed/cancelled/lost item按identity终结原entry，
-  snapshot terminal覆盖过程delta，terminal后的stale delta不再修改展示。
-- canonical `TurnCompleted` 是 live overlay 的收敛边界：连接层立即读取 authoritative snapshot，
+  authoritative terminal覆盖过程delta，terminal后的stale delta不再修改展示。
+- canonical `TurnCompleted` 是 live overlay 的收敛边界：connection立即读取authoritative view，
   用 committed history替换该回合的ephemeral partial；请求在途期间继续到达的canonical live records
   按 `presentation_id` 叠加到新baseline，避免标题等terminal后事实被较早的snapshot响应覆盖；若期间
   又收到后续回合的`TurnCompleted`，连接层在当前请求后再读取一次，保证每个terminal都完成durable收敛。
-- 同target后台refresh继续使用当前committed workspace conversation作为命令与执行状态基线；
-  `refreshing`只描述read请求，不覆盖`conversation.execution.status`或清空当前command set。
-  只有target replace才隔离旧conversation，原因是取消/停止按钮必须在refresh期间保持与已提交
-  Agent snapshot一致。
+- 同target Workspace后台refresh只影响Product projection；Composer继续使用当前Runtime control
+  selector。只有target replace才隔离旧Runtime view，原因是取消/停止按钮必须持续对应同一个
+  Complete Agent observation。
 - UI允许thread-level ContextFrame在视觉上把同一turn切成多个presentation section。Section的React
   identity由首个canonical display item identity派生，而不是只用turn id；authoritative收敛替换掉
   live section时会得到新的identity，旧DOM不会与新section并存。
@@ -51,15 +50,15 @@
 - LifecycleGate waiting items作为Product事实单独展示；Agent input handoff不进入持久队列model。
   没有canonical endpoint的管理动作不进入model/intents。
 
-必须测试target切换、stale snapshot、live lane重建、availability、presentation URI与layout稳定性；
+必须测试target切换、stale view、live lane重建、availability、presentation URI与layout稳定性；
 命令式 presentation 还必须覆盖“历史request不打开”“live request先刷新current projection”
 与“先打开 Tab、后执行 WorkspacePanel 首次初始化”的顺序。
-后台refresh测试必须从`running_active + enabled cancel command`开始，断言refresh期间仍保持
-running、cancel command与停止按钮派生条件；ContextFrame planner测试断言不产生workspace或hook
-runtime refresh effect。
-Runtime feed生命周期测试还必须覆盖StrictMode的`setup → cleanup → setup`：第一次load被取消、
-第二次同target load完成时boundary从`null`变为该次`lastAppliedSeq`；后续重连继续保留原boundary。
-Terminal convergence测试必须覆盖ephemeral overlay被committed snapshot替换，以及snapshot请求在途
+后台refresh测试必须从`active execution + available interrupt`开始，断言refresh期间仍保持
+  active、interrupt command与停止按钮派生条件；ContextFrame planner测试断言不产生workspace或hook
+  runtime refresh effect。
+AgentRuntimeConnection生命周期测试还必须覆盖StrictMode的`setup → cleanup → setup`、target fence、
+重连与gap恢复baseline；恢复view中的历史presentation不得重新执行一次性UI命令。
+Terminal convergence测试必须覆盖ephemeral overlay被committed view替换，以及view请求在途
 收到的后续durable record仍保留在最终projection；连续回合的terminal必须排队完成下一次收敛读取。
 
 ## Scenario: Canonical turn refresh ownership
@@ -81,10 +80,10 @@ planAgentRunLiveEvent(event: BackboneEvent): {
 
 ### 3. Contracts
 
-- canonical `TurnStarted`与`TurnCompleted`分别使Product Workspace失效一次，用于读取当前执行命令和
-  Product shell；普通command promise完成、composer清理和terminal展示metadata不建立平行刷新入口。
-- conversation feed在`TurnCompleted`上自行读取Complete Agent authoritative snapshot。composer
-  command完成只清理本地输入状态，不再次调用feed reload。
+- canonical `TurnStarted`与`TurnCompleted`只进入AgentRuntimeConnection的presentation/control归约，
+  不使Product Workspace失效。execution和command availability已随同一次Runtime update到达。
+- connection在`TurnCompleted`上读取Complete Agent authoritative view完成durable收敛。composer
+  command完成只清理本地输入状态，不触发Workspace reload。
 - Workspace Module用户打开只改变tab layout；菜单已经来自current `workspace_modules`，打开动作不反向
   使同一Workspace失效。Canvas向Agent提交输入后的状态收敛仍沿canonical turn边界完成。
 - Canvas runtime load identity由`run_id + agent_id + project_id + canvas_mount_id`和显式
@@ -94,8 +93,8 @@ planAgentRunLiveEvent(event: BackboneEvent): {
 
 | 输入 | Workspace读取 | conversation reload | Canvas iframe |
 | --- | ---: | ---: | --- |
-| `TurnStarted` | 1 | 0 | 保持 |
-| `TurnCompleted` | 1 | 由feed执行1次 | 保持 |
+| `TurnStarted` | 0 | 0 | 保持 |
+| `TurnCompleted` | 0 | 由connection执行1次 | 保持 |
 | terminal `SessionMetaUpdate` | 0 | 0 | 保持 |
 | 等值Workspace/bridge对象重渲染 | 0 | 0 | 保持 |
 | 用户显式点击Canvas刷新 | 0 | 0 | 重载1次 |
@@ -110,9 +109,8 @@ planAgentRunLiveEvent(event: BackboneEvent): {
 
 ### 6. Tests Required
 
-- planner测试断言`TurnStarted`与`TurnCompleted`各产生一个Workspace effect，terminal metadata不产生
-  effect。
-- terminal feed测试断言authoritative reload由connection owner执行且并发terminal按顺序收敛。
+- planner测试断言`TurnStarted`、`TurnCompleted`与terminal metadata都不产生Workspace effect。
+- terminal connection测试断言authoritative reload由connection owner执行且并发terminal按顺序收敛。
 - 真实浏览器回归在已打开Canvas的会话发送无工具输入，断言运行期和终止后Canvas loading次数、
   iframe缺失次数、reconnect状态次数均为0。
 
@@ -126,8 +124,8 @@ refreshAgentRunWorkspace();
 
 // Correct: command只提交输入；canonical边界分别驱动各自owner收敛。
 await submitComposer(intent);
-// TurnStarted -> Product Workspace invalidation
-// TurnCompleted -> Product Workspace invalidation + Agent feed authoritative reload
+// TurnStarted -> AgentRuntimeConnection update
+// TurnCompleted -> AgentRuntimeConnection update + authoritative view convergence
 ```
 
 ## Scenario: Runtime conversation name invalidation
@@ -150,7 +148,8 @@ planAgentRunControlPlaneRefresh(event): {
 
 ### 3. Contracts
 
-- 只有`seq > historyReplayBoundarySeq`的live `thread_name_updated`执行副作用。
+- 只有不属于connection恢复baseline、且`presentation_id`尚未消费的live
+  `thread_name_updated`执行副作用。
 - planner同时刷新当前AgentRun workspace与Project AgentRun list；store收到
   `agent_run_list/title_changed` product invalidation时也重新查询列表。
 - payload不直接patch shell/list；refetch结果读取Product-owned
@@ -186,7 +185,7 @@ planAgentRunControlPlaneRefresh(event): {
 workspaceStore.patchTitle(event.payload.threadName ?? "新会话");
 
 // Correct
-if (isLiveThreadNameUpdated(event, historyReplayBoundarySeq)) {
+if (isCurrentLaneThreadNameUpdated(event) && consumePresentationId(event.presentationId)) {
   refreshAgentRunWorkspaceState();
   refreshProjectAgentRunList();
 }
@@ -217,7 +216,7 @@ type AgentRunControlPlaneEffectExecutor = {
   planner才产生`refreshTaskPlan`。
 - executor使用事件所属的当前`run_id + agent_id`调用Task owner read；planner不解析tool output来
   patch本地Task。
-- hydration replay不重复执行该effect；live重复记录仍由canonical sequence去重。
+- hydration/reconnect baseline不重复执行该effect；live重复记录由presentation identity去重。
 - Task刷新与workspace、title等effect在同一typed plan中合并执行，Session组件不建立第二条事件扫描线。
 
 ### 4. Validation & Error Matrix

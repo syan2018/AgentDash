@@ -26,14 +26,6 @@ const workspace: AgentRunWorkspaceView = {
     delivery_status: "active",
     last_activity_at: "2026-07-11T00:00:00.000Z",
   },
-  control_plane: {
-    status: "running",
-    ownership: {
-      run_created_by_user_id: "owner-user",
-      agent_created_by_user_id: "owner-user",
-      current_user_controls_run: true,
-    },
-  },
   workspace_modules: [],
   agent: {
     agent_ref: { run_id: "run-1", agent_id: "agent-1" },

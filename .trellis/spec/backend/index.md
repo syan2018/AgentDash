@@ -20,9 +20,9 @@
 | [Logging Guidelines](./logging-guidelines.md) | 日志级别 / 字段 / 脱敏通用约定 |
 | [Runtime Gateway](./runtime-gateway.md) | runtime action 调用边界 |
 | [In-Memory Agent Runtime Kernel](./agent-runtime-kernel.md) | 同步 command handoff、Agent read/inspect、live normalize 与重连合同 |
-| [Managed Agent Runtime Context](./agent-runtime-context.md) | ContextRecipe/checkpoint/head fidelity与managed compaction activation/recovery合同 |
+| [Agent Runtime Context](./agent-runtime-context.md) | ContextRecipe/checkpoint/head fidelity与managed compaction activation/recovery合同 |
 | [Agent Runtime 持久化权威](./agent-runtime-persistence.md) | Product owner document、concrete Agent authority 与 Runtime/Host 纯内存边界 |
-| [Managed Agent Runtime Hook Orchestration](./agent-runtime-hooks.md) | immutable HookPlan、canonical HookRun、failure policy、effect与恢复合同 |
+| [Agent Runtime Hook Orchestration](./agent-runtime-hooks.md) | immutable HookPlan、canonical HookRun、failure policy、effect与恢复合同 |
 | [Business Agent Surface and Platform Tool Broker](./agent-runtime-surface-tool-broker.md) | capability编译、profile binding与callable tool执行合同 |
 | [Integration Complete Agent Host](./agent-runtime-driver-host.md) | service contribution、live attachment、surface、route 与 callback fencing合同 |
 | [Dash Complete Agent 与 Clean Agent Core](./agent-runtime-native-adapter.md) | Dash source authority、真实 execution callbacks 与 Clean Core合同 |

@@ -63,6 +63,7 @@ fn required_service_type_names() -> BTreeSet<String> {
         "ForkAgentReceipt",
         "AgentReadQuery",
         "AgentSnapshot",
+        "AgentExecutionSnapshot",
         "AgentObservationQuery",
         "AgentObservation",
         "AgentChangesQuery",

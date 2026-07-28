@@ -12,9 +12,7 @@ use agentdash_agent_protocol::{
     McpToolCallStatus, PatchApplyStatus,
 };
 use agentdash_contracts::agent_run_interaction::{
-    AgentRunAcceptedRefs, AgentRunCommandOnlyRequest, AgentRunCommandReceipt,
-    AgentRunComposerSubmitRequest, AgentRunContextCompactionCommandOutcome,
-    AgentRunContextCompactionCommandResponse, AgentRunForkLineageView, AgentRunForkOutcomeView,
+    AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunForkLineageView, AgentRunForkOutcomeView,
     AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
     AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
     AgentRunToolCallApprovalResponse, AgentRunToolCallRejectionResponse, BackendSelectionModeDto,
@@ -211,17 +209,14 @@ use agentdash_contracts::vfs::{
 use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationIdentity,
     AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
-    AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse,
-    AgentRunCommandPreconditionView, AgentRunLineageRef, AgentRunListChildView,
-    AgentRunListEntryView, AgentRunOwnershipView, AgentRunRefDto,
+    AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse, AgentRunLineageRef,
+    AgentRunListChildView, AgentRunListEntryView, AgentRunOwnershipView, AgentRunRefDto,
     AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView,
-    AgentRunRuntimeCommandRequest, AgentRunView, AgentRunWorkspaceControlPlaneStatus,
-    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceShell, AgentRunWorkspaceView,
+    AgentRunRuntimeCommandRequest, AgentRunView, AgentRunWorkspaceShell, AgentRunWorkspaceView,
     CapabilityCatalogEntryDto, CapabilityCatalogResponse, CapabilityScopeDto,
     ContinueLifecycleRunResponse, ConversationCommandKind, ConversationCommandPlacement,
-    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
-    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
-    ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
+    ConversationCommandSetView, ConversationCommandView, ConversationDiagnosticView,
+    ConversationEffectiveExecutorConfigView, ConversationKeyboardMapView,
     ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
     ConversationWaitingItemView, DefinitionSource, DeleteAgentProcedureResponse,
     DeleteAgentRunResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
@@ -262,17 +257,14 @@ use agentdash_contracts::workspace_module::{
 use ts_rs::TS;
 
 const AGENT_RUN_PRODUCT_RUNTIME_IMPORTS: &[(&str, &str)] = &[
-    ("ManagedRuntimeContentBlock", "./agent-runtime-contracts"),
+    ("AgentRuntimeContentBlock", "./agent-runtime-contracts"),
     (
-        "ManagedRuntimeInteractionResponse",
+        "AgentRuntimeInteractionResponse",
         "./agent-runtime-contracts",
     ),
+    ("AgentRuntimeOperationReceipt", "./agent-runtime-contracts"),
     (
-        "ManagedRuntimeOperationReceipt",
-        "./agent-runtime-contracts",
-    ),
-    (
-        "ManagedRuntimeSourceBindingEvidence",
+        "AgentRuntimeSourceBindingEvidence",
         "./agent-runtime-contracts",
     ),
     ("RuntimeInteractionId", "./agent-runtime-contracts"),
@@ -282,9 +274,9 @@ const AGENT_RUN_PRODUCT_RUNTIME_IMPORTS: &[(&str, &str)] = &[
 ];
 
 const LIFECYCLE_RUNTIME_IMPORTS: &[(&str, &str)] = &[
-    ("ManagedRuntimeSnapshot", "./agent-runtime-contracts"),
+    ("AgentRuntimeView", "./agent-runtime-contracts"),
     (
-        "ManagedRuntimeSourceBindingEvidence",
+        "AgentRuntimeSourceBindingEvidence",
         "./agent-runtime-contracts",
     ),
     ("RuntimeThreadId", "./agent-runtime-contracts"),
@@ -363,16 +355,12 @@ fn main() {
             export_all::<AgentRunMessageAcceptedRefs>(dir);
             export_all::<AgentRunToolCallApprovalResponse>(dir);
             export_all::<AgentRunToolCallRejectionResponse>(dir);
-            export_all::<AgentRunComposerSubmitRequest>(dir);
             export_all::<BackendSelectionModeDto>(dir);
             export_all::<BackendSelectionRequestDto>(dir);
             export_all::<AgentRunCommandReceipt>(dir);
             export_all::<AgentRunAcceptedRefs>(dir);
             export_all::<AgentRunMessageCommandResponse>(dir);
             export_all::<AgentRunMessageCommandOutcome>(dir);
-            export_all::<AgentRunCommandOnlyRequest>(dir);
-            export_all::<AgentRunContextCompactionCommandOutcome>(dir);
-            export_all::<AgentRunContextCompactionCommandResponse>(dir);
             export_all::<AgentRunForkRequest>(dir);
             export_all::<AgentRunForkSubmitRequest>(dir);
             export_all::<AgentRunForkLineageView>(dir);
@@ -882,24 +870,18 @@ fn main() {
             export_all::<ConversationModelConfigSource>(dir);
             export_all::<ConversationEffectiveExecutorConfigView>(dir);
             export_all::<ConversationModelConfigView>(dir);
-            export_all::<ConversationExecutionStatus>(dir);
             export_all::<ConversationCommandKind>(dir);
             export_all::<ConversationCommandPlacement>(dir);
             export_all::<AgentRunOwnershipView>(dir);
-            export_all::<ConversationCommandStaleGuardView>(dir);
-            export_all::<AgentRunCommandPreconditionView>(dir);
             export_all::<ConversationCommandView>(dir);
             export_all::<ConversationKeyboardMapView>(dir);
             export_all::<ConversationCommandSetView>(dir);
-            export_all::<ConversationExecutionView>(dir);
             export_all::<ConversationWaitingItemView>(dir);
             export_all::<AgentConversationSnapshot>(dir);
             export_all::<AgentConversationIdentity>(dir);
             export_all::<AgentConversationLifecycleContext>(dir);
             export_all::<ConversationDiagnosticView>(dir);
             export_all::<AgentRunWorkspaceShell>(dir);
-            export_all::<AgentRunWorkspaceControlPlaneStatus>(dir);
-            export_all::<AgentRunWorkspaceControlPlaneView>(dir);
             export_all::<AgentRunResourceSurfaceSourceAnchorView>(dir);
             export_all::<AgentRunResourceSurfaceCoordinateView>(dir);
             export_all::<AgentRunLineageRef>(dir);
@@ -1347,11 +1329,11 @@ mod tests {
 
         let generated = fs::read_to_string(out).expect("lifecycle contract");
         assert!(generated.contains(
-            "import type { ManagedRuntimeSnapshot, ManagedRuntimeSourceBindingEvidence, RuntimeThreadId } from \"./agent-runtime-contracts\";"
+            "import type { AgentRuntimeView, AgentRuntimeSourceBindingEvidence, RuntimeThreadId } from \"./agent-runtime-contracts\";"
         ));
         for runtime_owned in [
-            "ManagedRuntimeSnapshot",
-            "ManagedRuntimeSourceBindingEvidence",
+            "AgentRuntimeView",
+            "AgentRuntimeSourceBindingEvidence",
             "RuntimeThreadId",
         ] {
             assert!(
@@ -1378,10 +1360,10 @@ mod tests {
 
         let generated = fs::read_to_string(out).expect("product contract");
         assert!(generated.contains(
-            "import type { ManagedRuntimeSourceBindingEvidence } from \"./agent-runtime-contracts\";"
+            "import type { AgentRuntimeSourceBindingEvidence } from \"./agent-runtime-contracts\";"
         ));
         for runtime_owned in [
-            "ManagedRuntimeSourceBindingEvidence",
+            "AgentRuntimeSourceBindingEvidence",
             "RuntimeSourceRef",
             "RuntimeProjectionRevision",
             "SurfaceRevision",

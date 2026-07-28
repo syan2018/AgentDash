@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeCommandAvailability, ManagedRuntimeCommandKind, ManagedRuntimeSnapshot,
-    RuntimeThreadId,
+    AgentRuntimeCommandAvailability, AgentRuntimeCommandKind, AgentRuntimeView, RuntimeThreadId,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use chrono::Utc;
@@ -18,7 +17,7 @@ use super::product_protocol::{
 };
 use super::{
     AgentRunProductProjectionError, AgentRunProductProjectionQueryPort,
-    AgentRunProductRuntimeSnapshotObservation,
+    AgentRunProductRuntimeViewObservation,
 };
 
 const MAX_INLINE_ADVANCES: usize = 16;
@@ -198,35 +197,31 @@ impl AgentRunProductForkService {
     async fn current_runtime(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<
-        (super::AgentRunProductRuntimeBinding, ManagedRuntimeSnapshot),
-        AgentRunProductForkError,
-    > {
+    ) -> Result<(super::AgentRunProductRuntimeBinding, AgentRuntimeView), AgentRunProductForkError>
+    {
         match self
             .projection
-            .runtime_snapshot_observation(target)
+            .runtime_view_observation(target)
             .await
             .map_err(map_projection_error)?
         {
-            AgentRunProductRuntimeSnapshotObservation::Current {
+            AgentRunProductRuntimeViewObservation::Current {
                 product_binding,
-                snapshot,
-            } => Ok((product_binding, snapshot)),
-            AgentRunProductRuntimeSnapshotObservation::Absent { .. } => {
+                view,
+            } => Ok((product_binding, view)),
+            AgentRunProductRuntimeViewObservation::Absent { .. } => {
                 Err(AgentRunProductForkError::TargetNotBound)
             }
         }
     }
 }
 
-fn ensure_fork_available(
-    snapshot: &ManagedRuntimeSnapshot,
-) -> Result<(), AgentRunProductForkError> {
+fn ensure_fork_available(snapshot: &AgentRuntimeView) -> Result<(), AgentRunProductForkError> {
     if matches!(
         snapshot
             .command_availability
-            .get(&ManagedRuntimeCommandKind::Fork),
-        Some(ManagedRuntimeCommandAvailability::Available { .. })
+            .get(&AgentRuntimeCommandKind::Fork),
+        Some(AgentRuntimeCommandAvailability::Available { .. })
     ) {
         Ok(())
     } else {
@@ -235,7 +230,7 @@ fn ensure_fork_available(
 }
 
 fn resolve_cutoff(
-    snapshot: &ManagedRuntimeSnapshot,
+    snapshot: &AgentRuntimeView,
     requested: Option<&AgentRunProductForkMessageRef>,
 ) -> Result<
     (
@@ -245,8 +240,7 @@ fn resolve_cutoff(
     ),
     AgentRunProductForkError,
 > {
-    let history =
-        agentdash_agent_protocol::CanonicalConversationView::new(&snapshot.conversation_history);
+    let history = snapshot.conversation();
     let turn = history.completed_turn(requested.map(|point| point.turn_id.as_str()));
     let turn = turn.ok_or_else(|| {
         if requested.is_some() {
@@ -388,38 +382,42 @@ mod tests {
         codex_app_server_protocol as codex,
     };
     use agentdash_agent_runtime_contract::{
-        ManagedRuntimeAvailabilityEvidence, ManagedRuntimeLifecycleStatus,
-        ManagedRuntimeProjectionAuthority, ManagedRuntimeProjectionFidelity,
-        RuntimeProjectionRevision,
+        AgentRuntimeAvailabilityEvidence, AgentRuntimeLifecycleStatus,
+        AgentRuntimeProjectionAuthority, AgentRuntimeProjectionFidelity, RuntimeProjectionRevision,
     };
 
     use super::*;
 
-    fn snapshot(conversation_history: Vec<CanonicalConversationRecord>) -> ManagedRuntimeSnapshot {
+    fn snapshot(conversation: Vec<CanonicalConversationRecord>) -> AgentRuntimeView {
         let revision = RuntimeProjectionRevision(7);
-        ManagedRuntimeSnapshot {
+        AgentRuntimeView {
             thread_id: RuntimeThreadId::new("runtime-parent").expect("thread"),
-            revision,
+            view_revision: revision,
             captured_at_ms: 10,
-            lifecycle: ManagedRuntimeLifecycleStatus::Active,
+            lifecycle: AgentRuntimeLifecycleStatus::Active,
+            execution: agentdash_agent_runtime_contract::AgentRuntimeExecutionView {
+                status: agentdash_agent_runtime_contract::AgentRuntimeExecutionStatus::Idle,
+                active_turn_id: None,
+                latest_turn_id: None,
+            },
             interactions: Vec::new(),
             thread_name: None,
             thread_name_source: None,
             operations: Vec::new(),
             source_binding: None,
-            authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
-            fidelity: ManagedRuntimeProjectionFidelity::Exact,
+            authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
+            fidelity: AgentRuntimeProjectionFidelity::Exact,
             command_availability: BTreeMap::from([(
-                ManagedRuntimeCommandKind::Fork,
-                ManagedRuntimeCommandAvailability::Available {
-                    evidence: ManagedRuntimeAvailabilityEvidence {
+                AgentRuntimeCommandKind::Fork,
+                AgentRuntimeCommandAvailability::Available {
+                    evidence: AgentRuntimeAvailabilityEvidence {
                         blocking_operation_id: None,
                         bound_surface_revision: None,
                         applied_surface_revision: None,
                     },
                 },
             )]),
-            conversation_history,
+            conversation,
         }
     }
 

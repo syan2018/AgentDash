@@ -52,7 +52,7 @@ Agent 子系统（独立于主分层）：
 agentdash-agent-runtime-contract ← agentdash-agent-runtime-wire
 agentdash-agent-runtime-contract ← agentdash-agent-runtime-test-support
 
-现有Agent执行链在后续工作包中逐步切换到Managed Runtime与Integration Driver Host；新Runtime Contract不反向依赖application、domain repository、旧protocol、vendor或transport。
+现有Agent执行链在后续工作包中逐步切换到Agent Runtime与Integration Driver Host；新Runtime Contract不反向依赖application、domain repository、旧protocol、vendor或transport。
 ```
 
 ### 分层职责

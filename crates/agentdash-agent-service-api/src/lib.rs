@@ -48,6 +48,7 @@ pub struct AgentServiceApiSchema {
     pub create_evidence: AgentCreateEvidence,
     pub read: AgentReadQuery,
     pub snapshot: AgentSnapshot,
+    pub execution_snapshot: AgentExecutionSnapshot,
     pub observe: AgentObservationQuery,
     pub observation: AgentObservation,
     pub changes: AgentChangesQuery,

@@ -50,10 +50,6 @@ function workspaceView(
       delivery_status: controlStatus,
       last_activity_at: "2026-06-12T00:00:00.000Z",
     },
-    control_plane: {
-      status: controlStatus === "running" ? "running" : controlStatus === "ready" ? "ready" : "terminal",
-      ownership,
-    },
     workspace_modules: [],
     agent: {
       agent_ref: { run_id: "run-1", agent_id: "agent-1" },
@@ -66,16 +62,12 @@ function workspaceView(
     subject_associations: [],
     children: [],
     conversation: {
-      snapshot_id: "snapshot-1",
       identity: {
         run_ref: { run_id: "run-1" },
         agent_ref: { run_id: "run-1", agent_id: "agent-1" },
         project_id: "project-1",
       },
       lifecycle_context: { subject_associations: [] },
-      execution: {
-        status: controlStatus === "running" ? "running_active" : controlStatus === "ready" ? "ready" : "terminal",
-      },
       model_config: {
         status: "resolved",
         missing_fields: [],
@@ -169,16 +161,14 @@ function command(kind: ConversationCommandView["kind"], commandId: string): Conv
   return {
     kind,
     command_id: commandId,
-    enabled: true,
+    runtime_command: kind === "cancel"
+      ? "interrupt"
+      : kind === "compact_context"
+        ? "request_compaction"
+        : "submit_input",
     requires_input: true,
     executor_config_policy: "required",
     placement: ["composer_primary"],
-    stale_guard: {
-      snapshot_id: `snapshot-${commandId}`,
-      run_id: "run-1",
-      agent_id: "agent-1",
-      active_turn_id: undefined,
-    },
   };
 }
 
@@ -435,16 +425,8 @@ describe("AgentRun workspace conversation command authority", () => {
     expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.kind).toBe("submit_message");
   });
 
-  it("exposes running submit only when snapshot maps it", () => {
-    const submit = {
-      ...command("submit_message", "cmd-submit"),
-      stale_guard: {
-        snapshot_id: "snapshot-cmd-submit",
-        run_id: "run-1",
-        agent_id: "agent-1",
-        active_turn_id: "turn-1",
-      },
-    };
+  it("exposes the Runtime command binding selected by Workspace", () => {
+    const submit = command("submit_message", "cmd-submit");
     const state = commandState("ready", workspaceView("running", [submit], {
       enter: "cmd-submit",
       ctrl_enter: "cmd-submit",
@@ -452,13 +434,15 @@ describe("AgentRun workspace conversation command authority", () => {
 
     expect(state.commands.keyboard.enter).toBe("cmd-submit");
     expect(state.commands.keyboard.ctrl_enter).toBe("cmd-submit");
-    expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.stale_guard.active_turn_id).toBe("turn-1");
+    expect(state.commands.commands.find(
+      (item) => item.command_id === "cmd-submit",
+    )?.runtime_command).toBe("submit_input");
   });
 
-  it("does not infer command enablement from top-level control_plane status", () => {
+  it("does not infer Runtime execution from Product shell status", () => {
     const state = commandState("ready", workspaceView("running"));
 
-    expect(state.executionStatus).toBe("running_active");
+    expect(state.executionStatus).toBe("runtime");
     expect(state.commands.commands).toHaveLength(0);
     expect(state.commands.keyboard.enter).toBeUndefined();
     expect(state.commands.keyboard.ctrl_enter).toBeUndefined();
@@ -469,7 +453,7 @@ describe("AgentRun workspace conversation command authority", () => {
       command("submit_message", "cmd-submit"),
     ], { enter: "cmd-submit" }));
 
-    expect(state.executionStatus).toBe("running_active");
+    expect(state.executionStatus).toBe("runtime");
     expect(state.commands.keyboard.enter).toBe("cmd-submit");
     expect(state.commands.commands).toHaveLength(1);
   });

@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::{
-    ManagedRuntimeContentBlock, ManagedRuntimeOperationReceipt,
-};
+use agentdash_agent_runtime_contract::{AgentRuntimeContentBlock, AgentRuntimeOperationReceipt};
 use agentdash_agent_service_api::AgentInputContent;
 use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -31,7 +29,7 @@ pub struct DeliverAgentRunProductInput {
 pub struct AgentRunProductInputDelivery {
     /// Deterministic identity retained by the owning Product workflow as input-handoff evidence.
     pub handoff_id: Uuid,
-    pub operation_receipt: ManagedRuntimeOperationReceipt,
+    pub operation_receipt: AgentRuntimeOperationReceipt,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -114,7 +112,7 @@ impl AgentRunProductInputDeliveryService {
     async fn initialize_title(&self, target: &AgentRunTarget) -> Result<(), String> {
         let snapshot = self
             .projection
-            .runtime_snapshot(target)
+            .runtime_view(target)
             .await
             .map_err(|error| error.to_string())?;
         if let Some(title) = snapshot.thread_name.as_deref() {
@@ -202,7 +200,7 @@ fn stable_handoff_id(target: &AgentRunTarget, client_command_id: &str) -> Uuid {
 
 fn managed_content(
     content: &[AgentInputContent],
-) -> Result<Vec<ManagedRuntimeContentBlock>, AgentRunProductInputDeliveryError> {
+) -> Result<Vec<AgentRuntimeContentBlock>, AgentRunProductInputDeliveryError> {
     if content.is_empty() || !content.iter().any(non_empty_input) {
         return Err(AgentRunProductInputDeliveryError::EmptyInput);
     }
@@ -210,13 +208,13 @@ fn managed_content(
         .iter()
         .map(|block| match block {
             AgentInputContent::Text { text } => {
-                ManagedRuntimeContentBlock::Text { text: text.clone() }
+                AgentRuntimeContentBlock::Text { text: text.clone() }
             }
             AgentInputContent::Image {
                 media_type,
                 source,
                 digest,
-            } => ManagedRuntimeContentBlock::Image {
+            } => AgentRuntimeContentBlock::Image {
                 media_type: media_type.clone(),
                 source: source.clone(),
                 digest: agentdash_agent_runtime_contract::RuntimePayloadDigest::new(
@@ -228,7 +226,7 @@ fn managed_content(
                 uri,
                 media_type,
                 digest,
-            } => ManagedRuntimeContentBlock::Resource {
+            } => AgentRuntimeContentBlock::Resource {
                 uri: uri.clone(),
                 media_type: media_type.clone(),
                 digest: digest.as_ref().map(|digest| {
@@ -239,7 +237,7 @@ fn managed_content(
                 }),
             },
             AgentInputContent::Structured { schema, value } => {
-                ManagedRuntimeContentBlock::Structured {
+                AgentRuntimeContentBlock::Structured {
                     schema: schema.clone(),
                     value: value.clone(),
                 }

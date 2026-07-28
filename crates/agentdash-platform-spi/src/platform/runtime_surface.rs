@@ -34,7 +34,7 @@ pub struct ExecutionSessionFrame {
     pub executor_config: AgentConfig,
     /// 本轮完整 MCP 声明（内部类型，带 relay 标记）。
     ///
-    /// 云端 Managed Runtime 不自行处理这里的 MCP，而是消费 Application 已经预构建好的
+    /// 云端 Agent Runtime 不自行处理这里的 MCP，而是消费 Application 已经预构建好的
     /// `turn.assembled_tools`。Relay transport 可将该结构原样下发给
     /// 远端 agent，由远端 agent 自行建联。
     pub mcp_servers: Vec<RuntimeMcpServer>,
@@ -210,11 +210,11 @@ pub struct ExecutionTurnFrame {
     pub capability_state: CapabilityState,
     pub runtime_delegates: AgentRuntimeDelegateSet,
     /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
-    /// 会把重建出的消息历史放在这里，供 Managed Runtime 恢复连续会话。
+    /// 会把重建出的消息历史放在这里，供 Agent Runtime 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
     /// Application 层预构建的工具列表（runtime + direct MCP + relay MCP）。
     ///
-    /// Managed Runtime 只持有并调用这里的 `DynAgentTool`，不重新持有
+    /// Agent Runtime 只持有并调用这里的 `DynAgentTool`，不重新持有
     /// `McpServer` 声明，也不自行区分 direct / relay MCP。
     pub assembled_tools: Vec<agentdash_agent::DynAgentTool>,
 }
@@ -245,7 +245,7 @@ pub struct PlatformToolInvocationCoordinates {
 
 /// 连接器拿到的一次 `prompt(...)` 调用上下文。
 ///
-/// 拆分为 `session`（Who/Where，不可变）与 `turn`（How，可变）两层，让 Managed Runtime
+/// 拆分为 `session`（Who/Where，不可变）与 `turn`（How，可变）两层，让 Agent Runtime
 /// 能清晰区分"身份 + 执行环境"与"本轮工具 + 运行时控制面"。
 #[derive(Clone)]
 pub struct ExecutionContext {

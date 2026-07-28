@@ -272,7 +272,7 @@ struct ToolCallCoordinates {
   完整路由，因此其空 backend 不影响 surface evidence 的完整性。
 - 每个进入最终Tool Catalog的`ToolContribution`必须由owner声明protocol projector与family；Surface compile缺projector即typed reject。Command、FileChange、FS与MCP使用各自typed family，普通VFS、RuntimeAction、Workspace Module、Companion、Task、Wait与LifecycleComplete显式声明Dynamic，禁止按tool name猜测或以Dynamic作为缺省。Dynamic的展示身份就是callable tool name，不附加owner namespace；来源归属已经由accepted definition与projector证据表达，不进入Card标题。
 - 每个binding的effective presentation route必须把owner projector与`VendorStream|ToolBroker` emitter作为一个原子事实发布和替换。owner显式声明Dynamic时才允许Dynamic；route缺失是typed protocol violation，不能把原本的FS、Command、FileChange或MCP静默换型。
-- Tool item lifecycle必须exactly-one presentation producer：`VendorStream`由connector mapper发布、Broker只维护internal canonical state；`ToolBroker`由`ToolContribution + ManagedRuntimeToolJournal`发布、connector mapper抑制同一tool的vendor lifecycle。Native、Codex与Remote均消费binding effective route，不能由全局默认或工具名推断owner。
+- Tool item lifecycle必须exactly-one presentation producer：`VendorStream`由connector mapper发布、Broker只维护internal canonical state；`ToolBroker`由`ToolContribution + AgentRuntimeToolJournal`发布、connector mapper抑制同一tool的vendor lifecycle。Native、Codex与Remote均消费binding effective route，不能由全局默认或工具名推断owner。
 - Driver callback同时传递canonical Runtime item、独立session-visible `PresentationItemId`、原样source thread/turn/item三元组及binding/generation/tool identity/arguments。canonical ID只用于Runtime state与side-effect idempotency；presentation ID只进入Backbone payload；source坐标只进入carrier correlation，三者不得互相替代。
 - readable tool-result ref与presentation item必须由同一个session-scoped identity allocator生成，并按effective `ToolProtocolProjection`判断Tool/Command family。调用首事件必须同时固定该call的projector、emitter与readable family；后续update/result不能按工具名或更新后的surface重新猜测，否则会中途换producer或把大结果ref回填到另一张card。
 - Broker首次accept使用owner projector原子提交authoritative ItemStarted；CAS conflict reload，相同turn与initial payload重放幂等，不同payload返回`IdempotencyConflict`。Tool update通过同一journal进入Runtime transient publisher，由store分配generation内单调sequence与唯一event ID。
@@ -293,7 +293,7 @@ struct ToolCallCoordinates {
   字段，避免拼写错误被静默解释为缺省值。省略`canvas_mount_id`时Canvas owner生成
   `cvs-{slug}-{unique_suffix}`身份，唯一性不依赖标题可否ASCII slug化；显式身份继续由调用者负责选择，
   冲突返回typed conflict。
-- Application presentation producer提交canonical Runtime turn/item，由Managed Runtime补全runtime-to-presentation turn映射；只有真实外部producer stream才填写source correlation坐标。
+- Application presentation producer提交canonical Runtime turn/item，由Agent Runtime补全runtime-to-presentation turn映射；只有真实外部producer stream才填写source correlation坐标。
 - Normalized context equality只包含可呈现业务语义：assignment比较fragments，tool schema provenance使用稳定owner layer；AgentFrame revision/UUID保留在Business Surface provenance，不得放大成assignment或全工具delta。
 - Dynamic工具typed content提供可读分行摘要，结构化details用于机器消费；两者不得以单行协议JSON互相替代。
 - Native presentation接收Broker envelope时优先恢复typed `content_items`；只有不存在typed/text content的未知payload才允许使用JSON诊断兜底。

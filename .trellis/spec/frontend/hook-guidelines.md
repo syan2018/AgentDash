@@ -14,16 +14,17 @@
 
 ---
 
-## 流式 Hook 规范（Fetch NDJSON）
+## Agent Runtime 连接 Hook 规范（Fetch NDJSON）
 
-参考 `useSessionStream` + canonical `runtimeEventStream` 实现。AgentRun session不恢复旧session endpoint或Backbone transport。
+参考 `useAgentRuntimeConnection` + `useSessionStream` 实现。前者拥有唯一连接，后者只把同一
+`AgentRuntimeView`中的canonical conversation投影为Session UI model。
 
 ### 必备功能
 
-- 连接状态追踪（`isConnected`）
+- 连接状态追踪（connecting / connected / reconnecting / closed）
 - transport 抽象：业务层不直接处理 `ReadableStream`
-- NDJSON transport支持canonical durable cursor与transient generation/sequence续传
-- 消息缓冲与批量刷新
+- NDJSON transport只消费当前连接的`lane_sequence`；reconnect或gap通过authoritative view恢复
+- update缓冲、target fence与durable presentation overlay
 - 清理函数 + HMR dispose 时统一关闭（防连接累积）
 
 ### 依赖卫生
@@ -40,15 +41,12 @@ const initialRef = useRef(initialEntries ?? EMPTY);
 useEffect(() => { connect(); return disconnect; }, [sessionId, endpoint, connectKey]);
 ```
 
-### NDJSON Envelope 契约
+### NDJSON Update 契约
 
-NDJSON envelope属于cross-layer contract，类型与validator由Rust Runtime contract生成。Hook只消费校验后的canonical envelope，通过`runtimeSessionAdapter`投影为feature-local `SessionPresentationEvent`，不得伪装成generated Backbone envelope或在前端补造timestamp/source/trace。
-
-- `connected`：`last_event_id: number`
-- `event`：`session_id`, `event_seq`, `occurred_at_ms`, `committed_at_ms`, `session_update_type`, `turn_id?`, `entry_index?`, `tool_call_id?`, `notification`（`BackboneEnvelope`）
-- `heartbeat`：`timestamp: number`
-
-前端必须对未知 `type` 安全忽略；业务层只消费解析后的 envelope。
+`/agent-runs/{run_id}/agents/{agent_id}/runtime/updates`逐行输出generated
+`AgentRuntimeUpdate`。validator在transport边界校验`lane_sequence`、`view_revision`、execution、
+command availability、interactions与presentations；解析失败不得进入connection state。
+`lane_sequence`只在当前连接内排序，断线后必须读取`/runtime/view`，不能把它当durable cursor续传。
 
 ---
 
@@ -85,11 +83,10 @@ discriminant，原因是 presentation intent 与 projection invalidation 具有�
 
 ### History Hydrate 与 Live 副作用边界
 
-`useSessionStream` 暴露的历史事件用于重建 feed、turn segment 与审计卡片；
-`historyReplayBoundarySeq` 后到达的事件才进入页面命令式副作用入口。页面只建立一个
-live-event cursor，并把完整 typed `BackboneEvent` 交给 AgentRun planner；turn terminal、
-task mutation、projection invalidation 与 presentation request 由该 planner 按协议
-discriminant 分类，避免多个 effect 独立扫描同一事件数组。
+`useSessionStream`暴露的canonical records用于重建feed、turn segment与审计卡片。
+AgentRuntimeConnection在初次连接、重连和lane gap恢复时登记baseline presentation identities；
+Session页面只把不属于baseline且尚未消费的`presentation_id`交给AgentRun planner。数组下标只服务
+当前render投影，不承担跨快照副作用cursor。
 
 `WorkspaceModulePresentationRequested` 携带完整 `presentation_uri`。live executor 必须先刷新 AgentRun workspace，再用
 `module_id + view_key + renderer_kind + presentation_uri` 精确匹配当前 ready
@@ -99,7 +96,10 @@ presentation target mapper；renderer kind 只参与 registry target 选择，�
 事件链。命令式打开必须把当前 AgentRun workspace key 一并提交给 tab store，使 workspace
 scope 与 tab mutation 原子完成。
 
-AgentRun Runtime feed 的 `turn_started`、`turn_terminal`、`interaction_requested`与`interaction_terminal`是Runtime inspect的失效信号：feed保留可展示的event identity/terminal，但命令可用性仍通过重新读取canonical snapshot获得，不直接修改本地command state。有限durable replay即使在页面打开后才消费到terminal，也必须触发同一刷新，原因是composer的`turn_start/turn_steer`与interaction response只能由最新`command_availability`裁决。
+`turn_started`、`turn_completed`与interaction presentations只负责展示。每个
+`AgentRuntimeUpdate`已携带同一次Complete Agent authoritative read得到的execution、interaction与
+command availability，Composer直接归约这些字段。terminal presentation只要求connection执行
+authoritative view convergence，不触发Workspace刷新。
 
 ### Terminal Platform Event Projection
 

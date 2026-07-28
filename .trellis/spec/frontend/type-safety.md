@@ -189,23 +189,23 @@ AgentRun 右侧 WorkspacePanel 消费 current workspace projection state。该 s
 
 ```text
 GET  /agent-runs/{run_id}/agents/{agent_id}/workspace -> AgentRunProductView
-GET  /agent-runs/{run_id}/agents/{agent_id}/runtime   -> Managed Runtime inspect
-POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit
-     { input, client_command_id, delivery_intent?: "steer" }
-POST .../cancel | .../runtime/context/compact
-     { client_command_id }
-POST .../runtime/interactions/{interaction_id}/respond
-     InteractionResponse
+GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/view
+GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/updates
+POST /agent-runs/{run_id}/agents/{agent_id}/runtime/commands
+     { client_command_id, command }
 ```
 
 ### 3. Contracts
 
 - `AgentRunProductView` 只包含 Lifecycle identity/shell、current AgentFrame、`model_config`、subject associations 与 `resource_surface`；不嵌入 Runtime snapshot、mailbox command policy或旧 RuntimeSession source anchor。
-- Runtime command enabled 状态只读取 `RuntimeSnapshot.command_availability`。前端 action ID 可以投影 Runtime command kind，但不携带自造 stale guard。
-- Draft create可以携带model/runtime/backend selection；既有Run composer禁止executor/backend override。active turn时command projection只发送generated `delivery_intent="steer"`，idle时省略该字段并进入durable mailbox/TurnStart。
+- Runtime command enabled 状态只读取 `AgentRuntimeView.command_availability`。Workspace action ID
+  只绑定 Runtime command kind，不携带自造 stale guard。
+- Draft create可以携带model/runtime/backend selection；既有Run的 submit/interrupt/compact/
+  interaction response统一发送generated Runtime command。
 - Runtime event只提供interaction identity与展示内容；response按钮读取刷新后的`interaction_respond` availability。context popup直接消费`RuntimeContextView`并用target generation丢弃迟到响应。
 - 服务端在 mutating command 前 inspect 当前 Runtime snapshot并生成 `AgentRunCommandGuard`，因此请求只携带幂等 `client_command_id` 与命令 payload。
-- workspace product 与 runtime inspect 独立加载、独立记录错误；refresh 单路失败时保留该 owner 上一份成功事实。
+- workspace product 与 Runtime connection 独立加载、独立记录错误；Workspace refresh失败不得
+  覆盖 Runtime connection 的当前控制事实。
 - ProjectAgent draft start 继续使用 generated `CreateProjectAgentRunRequest` / `ProjectAgentRunStartResult`；HTTP success不等于 turn terminal。
 
 ### 4. Validation & Error Matrix
@@ -241,14 +241,16 @@ POST .../runtime/interactions/{interaction_id}/respond
 ```ts
 // Wrong：一个旧聚合DTO和一次统一catch覆盖两个owner。
 const [workspace, runtime] = await Promise.all([loadWorkspace(), inspectRuntime()]);
-const canCancel = workspace.control_plane.status === "running";
+const canCancel = workspace.shell.delivery_status === "running";
 
 // Correct：两路事实独立settle，命令只消费canonical Runtime availability。
 const [productResult, runtimeResult] = await Promise.allSettled([
   loadAgentRunProduct(),
   inspectRuntime(),
 ]);
-const canCancel = runtimeSnapshot?.command_availability.turn_interrupt?.status === "available";
+const canCancel =
+  runtimeView?.execution.status === "active"
+  && runtimeView.command_availability.interrupt?.status === "available";
 ```
 
 Round action只暴露已有canonical command的动作。新增fork前必须先在`AgentRunRuntime` facade实现typed ThreadFork、availability、operation receipt与产品child binding，再生成前端合同。

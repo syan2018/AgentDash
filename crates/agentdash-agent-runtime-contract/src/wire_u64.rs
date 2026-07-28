@@ -15,7 +15,7 @@ pub const CANONICAL_U64_PATTERN: &str = concat!(
     "1844674407370955161[0-4]|18446744073709551615)$"
 );
 
-/// Raw Managed Runtime wire representation of a semantic Rust `u64`.
+/// Raw Agent Runtime wire representation of a semantic Rust `u64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, TS)]
 #[ts(type = "string & { readonly __runtime_u64: \"canonical_unsigned_decimal\" }")]
 pub struct RuntimeU64(pub u64);

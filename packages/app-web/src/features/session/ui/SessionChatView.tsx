@@ -5,7 +5,7 @@
  * 执行器选择、上下文用量指示、发送/取消。
  *
  * AgentRun workspace 等 runtime trace 场景复用此组件，
- * 由父组件提供 AgentRun Managed Runtime target 与外层导航。
+ * 由父组件提供 AgentRun Agent Runtime target 与外层导航。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -29,8 +29,7 @@ import {
 } from "./SessionChatViewParts";
 import {
   computeProjectionRefreshKey,
-  dispatchLiveSessionEvents,
-  isAgentRunWorkspaceActionRunning,
+  applyAgentRuntimeControlToChatCommandState,
   rawEventsBelongToRuntimeStreamTarget,
   resolveSessionInitialSubmit,
   resolveExecutorFromHint,
@@ -38,9 +37,11 @@ import {
 } from "./SessionChatViewModel";
 import type { SessionChatCommandModel, SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
+import type { ImageAttachment } from "./composer/useImageAttachments";
 import { SessionStatusBar } from "../../agent-run-workspace/ui";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 import { SessionWorkspacePanelActionProvider } from "./SessionWorkspacePanelActionProvider";
+import { sha256OfBlob } from "../../../utils/sha256";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -80,8 +81,7 @@ export function SessionChatView({
     agentDefaults,
     executorStateKey,
     showExecutorSelector = true,
-    commandState,
-    compactContextCommand,
+    commandState: productCommandState,
     waitingItems,
     statusBarRunId,
     statusBarAgentId,
@@ -156,7 +156,7 @@ export function SessionChatView({
   const discovery = useExecutorDiscovery();
 
   // 仅挂载时读一次 agentDefaults，作为 useExecutorConfig 的 initialSource
-  const snapshotExecutorDefaults = commandState.modelConfig.effective_executor_config ?? null;
+  const snapshotExecutorDefaults = productCommandState.modelConfig.effective_executor_config ?? null;
   const initialExecutorSource = useMemo<ExecutorConfigSource | null>(
     () => toExecutorConfigSource(snapshotExecutorDefaults ?? agentDefaults),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -282,11 +282,20 @@ export function SessionChatView({
     reconnect,
     streamingEntryId,
     tokenUsage,
+    runtimeView,
+    executeRuntimeCommand,
   } = useSessionFeed({
     agentRunTarget,
-    activeTurnId: commandState.activeTurnId ?? null,
+    activeTurnId: productCommandState.activeTurnId ?? null,
     enabled: hasRuntimeStreamTarget,
   });
+  const commandState = useMemo(
+    () => applyAgentRuntimeControlToChatCommandState(
+      productCommandState,
+      runtimeView,
+    ),
+    [productCommandState, runtimeView],
+  );
 
   const projectionRefreshKey = useMemo(
     () => computeProjectionRefreshKey(rawEvents),
@@ -309,25 +318,27 @@ export function SessionChatView({
 
   // ─── Action running 检测 ──────────────────────────────
 
-  const isActionRunning = isAgentRunWorkspaceActionRunning({
-    executionStatus: commandState.executionStatus,
-  });
+  const isActionRunning = runtimeView?.execution.status === "active";
 
   const onLiveEventRef = useRef(onLiveEvent);
-  const lastLiveEventSeqRef = useRef<number | null>(null);
+  const dispatchedLivePresentationIdsRef = useRef(new Set<string>());
   useEffect(() => { onLiveEventRef.current = onLiveEvent; }, [onLiveEvent]);
   useEffect(() => {
-    lastLiveEventSeqRef.current = null;
+    dispatchedLivePresentationIdsRef.current.clear();
   }, [agentRunTargetKey]);
 
   useEffect(() => {
     if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
-    lastLiveEventSeqRef.current = dispatchLiveSessionEvents(
-      rawEvents,
-      lastLiveEventSeqRef.current,
-      historyReplayBoundarySeq,
-      (event) => onLiveEventRef.current?.(event),
-    );
+    for (const event of rawEvents) {
+      if (
+        event.baseline
+        || dispatchedLivePresentationIdsRef.current.has(event.presentation_id)
+      ) {
+        continue;
+      }
+      dispatchedLivePresentationIdsRef.current.add(event.presentation_id);
+      onLiveEventRef.current?.(event.notification.event);
+    }
   }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────
@@ -347,6 +358,33 @@ export function SessionChatView({
 
   const commandActionRef = useRef(submitComposer);
   useEffect(() => { commandActionRef.current = submitComposer; }, [submitComposer]);
+
+  const executeRuntimeInput = useCallback(async (
+    prompt: string,
+    images: ImageAttachment[],
+  ): Promise<void> => {
+    if (!agentRunTarget) {
+      throw new Error("Agent Runtime target 尚未建立");
+    }
+    const content: Array<
+      | { kind: "text"; text: string }
+      | { kind: "image"; media_type: string; source: string; digest: string }
+    > = [];
+    if (prompt) content.push({ kind: "text", text: prompt });
+    for (const image of images) {
+      content.push({
+        kind: "image",
+        media_type: image.file.type,
+        source: image.dataUrl,
+        digest: await sha256OfBlob(image.file),
+      });
+    }
+    await executeRuntimeCommand({
+      client_command_id: globalThis.crypto?.randomUUID?.()
+        ?? `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      command: { kind: "submit_input", content },
+    });
+  }, [agentRunTarget, executeRuntimeCommand]);
 
   const handleSubmit = useCallback(async (command: SessionChatCommandModel | undefined, deliveryIntent?: string) => {
     const promptText = richInputRef.current?.getValue() ?? "";
@@ -374,13 +412,17 @@ export function SessionChatView({
     setInputValue("");
 
     try {
-      await commandActionRef.current({
-        command_id: command.command_id,
-        prompt: trimmed,
-        executorConfig,
-        imageAttachments: images.length > 0 ? images : undefined,
-        deliveryIntent,
-      });
+      if (agentRunTarget) {
+        await executeRuntimeInput(trimmed, images);
+      } else {
+        await commandActionRef.current({
+          command_id: command.command_id,
+          prompt: trimmed,
+          executorConfig,
+          imageAttachments: images.length > 0 ? images : undefined,
+          deliveryIntent,
+        });
+      }
 
       execConfig.recordUsage();
       clearInput();
@@ -397,12 +439,14 @@ export function SessionChatView({
     }
   }, [
     clearInput,
+    agentRunTarget,
     commandState.modelConfig.message,
     commandState.modelConfig.status,
     execConfig,
     executorConfig,
     imageAttach.attachments,
     isSending,
+    executeRuntimeInput,
   ]);
 
   useEffect(() => {
@@ -422,7 +466,13 @@ export function SessionChatView({
       setSendError(null);
       setIsSending(true);
     });
-    void commandActionRef.current(submitIntent).then(async () => {
+    const submission = agentRunTarget
+      ? executeRuntimeInput(
+          submitIntent.prompt.trim(),
+          submitIntent.imageAttachments ?? [],
+        )
+      : commandActionRef.current(submitIntent);
+    void submission.then(async () => {
       execConfig.recordUsage();
       clearInput();
     }).catch((error) => {
@@ -443,6 +493,8 @@ export function SessionChatView({
     initialSubmit,
     isConnected,
     isSending,
+    agentRunTarget,
+    executeRuntimeInput,
     onInitialSubmitConsumed,
   ]);
 
@@ -459,7 +511,13 @@ export function SessionChatView({
     setSendError(null);
     setIsCancelling(true);
     try {
-      if (cancelAction) {
+      if (agentRunTarget) {
+        await executeRuntimeCommand({
+          client_command_id: globalThis.crypto?.randomUUID?.()
+            ?? `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          command: { kind: "interrupt" },
+        });
+      } else if (cancelAction) {
         await cancelAction();
       }
     } catch (e) {
@@ -468,7 +526,25 @@ export function SessionChatView({
       cancelInFlightRef.current = false;
       setIsCancelling(false);
     }
-  }, [cancelAction, commandState.cancelCommand]);
+  }, [
+    agentRunTarget,
+    cancelAction,
+    commandState.cancelCommand,
+    executeRuntimeCommand,
+  ]);
+
+  const handleCompactContext = useCallback(async () => {
+    const command = commandState.commands.find(
+      (candidate) => candidate.runtimeCommand === "request_compaction"
+        || candidate.kind === "compact_context",
+    );
+    if (!agentRunTarget || !command?.enabled) return;
+    await executeRuntimeCommand({
+      client_command_id: globalThis.crypto?.randomUUID?.()
+        ?? `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      command: { kind: "request_compaction" },
+    });
+  }, [agentRunTarget, commandState.commands, executeRuntimeCommand]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 
@@ -651,7 +727,11 @@ export function SessionChatView({
           tokenUsage={tokenUsage}
           agentRunTarget={agentRunTarget}
           projectionRefreshKey={projectionRefreshKey}
-          compactContextCommand={compactContextCommand}
+          compactContextCommand={commandState.commands.find(
+            (command) => command.runtimeCommand === "request_compaction"
+              || command.kind === "compact_context",
+          )}
+          onCompactContext={handleCompactContext}
           onAtTrigger={handleAtTrigger}
           onFileSelected={handleFileSelected}
           onInputChange={setInputValue}

@@ -180,7 +180,7 @@ pub(super) async fn compose_project_agent_owner_frame(
     let lifecycle_message_stream =
         agentdash_application_ports::lifecycle_surface_projection::MessageStreamProjectionRef {
             runtime_thread_id: input.runtime_thread_id,
-            trace_kind: agentdash_application_ports::lifecycle_surface_projection::MessageStreamTraceKind::ManagedRuntimeThread,
+            trace_kind: agentdash_application_ports::lifecycle_surface_projection::MessageStreamTraceKind::AgentRuntimeThread,
         };
 
     context

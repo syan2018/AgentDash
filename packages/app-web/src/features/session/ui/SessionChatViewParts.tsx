@@ -4,7 +4,6 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 import { SessionProjectionView } from "./SessionProjectionView";
 
 import type { SessionMessageRefDto } from "../../../generated/agent-run-interaction-contracts";
-import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 import type {
@@ -96,11 +95,13 @@ function ContextUsageRing({
   agentRunTarget,
   refreshKey,
   compactContextCommand,
+  onCompactContext,
 }: {
   usage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey: number;
-  compactContextCommand?: ConversationCommandView;
+  compactContextCommand?: SessionChatCommandModel;
+  onCompactContext?: () => Promise<void>;
 }) {
   const [hover, setHover] = useState(false);
   const [open, setOpen] = useState(false);
@@ -208,6 +209,7 @@ function ContextUsageRing({
             refreshKey={refreshKey}
             tokenUsage={usage}
             compactContextCommand={compactContextCommand}
+            onCompactContext={onCompactContext}
             embedded
           />
         </div>
@@ -621,6 +623,7 @@ export function SessionChatComposer({
   agentRunTarget,
   projectionRefreshKey,
   compactContextCommand,
+  onCompactContext,
   onAtTrigger,
   onFileSelected,
   onInputChange,
@@ -652,7 +655,8 @@ export function SessionChatComposer({
   tokenUsage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   projectionRefreshKey: number;
-  compactContextCommand?: ConversationCommandView;
+  compactContextCommand?: SessionChatCommandModel;
+  onCompactContext?: () => Promise<void>;
   onAtTrigger: (query: string) => void;
   onFileSelected: (file: FileEntry) => void;
   onInputChange: (value: string) => void;
@@ -819,6 +823,7 @@ export function SessionChatComposer({
               agentRunTarget={agentRunTarget}
               refreshKey={projectionRefreshKey}
               compactContextCommand={compactContextCommand}
+              onCompactContext={onCompactContext}
             />
             {showExecutorSelector && (
               <InlineModelSelector
@@ -842,7 +847,6 @@ export function SessionChatComposer({
           <div className={isExpanded ? "order-5" : "order-4"}>
             <ComposerSendButton
               isRunning={isActionRunning}
-              hasInput={hasContent}
               isSending={isSending}
               isCancelling={isCancelling}
               cancelDisabled={cancelDisabled}

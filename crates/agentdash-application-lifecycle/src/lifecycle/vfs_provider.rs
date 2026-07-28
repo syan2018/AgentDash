@@ -904,8 +904,8 @@ mod tests {
         UserInputSubmissionKind, UserInputSubmittedNotification, text_user_input_blocks,
     };
     use agentdash_agent_runtime_contract::{
-        ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
-        ManagedRuntimeProjectionFidelity, RuntimeProjectionRevision, RuntimeThreadId,
+        AgentRuntimeLifecycleStatus, AgentRuntimeProjectionAuthority,
+        AgentRuntimeProjectionFidelity, RuntimeProjectionRevision, RuntimeThreadId,
     };
     use agentdash_domain::workflow::{AgentSource, LifecycleAgent};
     use agentdash_test_support::{
@@ -1041,10 +1041,10 @@ mod tests {
             runtime_thread_id: RuntimeThreadId::new("runtime-thread-1").expect("thread id"),
             projection_revision: RuntimeProjectionRevision(7),
             captured_at_ms: 17,
-            lifecycle: ManagedRuntimeLifecycleStatus::Active,
+            lifecycle: AgentRuntimeLifecycleStatus::Active,
             thread_name: None,
-            authority: ManagedRuntimeProjectionAuthority::SourceAuthoritative,
-            fidelity: ManagedRuntimeProjectionFidelity::Exact,
+            authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
+            fidelity: AgentRuntimeProjectionFidelity::Exact,
             interactions: Vec::new(),
             conversation_history: vec![record],
         };

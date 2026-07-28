@@ -1,6 +1,6 @@
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeContentBlock, ManagedRuntimeInteractionResponse, ManagedRuntimeOperationReceipt,
-    ManagedRuntimeSourceBindingEvidence, RuntimeInteractionId,
+    AgentRuntimeContentBlock, AgentRuntimeInteractionResponse, AgentRuntimeOperationReceipt,
+    AgentRuntimeSourceBindingEvidence, RuntimeInteractionId,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -16,14 +16,14 @@ pub struct AgentRunProjectionTarget {
 pub enum AgentRunProductRuntimeCommand {
     Resume,
     SubmitInput {
-        content: Vec<ManagedRuntimeContentBlock>,
+        content: Vec<AgentRuntimeContentBlock>,
     },
     Interrupt,
     RequestCompaction,
     Rebind,
     ResolveInteraction {
         interaction_id: RuntimeInteractionId,
-        response: ManagedRuntimeInteractionResponse,
+        response: AgentRuntimeInteractionResponse,
     },
     Close,
 }
@@ -72,7 +72,7 @@ pub struct AgentRunTerminalOwnerFence {
     pub terminal_owner_epoch_id: String,
     pub target: AgentRunProjectionTarget,
     pub runtime_thread_id: String,
-    pub source_binding: ManagedRuntimeSourceBindingEvidence,
+    pub source_binding: AgentRuntimeSourceBindingEvidence,
     pub backend_id: String,
 }
 
@@ -226,7 +226,7 @@ pub struct AgentRunTerminalChangePage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct AgentRunProductProjectionContractSchema {
     pub runtime_command: AgentRunProductRuntimeCommandRequest,
-    pub runtime_command_receipt: ManagedRuntimeOperationReceipt,
+    pub runtime_command_receipt: AgentRuntimeOperationReceipt,
     pub terminal_snapshot: AgentRunTerminalSnapshot,
     pub terminal_change_page: AgentRunTerminalChangePage,
 }

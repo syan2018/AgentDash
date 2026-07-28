@@ -1,4 +1,4 @@
-use agentdash_agent_runtime_contract::{ManagedRuntimeInitialContextPackage, RuntimeThreadId};
+use agentdash_agent_runtime_contract::{AgentRuntimeInitialContextPackage, RuntimeThreadId};
 use agentdash_agent_service_api::{
     AgentCommandReceipt, AgentEffectIdentity, AgentForkPoint, AgentPayloadDigest,
     AgentServiceInstanceId, AgentSourceCoordinate, ForkAgentReceipt,
@@ -22,7 +22,7 @@ pub struct ProductExecutionProfileRef {
     pub configuration: serde_json::Value,
     /// Stable Product authorization reference used by the Complete Agent
     /// adapter to resolve credentials at execution time. Secrets never enter
-    /// AgentFrame or Managed Runtime persistence.
+    /// AgentFrame or Agent Runtime persistence.
     pub credential_scope: Option<ProductCredentialScopeRef>,
 }
 
@@ -180,7 +180,7 @@ impl AgentRunProductRuntimeProvisioningRequest {
 
 /// Host target 已按 Product 输入完成幂等注册的 Product 可见证据。
 ///
-/// 该证据只允许 Product 再向 Managed Runtime 发 Create；Agent source binding 仍必须由
+/// 该证据只允许 Product 再向 Agent Runtime 发 Create；Agent source binding 仍必须由
 /// Create receipt/inspect 返回，不能由 provisioning 阶段伪造。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRunProductRuntimeProvisioningEvidence {
@@ -248,7 +248,7 @@ pub trait AgentRunProductRuntimeProvisioningPort: Send + Sync {
     async fn create_agent_source(
         &self,
         request: &AgentRunProductRuntimeProvisioningRequest,
-        initial_context: Option<ManagedRuntimeInitialContextPackage>,
+        initial_context: Option<AgentRuntimeInitialContextPackage>,
     ) -> Result<AgentRunProductAgentCreateEvidence, AgentRunProductRuntimeProvisioningError>;
 
     /// Forks the concrete parent Agent at an exact Agent-owned cutoff.
@@ -280,7 +280,7 @@ pub trait AgentRunProductRuntimeProvisioningPort: Send + Sync {
 /// Product-owned request for replacing the applied surface of an existing Runtime thread.
 ///
 /// The caller has already persisted `frame`; the implementation compiles its immutable surface,
-/// advances the Host binding generation exactly once, and leaves Managed Runtime Rebind/Activate
+/// advances the Host binding generation exactly once, and leaves Agent Runtime Rebind/Activate
 /// to the Product convergence saga.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRunProductRuntimeSurfaceRebindRequest {

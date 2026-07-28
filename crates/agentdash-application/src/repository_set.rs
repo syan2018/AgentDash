@@ -36,7 +36,7 @@ use agentdash_domain::workspace::WorkspaceRepository;
 
 /// Product and platform repositories only.
 ///
-/// Managed Runtime, Complete Agent Host, Product projection sagas and their effects are composed
+/// Agent Runtime, Complete Agent Host, Product projection sagas and their effects are composed
 /// through their owning concrete stores instead of being flattened into this business repository
 /// bag.
 #[derive(Clone)]

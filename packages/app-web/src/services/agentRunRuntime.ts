@@ -5,13 +5,13 @@ import type {
   AgentRunProductRuntimeCommandRequest as AgentRunProductRuntimeCommandRequestWire,
 } from "../generated/agent-run-product-projection-contracts";
 import type {
-  ManagedRuntimeInteractionResponse,
+  AgentRuntimeInteractionResponse,
 } from "../generated/agent-runtime-contracts";
 import {
-  decodeManagedRuntimeOperationReceipt,
-  decodeManagedRuntimeSnapshot,
-  type ManagedRuntimeOperationReceipt,
-  type ManagedRuntimeSnapshot,
+  decodeAgentRuntimeOperationReceipt,
+  decodeAgentRuntimeView,
+  type AgentRuntimeOperationReceipt,
+  type AgentRuntimeView,
 } from "../generated/agent-runtime-validators";
 
 export interface AgentRunRuntimeTarget {
@@ -23,11 +23,11 @@ export function agentRunScopedPath(target: AgentRunRuntimeTarget, route: string)
   return `/agent-runs/${encodeURIComponent(target.runId)}/agents/${encodeURIComponent(target.agentId)}${route}`;
 }
 
-export async function fetchManagedRuntimeSnapshot(
+export async function fetchAgentRuntimeView(
   target: AgentRunRuntimeTarget,
-): Promise<ManagedRuntimeSnapshot> {
-  const payload = await api.get<unknown>(agentRunScopedPath(target, "/runtime/snapshot"));
-  return decodeManagedRuntimeSnapshot(payload);
+): Promise<AgentRuntimeView> {
+  const payload = await api.get<unknown>(agentRunScopedPath(target, "/runtime/view"));
+  return decodeAgentRuntimeView(payload);
 }
 
 export async function fetchAgentRunRuntimeContextProjection(
@@ -46,7 +46,7 @@ export interface AgentRunProductRuntimeCommandRequest {
 export async function executeAgentRunRuntimeCommand(
   target: AgentRunRuntimeTarget,
   request: AgentRunProductRuntimeCommandRequest,
-): Promise<ManagedRuntimeOperationReceipt> {
+): Promise<AgentRuntimeOperationReceipt> {
   const wireRequest: AgentRunProductRuntimeCommandRequestWire = {
     client_command_id: request.client_command_id,
     command: request.command,
@@ -55,29 +55,15 @@ export async function executeAgentRunRuntimeCommand(
     agentRunScopedPath(target, "/runtime/commands"),
     wireRequest,
   );
-  return decodeManagedRuntimeOperationReceipt(payload);
-}
-
-export async function compactAgentRunContext(
-  target: AgentRunRuntimeTarget,
-  clientCommandId: string,
-): Promise<ManagedRuntimeOperationReceipt> {
-  const snapshot = await fetchManagedRuntimeSnapshot(target);
-  if (snapshot.command_availability.request_compaction?.status !== "available") {
-    throw new Error("Managed Runtime 当前不接受 context compaction");
-  }
-  return executeAgentRunRuntimeCommand(target, {
-    client_command_id: clientCommandId,
-    command: { kind: "request_compaction" },
-  });
+  return decodeAgentRuntimeOperationReceipt(payload);
 }
 
 export async function respondAgentRunInteraction(
   target: AgentRunRuntimeTarget,
   interactionId: string,
-  response: ManagedRuntimeInteractionResponse,
+  response: AgentRuntimeInteractionResponse,
   clientCommandId: string,
-): Promise<ManagedRuntimeOperationReceipt> {
+): Promise<AgentRuntimeOperationReceipt> {
   return executeAgentRunRuntimeCommand(target, {
     client_command_id: clientCommandId,
     command: {

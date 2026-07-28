@@ -1,4 +1,4 @@
-//! Application-facing Managed Agent Runtime contract.
+//! Application-facing Agent Runtime contract.
 //!
 //! This crate owns only platform command, snapshot, availability, and projection
 //! vocabulary. Complete Agent commands and source coordinates belong to
@@ -8,13 +8,13 @@
 pub mod canonical_json;
 pub mod gateway;
 pub mod ids;
-pub mod managed_projection;
+pub mod runtime_view;
 pub mod wire_u64;
 
 pub use canonical_json::*;
 pub use gateway::*;
 pub use ids::*;
-pub use managed_projection::*;
+pub use runtime_view::*;
 pub use wire_u64::*;
 
 #[cfg(test)]
@@ -28,8 +28,8 @@ mod tests {
     #[test]
     fn runtime_typescript_root_uses_canonical_unsigned_decimal_vocabulary() {
         let temp = tempfile::tempdir().expect("create TypeScript export directory");
-        ManagedRuntimeContractSchema::export_all_to(temp.path())
-            .expect("export Managed Runtime contracts");
+        AgentRuntimeContractSchema::export_all_to(temp.path())
+            .expect("export Agent Runtime contracts");
         RuntimeU64::export_all_to(temp.path()).expect("export Runtime u64");
         let typescript = read_typescript(temp.path());
 

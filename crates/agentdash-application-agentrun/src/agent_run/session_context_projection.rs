@@ -5,7 +5,7 @@ use agentdash_agent_protocol::{
     ContextFrameSource, PlatformEvent, PresentationDurability, codex_app_server_protocol as codex,
     codex_user_input_to_text,
 };
-use agentdash_agent_runtime_contract::ManagedRuntimeSnapshot;
+use agentdash_agent_runtime_contract::AgentRuntimeView;
 use agentdash_contracts::session::{
     SessionAttachmentContextContributionResponse, SessionContextUsageAnalysisResponse,
     SessionContextUsageCategoryResponse, SessionContextUsageItemResponse,
@@ -15,7 +15,7 @@ use agentdash_contracts::session::{
 };
 use serde_json::Value;
 
-const PROJECTION_KIND: &str = "managed_runtime_canonical_context";
+const PROJECTION_KIND: &str = "agent_runtime_canonical_context";
 
 #[derive(Default)]
 struct ToolContribution {
@@ -35,13 +35,11 @@ struct SegmentContent {
     tool_result_tokens: u64,
 }
 
-pub fn project_managed_runtime_context(
-    snapshot: &ManagedRuntimeSnapshot,
-) -> SessionProjectionViewResponse {
+pub fn project_agent_runtime_context(snapshot: &AgentRuntimeView) -> SessionProjectionViewResponse {
     project_records(
         snapshot.thread_id.as_str(),
-        snapshot.revision.0,
-        &snapshot.conversation_history,
+        snapshot.view_revision.0,
+        &snapshot.conversation,
     )
 }
 

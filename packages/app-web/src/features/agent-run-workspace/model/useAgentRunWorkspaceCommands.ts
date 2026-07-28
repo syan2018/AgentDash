@@ -1,26 +1,17 @@
 import { useCallback, useRef } from "react";
 
-import type { AgentInputContent } from "../../../generated/agent-service-api";
 import type { JsonValue } from "../../../generated/common-contracts";
-import { sha256OfBlob } from "../../../utils/sha256";
 import type {
-  ConversationCommandView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
 import type {
   AgentRunForkResponse,
-  AgentRunCommandOnlyRequest,
-  AgentRunCommandPreconditionView,
   AgentRunMessageCommandResponse,
   BackendSelectionRequestDto,
   SessionMessageRefDto,
 } from "../../../generated/agent-run-interaction-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
-import {
-  cancelAgentRun,
-  forkAgentRun,
-  submitAgentRunComposerInput,
-} from "../../../services/agentRunInteraction";
+import { forkAgentRun } from "../../../services/agentRunInteraction";
 import type {
   CreateProjectAgentRunRequest,
   ProjectAgentRunStartResult,
@@ -35,10 +26,7 @@ import type {
   AgentRunConversationCommand,
   AgentRunConversationCommandState,
 } from "./conversationCommandState";
-import {
-  conversationCommandByKind,
-  isLocalDraftStartAction,
-} from "./conversationCommandState";
+import { isLocalDraftStartAction } from "./conversationCommandState";
 
 interface ResolveExecutorConfigInput {
   command: AgentRunConversationCommand;
@@ -84,14 +72,6 @@ export interface UseAgentRunWorkspaceCommandsResult {
   ) => Promise<void>;
   handleCancelAgentRun: () => Promise<void>;
   handleForkFromMessageRef: (forkPointRef: SessionMessageRefDto) => Promise<void>;
-}
-
-class SilentCommandRefreshError extends Error {
-  readonly silentCommandRefresh = true;
-
-  constructor() {
-    super("AgentRun workspace state refreshed.");
-  }
 }
 
 function newClientCommandId(): string {
@@ -143,30 +123,6 @@ export async function forkAgentRunFromMessageRef({
   });
 }
 
-function commandPrecondition(command: ConversationCommandView): AgentRunCommandPreconditionView {
-  return {
-    command_id: command.command_id,
-    command_kind: command.kind,
-    stale_guard: command.stale_guard,
-  };
-}
-
-function commandRequest(command: ConversationCommandView): AgentRunCommandOnlyRequest {
-  return {
-    command: commandPrecondition(command),
-    client_command_id: newClientCommandId(),
-  };
-}
-
-function apiErrorCode(error: unknown): string | null {
-  if (!error || typeof error !== "object" || !("errorCode" in error)) return null;
-  return typeof error.errorCode === "string" ? error.errorCode : null;
-}
-
-function isStaleAgentRunCommandError(error: unknown): boolean {
-  return apiErrorCode(error) === "stale_command";
-}
-
 function executorConfigToJsonValue(config: ExecutorConfig | undefined): JsonValue | undefined {
   if (!config) return undefined;
   return {
@@ -190,23 +146,12 @@ export function useAgentRunWorkspaceCommands(
     draftReady,
     createProjectAgentRun,
     fetchAndIngestLifecycleRun,
-    refreshWorkspaceState,
     onAgentRunRedirect,
     resolveExecutorConfig,
     isCompleteExecutorConfig,
     onDraftStarted,
   } = options;
   const inFlightCommandRef = useRef<InFlightAgentRunCommand | null>(null);
-
-  const refreshWorkspaceStateSilently = useCallback(() => {
-    void refreshWorkspaceState().catch(() => {});
-  }, [refreshWorkspaceState]);
-
-  const refreshAfterStaleAgentRunCommandError = useCallback((error: unknown): boolean => {
-    if (!isStaleAgentRunCommandError(error)) return false;
-    refreshWorkspaceStateSilently();
-    return true;
-  }, [refreshWorkspaceStateSilently]);
 
   const handleAgentRunCommand = useCallback(async (
     command: AgentRunConversationCommand,
@@ -221,7 +166,7 @@ export function useAgentRunWorkspaceCommands(
     if (!trimmed && !hasImages) {
       throw new Error("请输入要发送的消息。");
     }
-    if (!command.enabled) {
+    if (isLocalDraftStartAction(command) && !command.enabled) {
       throw new Error(command.unavailable_reason ?? "当前 AgentRun 不可执行该命令。");
     }
 
@@ -243,7 +188,6 @@ export function useAgentRunWorkspaceCommands(
     const commandKey = JSON.stringify({
       command_id: command.command_id,
       kind: command.kind,
-      stale_guard: isLocalDraftStartAction(command) ? null : command.stale_guard,
       input: {
         prompt: trimmed,
         images: imageAttachments?.map((image) => ({
@@ -264,106 +208,43 @@ export function useAgentRunWorkspaceCommands(
     inFlightCommandRef.current = resolvedCommand.inFlightCommand;
 
     try {
-      if (isLocalDraftStartAction(command)) {
-        if (!draftProjectId || !draftProjectAgentKey || !draftReady) {
-          throw new Error(command.unavailable_reason ?? "当前 Draft 尚未就绪。");
-        }
-        const response = await createProjectAgentRun(draftProjectId, draftProjectAgentKey, {
-          client_command_id: resolvedCommand.clientCommandId,
-          executor_config: executorConfigToJsonValue(commandExecutorConfig),
-          backend_selection: backendSelection,
-        });
-        void fetchAndIngestLifecycleRun(response.run_ref.run_id);
-        onDraftStarted(response, {
-          prompt: trimmed,
-          executorConfig: commandExecutorConfig,
-          backendSelection,
-          imageAttachments,
-          deliveryIntent,
-        });
-        return;
+      if (!isLocalDraftStartAction(command)) {
+        throw new Error("既有 AgentRun 命令必须通过 AgentRuntimeConnection 执行。");
       }
-
-      if (!currentRunId || !currentAgentId) {
-        throw new Error("当前 AgentRun 尚未就绪，无法执行控制动作。");
+      if (!draftProjectId || !draftProjectAgentKey || !draftReady) {
+        throw new Error(command.unavailable_reason ?? "当前 Draft 尚未就绪。");
       }
-
-      const inputBlocks: AgentInputContent[] = [];
-      if (trimmed) {
-        inputBlocks.push({ kind: "text", text: trimmed });
-      }
-      if (imageAttachments) {
-        for (const img of imageAttachments) {
-          inputBlocks.push({
-            kind: "image",
-            media_type: img.file.type,
-            source: img.dataUrl,
-            digest: await sha256OfBlob(img.file),
-          });
-        }
-      }
-
-      const response = await submitAgentRunComposerInput(currentRunId, currentAgentId, {
-        input: inputBlocks,
+      const response = await createProjectAgentRun(draftProjectId, draftProjectAgentKey, {
         client_command_id: resolvedCommand.clientCommandId,
-        command: commandPrecondition(command),
         executor_config: executorConfigToJsonValue(commandExecutorConfig),
         backend_selection: backendSelection,
-        delivery_intent: deliveryIntent,
       });
-      if (response.accepted_refs?.run_ref.run_id) {
-        void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
-      }
-      const redirect = resolveAgentRunCommandRedirect(response);
-      if (redirect) {
-        void fetchAndIngestLifecycleRun(redirect.runId);
-        onAgentRunRedirect(redirect);
-        return;
-      }
-    } catch (error) {
-      if (refreshAfterStaleAgentRunCommandError(error)) {
-        throw new SilentCommandRefreshError();
-      }
-      throw error;
+      void fetchAndIngestLifecycleRun(response.run_ref.run_id);
+      onDraftStarted(response, {
+        prompt: trimmed,
+        executorConfig: commandExecutorConfig,
+        backendSelection,
+        imageAttachments,
+        deliveryIntent,
+      });
     } finally {
       inFlightCommandRef.current = null;
     }
   }, [
     chatCommandState.modelConfig,
     createProjectAgentRun,
-    currentAgentId,
-    currentRunId,
     draftProjectAgentKey,
     draftProjectId,
     draftReady,
     fetchAndIngestLifecycleRun,
     isCompleteExecutorConfig,
     onDraftStarted,
-    onAgentRunRedirect,
-    refreshAfterStaleAgentRunCommandError,
     resolveExecutorConfig,
   ]);
 
   const handleCancelAgentRun = useCallback(async () => {
-    if (!currentRunId || !currentAgentId) {
-      throw new Error("当前 AgentRun 尚未就绪。");
-    }
-    const cancelCommand = conversationCommandByKind(chatCommandState.commands.commands, "cancel");
-    if (!cancelCommand?.enabled) {
-      throw new Error(cancelCommand?.unavailable_reason ?? "当前 AgentRun 没有可取消的运行。");
-    }
-    try {
-      await cancelAgentRun(currentRunId, currentAgentId, commandRequest(cancelCommand));
-    } catch (error) {
-      if (refreshAfterStaleAgentRunCommandError(error)) return;
-      throw error;
-    }
-  }, [
-    chatCommandState.commands.commands,
-    currentAgentId,
-    currentRunId,
-    refreshAfterStaleAgentRunCommandError,
-  ]);
+    throw new Error("停止命令必须通过 AgentRuntimeConnection 执行。");
+  }, []);
 
   const handleForkFromMessageRef = useCallback(async (forkPointRef: SessionMessageRefDto) => {
     if (!currentRunId || !currentAgentId) {

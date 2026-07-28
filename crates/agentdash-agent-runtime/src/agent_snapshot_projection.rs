@@ -3,12 +3,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use agentdash_agent_protocol::{BackboneEvent, CanonicalConversationView};
 
 use agentdash_agent_runtime_contract::{
-    ManagedRuntimeAvailabilityEvidence, ManagedRuntimeCommandAvailability,
-    ManagedRuntimeCommandKind, ManagedRuntimeInteraction, ManagedRuntimeInteractionRequest,
-    ManagedRuntimeInteractionResolution, ManagedRuntimeInteractionStatus,
-    ManagedRuntimeLifecycleStatus, ManagedRuntimeProjectionAuthority,
-    ManagedRuntimeProjectionFidelity, ManagedRuntimeSnapshot, ManagedRuntimeThreadNameSource,
-    ManagedRuntimeUnavailabilityReason, RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest,
+    AgentRuntimeAvailabilityEvidence, AgentRuntimeCommandAvailability, AgentRuntimeCommandKind,
+    AgentRuntimeExecutionStatus, AgentRuntimeExecutionView, AgentRuntimeInteraction,
+    AgentRuntimeInteractionRequest, AgentRuntimeInteractionResolution,
+    AgentRuntimeInteractionStatus, AgentRuntimeLifecycleStatus, AgentRuntimeProjectionAuthority,
+    AgentRuntimeProjectionFidelity, AgentRuntimeThreadNameSource, AgentRuntimeUnavailabilityReason,
+    AgentRuntimeView, RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest,
     RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 use agentdash_agent_service_api::{
@@ -32,10 +32,10 @@ pub enum AgentSnapshotProjectionError {
 /// The mapping keeps no Runtime journal, cursor, operation ledger, or source identity registry.
 /// Runtime-facing ids are deterministic aliases of concrete-Agent coordinates, so reconnecting
 /// and reading the same Agent state reconstructs the same presentation.
-pub fn project_authoritative_agent_snapshot(
+pub fn project_authoritative_agent_view(
     thread_id: RuntimeThreadId,
     snapshot: AgentSnapshot,
-) -> Result<ManagedRuntimeSnapshot, AgentSnapshotProjectionError> {
+) -> Result<AgentRuntimeView, AgentSnapshotProjectionError> {
     validate_conversation_history(&snapshot)?;
     let revision = RuntimeProjectionRevision(snapshot.revision.0);
     let captured_at_ms = snapshot.source_info.observed_at_ms;
@@ -94,7 +94,7 @@ pub fn project_authoritative_agent_snapshot(
         }) {
             return invalid("interaction item does not belong to its turn");
         }
-        let projected = ManagedRuntimeInteraction {
+        let projected = AgentRuntimeInteraction {
             id: runtime_interaction_id(&interaction.id)?,
             turn_id: runtime_turn_id(&interaction.turn_id)?,
             item_id: interaction
@@ -102,12 +102,12 @@ pub fn project_authoritative_agent_snapshot(
                 .as_ref()
                 .map(runtime_item_id)
                 .transpose()?,
-            request: transcode::<_, ManagedRuntimeInteractionRequest>(&interaction.request)?,
+            request: transcode::<_, AgentRuntimeInteractionRequest>(&interaction.request)?,
             status: project_interaction_status(interaction.status),
             resolution: interaction
                 .resolution
                 .as_ref()
-                .map(transcode::<_, ManagedRuntimeInteractionResolution>)
+                .map(transcode::<_, AgentRuntimeInteractionResolution>)
                 .transpose()?,
         };
         if !projected.validate() {
@@ -118,12 +118,31 @@ pub fn project_authoritative_agent_snapshot(
 
     let (thread_name, thread_name_source) =
         project_thread_name(snapshot.thread_name, &snapshot.source)?;
-    let has_active_turn = CanonicalConversationView::new(&snapshot.conversation_history)
-        .active_turn()
-        .is_some();
+    let conversation = CanonicalConversationView::new(&snapshot.conversation_history);
+    let active_turn_id = snapshot
+        .execution
+        .active_turn_id
+        .as_ref()
+        .map(|turn| RuntimeTurnId::new(turn.as_str().to_owned()))
+        .transpose()
+        .map_err(|error| presentation(error.to_string()))?;
+    let latest_turn_id = conversation
+        .latest_turn()
+        .map(|turn| RuntimeTurnId::new(turn.id.clone()))
+        .transpose()
+        .map_err(|error| presentation(error.to_string()))?;
+    let execution = AgentRuntimeExecutionView {
+        status: if active_turn_id.is_some() {
+            AgentRuntimeExecutionStatus::Active
+        } else {
+            AgentRuntimeExecutionStatus::Idle
+        },
+        active_turn_id,
+        latest_turn_id,
+    };
     let command_availability = presentation_command_availability(
         snapshot.lifecycle,
-        has_active_turn,
+        execution.status == AgentRuntimeExecutionStatus::Active,
         snapshot
             .interactions
             .iter()
@@ -131,11 +150,12 @@ pub fn project_authoritative_agent_snapshot(
         applied_surface_revision,
     );
 
-    Ok(ManagedRuntimeSnapshot {
+    Ok(AgentRuntimeView {
         thread_id,
-        revision,
+        view_revision: revision,
         captured_at_ms,
         lifecycle: project_lifecycle(snapshot.lifecycle),
+        execution,
         interactions,
         thread_name,
         thread_name_source,
@@ -144,7 +164,7 @@ pub fn project_authoritative_agent_snapshot(
         authority: project_authority(snapshot.source_info.authority),
         fidelity: project_fidelity(snapshot.source_info.fidelity),
         command_availability,
-        conversation_history: snapshot.conversation_history,
+        conversation: snapshot.conversation_history,
     })
 }
 
@@ -164,8 +184,7 @@ fn validate_conversation_history(
 fn project_thread_name(
     thread_name: Option<agentdash_agent_service_api::AgentThreadNameSnapshot>,
     source: &agentdash_agent_service_api::AgentSourceCoordinate,
-) -> Result<(Option<String>, Option<ManagedRuntimeThreadNameSource>), AgentSnapshotProjectionError>
-{
+) -> Result<(Option<String>, Option<AgentRuntimeThreadNameSource>), AgentSnapshotProjectionError> {
     let Some(thread_name) = thread_name else {
         return Ok((None, None));
     };
@@ -185,8 +204,8 @@ fn project_thread_name(
 fn project_thread_name_source(
     source_info: &AgentSnapshotSource,
     source: &agentdash_agent_service_api::AgentSourceCoordinate,
-) -> Result<ManagedRuntimeThreadNameSource, AgentSnapshotProjectionError> {
-    Ok(ManagedRuntimeThreadNameSource {
+) -> Result<AgentRuntimeThreadNameSource, AgentSnapshotProjectionError> {
+    Ok(AgentRuntimeThreadNameSource {
         authority: project_authority(source_info.authority),
         fidelity: project_fidelity(source_info.fidelity),
         source_identity_digest: opaque_digest(source.as_str())?,
@@ -204,43 +223,43 @@ fn presentation_command_availability(
     has_active_turn: bool,
     has_pending_interaction: bool,
     applied_surface_revision: Option<SurfaceRevision>,
-) -> BTreeMap<ManagedRuntimeCommandKind, ManagedRuntimeCommandAvailability> {
+) -> BTreeMap<AgentRuntimeCommandKind, AgentRuntimeCommandAvailability> {
     let active = lifecycle == AgentLifecycleStatus::Active;
-    ManagedRuntimeCommandKind::ALL
+    AgentRuntimeCommandKind::ALL
         .into_iter()
         .map(|command| {
             let available = match command {
-                ManagedRuntimeCommandKind::Create
-                | ManagedRuntimeCommandKind::Activate
-                | ManagedRuntimeCommandKind::Rebind => false,
-                ManagedRuntimeCommandKind::Resume => lifecycle == AgentLifecycleStatus::Suspended,
-                ManagedRuntimeCommandKind::SubmitInput
-                | ManagedRuntimeCommandKind::RequestCompaction
-                | ManagedRuntimeCommandKind::Fork => active && !has_active_turn,
-                ManagedRuntimeCommandKind::Steer | ManagedRuntimeCommandKind::Interrupt => {
+                AgentRuntimeCommandKind::Create
+                | AgentRuntimeCommandKind::Activate
+                | AgentRuntimeCommandKind::Rebind => false,
+                AgentRuntimeCommandKind::Resume => lifecycle == AgentLifecycleStatus::Suspended,
+                AgentRuntimeCommandKind::SubmitInput
+                | AgentRuntimeCommandKind::RequestCompaction
+                | AgentRuntimeCommandKind::Fork => active && !has_active_turn,
+                AgentRuntimeCommandKind::Steer | AgentRuntimeCommandKind::Interrupt => {
                     active && has_active_turn
                 }
-                ManagedRuntimeCommandKind::ResolveInteraction => active && has_pending_interaction,
-                ManagedRuntimeCommandKind::Close => !matches!(
+                AgentRuntimeCommandKind::ResolveInteraction => active && has_pending_interaction,
+                AgentRuntimeCommandKind::Close => !matches!(
                     lifecycle,
                     AgentLifecycleStatus::Closed | AgentLifecycleStatus::Lost
                 ),
             };
-            let evidence = ManagedRuntimeAvailabilityEvidence {
+            let evidence = AgentRuntimeAvailabilityEvidence {
                 blocking_operation_id: None,
                 bound_surface_revision: applied_surface_revision,
                 applied_surface_revision,
             };
             let availability = if available {
-                ManagedRuntimeCommandAvailability::Available { evidence }
+                AgentRuntimeCommandAvailability::Available { evidence }
             } else {
-                ManagedRuntimeCommandAvailability::Unavailable {
+                AgentRuntimeCommandAvailability::Unavailable {
                     reason: if !active {
-                        ManagedRuntimeUnavailabilityReason::RuntimeNotActive
+                        AgentRuntimeUnavailabilityReason::RuntimeNotActive
                     } else if has_active_turn {
-                        ManagedRuntimeUnavailabilityReason::NoActiveTurnRequired
+                        AgentRuntimeUnavailabilityReason::NoActiveTurnRequired
                     } else {
-                        ManagedRuntimeUnavailabilityReason::ActiveTurnRequired
+                        AgentRuntimeUnavailabilityReason::ActiveTurnRequired
                     },
                     evidence,
                 }
@@ -282,42 +301,42 @@ fn opaque_digest(value: &str) -> Result<RuntimePayloadDigest, AgentSnapshotProje
         .map_err(|error| presentation(error.to_string()))
 }
 
-fn project_lifecycle(status: AgentLifecycleStatus) -> ManagedRuntimeLifecycleStatus {
+fn project_lifecycle(status: AgentLifecycleStatus) -> AgentRuntimeLifecycleStatus {
     match status {
-        AgentLifecycleStatus::Creating => ManagedRuntimeLifecycleStatus::Provisioning,
-        AgentLifecycleStatus::Active => ManagedRuntimeLifecycleStatus::Active,
-        AgentLifecycleStatus::Suspended => ManagedRuntimeLifecycleStatus::Suspended,
-        AgentLifecycleStatus::Closed => ManagedRuntimeLifecycleStatus::Closed,
-        AgentLifecycleStatus::Lost => ManagedRuntimeLifecycleStatus::Lost,
+        AgentLifecycleStatus::Creating => AgentRuntimeLifecycleStatus::Provisioning,
+        AgentLifecycleStatus::Active => AgentRuntimeLifecycleStatus::Active,
+        AgentLifecycleStatus::Suspended => AgentRuntimeLifecycleStatus::Suspended,
+        AgentLifecycleStatus::Closed => AgentRuntimeLifecycleStatus::Closed,
+        AgentLifecycleStatus::Lost => AgentRuntimeLifecycleStatus::Lost,
     }
 }
 
-fn project_interaction_status(status: AgentInteractionStatus) -> ManagedRuntimeInteractionStatus {
+fn project_interaction_status(status: AgentInteractionStatus) -> AgentRuntimeInteractionStatus {
     match status {
-        AgentInteractionStatus::Pending => ManagedRuntimeInteractionStatus::Pending,
-        AgentInteractionStatus::Resolved => ManagedRuntimeInteractionStatus::Resolved,
-        AgentInteractionStatus::Cancelled => ManagedRuntimeInteractionStatus::Cancelled,
-        AgentInteractionStatus::Expired => ManagedRuntimeInteractionStatus::Expired,
-        AgentInteractionStatus::Lost => ManagedRuntimeInteractionStatus::Lost,
+        AgentInteractionStatus::Pending => AgentRuntimeInteractionStatus::Pending,
+        AgentInteractionStatus::Resolved => AgentRuntimeInteractionStatus::Resolved,
+        AgentInteractionStatus::Cancelled => AgentRuntimeInteractionStatus::Cancelled,
+        AgentInteractionStatus::Expired => AgentRuntimeInteractionStatus::Expired,
+        AgentInteractionStatus::Lost => AgentRuntimeInteractionStatus::Lost,
     }
 }
 
-fn project_authority(authority: AgentSnapshotAuthority) -> ManagedRuntimeProjectionAuthority {
+fn project_authority(authority: AgentSnapshotAuthority) -> AgentRuntimeProjectionAuthority {
     match authority {
         AgentSnapshotAuthority::AgentAuthoritative => {
-            ManagedRuntimeProjectionAuthority::SourceAuthoritative
+            AgentRuntimeProjectionAuthority::SourceAuthoritative
         }
-        AgentSnapshotAuthority::AgentObserved => ManagedRuntimeProjectionAuthority::SourceObserved,
-        AgentSnapshotAuthority::Derived => ManagedRuntimeProjectionAuthority::RuntimeDerived,
+        AgentSnapshotAuthority::AgentObserved => AgentRuntimeProjectionAuthority::SourceObserved,
+        AgentSnapshotAuthority::Derived => AgentRuntimeProjectionAuthority::RuntimeDerived,
     }
 }
 
-fn project_fidelity(fidelity: SemanticFidelity) -> ManagedRuntimeProjectionFidelity {
+fn project_fidelity(fidelity: SemanticFidelity) -> AgentRuntimeProjectionFidelity {
     match fidelity {
-        SemanticFidelity::Unsupported => ManagedRuntimeProjectionFidelity::Unsupported,
-        SemanticFidelity::Observed => ManagedRuntimeProjectionFidelity::Observed,
-        SemanticFidelity::Approximation => ManagedRuntimeProjectionFidelity::Approximation,
-        SemanticFidelity::Exact => ManagedRuntimeProjectionFidelity::Exact,
+        SemanticFidelity::Unsupported => AgentRuntimeProjectionFidelity::Unsupported,
+        SemanticFidelity::Observed => AgentRuntimeProjectionFidelity::Observed,
+        SemanticFidelity::Approximation => AgentRuntimeProjectionFidelity::Approximation,
+        SemanticFidelity::Exact => AgentRuntimeProjectionFidelity::Exact,
     }
 }
 
@@ -336,7 +355,8 @@ fn presentation(reason: impl Into<String>) -> AgentSnapshotProjectionError {
 #[cfg(test)]
 mod tests {
     use agentdash_agent_service_api::{
-        AgentSnapshot, AgentSnapshotRevision, AgentSnapshotSource, AgentSourceCoordinate,
+        AgentExecutionSnapshot, AgentSnapshot, AgentSnapshotRevision, AgentSnapshotSource,
+        AgentSourceCoordinate,
     };
 
     use super::*;
@@ -346,6 +366,9 @@ mod tests {
             source: AgentSourceCoordinate::new("source-1").expect("source"),
             revision: AgentSnapshotRevision(7),
             lifecycle: AgentLifecycleStatus::Active,
+            execution: AgentExecutionSnapshot {
+                active_turn_id: None,
+            },
             interactions: Vec::new(),
             thread_name: None,
             source_info: AgentSnapshotSource {
@@ -362,18 +385,42 @@ mod tests {
 
     #[test]
     fn authoritative_snapshot_projects_without_runtime_state() {
-        let projected = project_authoritative_agent_snapshot(
+        let projected = project_authoritative_agent_view(
             RuntimeThreadId::new("thread-1").expect("thread"),
             snapshot(),
         )
         .expect("projection");
 
-        assert_eq!(projected.revision, RuntimeProjectionRevision(7));
+        assert_eq!(projected.view_revision, RuntimeProjectionRevision(7));
+        assert_eq!(
+            projected.execution.status,
+            AgentRuntimeExecutionStatus::Idle
+        );
         assert!(projected.operations.is_empty());
         assert!(projected.source_binding.is_none());
         assert_eq!(
             projected.authority,
-            ManagedRuntimeProjectionAuthority::SourceAuthoritative
+            AgentRuntimeProjectionAuthority::SourceAuthoritative
         );
+    }
+
+    #[test]
+    fn execution_uses_complete_agent_fact_even_when_presentation_has_not_arrived() {
+        let mut snapshot = snapshot();
+        snapshot.execution.active_turn_id =
+            Some(agentdash_agent_service_api::AgentTurnId::new("turn-1").expect("turn"));
+
+        let projected = project_authoritative_agent_view(
+            RuntimeThreadId::new("thread-1").expect("thread"),
+            snapshot,
+        )
+        .expect("projection");
+
+        assert_eq!(
+            projected.execution.status,
+            AgentRuntimeExecutionStatus::Active
+        );
+        assert_eq!(projected.active_turn_id(), Some("turn-1"));
+        assert!(projected.conversation.is_empty());
     }
 }

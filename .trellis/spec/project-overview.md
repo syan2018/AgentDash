@@ -32,9 +32,12 @@ AgentDashboard 是一个**统一看板系统**，用于在多设备、多项目�
 
 `LifecycleAgent` 是 `LifecycleRun` 内的一等 Agent 产品身份。`AgentFrame` 是某个 revision 的期望业务 surface，拥有 procedure、capability、context slice、VFS 与 MCP。Business Surface将其编译为immutable snapshot，再与service `RuntimeOffer`求交形成bound surface。
 
-### Managed Agent Runtime
+### Agent Runtime
 
-AgentDash-owned Thread/Turn/Item/Interaction、operation journal、snapshot/events cursor、context/compaction、HookRun/effect 与 Tool Broker的唯一执行事实源。产品入口从`SubjectRef`与run/agent/frame开始，经`AgentRunRuntime` facade和durable binding进入Runtime；Driver与vendor protocol只在Integration adapter以下出现。
+面向 Application 的进程内 command/read/normalize/update seam。产品入口从 `SubjectRef` 与
+run/agent/frame 开始，经 durable binding 解析隐藏的 Complete Agent service/source；concrete
+Complete Agent 拥有 history、execution 与 effect 事实，Agent Runtime 不持久化第三套 aggregate。
+Driver 与 vendor protocol 只在 Runtime Host / Integration adapter 以下出现。
 
 ---
 
@@ -69,7 +72,8 @@ AgentDash-owned Thread/Turn/Item/Interaction、operation journal、snapshot/even
 
 ### 数据归属
 
-- **云端拥有**：Project / Workspace 元数据 / Settings / StateChange / Lifecycle 产品事实 / Agent Runtime canonical journal与binding
+- **云端拥有**：Project / Workspace 元数据 / Settings / StateChange / Lifecycle 产品事实 /
+  concrete Complete Agent durable history 与 Product binding
 - **本机拥有**：Agent 进程、工作空间物理文件
 - 命令路由基于 `Workspace.backend_id`（物理文件所在本机）
 

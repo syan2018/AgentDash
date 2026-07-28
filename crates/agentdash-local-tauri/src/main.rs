@@ -151,7 +151,7 @@ async fn runtime_restart(state: State<'_, DesktopState>) -> Result<LocalRuntimeS
 }
 
 #[tauri::command]
-async fn runtime_snapshot(
+async fn runtime_view(
     state: State<'_, DesktopState>,
 ) -> Result<Option<LocalRuntimeSnapshot>, String> {
     Ok(state.runtime.snapshot().await)
@@ -399,7 +399,7 @@ fn main() {
             runtime_restart,
             runtime_start,
             runtime_stop,
-            runtime_snapshot,
+            runtime_view,
             open_external_url
         ])
         .build(tauri::generate_context!())

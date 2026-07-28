@@ -36,10 +36,10 @@ pub trait CompleteAgentService {
 ```
 
 ```rust
-pub fn project_authoritative_agent_snapshot(
+pub fn project_authoritative_agent_view(
     runtime_thread_id: RuntimeThreadId,
     snapshot: AgentSnapshot,
-) -> Result<ManagedRuntimeSnapshot, AgentSnapshotProjectionError>;
+) -> Result<AgentRuntimeView, AgentSnapshotProjectionError>;
 ```
 
 ```rust
@@ -65,14 +65,15 @@ pub trait AgentRunCompleteAgentResolverPort {
 ```
 
 ```ts
-interface ManagedRuntimeFeedConnection {
+interface AgentRuntimeConnection {
   readonly ready: Promise<void>;
-  reload(): Promise<void>;
+  refresh(): Promise<void>;
+  execute(command: AgentRuntimeCommand): Promise<AgentRuntimeOperationReceipt>;
   close(): void;
 }
 ```
 
-Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt 与 command DTO，原因是
+Runtime 可以保留平台中立的 `AgentRuntimeView`、operation receipt 与 command DTO，原因是
 它们是 API/adapter contract；它们不因此成为数据库事实。
 
 ## 3. Contracts
@@ -88,22 +89,23 @@ Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt
   换 identity 重派。
 - `read` 每次从 Product association 定位 concrete Agent source，调用 Agent authoritative
   read，再在内存中 normalize 为 Product/UI 所需 snapshot。
-- normalize 必须保留 concrete Agent 的 turn/item coordinate，并把
-  `conversation_history: Vec<CanonicalConversationRecord>` 原样交给 Product/UI。Runtime snapshot
-  不再维护 `turns/items/active_turn_id` 平行字段；需要 active/completed/item view 时使用
-  `CanonicalConversationView` 即时推导。
+- Complete Agent `AgentSnapshot.execution.active_turn_id` 是当前执行事实；adapter 必须从自己的
+  source state 显式填充。Runtime normalize 从该字段投影 `execution` 与
+  `command_availability`，从同一次 read 的 `conversation` 投影 presentation，并保留 concrete
+  Agent 的 turn/item coordinate。Runtime 与调用方不得扫描 conversation turn 边界反推控制事实。
 - Product binding 是冷启动解析 Complete Agent 的最小完整输入。resolver 必须先用 binding 中的
   immutable execution profile 与 AgentFrame 重建当前 Host route，再原子返回 service 与
   binding generation；按裸 `service_instance_id` 直接查询进程内 catalog 无法恢复重启后的绑定。
 - 同步 Product command 响应透传 concrete Agent operation receipt 的真实状态。前端收到响应后
-  主动 `reload()` authoritative snapshot；live delta 继续负责执行中的低延迟展示，不承担终态
-  提交证明。
+  由 `AgentRuntimeConnection.refresh()` 收敛 authoritative view。
 - authoritative history 中没有 assistant item 的 terminal turn 仍是完整轮次。前端保留该
   segment，并展示 `turn.error.message`；错误终态不因“没有可渲染文本”而被过滤。
 - `changes` 只有 concrete Agent 真正提供 ordered durable change tail 时才映射该 tail。
   Snapshot-only Agent 通过重复 `read` 恢复，不由 Runtime 伪造 durable cursor。
-- live event 是 connection/process-local `CanonicalConversationRecord`。Runtime 只按 source-local
-  sequence broadcast；gap、Lagged、断连后丢弃 partial lane并重新读取 Agent snapshot。
+- Complete Agent live event 是 connection/process-local `CanonicalConversationRecord`。Runtime
+  对 Application/UI 输出 `AgentRuntimeUpdate`，同一条 update 同时携带最新 execution、command
+  availability、interactions 与 presentation records。`lane_sequence` 只用于当前连接排序；
+  gap、Lagged、断连后丢弃 partial lane并重新读取 Agent view。
 - Runtime 不持久化 operation、projection、journal、change、outbox、source identity map、
   availability revision 或 surface snapshot。
 - Runtime 不比较 Product revision 与 derived Runtime projection revision。并发 gate 使用真实
@@ -156,7 +158,7 @@ Runtime 可以保留平台中立的 `ManagedRuntimeSnapshot`、operation receipt
   reconnect read。
 - cold-start composition test 先清空 Host/catalog 进程态，再以既有 Product binding 读取
   snapshot，断言同一 service/source 被重新 materialize 且 generation 来自新 Host route。
-- frontend feed test 覆盖同步 command 后 authoritative reload；turn segmentation 与静态渲染测试
+- frontend connection test 覆盖同步 command 后 authoritative refresh；turn segmentation 与静态渲染测试
   覆盖无 assistant item 的 failed terminal 及其错误文本。
 - 负向源码搜索断言 Runtime repository、journal/outbox persistence、change worker 与
   projection revision gate 不在 production composition。
@@ -184,7 +186,7 @@ let snapshot = complete_agent.read(AgentReadQuery {
     source: binding.agent.source,
     at_revision: None,
 }).await?;
-project_authoritative_agent_snapshot(binding.runtime_thread_id, snapshot)
+project_authoritative_agent_view(binding.runtime_thread_id, snapshot)
 ```
 
 ```rust
@@ -206,5 +208,5 @@ await submitComposerInput(request);
 
 // Correct: live 展示 partial，command 完成后以 authoritative read 收束终态。
 await submitComposerInput(request);
-await runtimeFeed.reload();
+await runtimeConnection.refresh();
 ```

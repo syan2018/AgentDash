@@ -60,7 +60,7 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 - effective route为`VendorStream`时，Codex标准dynamic tool notification是唯一session presentation producer，Broker只提交internal canonical lifecycle；route为`ToolBroker`时mapper抑制对应vendor presentation。两条路径都复用同一callback执行合同与presentation item identity。
 - 平台`SurfaceAdopt`与ContextFrame mutation在active tool turn中可以先canonical接受。Codex driver的full surface同步等待该turn terminal后再执行thread resume/rebind；等待不占用session锁，使当前tool result能够回灌并继续final assistant。
 - terminal notification只有在presentation sink提交成功后才清理active turn与推进本地terminal fence。terminal sink失败先提交binding-scoped `BindingLost`；若Lost也失败则保留active坐标，允许同terminal重试。
-- sink返回`DriverError::Terminalized`表示Managed Runtime已经提交canonical critical terminal；stdout pump必须清理active turns、pending interactions与RPC waiters并停止，不再进入普通terminal sink failure分支或补`BindingLost`。非terminalized sink error仍保留既有retry/坐标语义。
+- sink返回`DriverError::Terminalized`表示Agent Runtime已经提交canonical critical terminal；stdout pump必须清理active turns、pending interactions与RPC waiters并停止，不再进入普通terminal sink failure分支或补`BindingLost`。非terminalized sink error仍保留既有retry/坐标语义。
 - Approval、user input、MCP elicitation与dynamic-tool interaction都形成durable canonical Interaction。Identity包含稳定source坐标与JSON-RPC request coordinate：同request replay稳定，不同request不碰撞。只有response成功写回Codex后才移除pending并发Resolved。
 - Native compaction真实强度为Observed/Opaque：`thread/compacted`只产生opaque observation；ContextCompact不能冒充managed activation；context inspect为Opaque，thread/read为EventProjected。
 - Native Hook使用Adapter隔离HTTP callback bridge与digest-addressed immutable plugin artifact。Artifact digest覆盖plugin manifest、hooks manifest、bridge、schema和adapter revision，但不包含ephemeral endpoint token或worktree路径。
@@ -124,6 +124,10 @@ Runtime reducer；字段缺失只表示vendor没有提供该事实，不能被ad
 - WP08 production E2E必须通过真实Host activation运行Codex并证明旧connector已删除。
 
 ## 7. Wrong vs Correct
+
+Codex `thread/read` adapter 在 Complete Agent 边界内解析当前 active turn，并显式写入
+`AgentSnapshot.execution.active_turn_id`。Agent Runtime 只投影该业务事实，不从 canonical
+conversation 再次推断。
 
 ```rust
 // Wrong: interrupt请求返回success就宣称Turn已终止。

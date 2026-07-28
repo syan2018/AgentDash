@@ -128,7 +128,7 @@ provider.discover_from_vfs(context, mount_summaries, bounded_files).await
 active VFS -> bounded file scan -> normalized MemoryDiscoveryOutput -> Business Surface context contribution -> immutable AgentSurfaceSnapshot -> BoundAgentSurface -> Driver materialization
 ```
 
-这样分层的原因是不同 Integration 可以贡献 memory inventory 识别逻辑，但读写行为、权限边界和上下文 materialization 生命周期必须继续由平台 VFS、Business Surface 与 Managed Runtime 统一控制。
+这样分层的原因是不同 Integration 可以贡献 memory inventory 识别逻辑，但读写行为、权限边界和上下文 materialization 生命周期必须继续由平台 VFS、Business Surface 与 Agent Runtime 统一控制。
 
 ## Integration Embedded Shared Library Assets
 

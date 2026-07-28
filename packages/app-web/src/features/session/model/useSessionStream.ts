@@ -1,9 +1,13 @@
 import { useEffect, useMemo } from "react";
 
 import type { CanonicalConversationRecord } from "../../../generated/backbone-protocol";
-import { hasActiveCanonicalTurn } from "../../agent-run-runtime/model/agentLiveProjection";
+import type {
+  AgentRuntimeOperationReceipt,
+  AgentRuntimeView,
+} from "../../../generated/agent-runtime-validators";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
-import { useManagedRuntimeFeed } from "../../agent-run-runtime/model/useManagedRuntimeFeed";
+import type { AgentRunProductRuntimeCommandRequest } from "../../../services/agentRunRuntime";
+import { useAgentRuntimeConnection } from "../../agent-run-runtime/model/useAgentRuntimeConnection";
 import {
   createInitialStreamState,
   reduceStreamState,
@@ -33,6 +37,10 @@ export interface UseSessionStreamResult {
   isReceiving: boolean;
   error: Error | null;
   tokenUsage: TokenUsageInfo | null;
+  runtimeView: AgentRuntimeView | null;
+  executeRuntimeCommand: (
+    request: AgentRunProductRuntimeCommandRequest,
+  ) => Promise<AgentRuntimeOperationReceipt>;
   refresh: () => Promise<void>;
   reconnect: () => void;
   close: () => void;
@@ -102,12 +110,12 @@ export function useSessionStream({
   onConnectionChange,
   onError,
 }: UseSessionStreamOptions): UseSessionStreamResult {
-  const feed = useManagedRuntimeFeed({
+  const feed = useAgentRuntimeConnection({
     agentRunTarget,
     enabled,
   });
   const records =
-    feed.snapshot?.conversation_history ?? EMPTY_CONVERSATION_HISTORY;
+    feed.view?.conversation ?? EMPTY_CONVERSATION_HISTORY;
   const coordinates = useMemo(
     () => presentationCoordinates(records, feed.baselinePresentationIds),
     [feed.baselinePresentationIds, records],
@@ -135,8 +143,8 @@ export function useSessionStream({
     for (const event of events) {
       if (event.baseline) boundary = event.event_seq;
     }
-    return feed.snapshot ? boundary : null;
-  }, [events, feed.snapshot]);
+    return feed.view ? boundary : null;
+  }, [events, feed.view]);
   useEffect(() => {
     onConnectionChange?.(feed.lifecycle === "connected");
   }, [feed.lifecycle, onConnectionChange]);
@@ -153,11 +161,11 @@ export function useSessionStream({
     boundTargetKey: feed.boundTargetKey,
     isConnected: feed.lifecycle === "connected",
     isLoading: feed.isLoading,
-    isReceiving: hasActiveCanonicalTurn(
-      feed.snapshot?.conversation_history ?? [],
-    ),
+    isReceiving: feed.view?.execution.status === "active",
     error: feed.error,
     tokenUsage: state.tokenUsage,
+    runtimeView: feed.view,
+    executeRuntimeCommand: feed.execute,
     refresh: feed.refresh,
     reconnect: feed.reconnect,
     close: feed.close,

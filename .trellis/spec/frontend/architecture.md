@@ -5,10 +5,15 @@ Frontend以产品路由与generated contracts组织：Project/Story/Task/Lifecyc
 ## Invariants
 
 - API client只使用generated Rust contracts；不手写Runtime/vendor DTO。
-- AgentRun command availability只来自Runtime snapshot，不从产品status、Backbone或executor kind推导。
-- Runtime feed按snapshot `conversation_history` baseline与process-local live canonical records消费同一协议；只以`presentation_id`合并，不建立第二份turn/item store。canonical record再进入`useSessionStream -> sessionStreamReducer -> SessionEntry -> toolCardRegistry`。target切换隔离旧state。
-- 会话运行态只由canonical `TurnStarted/TurnCompleted`推导。message delta、tool item或provider round结束不能单独停止receiving状态。
-- `AgentRuntimeFeed`等平行renderer不存在；AgentRun workspace只提供Runtime target、inspect、command availability与product projection，不拥有第二套会话UI。
+- AgentRun execution 与 command availability只来自 `AgentRuntimeView/AgentRuntimeUpdate`，不从
+  产品status、Backbone、conversation record或executor kind推导。
+- `AgentRuntimeConnection` 按 `AgentRuntimeView.conversation` baseline 与 update presentations
+  消费同一 canonical schema；只以 `presentation_id` 合并，不建立第二份turn/item store。
+  canonical record再进入 `useSessionStream -> sessionStreamReducer -> SessionEntry ->
+  toolCardRegistry`。target切换隔离旧state。
+- `AgentRuntimeConnection` 是同一 target 的唯一 Runtime 连接 owner。Feed、Composer 与
+  Interaction UI 读取同一 view；Workspace 只提供 Product shell、静态 command binding、
+  model/resource/waiting facts。
 - Workspace Module/Canvas tab以concrete presentation URI为identity；layout按AgentRun product key持久化。
 - VFS/resource surface来自current AgentFrame/Business Surface；Runtime binding只提供typed execution coordinate。
 - Canvas 用户可打开项直接来自 `AgentRunWorkspaceView.workspace_modules` 的 ready Canvas
@@ -33,21 +38,23 @@ Frontend以产品路由与generated contracts组织：Project/Story/Task/Lifecyc
 ### 2. Signatures
 
 ```ts
-type AgentLiveEvent = {
-  source: AgentSourceCoordinate;
-  sequence: AgentServiceU64;
-  record: CanonicalConversationRecord;
+type AgentRuntimeUpdate = {
+  lane_sequence: RuntimeU64;
+  view_revision: RuntimeProjectionRevision;
+  execution: AgentRuntimeExecutionView;
+  command_availability: AgentRuntimeCommandAvailabilityMap;
+  interactions: AgentRuntimeInteraction[];
+  presentations: CanonicalConversationRecord[];
 };
-
-function hasActiveCanonicalTurn(
-  records: readonly CanonicalConversationRecord[],
-): boolean;
 ```
 
 ### 3. Contracts
 
-- transport只接收generated `AgentLiveEvent`形态。
-- `ManagedRuntimeSnapshot.conversation_history`是渲染输入；live只向该数组覆盖/追加canonical record。
+- transport只接收generated `AgentRuntimeUpdate`形态。
+- `AgentRuntimeView.conversation`是渲染输入；update只按 presentation identity
+  覆盖/追加canonical record。
+- execution、active turn、command availability与interactions由每条 update 直接替换，不从
+  presentation event type推导。
 - `AgentDashThreadItem.type`直接决定消息、reasoning或tool/resource card。
 - `TurnCompleted`触发reload，以Complete Agent durable history替换ephemeral overlay；reload期间到达的
   后续canonical records继续fold到新baseline；期间再次出现`TurnCompleted`时排队下一次reload，
@@ -60,7 +67,7 @@ function hasActiveCanonicalTurn(
 | live缺少canonical record | 拒绝并报告连接错误 |
 | presentation id重复 | 覆盖同一record |
 | item completed | 终结该item，不终结turn |
-| turn completed | receiving=false |
+| update.execution=idle | receiving=false |
 | terminal snapshot请求期间收到后续live record | snapshot替换旧overlay后继续保留该record |
 | terminal snapshot请求期间下一回合也完成 | 当前收敛结束后再读取一次authoritative snapshot |
 
@@ -74,17 +81,17 @@ function hasActiveCanonicalTurn(
 
 - transport current/removed shape边界测试。
 - `presentation_id`合并测试。
-- first output与TurnCompleted运行态测试。
+- Runtime update控制状态替换测试。
 - tool + final assistant真实浏览器tracer和reload恢复。
 
 ### 7. Wrong vs Correct
 
 ```ts
-// Wrong
-isReceiving = snapshot.active_turn_id != null;
+// Wrong：presentation 不能承担控制事实。
+isReceiving = hasActiveCanonicalTurn(view.conversation);
 
 // Correct
-isReceiving = hasActiveCanonicalTurn(snapshot.conversation_history);
+isReceiving = view.execution.status === "active";
 ```
 
 ## Data Flow
@@ -94,7 +101,7 @@ React intent
   -> typed service
   -> AgentRun API/facade
   -> Runtime operation receipt
-  -> snapshot/events refresh
+  -> AgentRuntimeView / AgentRuntimeUpdate
   -> view model
 ```
 
@@ -112,9 +119,9 @@ Draft composer
 ## Tests Required
 
 - generated contract check与TypeScript typecheck。
-- command-state availability、target isolation与stream cursor tests。
+- command-state availability、target isolation与connection lane tests。
 - session presentation parity覆盖message/reasoning/plan/tool/context/Companion/usage/error/interaction、item terminal与transient generation切换。
-- service URL/encoding、Draft create/composer/cancel/context/approval tests。
+- service URL/encoding、Draft create、Runtime command/context/interaction tests。
 - Draft tracer必须断言导航早于首个Agent output与turn terminal，首条用户消息由canonical Agent
   history/live产生且只提交一次。
 - Workspace presentation、Canvas/VFS surface与Runtime Lost UI tests。

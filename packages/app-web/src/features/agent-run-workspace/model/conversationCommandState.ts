@@ -15,7 +15,8 @@ import type {
 } from "../../session";
 import type { ExecutorConfig } from "../../../services/executor";
 
-// Adapter boundary to the reusable SessionChatView shell; AgentRun command authority stays in the conversation snapshot.
+// Adapter boundary to the reusable SessionChatView shell. Workspace supplies Product bindings;
+// AgentRuntimeView supplies execution and command availability.
 export type AgentRunChatCommandModel = SessionChatCommandModel;
 export type AgentRunChatCommandState = SessionChatCommandState;
 export type AgentRunChatModel = SessionChatModel;
@@ -219,7 +220,6 @@ export function buildDraftConversationCommandState(input: {
 
 export function buildAgentRunConversationCommandState(input: {
   conversation: {
-    execution: { status: string; active_turn_id?: string; reason?: string };
     commands: ConversationCommandSetView;
     model_config: ConversationModelConfigView;
   } | null | undefined;
@@ -261,11 +261,9 @@ export function buildAgentRunConversationCommandState(input: {
 
   return {
     mode: "runtime",
-    executionStatus: input.conversation.execution.status,
-    activeTurnId: input.conversation.execution.active_turn_id,
+    executionStatus: "runtime",
     commands: input.conversation.commands,
     modelConfig: input.conversation.model_config,
-    helperText: input.conversation.execution.reason,
   };
 }
 
@@ -280,12 +278,25 @@ function normalizeShortcut(value: string | undefined): AgentRunChatCommandModel[
 }
 
 function projectCommand(command: AgentRunConversationCommand): AgentRunChatCommandModel {
+  if (isLocalDraftStartAction(command)) {
+    return {
+      command_id: command.command_id,
+      kind: command.kind,
+      enabled: command.enabled,
+      unavailable_reason: command.unavailable_reason,
+      disabled_code: command.disabled_code,
+      requires_input: command.requires_input,
+      executor_config_policy: normalizeExecutorConfigPolicy(command.executor_config_policy),
+      shortcut: normalizeShortcut(command.shortcut),
+    };
+  }
   return {
     command_id: command.command_id,
     kind: command.kind,
-    enabled: command.enabled,
-    unavailable_reason: command.unavailable_reason,
-    disabled_code: command.disabled_code,
+    runtimeCommand: command.runtime_command,
+    enabled: false,
+    unavailable_reason: "Agent Runtime view 正在加载。",
+    disabled_code: "runtime_view_loading",
     requires_input: command.requires_input,
     executor_config_policy: normalizeExecutorConfigPolicy(command.executor_config_policy),
     shortcut: normalizeShortcut(command.shortcut),
@@ -318,7 +329,6 @@ export function projectAgentRunChatCommandState(
   const enter = commandState.localDraftAction?.command_id ?? commandState.commands.keyboard.enter;
   const primaryCommandId =
     enter
-    ?? runtimeCommands.find((command) => command.kind === "submit_message" && command.enabled)?.command_id
     ?? runtimeCommands.find((command) => command.kind === "submit_message")?.command_id;
   const cancelCommand = conversationCommandByKind(commandState.commands.commands, "cancel");
 

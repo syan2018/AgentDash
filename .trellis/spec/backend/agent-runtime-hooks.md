@@ -1,8 +1,8 @@
-# Managed Agent Runtime Hook Orchestration
+# Agent Runtime Hook Orchestration
 
 ## 1. Scope / Trigger
 
-本规范适用于 Managed Runtime 对已绑定 Hook Plan 的采用、canonical HookRun 生命周期、HookEffect 持久化与恢复，以及 Driver hook notification 进入 Runtime journal 前的校验。修改 Hook plan revision、execution site、failure policy、effect descriptor、HookRun event 或 hook work lease 时必须复核本规范。
+本规范适用于 Agent Runtime 对已绑定 Hook Plan 的采用、canonical HookRun 生命周期、HookEffect 持久化与恢复，以及 Driver hook notification 进入 Runtime journal 前的校验。修改 Hook plan revision、execution site、failure policy、effect descriptor、HookRun event 或 hook work lease 时必须复核本规范。
 
 ## 2. Signatures
 
@@ -30,11 +30,11 @@ pub async fn complete_hook(
 ) -> Result<HookRun, HookOrchestrationError>;
 ```
 
-Runtime 从 Thread 当前 durable `BoundRuntimeHookPlan` 解析 invocation；调用者不能传入或替换计划。`HookExecutionSite` 包含 Managed Runtime、Tool Broker、Agent Core Callback、Driver Native 与 Observed Event Reaction，所有 actionful route 共享同一个 canonical HookRun。
+Runtime 从 Thread 当前 durable `BoundRuntimeHookPlan` 解析 invocation；调用者不能传入或替换计划。`HookExecutionSite` 包含 Agent Runtime、Tool Broker、Agent Core Callback、Driver Native 与 Observed Event Reaction，所有 actionful route 共享同一个 canonical HookRun。
 
 ## 3. Contracts
 
-- Business Agent Surface 编译 Hook sources 与 requirements，Driver Host 绑定 route/profile；Managed Runtime 只采用 immutable bound plan，并独占 HookRun 状态机与 journal authority。
+- Business Agent Surface 编译 Hook sources 与 requirements，Driver Host 绑定 route/profile；Agent Runtime 只采用 immutable bound plan，并独占 HookRun 状态机与 journal authority。
 - 每个 Thread 的首个 `HookPlanRevision` 必须为 1，后续严格增加 1；相同 revision 与完整内容可幂等重放。digest 表达内容而非唯一历史身份，因此不同 revision 可以复用相同 digest。
 - Actionful HookRun 必须按 `Accepted -> Running -> Completed | Blocked | Failed | Stopped | Cancelled` 分三次 durable transaction 推进，并分别产生 canonical accepted/started/terminal event。并发重放只有完整 immutable identity 与目标状态一致时才幂等成功。
 - Runtime 记录所有 execution site 的 actionful HookRun，但不因此接管 Tool Broker、Agent Core 或 Driver Native 的实际执行。Driver event 不能直接伪造 HookPlan/HookRun Runtime-owned transition。

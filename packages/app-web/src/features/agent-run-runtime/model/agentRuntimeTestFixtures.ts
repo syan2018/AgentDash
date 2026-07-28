@@ -67,6 +67,7 @@ function runtimeSnapshot(
             cancellable: false,
           }
         : null,
+      queued_compaction: null,
       last_compaction_outcome: active
         ? null
         : {
@@ -94,7 +95,7 @@ function runtimeSnapshot(
     authority: "source_authoritative",
     fidelity: "exact",
     command_availability: {
-      submit_input: availability(status, !active, "compaction_in_progress"),
+      submit_input: availability(status, true),
       steer: availability(status, false, "active_turn_not_steerable"),
       interrupt: availability(status, false, "turn_not_cancellable"),
       request_compaction: availability(status, !active, "compaction_in_progress"),

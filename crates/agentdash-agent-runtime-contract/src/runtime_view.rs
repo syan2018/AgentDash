@@ -463,9 +463,20 @@ pub struct AgentRuntimeCompactionOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct AgentRuntimeQueuedCompaction {
+    pub operation_id: RuntimeOperationId,
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::RuntimeU64")]
+    #[ts(type = "RuntimeU64")]
+    pub queued_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeExecutionView {
     pub status: AgentRuntimeExecutionStatus,
     pub active_turn: Option<AgentRuntimeActiveTurn>,
+    pub queued_compaction: Option<AgentRuntimeQueuedCompaction>,
     pub last_compaction_outcome: Option<AgentRuntimeCompactionOutcome>,
     pub latest_turn_id: Option<RuntimeTurnId>,
 }
@@ -572,6 +583,7 @@ mod tests {
                 started_at_ms: 42,
                 cancellable: true,
             }),
+            queued_compaction: None,
             last_compaction_outcome: None,
             latest_turn_id: Some(active_turn_id),
         };

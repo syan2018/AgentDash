@@ -800,6 +800,7 @@ mod tests {
             execution: AgentRuntimeExecutionView {
                 status: AgentRuntimeExecutionStatus::Idle,
                 active_turn: None,
+                queued_compaction: None,
                 last_compaction_outcome: None,
                 latest_turn_id: None,
             },

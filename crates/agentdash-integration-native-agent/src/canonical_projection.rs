@@ -239,6 +239,13 @@ pub(crate) fn entry_records(
                 turn: turn(state, &turn_id, Some(&failure))?,
             }));
         }
+        HistoryPayload::CompactionCancelled { compaction_id, .. } => {
+            let turn_id = AgentTurnId::new(compaction_id.0.clone());
+            events.push(BackboneEvent::TurnCompleted(TurnCompletedNotification {
+                thread_id: session_id.to_owned(),
+                turn: turn(state, &turn_id, None)?,
+            }));
+        }
         HistoryPayload::TurnCompleted { turn_id, .. }
         | HistoryPayload::TurnInterrupted { turn_id, .. } => {
             events.push(BackboneEvent::TurnCompleted(TurnCompletedNotification {
@@ -255,6 +262,8 @@ pub(crate) fn entry_records(
         HistoryPayload::InteractionRequested { .. }
         | HistoryPayload::InteractionResolved { .. }
         | HistoryPayload::InteractionCancelled { .. }
+        | HistoryPayload::CompactionQueued { .. }
+        | HistoryPayload::CompactionSideEffectStarted { .. }
         | HistoryPayload::Closed => {}
     }
 
@@ -542,9 +551,11 @@ fn turn_id(payload: &HistoryPayload) -> Option<&str> {
         | HistoryPayload::TurnFailed { turn_id, .. }
         | HistoryPayload::TurnInterrupted { turn_id, .. } => Some(&turn_id.0),
         HistoryPayload::CompactionStarted { compaction_id, .. }
+        | HistoryPayload::CompactionSideEffectStarted { compaction_id, .. }
         | HistoryPayload::CompactionApplied { compaction_id, .. }
         | HistoryPayload::CompactionCompleted { compaction_id, .. }
-        | HistoryPayload::CompactionFailed { compaction_id, .. } => Some(&compaction_id.0),
+        | HistoryPayload::CompactionFailed { compaction_id, .. }
+        | HistoryPayload::CompactionCancelled { compaction_id, .. } => Some(&compaction_id.0),
         HistoryPayload::InitialContextInstalled { .. }
         | HistoryPayload::SurfaceApplied { .. }
         | HistoryPayload::SurfaceRevoked { .. }
@@ -552,6 +563,7 @@ fn turn_id(payload: &HistoryPayload) -> Option<&str> {
         | HistoryPayload::InputAccepted { .. }
         | HistoryPayload::InteractionResolved { .. }
         | HistoryPayload::InteractionCancelled { .. }
+        | HistoryPayload::CompactionQueued { .. }
         | HistoryPayload::Closed => None,
     }
 }
@@ -941,6 +953,13 @@ mod tests {
                         source_head: None,
                         source_digest: source_digest.clone(),
                         started_at_ms: 1_000,
+                    },
+                },
+                HistoryContribution {
+                    entry_id: HistoryEntryId::new("compact-side-effect-started"),
+                    payload: HistoryPayload::CompactionSideEffectStarted {
+                        compaction_id: compaction_id.clone(),
+                        started_at_ms: 1_500,
                     },
                 },
                 HistoryContribution {

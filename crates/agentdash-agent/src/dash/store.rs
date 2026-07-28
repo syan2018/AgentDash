@@ -223,6 +223,56 @@ impl DashAgentStore {
         Ok(())
     }
 
+    pub fn mark_compaction_side_effect_started(
+        &mut self,
+        compaction_id: CompactionId,
+        entry_id: HistoryEntryId,
+    ) -> Result<(), StoreError> {
+        self.commit(DashAgentCommit {
+            expected_head: self.history.head().cloned(),
+            command_settlement: None,
+            effect_settlements: vec![],
+            history: vec![HistoryContribution {
+                entry_id,
+                payload: HistoryPayload::CompactionSideEffectStarted {
+                    compaction_id,
+                    started_at_ms: crate::model::message::now_millis(),
+                },
+            }],
+            enqueue_commands: vec![],
+        })?;
+        Ok(())
+    }
+
+    pub fn cancel_compaction(
+        &mut self,
+        command_id: CommandId,
+        effect_id: EffectId,
+        compaction_id: CompactionId,
+        entry_id: HistoryEntryId,
+    ) -> Result<(), StoreError> {
+        self.commit(DashAgentCommit {
+            expected_head: self.history.head().cloned(),
+            command_settlement: Some(CommandSettlement {
+                command_id,
+                outcome: CommandOutcome::Failed,
+            }),
+            effect_settlements: vec![EffectSettlement {
+                effect_id,
+                outcome: EffectOutcome::Failed,
+            }],
+            history: vec![HistoryContribution {
+                entry_id,
+                payload: HistoryPayload::CompactionCancelled {
+                    compaction_id,
+                    completed_at_ms: crate::model::message::now_millis(),
+                },
+            }],
+            enqueue_commands: vec![],
+        })?;
+        Ok(())
+    }
+
     pub fn fail_compaction(
         &mut self,
         command_id: CommandId,

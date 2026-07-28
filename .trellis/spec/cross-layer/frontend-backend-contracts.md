@@ -191,6 +191,7 @@ facade或Session命令门禁时适用。活动类型和控制权限必须来自�
 ```rust
 AgentExecutionSnapshot {
     active_turn: Option<AgentActiveTurnSnapshot>,
+    queued_compaction: Option<AgentQueuedCompactionSnapshot>,
     last_compaction_outcome: Option<AgentCompactionOutcomeSnapshot>,
 }
 
@@ -215,7 +216,7 @@ AgentChangePayload::ExecutionChanged {
 }
 ```
 
-Runtime无损映射为`AgentRuntimeExecutionView.active_turn`、
+Runtime无损映射为`AgentRuntimeExecutionView.active_turn/queued_compaction`、
 `last_compaction_outcome`和带`expected_view_revision/expected_turn_id/
 blocking_operation_id`证据的command availability。
 
@@ -223,11 +224,14 @@ blocking_operation_id`证据的command availability。
 
 - concrete Agent从同一durable history或provider observation构造typed active Turn；Native
   Compaction的`operation_id`与执行effect identity一致，reload后保持稳定。
+- manual compaction在普通Turn活动期间先发布`queued_compaction`命令事实；只有promotion提交
+  `CompactionStarted`后才成为`active_turn`，避免把排队意图伪装成正在执行。
 - `AgentExecutionSnapshot::command_availability`是Submit、Steer、Interrupt、Compact、
   interaction、Close与Fork的共享owner policy；adapter只决定可观察的kind/phase与
   `cancellable`。
-- Compaction active时Submit、Steer、重复Compact、Fork与Close按owner policy关闭；Interrupt只在
-  `cancellable=true`时开放。草稿编辑与只读浏览不属于Agent command。
+- Compaction active时Submit表示durable deferred input并保持可用；Steer、重复Compact、Fork与
+  Close关闭。Interrupt只在provider side-effect claim前的`cancellable=true`阶段开放。草稿编辑
+  与只读浏览不属于Agent command。
 - Product command facade先读取owner availability：只有Steer可用时才把产品Submit映射为
   `AgentCommand::Steer`；否则只在Submit可用时提交新Turn。
 - `SourceObservation.state=ExecutionChanged`与同次canonical presentation共同发布
@@ -240,8 +244,9 @@ blocking_operation_id`证据的command availability。
 | Condition | Required behavior |
 | --- | --- |
 | active conversation Turn | Steer/可取消的Interrupt可用；Submit按Steer执行 |
-| active Compaction、`cancellable=false` | Submit/Steer/Interrupt/重复Compact/Fork/Close不可用 |
-| active Compaction、`cancellable=true` | 仅Interrupt按owner证据开放 |
+| active conversation Turn + queued compaction | 保持当前Steer；重复Compact/Fork/Close不可用 |
+| active Compaction、`cancellable=false` | deferred Submit可用；Steer/Interrupt/重复Compact/Fork/Close不可用 |
+| active Compaction、`cancellable=true` | deferred Submit与Interrupt按owner证据开放 |
 | `phase=applied` | active Turn保持到terminal；context checkpoint已应用但operation尚未结束 |
 | terminal success/failure/lost/cancelled | `active_turn=None`并发布typed `last_compaction_outcome` |
 | Product请求与owner availability不符 | side effect前拒绝，不根据`execution.status`改写命令 |
@@ -251,7 +256,8 @@ blocking_operation_id`证据的command availability。
 #### 5. Good / Base / Bad Cases
 
 - Good：Native reload在Compaction running阶段恢复同一turn/effect identity、开始时间和命令矩阵。
-- Base：普通Turn继续通过owner开放Steer，现有产品Submit入口无需复制Turn类型判断。
+- Base：普通Turn继续通过owner开放Steer；Compaction期间相同Submit入口按owner事实写入deferred
+  command，不复制Turn类型判断。
 - Bad：只根据`execution.status=active`启用Steer/Interrupt，会把Compaction误当普通对话Turn。
 
 #### 6. Tests Required
@@ -261,8 +267,10 @@ blocking_operation_id`证据的command availability。
 - Native changes测试断言running → applied → terminal均以`ExecutionChanged`发布，并与canonical
   Compaction Turn presentation同lane出现。
 - Runtime mapper测试断言typed Turn、operation和owner unavailable reason无损映射。
-- Product command facade测试断言普通Turn的Submit映射Steer，Compaction Turn在副作用前拒绝。
-- frontend selector测试断言Compaction期间Submit/Cancel/Compact禁用且原因来自Runtime view。
+- Product command facade测试断言普通Turn的Submit映射Steer，Compaction Turn的Submit映射
+  deferred input。
+- frontend selector测试断言Compaction期间Submit保持可用，Cancel/Compact按phase与owner
+  reason门禁；queued状态来自Runtime view。
 - Codex fixture断言可观察ContextCompaction进入typed active Turn，operation保持空值。
 
 #### 7. Wrong vs Correct

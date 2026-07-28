@@ -308,6 +308,21 @@ function decodeExecution(
           ),
         };
       })();
+  const queuedCompaction = execution.queued_compaction === null
+    ? null
+    : (() => {
+        const queued = record(
+          execution.queued_compaction,
+          `${path}.queued_compaction`,
+        );
+        return {
+          ...queued,
+          queued_at_ms: runtimeU64(
+            queued.queued_at_ms,
+            `${path}.queued_compaction.queued_at_ms`,
+          ),
+        };
+      })();
   const lastCompactionOutcome = execution.last_compaction_outcome === null
     ? null
     : (() => {
@@ -326,6 +341,7 @@ function decodeExecution(
   return {
     ...(execution as unknown as AgentRuntimeViewWire["execution"]),
     active_turn: activeTurn,
+    queued_compaction: queuedCompaction,
     last_compaction_outcome: lastCompactionOutcome,
   } as AgentRuntimeView["execution"];
 }
@@ -340,6 +356,14 @@ function encodeExecution(
       : {
           ...execution.active_turn,
           started_at_ms: encodeRuntimeU64(execution.active_turn.started_at_ms),
+        },
+    queued_compaction: execution.queued_compaction === null
+      ? null
+      : {
+          ...execution.queued_compaction,
+          queued_at_ms: encodeRuntimeU64(
+            execution.queued_compaction.queued_at_ms,
+          ),
         },
     last_compaction_outcome: execution.last_compaction_outcome === null
       ? null

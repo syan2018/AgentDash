@@ -115,7 +115,7 @@ export type AgentEffectInspection = { effect_id: AgentEffectIdentity, command_id
 
 export type AgentEffectInspectionState = { "kind": "not_applied" } | { "kind": "accepted", source: AgentSourceCoordinate, } | { "kind": "applied", outcome: AgentAppliedEffectOutcome, } | { "kind": "unknown" };
 
-export type AgentExecutionSnapshot = { active_turn: AgentActiveTurnSnapshot | null, last_compaction_outcome: AgentCompactionOutcomeSnapshot | null, };
+export type AgentExecutionSnapshot = { active_turn: AgentActiveTurnSnapshot | null, queued_compaction: AgentQueuedCompactionSnapshot | null, last_compaction_outcome: AgentCompactionOutcomeSnapshot | null, };
 
 export type AgentForkCapability = { cutoffs: { [key in AgentForkCutoffKind]?: SemanticFidelity }, lineage_fidelity: SemanticFidelity, native_durability: SemanticFidelity, };
 
@@ -188,6 +188,8 @@ export type AgentObservationQuery = { source: AgentSourceCoordinate, };
 export type AgentPayloadDigest = string;
 
 export type AgentProfileDigest = string;
+
+export type AgentQueuedCompactionSnapshot = { command_id: AgentCommandId, operation_id: AgentEffectIdentity, queued_at_ms: AgentServiceU64, };
 
 export type AgentReadQuery = { source: AgentSourceCoordinate, at_revision: AgentSnapshotRevision | null, };
 

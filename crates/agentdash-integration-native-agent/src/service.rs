@@ -34,19 +34,20 @@ use agentdash_agent_service_api::{
     AgentInteractionRequest, AgentInteractionResolution, AgentInteractionSnapshot,
     AgentInteractionStatus, AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveEvent,
     AgentLiveEventStream, AgentObservation, AgentObservationQuery, AgentPayloadDigest,
-    AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor,
-    AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId, AgentServiceU64,
-    AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource,
-    AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor, AgentSourceRevision,
-    AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
-    AgentTerminalOutcome, AgentThreadNameSnapshot, AgentToolDelivery, AgentToolSemanticFacet,
-    AgentToolUpdateSemantics, AgentTurnObservation, AppliedAgentCommandReceipt,
-    AppliedAgentSurface, AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt,
-    AppliedContributionStatus, AppliedForkAgentReceipt, AppliedInitialContextEvidence,
-    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
-    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
-    InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
-    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentQueuedCompactionSnapshot, AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId,
+    AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
+    AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
+    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
+    AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute,
+    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot, AgentToolDelivery,
+    AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnObservation,
+    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
+    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
+    BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
+    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
+    InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
+    ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, CompleteAgentPlacementRequirement, CompleteAgentRegistrationClaim,
@@ -399,6 +400,10 @@ impl DashAgentCompleteService {
         };
         self.materialize_live_surface(source, &service, &metadata)
             .await?;
+        service
+            .recover_pending_execution()
+            .await
+            .map_err(map_dash_error)?;
         Ok((service, metadata))
     }
 
@@ -1688,9 +1693,23 @@ fn dash_execution_snapshot(
                     })
                     .transpose()?,
                 started_at_ms: turn.started_at_ms,
-                // Dash conversation turns have a cancellation handle. Compaction becomes
-                // cancellable only after Slice 4 moves it behind the durable worker.
-                cancellable: active_compaction.is_none(),
+                cancellable: active_compaction
+                    .is_none_or(|compaction| compaction.side_effect_started_at_ms.is_none()),
+            })
+        })
+        .transpose()?;
+    let queued_compaction = state
+        .queued_compaction
+        .as_ref()
+        .map(|queued| {
+            Ok(AgentQueuedCompactionSnapshot {
+                command_id: agentdash_agent_service_api::AgentCommandId::new(
+                    queued.compaction_id.0.clone(),
+                )
+                .map_err(internal)?,
+                operation_id: AgentEffectIdentity::new(queued.operation_id.0.clone())
+                    .map_err(internal)?,
+                queued_at_ms: queued.queued_at_ms,
             })
         })
         .transpose()?;
@@ -1728,6 +1747,7 @@ fn dash_execution_snapshot(
         .transpose()?;
     Ok(agentdash_agent_service_api::AgentExecutionSnapshot {
         active_turn,
+        queued_compaction,
         last_compaction_outcome,
     })
 }
@@ -1786,10 +1806,13 @@ fn change_payload(
         | HistoryPayload::TurnCompleted { .. }
         | HistoryPayload::TurnFailed { .. }
         | HistoryPayload::TurnInterrupted { .. }
+        | HistoryPayload::CompactionQueued { .. }
         | HistoryPayload::CompactionStarted { .. }
+        | HistoryPayload::CompactionSideEffectStarted { .. }
         | HistoryPayload::CompactionApplied { .. }
         | HistoryPayload::CompactionCompleted { .. }
-        | HistoryPayload::CompactionFailed { .. } => Ok(Some(execution_change_payload(state)?)),
+        | HistoryPayload::CompactionFailed { .. }
+        | HistoryPayload::CompactionCancelled { .. } => Ok(Some(execution_change_payload(state)?)),
         HistoryPayload::InteractionRequested { interaction_id, .. }
         | HistoryPayload::InteractionResolved { interaction_id, .. }
         | HistoryPayload::InteractionCancelled { interaction_id } => {

@@ -182,12 +182,22 @@ pub enum HistoryPayload {
     InteractionCancelled {
         interaction_id: InteractionId,
     },
+    CompactionQueued {
+        compaction_id: CompactionId,
+        operation_id: EffectId,
+        mode: CompactionMode,
+        queued_at_ms: u64,
+    },
     CompactionStarted {
         compaction_id: CompactionId,
         operation_id: EffectId,
         mode: CompactionMode,
         source_head: Option<HistoryEntryId>,
         source_digest: String,
+        started_at_ms: u64,
+    },
+    CompactionSideEffectStarted {
+        compaction_id: CompactionId,
         started_at_ms: u64,
     },
     CompactionApplied {
@@ -206,6 +216,10 @@ pub enum HistoryPayload {
         compaction_id: CompactionId,
         error: String,
         lost: bool,
+        completed_at_ms: u64,
+    },
+    CompactionCancelled {
+        compaction_id: CompactionId,
         completed_at_ms: u64,
     },
     TurnCompleted {
@@ -516,8 +530,17 @@ pub struct CompactionState {
     pub retained_from: Option<HistoryEntryId>,
     pub source_digest: String,
     pub started_at_ms: u64,
+    pub side_effect_started_at_ms: Option<u64>,
     pub completed_at_ms: Option<u64>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedCompactionState {
+    pub compaction_id: CompactionId,
+    pub operation_id: EffectId,
+    pub mode: CompactionMode,
+    pub queued_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -549,6 +572,7 @@ pub struct AgentHistoryState {
     pub accepted_inputs: Vec<String>,
     pub active_turn: Option<AgentTurnId>,
     pub active_compaction: Option<CompactionId>,
+    pub queued_compaction: Option<QueuedCompactionState>,
     pub turns: BTreeMap<AgentTurnId, TurnState>,
     pub items: BTreeMap<AgentItemId, ItemState>,
     pub interactions: BTreeMap<InteractionId, InteractionState>,
@@ -577,6 +601,7 @@ impl AgentHistoryReplayer {
                 accepted_inputs: Vec::new(),
                 active_turn: None,
                 active_compaction: None,
+                queued_compaction: None,
                 turns: BTreeMap::new(),
                 items: BTreeMap::new(),
                 interactions: BTreeMap::new(),
@@ -900,6 +925,22 @@ fn apply_payload(
             }
             interaction.cancelled = true;
         }
+        HistoryPayload::CompactionQueued {
+            compaction_id,
+            operation_id,
+            mode,
+            queued_at_ms,
+        } => {
+            if state.queued_compaction.is_some() || state.active_compaction.is_some() {
+                return Err(HistoryError::CompactionAlreadyPending);
+            }
+            state.queued_compaction = Some(QueuedCompactionState {
+                compaction_id: compaction_id.clone(),
+                operation_id: operation_id.clone(),
+                mode: *mode,
+                queued_at_ms: *queued_at_ms,
+            });
+        }
         HistoryPayload::CompactionStarted {
             compaction_id,
             operation_id,
@@ -909,6 +950,13 @@ fn apply_payload(
             started_at_ms,
         } => {
             ensure_idle(state)?;
+            if let Some(queued) = state.queued_compaction.take()
+                && (queued.compaction_id != *compaction_id
+                    || queued.operation_id != *operation_id
+                    || queued.mode != *mode)
+            {
+                return Err(HistoryError::QueuedCompactionMismatch);
+            }
             if source_head != &state.head {
                 return Err(HistoryError::CompactionSourceHeadMismatch);
             }
@@ -925,6 +973,7 @@ fn apply_payload(
                         retained_from: None,
                         source_digest: source_digest.clone(),
                         started_at_ms: *started_at_ms,
+                        side_effect_started_at_ms: None,
                         completed_at_ms: None,
                         error: None,
                     },
@@ -968,6 +1017,25 @@ fn apply_payload(
             state.active_turn = Some(turn_id);
             state.active_compaction = Some(compaction_id.clone());
         }
+        HistoryPayload::CompactionSideEffectStarted {
+            compaction_id,
+            started_at_ms,
+        } => {
+            ensure_active_compaction(state, compaction_id)?;
+            let compaction = state
+                .compactions
+                .get_mut(compaction_id)
+                .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?;
+            if compaction
+                .side_effect_started_at_ms
+                .replace(*started_at_ms)
+                .is_some()
+            {
+                return Err(HistoryError::InvalidCompactionTransition(
+                    compaction_id.clone(),
+                ));
+            }
+        }
         HistoryPayload::CompactionApplied {
             compaction_id,
             revision,
@@ -981,7 +1049,10 @@ fn apply_payload(
                 .compactions
                 .get_mut(compaction_id)
                 .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?;
-            if compaction.source_digest != *source_digest || compaction.revision.is_some() {
+            if compaction.source_digest != *source_digest
+                || compaction.side_effect_started_at_ms.is_none()
+                || compaction.revision.is_some()
+            {
                 return Err(HistoryError::InvalidCompactionTransition(
                     compaction_id.clone(),
                 ));
@@ -1045,6 +1116,37 @@ fn apply_payload(
                 .ok_or_else(|| HistoryError::UnknownItem(item_id.clone()))?
                 .status = status;
             terminalize_turn(state, &turn_id, status, *completed_at_ms)?;
+        }
+        HistoryPayload::CompactionCancelled {
+            compaction_id,
+            completed_at_ms,
+        } => {
+            ensure_active_compaction(state, compaction_id)?;
+            let compaction = state
+                .compactions
+                .get_mut(compaction_id)
+                .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?;
+            if compaction.side_effect_started_at_ms.is_some() || compaction.revision.is_some() {
+                return Err(HistoryError::InvalidCompactionTransition(
+                    compaction_id.clone(),
+                ));
+            }
+            compaction.status = ActivityStatus::Interrupted;
+            compaction.completed_at_ms = Some(*completed_at_ms);
+            state.active_compaction = None;
+            let turn_id = compaction_turn_id(compaction_id);
+            let item_id = compaction_item_id(compaction_id);
+            state
+                .items
+                .get_mut(&item_id)
+                .ok_or_else(|| HistoryError::UnknownItem(item_id.clone()))?
+                .status = ActivityStatus::Interrupted;
+            terminalize_turn(
+                state,
+                &turn_id,
+                ActivityStatus::Interrupted,
+                *completed_at_ms,
+            )?;
         }
         HistoryPayload::TurnCompleted {
             turn_id,
@@ -1207,6 +1309,10 @@ pub enum HistoryError {
     InteractionAlreadyResolved(InteractionId),
     #[error("duplicate compaction {0:?}")]
     DuplicateCompaction(CompactionId),
+    #[error("another compaction command is already queued or active")]
+    CompactionAlreadyPending,
+    #[error("promoted compaction does not match the queued command fact")]
+    QueuedCompactionMismatch,
     #[error("compaction is not active: {0:?}")]
     CompactionNotActive(CompactionId),
     #[error("compaction source head does not match current history head")]

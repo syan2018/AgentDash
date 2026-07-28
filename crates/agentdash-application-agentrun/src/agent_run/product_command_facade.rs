@@ -516,6 +516,7 @@ mod tests {
                 started_at_ms: 1,
                 cancellable,
             }),
+            queued_compaction: None,
             last_compaction_outcome: None,
         };
         let revision = agentdash_agent_service_api::AgentSnapshotRevision(1);

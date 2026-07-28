@@ -174,3 +174,89 @@ callback_repository.reserve(route, invocation).await?;
 let route = host.resolve_callback_route(&invocation.meta).await?;
 handler.invoke(invocation.meta.idempotency_key, invocation.payload).await
 ```
+
+## Scenario: Durable Compaction Worker Lease
+
+### 1. Scope / Trigger
+
+修改Dash compaction queue、worker、provider side effect、restart recovery或source JSONB document
+时适用。lease属于source owner，因为它决定哪个worker可以执行不可安全重放的provider请求。
+
+### 2. Signatures
+
+```rust
+DashActiveExecutionState {
+    turn_id,
+    request,
+    lease: Option<DashWorkerLease>,
+}
+
+DashWorkerLease {
+    owner_id: String,
+    expires_at_ms: u64,
+}
+
+HistoryPayload =
+    CompactionQueued { compaction_id, operation_id, mode, queued_at_ms }
+  | CompactionStarted { ... }
+  | CompactionSideEffectStarted { compaction_id, started_at_ms }
+  | CompactionApplied { ... }
+  | CompactionCompleted { ... }
+  | CompactionFailed { lost, ... }
+  | CompactionCancelled { ... };
+```
+
+数据库通过正式migration为已有`dash_complete_source.repository.active`补齐`lease`字段；新状态由
+repository JSONB整体CAS写入，不建立平行worker表。
+
+### 3. Contracts
+
+- `CompactionQueued`只表示durable command；promotion提交`CompactionStarted`后才建立正式Turn。
+- provider side-effect claim是取消线性化点：claim前Interrupt可提交`CompactionCancelled`，
+  claim后`cancellable=false`。
+- worker每5秒续租15秒lease。其它Service实例在lease有效时只观察；lease过期后，side effect前
+  可安全收敛为failed，side effect后只能收敛为Lost。
+- successful terminal、failed、lost与cancelled均在source CAS中settle command/effect；dependent
+  input只在compaction succeeded后promotion，其余状态同步终态化。
+- source digest/head fence固定provider request前缀；同一operation identity贯穿queued、Turn、
+  lease、terminal与inspect。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 有效lease由其它worker持有 | 不claim、不重放provider side effect |
+| claim前Interrupt先提交 | cancelled；worker CAS失败且不调用provider |
+| side effect后Interrupt | typed not cancellable |
+| lease过期且side effect未开始 | failed；dependent command不执行 |
+| lease过期且side effect已开始 | Lost；checkpoint不推进，dependent command blocked/lost |
+| terminal CAS重复 | 返回原receipt；不重复append或apply |
+
+### 5. Good / Base / Bad Cases
+
+- Good：Service B在Service A lease有效时读取同一source，只返回相同running operation。
+- Base：manual compaction排在普通Turn后，Turn终态后promotion；期间提交的输入在成功终态后只执行
+  一次。
+- Bad：看到`CompactionStarted`就由每个新Service实例重新调用provider；这会重复不可逆side
+  effect并让terminal identity分叉。
+
+### 6. Tests Required
+
+- active Turn queue manual compaction，断言`TurnCompleted < CompactionStarted`且operation不变。
+- blocking compactor期间提交输入，断言terminal前没有`InputAccepted`，成功后恰好一次。
+- claim CAS barrier覆盖pre-side-effect cancel；provider开始后command matrix必须不可取消。
+- worker panic/reopen覆盖lease失效与Lost terminal；并发Service reopen在有效lease期间不得误判。
+- failed/lost/cancelled覆盖dependent command/effect不保留Accepted。
+- migration与repository serialization测试覆盖active lease字段。
+
+### 7. Wrong vs Correct
+
+```rust
+// Wrong：HTTP future拥有compactor生命周期，进程退出后只剩Started。
+compactor.compact(request).await?;
+
+// Correct：source先提交queue/Turn/lease事实，worker按claim fence执行并幂等terminal。
+let claim = source.claim_compaction(operation, lease).await?;
+let outcome = worker.run_with_heartbeat(claim).await;
+source.commit_compaction_terminal(operation, outcome).await?;
+```

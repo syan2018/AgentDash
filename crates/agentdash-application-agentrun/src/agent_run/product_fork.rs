@@ -398,6 +398,7 @@ mod tests {
             execution: agentdash_agent_runtime_contract::AgentRuntimeExecutionView {
                 status: agentdash_agent_runtime_contract::AgentRuntimeExecutionStatus::Idle,
                 active_turn: None,
+                queued_compaction: None,
                 last_compaction_outcome: None,
                 latest_turn_id: None,
             },

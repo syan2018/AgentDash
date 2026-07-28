@@ -40,7 +40,7 @@ export type AgentRuntimeContractSchema = { initial_context: AgentRuntimeInitialC
 
 export type AgentRuntimeExecutionStatus = "idle" | "active";
 
-export type AgentRuntimeExecutionView = { status: AgentRuntimeExecutionStatus, active_turn: AgentRuntimeActiveTurn | null, last_compaction_outcome: AgentRuntimeCompactionOutcome | null, latest_turn_id: RuntimeTurnId | null, };
+export type AgentRuntimeExecutionView = { status: AgentRuntimeExecutionStatus, active_turn: AgentRuntimeActiveTurn | null, queued_compaction: AgentRuntimeQueuedCompaction | null, last_compaction_outcome: AgentRuntimeCompactionOutcome | null, latest_turn_id: RuntimeTurnId | null, };
 
 export type AgentRuntimeForkCutoff = { "kind": "head" } | { "kind": "completed_turn", turn_id: RuntimeTurnId, };
 
@@ -87,6 +87,8 @@ export type AgentRuntimeProjectionAuthority = "source_authoritative" | "source_o
 export type AgentRuntimeProjectionFidelity = "unsupported" | "observed" | "approximation" | "exact";
 
 export type AgentRuntimeProjectionSchema = { view: AgentRuntimeView, update: AgentRuntimeUpdate, };
+
+export type AgentRuntimeQueuedCompaction = { operation_id: RuntimeOperationId, queued_at_ms: RuntimeU64, };
 
 export type AgentRuntimeSourceBindingEvidence = { source_ref: RuntimeSourceRef, committed_at_revision: RuntimeProjectionRevision, applied_surface_revision: SurfaceRevision, activated_at_revision: RuntimeProjectionRevision | null, };
 

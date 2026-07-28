@@ -901,6 +901,16 @@
             }
           ]
         },
+        "queued_compaction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRuntimeQueuedCompaction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "last_compaction_outcome": {
           "anyOf": [
             {
@@ -974,6 +984,21 @@
       "enum": [
         "running",
         "applied"
+      ]
+    },
+    "AgentRuntimeQueuedCompaction": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string"
+        },
+        "queued_at_ms": {
+          "$ref": "#/$defs/RuntimeU64"
+        }
+      },
+      "required": [
+        "operation_id",
+        "queued_at_ms"
       ]
     },
     "AgentRuntimeCompactionOutcome": {

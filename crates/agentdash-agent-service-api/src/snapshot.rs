@@ -146,6 +146,17 @@ pub struct AgentCompactionOutcomeSnapshot {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentQueuedCompactionSnapshot {
+    pub command_id: crate::AgentCommandId,
+    pub operation_id: crate::AgentEffectIdentity,
+    #[serde(with = "crate::wire_u64")]
+    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+    #[ts(type = "AgentServiceU64")]
+    pub queued_at_ms: u64,
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
@@ -197,6 +208,7 @@ pub enum AgentControlAvailability {
 #[serde(rename_all = "snake_case")]
 pub struct AgentExecutionSnapshot {
     pub active_turn: Option<AgentActiveTurnSnapshot>,
+    pub queued_compaction: Option<AgentQueuedCompactionSnapshot>,
     pub last_compaction_outcome: Option<AgentCompactionOutcomeSnapshot>,
 }
 
@@ -217,12 +229,18 @@ impl AgentExecutionSnapshot {
             blocking_operation_id: self
                 .active_turn
                 .as_ref()
-                .and_then(|turn| turn.operation_id.clone()),
+                .and_then(|turn| turn.operation_id.clone())
+                .or_else(|| {
+                    self.queued_compaction
+                        .as_ref()
+                        .map(|compaction| compaction.operation_id.clone())
+                }),
         };
         let active = lifecycle == AgentLifecycleStatus::Active;
         let active_turn = self.active_turn.as_ref();
         let compaction_active =
             active_turn.is_some_and(|turn| turn.kind == AgentActiveTurnKind::ContextCompaction);
+        let compaction_pending = compaction_active || self.queued_compaction.is_some();
 
         [
             AgentControlKind::SubmitInput,
@@ -243,12 +261,9 @@ impl AgentExecutionSnapshot {
                 })
             } else {
                 match command {
+                    AgentControlKind::SubmitInput if compaction_active => None,
                     AgentControlKind::SubmitInput if active_turn.is_some() => {
-                        Some(if compaction_active {
-                            AgentControlUnavailabilityReason::CompactionInProgress
-                        } else {
-                            AgentControlUnavailabilityReason::NoActiveTurnRequired
-                        })
+                        Some(AgentControlUnavailabilityReason::NoActiveTurnRequired)
                     }
                     AgentControlKind::SubmitInput => None,
                     AgentControlKind::Steer if compaction_active => {
@@ -267,27 +282,26 @@ impl AgentExecutionSnapshot {
                         Some(AgentControlUnavailabilityReason::TurnNotCancellable)
                     }
                     AgentControlKind::Interrupt => None,
-                    AgentControlKind::RequestCompaction if active_turn.is_some() => {
-                        Some(if compaction_active {
-                            AgentControlUnavailabilityReason::CompactionInProgress
-                        } else {
-                            AgentControlUnavailabilityReason::NoActiveTurnRequired
-                        })
+                    AgentControlKind::RequestCompaction if compaction_pending => {
+                        Some(AgentControlUnavailabilityReason::CompactionInProgress)
                     }
+                    AgentControlKind::RequestCompaction if active_turn.is_some() => None,
                     AgentControlKind::RequestCompaction => None,
                     AgentControlKind::ResolveInteraction if !has_pending_interaction => {
                         Some(AgentControlUnavailabilityReason::PendingInteractionRequired)
                     }
                     AgentControlKind::ResolveInteraction => None,
-                    AgentControlKind::Close if compaction_active => {
+                    AgentControlKind::Close if compaction_pending => {
                         Some(AgentControlUnavailabilityReason::CompactionInProgress)
                     }
                     AgentControlKind::Close => None,
-                    AgentControlKind::Fork if active_turn.is_some() => Some(if compaction_active {
-                        AgentControlUnavailabilityReason::CompactionInProgress
-                    } else {
-                        AgentControlUnavailabilityReason::NoActiveTurnRequired
-                    }),
+                    AgentControlKind::Fork if active_turn.is_some() || compaction_pending => {
+                        Some(if compaction_pending {
+                            AgentControlUnavailabilityReason::CompactionInProgress
+                        } else {
+                            AgentControlUnavailabilityReason::NoActiveTurnRequired
+                        })
+                    }
                     AgentControlKind::Fork => None,
                 }
             };

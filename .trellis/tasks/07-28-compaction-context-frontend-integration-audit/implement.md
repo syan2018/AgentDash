@@ -22,10 +22,13 @@ Slice 5的Runtime/Frontend接线已解除前置阻塞。
 - [x] Slice 1：原Session Compaction Turn、共享materializer与canonical lifecycle已实现。
 - [x] Slice 1复核：Compaction Turn生命周期时间已进入durable history，snapshot/live/reload不再从
   Unix epoch计时。
-- [ ] Slice 2：typed active Turn、terminal outcome、owner command policy、Runtime无损映射、
-  Codex observed projection与前端基础门禁已完成；manual queue、deferred input、cancel phase与
-  recovery fixture继续实施。
+- [x] Slice 2：typed active Turn、typed queued compaction、terminal outcome、owner command
+  policy、Runtime无损映射、Codex observed projection、manual queue、deferred input、
+  pre-side-effect cancel与前端门禁已完成。
 - [ ] Slice 3：进入typed checkpoint与Exact context query实施。
+- [ ] Slice 4：manual/automatic compaction已迁移到Accepted后的source-owned worker，具备
+  claim lease、heartbeat、过期Lost recovery、幂等terminal与正式migration；outer effect
+  单一账本收束继续实施。
 
 ## Slice 2/3 实施前复核（2026-07-28）
 
@@ -187,6 +190,18 @@ Product/Runtime/UI三套规则。
 7. 删除 Product Workspace active-turn compact特例及Runtime command副本，统一使用同一command authority与stale identity。
 8. 明确并实现 `07-17` 已定义的 manual queue + deferred input语义。
 9. close/fork/interrupt/cancel按 activity phase显式计算。
+
+已实现的durable语义：
+
+- manual compaction先提交`CompactionQueued`命令事实；普通Turn终态后再promotion为正式
+  Compaction Turn；
+- active Compaction期间的输入以Compaction command dependency持久化，成功后只promotion一次，
+  failed/lost/cancelled则同步终态化，不留下Accepted；
+- provider side effect claim前允许Interrupt，claim提交后由owner policy明确不可取消；
+- compactor worker持久化lease并heartbeat；其它Service实例不会抢占有效lease，lease过期时
+  side effect前收敛为failed、side effect后收敛为Lost；
+- queued/running/applied/terminal变化都经同一个source observation发布，前端可区分
+  “已排队上下文压缩”与正式Compaction Turn。
 
 主要文件：
 

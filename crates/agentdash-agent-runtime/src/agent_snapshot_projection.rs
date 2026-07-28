@@ -7,10 +7,10 @@ use agentdash_agent_runtime_contract::{
     AgentRuntimeCommandKind, AgentRuntimeCompactionOutcome, AgentRuntimeExecutionStatus,
     AgentRuntimeExecutionView, AgentRuntimeInteraction, AgentRuntimeInteractionRequest,
     AgentRuntimeInteractionResolution, AgentRuntimeInteractionStatus, AgentRuntimeLifecycleStatus,
-    AgentRuntimeProjectionAuthority, AgentRuntimeProjectionFidelity, AgentRuntimeThreadNameSource,
-    AgentRuntimeUnavailabilityReason, AgentRuntimeView, RuntimeInteractionId, RuntimeItemId,
-    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
-    SurfaceRevision,
+    AgentRuntimeProjectionAuthority, AgentRuntimeProjectionFidelity, AgentRuntimeQueuedCompaction,
+    AgentRuntimeThreadNameSource, AgentRuntimeUnavailabilityReason, AgentRuntimeView,
+    RuntimeInteractionId, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
+    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 use agentdash_agent_service_api::{
     AgentControlAvailability, AgentControlKind, AgentControlUnavailabilityReason,
@@ -133,6 +133,20 @@ pub fn project_authoritative_agent_view(
         .as_ref()
         .map(transcode::<_, AgentRuntimeCompactionOutcome>)
         .transpose()?;
+    let queued_compaction = snapshot
+        .execution
+        .queued_compaction
+        .as_ref()
+        .map(|queued| {
+            Ok(AgentRuntimeQueuedCompaction {
+                operation_id: RuntimeOperationId::new(queued.operation_id.as_str().to_owned())
+                    .map_err(|error| AgentSnapshotProjectionError::InvalidSnapshot {
+                        reason: error.to_string(),
+                    })?,
+                queued_at_ms: queued.queued_at_ms,
+            })
+        })
+        .transpose()?;
     let latest_turn_id = conversation
         .latest_turn()
         .map(|turn| RuntimeTurnId::new(turn.id.clone()))
@@ -145,6 +159,7 @@ pub fn project_authoritative_agent_view(
             AgentRuntimeExecutionStatus::Idle
         },
         active_turn,
+        queued_compaction,
         last_compaction_outcome,
         latest_turn_id,
     };
@@ -450,6 +465,7 @@ mod tests {
             lifecycle: AgentLifecycleStatus::Active,
             execution: AgentExecutionSnapshot {
                 active_turn: None,
+                queued_compaction: None,
                 last_compaction_outcome: None,
             },
             command_availability: [

@@ -54,6 +54,7 @@ describe("Agent Runtime projection", () => {
             started_at_ms: 1000n,
             cancellable: true,
           },
+          queued_compaction: null,
           last_compaction_outcome: null,
           latest_turn_id: "turn-1",
         },

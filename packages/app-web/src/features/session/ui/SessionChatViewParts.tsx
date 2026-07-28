@@ -35,6 +35,9 @@ import { DisclosureRow } from "../../../components/ui/disclosure";
 import { getTurnSectionKey } from "./turnSectionIdentity";
 
 type AgentRuntimeActiveTurn = NonNullable<AgentRuntimeView["execution"]["active_turn"]>;
+type AgentRuntimeQueuedCompaction = NonNullable<
+  AgentRuntimeView["execution"]["queued_compaction"]
+>;
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
 type ExecutorConfigState = ReturnType<typeof useExecutorConfig>;
@@ -248,6 +251,7 @@ export function SessionChatStream({
   isLoading,
   streamingEntryId,
   activeTurn,
+  queuedCompaction,
   streamPrefixContent,
   onForkFromMessageRef,
   onScroll,
@@ -261,6 +265,7 @@ export function SessionChatStream({
   isLoading: boolean;
   streamingEntryId: string | null;
   activeTurn?: AgentRuntimeActiveTurn | null;
+  queuedCompaction?: AgentRuntimeQueuedCompaction | null;
   streamPrefixContent?: ReactNode;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   onScroll: () => void;
@@ -286,6 +291,7 @@ export function SessionChatStream({
                 companionSubagents={companionSubagents}
                 streamingEntryId={streamingEntryId}
                 activeTurn={activeTurn}
+                queuedCompaction={queuedCompaction}
                 onForkFromMessageRef={onForkFromMessageRef}
               />
             ))
@@ -435,6 +441,7 @@ function TurnSection({
   companionSubagents,
   streamingEntryId,
   activeTurn,
+  queuedCompaction,
   onForkFromMessageRef,
 }: {
   segment: TurnSegment;
@@ -442,6 +449,7 @@ function TurnSection({
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   streamingEntryId: string | null;
   activeTurn?: AgentRuntimeActiveTurn | null;
+  queuedCompaction?: AgentRuntimeQueuedCompaction | null;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
 }) {
   const terminalLabel = segment.turnId ? terminalTurnLabel(segment.status) : null;
@@ -451,7 +459,11 @@ function TurnSection({
       ? currentActivity.phase === "applied"
         ? "正在应用上下文压缩"
         : "正在压缩上下文"
-      : segment.turnId ? "执行中" : null);
+      : segment.turnId
+        ? queuedCompaction
+          ? "执行中 · 已排队上下文压缩"
+          : "执行中"
+        : null);
   const activeElapsedMs = useActiveTurnElapsedMs(segment.startedAtMs, segment.status === "active");
   const displayDurationMs = segment.durationMs ?? activeElapsedMs;
   const [collapsed, setCollapsed] = useState(false);

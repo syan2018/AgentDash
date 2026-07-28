@@ -14,7 +14,7 @@ use agentdash_agent::dash::{
     DashCoreError, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
     DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
     DashProviderRequest, DashServiceError, DashToolCall, DashToolCallbacks, DashToolResult,
-    NoopDashConversationNamer, NoopDashHistoryCallbacks,
+    HistoryPayload, NoopDashConversationNamer, NoopDashHistoryCallbacks,
 };
 use agentdash_agent_protocol::{
     BackboneEvent, ContextFrameKind, ContextFrameSection, PlatformEvent, PresentationDurability,
@@ -54,6 +54,7 @@ use tokio::sync::{Barrier, Notify, RwLock};
 struct RecordingDashRepository {
     source: String,
     durable: Arc<RwLock<RecordingCompleteDurableState>>,
+    side_effect_claim_gate: Arc<Mutex<Option<(Arc<Notify>, Arc<Notify>)>>>,
 }
 
 #[async_trait]
@@ -86,6 +87,22 @@ impl DashAgentRepository for RecordingDashRepository {
         expected: DashAgentRepositoryState,
         replacement: DashAgentRepositoryState,
     ) -> Result<(), DashServiceError> {
+        let gate = self.side_effect_claim_gate.lock().unwrap().clone();
+        if replacement.history().entries().iter().any(|entry| {
+            matches!(
+                entry.payload,
+                HistoryPayload::CompactionSideEffectStarted { .. }
+            )
+        }) && !expected.history().entries().iter().any(|entry| {
+            matches!(
+                entry.payload,
+                HistoryPayload::CompactionSideEffectStarted { .. }
+            )
+        }) && let Some((entered, release)) = gate
+        {
+            entered.notify_one();
+            release.notified().await;
+        }
         let mut durable = self.durable.write().await;
         if durable.repositories.get(&self.source) != Some(&expected) {
             return Err(DashServiceError::Conflict {
@@ -112,6 +129,7 @@ struct RecordingCompleteStore {
     lose_next_commit_receipt: AtomicBool,
     fail_next_terminal_commit: AtomicBool,
     accepted_commit_barrier: Mutex<Option<Arc<Barrier>>>,
+    side_effect_claim_gate: Arc<Mutex<Option<(Arc<Notify>, Arc<Notify>)>>>,
 }
 
 impl RecordingCompleteStore {
@@ -125,6 +143,10 @@ impl RecordingCompleteStore {
 
     fn synchronize_next_accepted_commits(&self) {
         *self.accepted_commit_barrier.lock().unwrap() = Some(Arc::new(Barrier::new(2)));
+    }
+
+    fn block_next_compaction_side_effect_claim(&self, entered: Arc<Notify>, release: Arc<Notify>) {
+        *self.side_effect_claim_gate.lock().unwrap() = Some((entered, release));
     }
 }
 
@@ -145,6 +167,7 @@ impl DashAgentRepositoryStore for RecordingCompleteStore {
         Ok(Arc::new(RecordingDashRepository {
             source: source.0.clone(),
             durable: self.durable.clone(),
+            side_effect_claim_gate: self.side_effect_claim_gate.clone(),
         }))
     }
 
@@ -164,6 +187,7 @@ impl DashAgentRepositoryStore for RecordingCompleteStore {
         Ok(Some(Arc::new(RecordingDashRepository {
             source: source.0.clone(),
             durable: self.durable.clone(),
+            side_effect_claim_gate: self.side_effect_claim_gate.clone(),
         })))
     }
 }
@@ -595,6 +619,21 @@ impl DashCompactor for FixtureCompactor {
 struct BlockingCompactor {
     started: Arc<Notify>,
     release: Arc<Notify>,
+}
+
+struct PanickingCompactor {
+    started: Arc<Notify>,
+}
+
+#[async_trait]
+impl DashCompactor for PanickingCompactor {
+    async fn compact(
+        &self,
+        _request: DashCompactionRequest,
+    ) -> Result<DashCompactionResult, DashServiceError> {
+        self.started.notify_one();
+        panic!("injected compaction worker crash after provider side effect started");
+    }
 }
 
 #[async_trait]
@@ -3200,17 +3239,14 @@ async fn active_compaction_snapshot_keeps_operation_phase_and_owner_command_poli
         .await
         .unwrap();
 
+    let compact = AgentCommandEnvelope {
+        meta: meta("compact-active", "effect-compact-active"),
+        source: source.clone(),
+        command: AgentCommand::RequestCompaction,
+    };
     let execution_service = service.clone();
-    let execution_source = source.clone();
-    let execution = tokio::spawn(async move {
-        execution_service
-            .execute(AgentCommandEnvelope {
-                meta: meta("compact-active", "effect-compact-active"),
-                source: execution_source,
-                command: AgentCommand::RequestCompaction,
-            })
-            .await
-    });
+    let execution_request = compact.clone();
+    let execution = tokio::spawn(async move { execution_service.execute(execution_request).await });
     started.notified().await;
 
     let active = service
@@ -3229,11 +3265,17 @@ async fn active_compaction_snapshot_keeps_operation_phase_and_owner_command_poli
         Some("effect-compact-active")
     );
     assert!(!turn.cancellable);
+    assert!(matches!(
+        active
+            .command_availability
+            .get(&AgentControlKind::SubmitInput),
+        Some(AgentControlAvailability::Available { evidence })
+            if evidence.expected_turn_id.as_ref().map(|id| id.as_str())
+                == Some("compact-active")
+                && evidence.blocking_operation_id.as_ref().map(AgentEffectIdentity::as_str)
+                    == Some("effect-compact-active")
+    ));
     for (command, reason) in [
-        (
-            AgentControlKind::SubmitInput,
-            AgentControlUnavailabilityReason::CompactionInProgress,
-        ),
         (
             AgentControlKind::Steer,
             AgentControlUnavailabilityReason::ActiveTurnNotSteerable,
@@ -3269,7 +3311,11 @@ async fn active_compaction_snapshot_keeps_operation_phase_and_owner_command_poli
     }
 
     release.notify_one();
-    let receipt = execution.await.unwrap().unwrap();
+    assert_eq!(
+        execution.await.unwrap().unwrap().state,
+        AgentReceiptState::Accepted
+    );
+    let receipt = execute_and_wait(&service, compact).await;
     assert_eq!(
         receipt.state,
         AgentReceiptState::Terminal {
@@ -3299,6 +3345,331 @@ async fn active_compaction_snapshot_keeps_operation_phase_and_owner_command_poli
 }
 
 #[tokio::test]
+async fn compaction_is_cancellable_only_before_the_provider_side_effect_claim() {
+    let store = Arc::new(RecordingCompleteStore::default());
+    let claim_entered = Arc::new(Notify::new());
+    let claim_release = Arc::new(Notify::new());
+    store.block_next_compaction_side_effect_claim(claim_entered.clone(), claim_release.clone());
+    let service = service_with_store(store);
+    let source = create_source(&service, "dash-compaction-pre-effect-cancel").await;
+    let compact = AgentCommandEnvelope {
+        meta: meta("cancelled-compact", "cancelled-compact-effect"),
+        source: source.clone(),
+        command: AgentCommand::RequestCompaction,
+    };
+    assert_eq!(
+        service.execute(compact.clone()).await.unwrap().state,
+        AgentReceiptState::Accepted
+    );
+    claim_entered.notified().await;
+
+    let before_side_effect = service
+        .read(AgentReadQuery {
+            source: source.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        before_side_effect
+            .execution
+            .active_turn
+            .as_ref()
+            .is_some_and(|turn| turn.cancellable)
+    );
+    assert!(matches!(
+        before_side_effect
+            .command_availability
+            .get(&AgentControlKind::Interrupt),
+        Some(AgentControlAvailability::Available { .. })
+    ));
+
+    let interrupt = service
+        .execute(AgentCommandEnvelope {
+            meta: meta("cancel-compaction", "cancel-compaction-effect"),
+            source: source.clone(),
+            command: AgentCommand::Interrupt {
+                expected_turn_id: agentdash_agent_service_api::AgentTurnId::new(
+                    "cancelled-compact",
+                )
+                .unwrap(),
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        interrupt.state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Succeeded
+        }
+    );
+    claim_release.notify_one();
+    assert_eq!(
+        execute_and_wait(&service, compact).await.state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Interrupted
+        }
+    );
+}
+
+#[tokio::test]
+async fn manual_compaction_queues_behind_active_turn_then_promotes_with_the_same_operation() {
+    let store = Arc::new(RecordingCompleteStore::default());
+    let provider_started = Arc::new(Notify::new());
+    let provider_release = Arc::new(Notify::new());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let service = DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider: Arc::new(QueuedSteerProvider {
+                started: provider_started.clone(),
+                release: provider_release.clone(),
+                requests,
+            }),
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: Arc::new(FixtureCompactor),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
+        },
+        Arc::new(FixtureHostCallbacks),
+        store.clone(),
+    );
+    let source = create_source(&service, "dash-manual-compaction-queue").await;
+    let submit = submit_envelope(
+        source.clone(),
+        "queue-first-turn",
+        "queue-first-turn-effect",
+    );
+    assert_eq!(
+        service.execute(submit.clone()).await.unwrap().state,
+        AgentReceiptState::Accepted
+    );
+    provider_started.notified().await;
+
+    let compact = AgentCommandEnvelope {
+        meta: meta("queued-compact", "queued-compact-effect"),
+        source: source.clone(),
+        command: AgentCommand::RequestCompaction,
+    };
+    assert_eq!(
+        service.execute(compact.clone()).await.unwrap().state,
+        AgentReceiptState::Accepted
+    );
+    let queued = service
+        .read(AgentReadQuery {
+            source: source.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        queued.execution.active_turn.as_ref().map(|turn| turn.kind),
+        Some(AgentActiveTurnKind::Conversation)
+    );
+    assert_eq!(
+        queued
+            .execution
+            .queued_compaction
+            .as_ref()
+            .map(|queued| queued.operation_id.as_str()),
+        Some("queued-compact-effect")
+    );
+    assert!(matches!(
+        queued
+            .command_availability
+            .get(&AgentControlKind::RequestCompaction),
+        Some(AgentControlAvailability::Unavailable {
+            reason: AgentControlUnavailabilityReason::CompactionInProgress,
+            evidence,
+        }) if evidence.blocking_operation_id.as_ref().map(AgentEffectIdentity::as_str)
+            == Some("queued-compact-effect")
+    ));
+
+    provider_release.notify_one();
+    assert!(matches!(
+        execute_and_wait(&service, submit).await.state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Succeeded
+        }
+    ));
+    assert!(matches!(
+        execute_and_wait(&service, compact).await.state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Succeeded
+        }
+    ));
+
+    let durable = store.durable.read().await;
+    let history = durable
+        .repositories
+        .get(source.as_str())
+        .expect("source repository")
+        .history();
+    let turn_completed = history
+        .entries()
+        .iter()
+        .position(|entry| matches!(entry.payload, HistoryPayload::TurnCompleted { .. }))
+        .expect("normal turn completed");
+    let compaction_started = history
+        .entries()
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.payload,
+                HistoryPayload::CompactionStarted { compaction_id, .. }
+                    if compaction_id.0 == "queued-compact"
+            )
+        })
+        .expect("queued compaction promoted");
+    assert!(turn_completed < compaction_started);
+}
+
+#[tokio::test]
+async fn input_during_compaction_is_committed_once_only_after_compaction_terminal() {
+    let store = Arc::new(RecordingCompleteStore::default());
+    let compactor_started = Arc::new(Notify::new());
+    let compactor_release = Arc::new(Notify::new());
+    let service = DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider: Arc::new(FixtureProvider),
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: Arc::new(BlockingCompactor {
+                started: compactor_started.clone(),
+                release: compactor_release.clone(),
+            }),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
+        },
+        Arc::new(FixtureHostCallbacks),
+        store.clone(),
+    );
+    let source = create_source(&service, "dash-compaction-deferred-input").await;
+    let compact = AgentCommandEnvelope {
+        meta: meta("blocking-compact", "blocking-compact-effect"),
+        source: source.clone(),
+        command: AgentCommand::RequestCompaction,
+    };
+    assert_eq!(
+        service.execute(compact.clone()).await.unwrap().state,
+        AgentReceiptState::Accepted
+    );
+    compactor_started.notified().await;
+
+    let deferred = submit_envelope(source.clone(), "deferred-input", "deferred-input-effect");
+    assert_eq!(
+        service.execute(deferred.clone()).await.unwrap().state,
+        AgentReceiptState::Accepted
+    );
+    {
+        let durable = store.durable.read().await;
+        let history = durable
+            .repositories
+            .get(source.as_str())
+            .expect("source repository")
+            .history();
+        assert!(!history.entries().iter().any(|entry| {
+            matches!(
+                &entry.payload,
+                HistoryPayload::InputAccepted { input_id, .. } if input_id == "deferred-input"
+            )
+        }));
+    }
+
+    compactor_release.notify_one();
+    execute_and_wait(&service, compact).await;
+    execute_and_wait(&service, deferred).await;
+
+    let durable = store.durable.read().await;
+    let history = durable
+        .repositories
+        .get(source.as_str())
+        .expect("source repository")
+        .history();
+    let compaction_completed = history
+        .entries()
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.payload,
+                HistoryPayload::CompactionCompleted { compaction_id, .. }
+                    if compaction_id.0 == "blocking-compact"
+            )
+        })
+        .expect("compaction completed");
+    let deferred_inputs = history
+        .entries()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            matches!(
+                &entry.payload,
+                HistoryPayload::InputAccepted { input_id, .. } if input_id == "deferred-input"
+            )
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(deferred_inputs.len(), 1);
+    assert!(compaction_completed < deferred_inputs[0]);
+}
+
+#[tokio::test]
+async fn reopening_after_compactor_crash_terminalizes_unknown_outcome_as_lost() {
+    let store = Arc::new(RecordingCompleteStore::default());
+    let compactor_started = Arc::new(Notify::new());
+    let crashed = DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider: Arc::new(FixtureProvider),
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: Arc::new(PanickingCompactor {
+                started: compactor_started.clone(),
+            }),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
+        },
+        Arc::new(FixtureHostCallbacks),
+        store.clone(),
+    );
+    let source = create_source(&crashed, "dash-compaction-crash-recovery").await;
+    let compact = AgentCommandEnvelope {
+        meta: meta("crashed-compact", "crashed-compact-effect"),
+        source: source.clone(),
+        command: AgentCommand::RequestCompaction,
+    };
+    assert_eq!(
+        crashed.execute(compact.clone()).await.unwrap().state,
+        AgentReceiptState::Accepted
+    );
+    compactor_started.notified().await;
+    tokio::task::yield_now().await;
+
+    let reopened = service_with_store(store);
+    let snapshot = reopened
+        .read(AgentReadQuery {
+            source: source.clone(),
+            at_revision: None,
+        })
+        .await
+        .unwrap();
+    assert!(snapshot.execution.active_turn.is_none());
+    assert_eq!(
+        snapshot
+            .execution
+            .last_compaction_outcome
+            .as_ref()
+            .map(|outcome| outcome.status),
+        Some(AgentCompactionOutcomeStatus::Lost)
+    );
+    assert_eq!(
+        reopened.execute(compact).await.unwrap().state,
+        AgentReceiptState::Terminal {
+            outcome: AgentTerminalOutcome::Lost
+        }
+    );
+}
+
+#[tokio::test]
 async fn manual_compaction_is_exposed_once_in_canonical_history_and_changes() {
     let service = service();
     let source = AgentSourceCoordinate::new("dash-compaction").unwrap();
@@ -3310,14 +3681,15 @@ async fn manual_compaction_is_exposed_once_in_canonical_history_and_changes() {
         })
         .await
         .unwrap();
-    let receipt = service
-        .execute(AgentCommandEnvelope {
+    let receipt = execute_and_wait(
+        &service,
+        AgentCommandEnvelope {
             meta: meta("compact-1", "effect-compact-1"),
             source: source.clone(),
             command: AgentCommand::RequestCompaction,
-        })
-        .await
-        .unwrap();
+        },
+    )
+    .await;
     assert_eq!(
         receipt.state,
         AgentReceiptState::Terminal {

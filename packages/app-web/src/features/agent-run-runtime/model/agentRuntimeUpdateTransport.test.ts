@@ -16,6 +16,7 @@ describe("Agent Runtime update transport boundary", () => {
         started_at_ms: "1000",
         cancellable: true,
       },
+      queued_compaction: null,
       last_compaction_outcome: null,
       latest_turn_id: "turn-1",
     },

@@ -1249,6 +1249,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
         let active_turn = response_active_turn(&result, observed_at_ms)?;
         let execution = agentdash_agent_service_api::AgentExecutionSnapshot {
             active_turn,
+            queued_compaction: None,
             last_compaction_outcome: None,
         };
         let command_availability = execution.command_availability(

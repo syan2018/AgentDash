@@ -164,6 +164,13 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
                 },
             ),
             contribution(
+                "entry-compaction-side-effect-started",
+                HistoryPayload::CompactionSideEffectStarted {
+                    compaction_id: CompactionId::new("compact-b"),
+                    started_at_ms: 1_500,
+                },
+            ),
+            contribution(
                 "entry-compaction-applied",
                 HistoryPayload::CompactionApplied {
                     compaction_id: CompactionId::new("compact-b"),
@@ -459,6 +466,12 @@ fn manual_compaction_defers_new_input_until_terminal_then_promotes_explicitly() 
         .unwrap();
     assert!(store.claim_next_command().unwrap().is_none());
 
+    store
+        .mark_compaction_side_effect_started(
+            CompactionId::new("manual-b"),
+            HistoryEntryId::new("manual-side-effect-started"),
+        )
+        .unwrap();
     store
         .complete_compaction(
             CommandId::new("manual-b"),

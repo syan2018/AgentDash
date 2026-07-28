@@ -1616,6 +1616,16 @@
             }
           ]
         },
+        "queued_compaction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentQueuedCompactionSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "last_compaction_outcome": {
           "anyOf": [
             {
@@ -1673,6 +1683,25 @@
       "enum": [
         "running",
         "applied"
+      ]
+    },
+    "AgentQueuedCompactionSnapshot": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "queued_at_ms": {
+          "$ref": "#/$defs/AgentServiceU64"
+        }
+      },
+      "required": [
+        "command_id",
+        "operation_id",
+        "queued_at_ms"
       ]
     },
     "AgentCompactionOutcomeSnapshot": {

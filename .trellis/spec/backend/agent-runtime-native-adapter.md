@@ -76,6 +76,20 @@ pub trait DashConversationNamer {
 
 pub enum HistoryPayload {
     ThreadNameChanged { thread_name: String },
+    CompactionStarted {
+        compaction_id: CompactionId,
+        started_at_ms: u64,
+        // source provenance
+    },
+    CompactionCompleted {
+        compaction_id: CompactionId,
+        completed_at_ms: u64,
+    },
+    CompactionFailed {
+        compaction_id: CompactionId,
+        completed_at_ms: u64,
+        // typed terminal evidence
+    },
     // other native history facts
 }
 
@@ -167,6 +181,10 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   返回原 receipt；不同 request 返回 typed conflict。
 - `read` 必须把 source state 的 active turn 显式写入 `AgentSnapshot.execution.active_turn_id`；
   canonical conversation 是 presentation，不承担执行状态推断。
+- Compaction作为正式Turn时，`CompactionStarted`与terminal history必须分别保存真实
+  `started_at_ms/completed_at_ms`。folded Turn、canonical `TurnStarted/ItemStarted`与terminal
+  duration统一读取这些durable时间，原因是snapshot/live/reload必须恢复同一生命周期坐标，不能依赖
+  projector执行时的本机时钟。
 - 普通 `SubmitInput` 在 `InputAccepted + TurnStarted`、active execution 与 effect `Accepted`
   原子提交后立即返回；provider/tool loop由source owner后台推进。后台错误或panic必须提交typed
   terminal，Interrupt必须原子终结原effect并取消同turn的pending interaction，因此HTTP生命周期、
@@ -267,6 +285,7 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 | 没有 live subscriber | execution/history commit 正常完成 |
 | live subscriber lagged | retryable unavailable；重新 read |
 | history commit成功但live通知失败 | commit保持成功；subscriber重新read authoritative history |
+| Compaction Turn经snapshot/live/reload投影 | `started_at`来自同一`CompactionStarted.started_at_ms`，terminal duration由durable terminal时间计算 |
 | 命名输入缺少非空user input或Agent output | 不生成标题，不提交history entry |
 | 回合仍为Accepted或等待interaction | 不调用namer，等待terminal |
 | Failed/Lost/Interrupted terminal且已有Agent output | 尝试首次命名；原terminal保持不变 |
@@ -295,6 +314,7 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - Base：标题生成暂时失败，原回合terminal不变且source保持未命名；下一满足条件的terminal回合可以再次生成。
 - Base：Submit返回`Accepted`后客户端断开；source-owned worker继续执行，重连通过read恢复active或terminal，
   不依赖原HTTP请求存活。
+- Good：Compaction进行中重连后恢复原始开始时间；完成后snapshot与live展示相同、非负的duration。
 - Good：provider首轮仍在运行时提交Steer，Dash立即持久化输入并返回成功；首轮到达`Stop`后Core把
   该输入加入同一turn transcript并发起第二轮provider请求。
 - Base：Steer与首轮`Stop`同时到达；Dash steering mutex在接纳与terminal fence之间给出唯一顺序，
@@ -317,7 +337,7 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 ## 6. Tests Required
 
 - Dash repository测试覆盖首次 create、CAS、restart read、fork、compaction与 owner document
-  原子性。
+  原子性；Compaction replay必须断言formal Turn的started/completed时间保持不变。
 - Complete Agent tests覆盖 create/resume/fork/execute/read/changes/inspect/apply surface及
   stable effect replay/conflict。
 - background admission测试覆盖Accepted立即返回、并发同effect只启动一次、interaction期间
@@ -332,6 +352,8 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   失败的回归测试断言此前完成的每条ToolCall/ToolResult仍在native history中。
 - live composition test在执行前订阅，断言顺序为 durable user input、durable `TurnStarted`、
   ephemeral text/reasoning/tool delta 与 durable terminal；执行后从 read断言同 turn 已终态。
+- Compaction canonical projection测试使用固定毫秒时间，断言`TurnStarted.started_at`与terminal
+  `duration_ms`同时正确，避免前端把缺失时间解释为Unix epoch。
 - surface/context tests断言 native history保存实际instruction、tools与accepted ContextFrames，
   provider prompt逐字包含frame `rendered_text`，snapshot与live逐项发布同一frame，repository root
   不存在平行surface字段；连续surface只改变tool时，第二个`SurfaceApplied`的canonical projection

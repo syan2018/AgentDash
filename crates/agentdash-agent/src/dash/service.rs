@@ -1417,6 +1417,7 @@ impl DashAgentService {
                             mode: CompactionMode::AutomaticOverflow,
                             source_head: store.history().head().cloned(),
                             source_digest: store.history().digest(),
+                            started_at_ms: crate::model::message::now_millis(),
                         },
                     }],
                     enqueue_commands: vec![],
@@ -2138,7 +2139,7 @@ impl DashAgentService {
                 } => {
                     applied_compactions.insert(compaction_id.clone(), context_frame.clone());
                 }
-                HistoryPayload::CompactionCompleted { compaction_id } => {
+                HistoryPayload::CompactionCompleted { compaction_id, .. } => {
                     latest_frame = applied_compactions.get(compaction_id).cloned();
                 }
                 _ => {}
@@ -2552,7 +2553,7 @@ fn materialize_session_context(
                     (context_frame.clone(), retained_from.clone()),
                 );
             }
-            HistoryPayload::CompactionCompleted { compaction_id } => {
+            HistoryPayload::CompactionCompleted { compaction_id, .. } => {
                 if let Some((context_frame, retained_from)) =
                     applied_compactions.get(compaction_id).cloned()
                 {

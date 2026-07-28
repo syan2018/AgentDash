@@ -5,7 +5,7 @@
 
 ## 前置依赖与职责
 
-参考任务 `.trellis/tasks/07-28-runtime-session-state-chain` 拥有：
+参考任务 `.trellis/tasks/archive/2026-07/07-28-runtime-session-state-chain` 已完成并提供：
 
 - 单一 `AgentRuntimeConnection/View`；
 - Complete Agent `read/changes` baseline、tail、gap reload与presentation overlay；
@@ -13,21 +13,89 @@
 - Composer/Stop对统一Runtime view的接入；
 - 删除conversation history数组下标作为control cursor。
 
-本任务不得平行实现第二套connection/store。若两个任务并行：
-
-- 本任务可先完成后端Compaction contract、fixtures、checkpoint与context query；
-- Compaction前端接线等待统一Runtime view seam稳定；
-- 依赖通过类型与测试显式体现，不以任务目录树隐含。
-
-实施门禁：Slice 0/1不依赖`AgentRuntimeConnection/View`，在本次设计修订获用户确认后即可
-`task.py start`。Slice 5前端接线等待相邻任务稳定统一Runtime view seam；不得平行实现第二套
-connection/store。
+本任务直接扩展这条统一connection/view，不建立Compaction专用connection或store。Slice 2与
+Slice 5的Runtime/Frontend接线已解除前置阻塞。
 
 ## 当前实施状态
 
 - [x] Slice 0：精确context prefix、tool pairing、正式Turn与失败边界fixture已固定。
 - [x] Slice 1：原Session Compaction Turn、共享materializer与canonical lifecycle已实现。
-- [ ] Slice 2及以后：等待后续实施；Slice 5继续依赖相邻任务的统一Runtime view seam。
+- [x] Slice 1复核：Compaction Turn生命周期时间已进入durable history，snapshot/live/reload不再从
+  Unix epoch计时。
+- [ ] Slice 2：统一Runtime seam已就绪，进入Agent-owned typed Turn与command policy实施。
+- [ ] Slice 3：进入typed checkpoint与Exact context query实施。
+
+## Slice 2/3 实施前复核（2026-07-28）
+
+### 已具备的统一状态链
+
+- `AgentSnapshot.execution.active_turn_id`由concrete Agent read直接提供；
+- Native Dash fold把正式Compaction Turn作为同一个active Turn发布；
+- `AgentRuntimeView/AgentRuntimeUpdate`在同一lane携带execution、command availability与
+  presentation；
+- 浏览器只有一个`AgentRuntimeConnection`，Product Workspace不再提供Runtime execution副本；
+- Compaction因此已经能自然进入“执行中”展示，不需要presentation refresh特判。
+
+### Slice 2剩余缺口
+
+当前Service API和Runtime view只保存`active_turn_id + idle/active`，无法区分普通Turn与
+Compaction Turn。Runtime mapper据此把所有active Turn统一解释为：
+
+- Submit走`Steer`；
+- Interrupt可用；
+- RequestCompaction与Fork不可用；
+- Close仍可用。
+
+这不足以表达Compaction期间的deferred input、phase-specific cancel与Lost recovery。Slice 2按以下
+纵向顺序实施：
+
+1. **2A Owner contract**：将`active_turn_id`提升为typed `ActiveTurnSnapshot`，至少包含
+   `turn_id/kind/phase/operation_id/started_at_ms/cancellable`；增加typed
+   `last_compaction_outcome`。queued command在promotion前仍是command事实，不伪装成active Turn。
+2. **2B Native projection**：从Dash folded Turn、`active_compaction`、checkpoint状态与terminal
+   history确定性构造同一个snapshot；operation identity沿Compaction Turn全链路保持一致。
+3. **2C Owner command policy**：Complete Agent snapshot发布实际command availability与stale
+   coordinate。普通Turn、Compaction queued/running/applied和Lost分别覆盖Submit、Steer、
+   Interrupt/Cancel、Compact、Fork、Close、interaction response。
+4. **2D Runtime projection**：Runtime只无损映射owner policy和typed Turn，不再用
+   `has_active_turn`重新计算一套通用规则；generated Rust/TypeScript contract同步更新。
+5. **2E Codex observation**：从`thread/read`与可观察native compact事件构造Observed Compaction
+   Turn；仅发布provider确实给出的phase/terminal，不补造Dash checkpoint语义。
+6. **2F 纵向fixture**：覆盖reload中的同一operation/phase、active normal Turn queue manual
+   compaction、compaction期间deferred input exactly-once，以及每个phase的命令矩阵。
+
+Slice 2的关键类型边界是“扩展现有active Turn”，不是新增`active_activity`并行owner。
+
+### Slice 3剩余缺口
+
+Dash当前已具备可复用的`materialize_session_context`基础，但成功history只保存
+`revision/summary/retained_from/source_digest/context_frame`。生产frame的kind虽为
+`CompactionSummary`，section仍是`SystemNotice`，`created_at_ms`也没有真实证据。现有
+`runtime/context/projection`继续从canonical `ItemCompleted`位置截断消息，并把最后成功边界误名为
+`active_compaction_id`；它无法证明与provider request成员一致。
+
+Slice 3按以下纵向顺序实施：
+
+1. **3A Typed checkpoint**：让`CompactionApplied`提交完整`CompactionCheckpoint`，保存
+   checkpoint/operation identity、base/applied revision、source head/digest、summary frame、
+   compacted/retained coordinates、retained record membership、tool pair membership、usage evidence
+   与created time。
+2. **3B 单一recipe materializer**：从Dash history物化typed `ModelInputRecipe`；normal provider
+   round、Compaction Turn、post-compaction continuation与context query共同消费该结果。
+3. **3C Typed summary frame**：producer直接写
+   `ContextFrameSection::CompactionSummary`，其`rendered_text`与recipe中的summary contribution
+   逐字相同。
+4. **3D Complete Agent query**：Service API增加revision-bound `AgentContextSnapshot`查询；Native
+   返回`AgentOwned/Exact`，Codex返回`AgentObserved/Observed`并用opaque contribution说明
+   provider-private部分。
+5. **3E Runtime coordinate与Product route**：`AgentRuntimeView`只携带
+   `context_revision/recipe_digest/authority/fidelity`；现有context endpoint改为调用Agent query，
+   返回完整frame与retained records，删除position-based projector和`active_compaction_id`。
+6. **3F 一致性fixture**：对比provider capture与query contributions的成员、顺序、tool pairing和
+   digest；覆盖failed/lost不推进recipe、Surface变更、reload与Codex opaque。
+
+Slice 3优先从source-owned history确定性重放checkpoint和recipe，本切片预计不需要数据库migration；
+后续Slice 4的durable work item/lease若新增schema，再以正式migration提交。
 
 ## Slice 0：固定生产缺陷 fixture（已完成）
 

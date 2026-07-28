@@ -187,6 +187,7 @@ pub enum HistoryPayload {
         mode: CompactionMode,
         source_head: Option<HistoryEntryId>,
         source_digest: String,
+        started_at_ms: u64,
     },
     CompactionApplied {
         compaction_id: CompactionId,
@@ -198,11 +199,13 @@ pub enum HistoryPayload {
     },
     CompactionCompleted {
         compaction_id: CompactionId,
+        completed_at_ms: u64,
     },
     CompactionFailed {
         compaction_id: CompactionId,
         error: String,
         lost: bool,
+        completed_at_ms: u64,
     },
     TurnCompleted {
         turn_id: AgentTurnId,
@@ -897,6 +900,7 @@ fn apply_payload(
             mode,
             source_head,
             source_digest,
+            started_at_ms,
         } => {
             ensure_idle(state)?;
             if source_head != &state.head {
@@ -927,7 +931,7 @@ fn apply_payload(
                     TurnState {
                         status: ActivityStatus::Active,
                         output: None,
-                        started_at_ms: 0,
+                        started_at_ms: *started_at_ms,
                         completed_at_ms: None,
                     },
                 )
@@ -976,7 +980,10 @@ fn apply_payload(
             compaction.summary = Some(summary.clone());
             compaction.retained_from = retained_from.clone();
         }
-        HistoryPayload::CompactionCompleted { compaction_id } => {
+        HistoryPayload::CompactionCompleted {
+            compaction_id,
+            completed_at_ms,
+        } => {
             ensure_active_compaction(state, compaction_id)?;
             let compaction = state
                 .compactions
@@ -996,11 +1003,12 @@ fn apply_payload(
                 .get_mut(&item_id)
                 .ok_or_else(|| HistoryError::UnknownItem(item_id.clone()))?
                 .status = ActivityStatus::Completed;
-            terminalize_turn(state, &turn_id, ActivityStatus::Completed, 0)?;
+            terminalize_turn(state, &turn_id, ActivityStatus::Completed, *completed_at_ms)?;
         }
         HistoryPayload::CompactionFailed {
             compaction_id,
             lost,
+            completed_at_ms,
             ..
         } => {
             ensure_active_compaction(state, compaction_id)?;
@@ -1022,7 +1030,7 @@ fn apply_payload(
                 .get_mut(&item_id)
                 .ok_or_else(|| HistoryError::UnknownItem(item_id.clone()))?
                 .status = status;
-            terminalize_turn(state, &turn_id, status, 0)?;
+            terminalize_turn(state, &turn_id, status, *completed_at_ms)?;
         }
         HistoryPayload::TurnCompleted {
             turn_id,

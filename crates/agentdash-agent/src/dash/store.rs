@@ -156,6 +156,7 @@ impl DashAgentStore {
                     mode,
                     source_head: self.history.head().cloned(),
                     source_digest: self.history.digest(),
+                    started_at_ms: crate::model::message::now_millis(),
                 },
             }],
             enqueue_commands: vec![],
@@ -209,7 +210,10 @@ impl DashAgentStore {
                 },
                 HistoryContribution {
                     entry_id: completed_entry_id,
-                    payload: HistoryPayload::CompactionCompleted { compaction_id },
+                    payload: HistoryPayload::CompactionCompleted {
+                        compaction_id,
+                        completed_at_ms: crate::model::message::now_millis(),
+                    },
                 },
             ],
             enqueue_commands: vec![],
@@ -250,6 +254,7 @@ impl DashAgentStore {
                     compaction_id,
                     error,
                     lost,
+                    completed_at_ms: crate::model::message::now_millis(),
                 },
             }],
             enqueue_commands: vec![],

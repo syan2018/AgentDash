@@ -159,6 +159,7 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
                     mode: CompactionMode::AutomaticOverflow,
                     source_head,
                     source_digest: source_digest.clone(),
+                    started_at_ms: 1_000,
                 },
             ),
             contribution(
@@ -180,6 +181,7 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
                 "entry-compaction-complete",
                 HistoryPayload::CompactionCompleted {
                     compaction_id: CompactionId::new("compact-b"),
+                    completed_at_ms: 3_000,
                 },
             ),
         ])
@@ -196,6 +198,12 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
     );
     assert_eq!(compaction.summary.as_deref(), Some("compacted"));
     assert!(replayed.active_compaction.is_none());
+    let compaction_turn = replayed
+        .turns
+        .get(&AgentTurnId::new("compact-b"))
+        .expect("formal compaction turn");
+    assert_eq!(compaction_turn.started_at_ms, 1_000);
+    assert_eq!(compaction_turn.completed_at_ms, Some(3_000));
 }
 
 #[test]
@@ -537,6 +545,7 @@ fn invalid_compaction_provenance_does_not_mutate_history() {
                 mode: CompactionMode::Manual,
                 source_head: history.head().cloned(),
                 source_digest: "forged".into(),
+                started_at_ms: 1_000,
             },
         ))
         .unwrap_err();

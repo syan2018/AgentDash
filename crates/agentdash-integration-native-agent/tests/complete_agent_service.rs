@@ -24,7 +24,8 @@ use agentdash_agent_service_api::{
     AgentActiveTurnKind, AgentActiveTurnPhase, AgentAppliedEffectOutcome, AgentBindingGeneration,
     AgentCallbackRouteId, AgentChangePayload, AgentChangesQuery, AgentCommand,
     AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentCompactionOutcomeStatus,
-    AgentContextPackageId, AgentContextSchemaVersion, AgentContextSourceCoordinate,
+    AgentContextAuthority, AgentContextContribution, AgentContextFidelity, AgentContextPackageId,
+    AgentContextQuery, AgentContextSchemaVersion, AgentContextSourceCoordinate,
     AgentContextSourceRevision, AgentControlAvailability, AgentControlKind,
     AgentControlUnavailabilityReason, AgentEffectIdentity, AgentEffectInspectionState,
     AgentForkCutoffKind, AgentForkPoint, AgentHookAction, AgentHookBlockingSemantics,
@@ -1203,6 +1204,27 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
             BackboneEvent::UserInputSubmitted(_)
         )
     }));
+    let context = service
+        .context(AgentContextQuery {
+            source: parent.clone(),
+            at_revision: Some(parent_snapshot.revision),
+        })
+        .await
+        .unwrap();
+    assert_eq!(context.authority, AgentContextAuthority::AgentOwned);
+    assert_eq!(context.fidelity, AgentContextFidelity::Exact);
+    assert_eq!(context.snapshot_revision, parent_snapshot.revision);
+    assert!(context.contributions.iter().any(|contribution| matches!(
+        contribution,
+        AgentContextContribution::Frame { frame }
+            if frame.kind == ContextFrameKind::CompactionSummary
+    )));
+    assert!(context.contributions.iter().any(|contribution| matches!(
+        contribution,
+        AgentContextContribution::Message { role, content, .. }
+            if *role == agentdash_agent_service_api::AgentModelInputRole::User
+                && content == "first ordinary input"
+    )));
     assert!(parent_snapshot.conversation_history.iter().any(|record| {
         matches!(
             &record.presentation.envelope.event,

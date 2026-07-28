@@ -190,8 +190,7 @@ pub(crate) fn entry_records(
         }
         HistoryPayload::CompactionApplied {
             compaction_id,
-            context_frame,
-            ..
+            checkpoint,
         } => {
             events.push(BackboneEvent::ExecutorContextCompacted(
                 codex::ContextCompactedNotification {
@@ -199,7 +198,9 @@ pub(crate) fn entry_records(
                     turn_id: compaction_id.0.clone(),
                 },
             ));
-            events.extend(accepted_context_events(std::slice::from_ref(context_frame)));
+            events.extend(accepted_context_events(std::slice::from_ref(
+                &checkpoint.summary_frame,
+            )));
         }
         HistoryPayload::CompactionCompleted {
             compaction_id,
@@ -966,15 +967,34 @@ mod tests {
                     entry_id: HistoryEntryId::new("compact-applied"),
                     payload: HistoryPayload::CompactionApplied {
                         compaction_id: compaction_id.clone(),
-                        revision: revision.clone(),
-                        summary: "summary".to_owned(),
-                        retained_from: None,
-                        source_digest,
-                        context_frame: agentdash_agent::dash::accepted_compaction_summary_frame(
-                            &compaction_id,
-                            &revision,
-                            "summary",
-                        ),
+                        checkpoint: agentdash_agent::dash::CompactionCheckpoint {
+                            operation_id: agentdash_agent::dash::EffectId::new("compact-effect-1"),
+                            context_revision: revision.clone(),
+                            base_history_revision: 0,
+                            applied_history_revision: 3,
+                            source_head: None,
+                            source_digest,
+                            summary: "summary".to_owned(),
+                            summary_frame: agentdash_agent::dash::accepted_compaction_summary_frame(
+                                &compaction_id,
+                                &revision,
+                                "summary",
+                                agentdash_agent::dash::CompactionMode::Manual,
+                                0,
+                                0,
+                                None,
+                                None,
+                                None,
+                                2_000,
+                            ),
+                            compacted_entry_ids: Vec::new(),
+                            retained_from: None,
+                            retained_entry_ids: Vec::new(),
+                            tool_pairs: Vec::new(),
+                            checkpoint_digest: "sha256:test".to_owned(),
+                            usage: None,
+                            created_at_ms: 2_000,
+                        },
                     },
                 },
                 HistoryContribution {

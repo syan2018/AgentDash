@@ -9,12 +9,13 @@ use ts_rs::TS;
 
 use crate::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentChangePage, AgentChangesQuery,
-    AgentCommandEnvelope, AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection,
-    AgentHookAction, AgentHookDefinitionId, AgentHookPoint, AgentHookTiming, AgentIdempotencyKey,
-    AgentInteractionId, AgentItemId, AgentLiveEventStream, AgentObservation, AgentObservationQuery,
-    AgentReadQuery, AgentServiceDescriptor, AgentSnapshot, AgentSourceCoordinate, AgentToolName,
-    AgentTurnId, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CreateAgentCommand,
-    ForkAgentCommand, ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
+    AgentCommandEnvelope, AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot,
+    AgentEffectIdentity, AgentEffectInspection, AgentHookAction, AgentHookDefinitionId,
+    AgentHookPoint, AgentHookTiming, AgentIdempotencyKey, AgentInteractionId, AgentItemId,
+    AgentLiveEventStream, AgentObservation, AgentObservationQuery, AgentReadQuery,
+    AgentServiceDescriptor, AgentSnapshot, AgentSourceCoordinate, AgentToolName, AgentTurnId,
+    AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand,
+    ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
 };
 
 #[derive(
@@ -188,6 +189,17 @@ pub trait CompleteAgentService: Send + Sync {
     ) -> Result<AgentCommandReceipt, AgentServiceError>;
 
     async fn read(&self, query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError>;
+
+    async fn context(
+        &self,
+        _query: AgentContextQuery,
+    ) -> Result<AgentContextSnapshot, AgentServiceError> {
+        Err(AgentServiceError::new(
+            AgentServiceErrorCode::Unsupported,
+            "Complete Agent does not expose a context recipe",
+            false,
+        ))
+    }
 
     async fn observe(
         &self,

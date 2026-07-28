@@ -3,8 +3,8 @@ use std::sync::Arc;
 use agentdash_agent_runtime::project_authoritative_agent_view;
 use agentdash_agent_runtime_contract::{AgentRuntimeUpdate, AgentRuntimeView, RuntimeThreadId};
 use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentLiveEventStream, AgentReadQuery, AgentServiceError,
-    AgentSourceCoordinate, CompleteAgentService,
+    AgentBindingGeneration, AgentContextQuery, AgentContextSnapshot, AgentLiveEventStream,
+    AgentReadQuery, AgentServiceError, AgentSourceCoordinate, CompleteAgentService,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
@@ -244,6 +244,26 @@ impl AgentRunProductProjectionGateway {
         Ok(binding)
     }
 
+    pub async fn context_snapshot(
+        &self,
+        target: &AgentRunTarget,
+    ) -> Result<AgentContextSnapshot, AgentRunProductProjectionError> {
+        let binding = self.binding(target).await?;
+        let resolved = self
+            .agents
+            .resolve(&binding)
+            .await
+            .map_err(AgentRunProductProjectionError::Runtime)?;
+        resolved
+            .service
+            .context(AgentContextQuery {
+                source: binding.agent.source,
+                at_revision: None,
+            })
+            .await
+            .map_err(AgentRunProductProjectionError::Agent)
+    }
+
     pub async fn runtime_view_observation(
         &self,
         target: &AgentRunTarget,
@@ -351,6 +371,14 @@ pub trait AgentRunProductProjectionQueryPort: Send + Sync {
         &self,
         target: &AgentRunTarget,
     ) -> Result<AgentRuntimeView, AgentRunProductProjectionError>;
+    async fn context_snapshot(
+        &self,
+        _target: &AgentRunTarget,
+    ) -> Result<AgentContextSnapshot, AgentRunProductProjectionError> {
+        Err(AgentRunProductProjectionError::Runtime(
+            "Product projection does not expose Agent context".to_owned(),
+        ))
+    }
     async fn runtime_view_observation(
         &self,
         target: &AgentRunTarget,
@@ -385,6 +413,13 @@ impl AgentRunProductProjectionQueryPort for AgentRunProductProjectionGateway {
         target: &AgentRunTarget,
     ) -> Result<AgentRuntimeView, AgentRunProductProjectionError> {
         AgentRunProductProjectionGateway::runtime_view(self, target).await
+    }
+
+    async fn context_snapshot(
+        &self,
+        target: &AgentRunTarget,
+    ) -> Result<AgentContextSnapshot, AgentRunProductProjectionError> {
+        AgentRunProductProjectionGateway::context_snapshot(self, target).await
     }
 
     async fn runtime_view_observation(

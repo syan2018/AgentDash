@@ -8,17 +8,18 @@ use agentdash_agent_service_api::{
     AgentActiveTurnKind, AgentActiveTurnPhase, AgentActiveTurnSnapshot, AgentAppliedEffectOutcome,
     AgentCapabilityProfile, AgentChange, AgentChangePage, AgentChangePayload, AgentChangesQuery,
     AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
-    AgentCompactionMode, AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
-    AgentEffectInspectionState, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint,
-    AgentInput, AgentInputContent, AgentInteractionId, AgentInteractionRequest,
-    AgentInteractionSnapshot, AgentInteractionStatus, AgentItemId, AgentLifecycleCapability,
-    AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
-    AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
-    AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
-    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
-    AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload, AgentSurfaceProfile,
-    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentTurnId,
-    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+    AgentCompactionMode, AgentConfigurationBoundary, AgentContextAuthority,
+    AgentContextContribution, AgentContextFidelity, AgentContextQuery, AgentContextSnapshot,
+    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkCapability,
+    AgentForkCutoffKind, AgentForkPoint, AgentInput, AgentInputContent, AgentInteractionId,
+    AgentInteractionRequest, AgentInteractionSnapshot, AgentInteractionStatus, AgentItemId,
+    AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest,
+    AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor,
+    AgentServiceError, AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority,
+    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
+    AgentSourceCursor, AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload,
+    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
+    AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
     AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
     AppliedInitialContextEvidence, ApplyBoundAgentSurface, CompleteAgentService,
     CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
@@ -1283,6 +1284,56 @@ impl CompleteAgentService for CodexCompleteAgentService {
             applied_surface: source.applied_surface.clone(),
             initial_context: source.initial_context.clone(),
             conversation_history,
+        })
+    }
+
+    async fn context(
+        &self,
+        query: AgentContextQuery,
+    ) -> Result<AgentContextSnapshot, AgentServiceError> {
+        let snapshot = self
+            .read(AgentReadQuery {
+                source: query.source.clone(),
+                at_revision: None,
+            })
+            .await?;
+        if query
+            .at_revision
+            .is_some_and(|expected| expected != snapshot.revision)
+        {
+            return Err(service_error(
+                AgentServiceErrorCode::Conflict,
+                "requested Codex context observation revision is not current",
+                false,
+            ));
+        }
+        let contributions = vec![AgentContextContribution::Opaque {
+            label: "Codex provider context".to_owned(),
+            evidence: "Codex App Server does not expose its private model-input context recipe"
+                .to_owned(),
+        }];
+        let canonical =
+            serde_json::to_vec(&(query.source.as_str(), &contributions)).map_err(|error| {
+                service_error(
+                    AgentServiceErrorCode::Internal,
+                    format!("encode Codex context observation: {error}"),
+                    false,
+                )
+            })?;
+        Ok(AgentContextSnapshot {
+            source: query.source,
+            snapshot_revision: snapshot.revision,
+            context_revision: None,
+            recipe_digest: AgentPayloadDigest::new(format!(
+                "sha256:{:x}",
+                Sha256::digest(canonical)
+            ))
+            .map_err(|error| {
+                service_error(AgentServiceErrorCode::Internal, error.to_string(), false)
+            })?,
+            authority: AgentContextAuthority::AgentObserved,
+            fidelity: AgentContextFidelity::Observed,
+            contributions,
         })
     }
 

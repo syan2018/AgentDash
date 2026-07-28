@@ -9,6 +9,7 @@ use std::{
 use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use super::{
@@ -140,6 +141,21 @@ pub struct DashAgentRead {
     pub history: AgentHistory,
     pub history_digest: String,
     pub surface: Option<DashSurface>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DashContextRecipeMessage {
+    pub source_entry_id: HistoryEntryId,
+    pub message: DashMessage,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DashContextRecipe {
+    pub snapshot_revision: u64,
+    pub context_revision: Option<ContextRevision>,
+    pub frames: Vec<agentdash_agent_protocol::ContextFrame>,
+    pub messages: Vec<DashContextRecipeMessage>,
+    pub digest: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -808,6 +824,37 @@ impl DashAgentService {
 
     pub async fn history(&self) -> Result<AgentHistory, DashServiceError> {
         Ok(self.repository.load().await?.store.history().clone())
+    }
+
+    pub async fn context_recipe(&self) -> Result<DashContextRecipe, DashServiceError> {
+        let repository = self.repository.load().await?;
+        let materialized = materialize_session_context(&repository, None, false)?;
+        let snapshot_revision = repository.store.history().state()?.entry_count;
+        let messages = materialized
+            .context
+            .history
+            .into_iter()
+            .zip(materialized.message_entry_ids)
+            .map(|(message, source_entry_id)| DashContextRecipeMessage {
+                source_entry_id,
+                message,
+            })
+            .collect::<Vec<_>>();
+        let encoded = serde_json::to_vec(&(
+            &materialized.frames,
+            &messages,
+            &materialized.context_revision,
+        ))
+        .map_err(|error| DashServiceError::Internal {
+            message: format!("encode Dash context recipe: {error}"),
+        })?;
+        Ok(DashContextRecipe {
+            snapshot_revision,
+            context_revision: materialized.context_revision,
+            frames: materialized.frames,
+            messages,
+            digest: format!("sha256:{:x}", Sha256::digest(encoded)),
+        })
     }
 
     pub async fn export_store(&self) -> Result<DashAgentStore, DashServiceError> {
@@ -2699,35 +2746,11 @@ impl DashAgentService {
         &self,
     ) -> Result<(String, Vec<DashToolDefinition>), DashServiceError> {
         let repository = self.repository.load().await?;
-        let state = repository.store.history().state()?;
-        let mut applied_compactions = BTreeMap::new();
-        let mut latest_frame = None;
-        for entry in repository.store.history().entries() {
-            match &entry.payload {
-                HistoryPayload::CompactionApplied {
-                    compaction_id,
-                    context_frame,
-                    ..
-                } => {
-                    applied_compactions.insert(compaction_id.clone(), context_frame.clone());
-                }
-                HistoryPayload::CompactionCompleted { compaction_id, .. } => {
-                    latest_frame = applied_compactions.get(compaction_id).cloned();
-                }
-                _ => {}
-            }
-        }
-        let system_prompt = render_accepted_context(
-            state.surface.as_ref(),
-            state.initial_context.as_ref(),
-            latest_frame.as_ref(),
-            &accepted_surface_append_frames(repository.store.history().entries()),
-        );
-        let tools = state
-            .surface
-            .map(|surface| surface.tools)
-            .unwrap_or_default();
-        Ok((system_prompt, tools))
+        let materialized = materialize_session_context(&repository, None, false)?;
+        Ok((
+            materialized.context.system_prompt,
+            materialized.context.tools,
+        ))
     }
 
     async fn finish_failed_turn(
@@ -3221,12 +3244,12 @@ impl DashProviderRoundMaterializer for DashAgentService {
     }
 }
 
-fn render_accepted_context(
+fn materialize_accepted_context_frames(
     surface: Option<&DashSurface>,
     initial_context: Option<&InitialContextInstallation>,
     compaction_frame: Option<&agentdash_agent_protocol::ContextFrame>,
     surface_append_frames: &[agentdash_agent_protocol::ContextFrame],
-) -> String {
+) -> Vec<agentdash_agent_protocol::ContextFrame> {
     let mut frames = Vec::new();
     if let Some(surface) = surface {
         frames.extend(
@@ -3276,12 +3299,7 @@ fn render_accepted_context(
                 right.0.id.as_str(),
             ))
     });
-    frames
-        .into_iter()
-        .map(|(frame, _)| frame.rendered_text)
-        .filter(|text| !text.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    frames.into_iter().map(|(frame, _)| frame).collect()
 }
 
 fn accepted_surface_append_frames(
@@ -3314,6 +3332,8 @@ fn accepted_surface_append_frames(
 struct MaterializedSessionContext {
     context: DashCoreContext,
     message_entry_ids: Vec<HistoryEntryId>,
+    frames: Vec<agentdash_agent_protocol::ContextFrame>,
+    context_revision: Option<ContextRevision>,
 }
 
 fn materialize_session_context(
@@ -3331,34 +3351,38 @@ fn materialize_session_context(
         match &entry.payload {
             HistoryPayload::CompactionApplied {
                 compaction_id,
-                context_frame,
-                retained_from,
-                ..
+                checkpoint,
             } => {
                 applied_compactions.insert(
                     compaction_id.clone(),
-                    (context_frame.clone(), retained_from.clone()),
+                    (
+                        checkpoint.context_revision.clone(),
+                        checkpoint.summary_frame.clone(),
+                        checkpoint.retained_from.clone(),
+                    ),
                 );
             }
             HistoryPayload::CompactionCompleted { compaction_id, .. } => {
-                if let Some((context_frame, retained_from)) =
+                if let Some((revision, context_frame, retained_from)) =
                     applied_compactions.get(compaction_id).cloned()
                 {
-                    latest_compaction = Some((index, context_frame, retained_from));
+                    latest_compaction = Some((index, revision, context_frame, retained_from));
                 }
             }
             _ => {}
         }
     }
-    let (compaction_frame, history_start) = latest_compaction
-        .map(|(completed_index, context_frame, retained_from)| {
-            let start = retained_from
-                .as_ref()
-                .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
-                .unwrap_or(completed_index.saturating_add(1));
-            (Some(context_frame), start)
-        })
-        .unwrap_or((None, 0));
+    let (context_revision, compaction_frame, history_start) = latest_compaction
+        .map(
+            |(completed_index, revision, context_frame, retained_from)| {
+                let start = retained_from
+                    .as_ref()
+                    .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
+                    .unwrap_or(completed_index.saturating_add(1));
+                (Some(revision), Some(context_frame), start)
+            },
+        )
+        .unwrap_or((None, None, 0));
     let mut history = Vec::new();
     let mut message_entry_ids = Vec::new();
     let mut pending_tool_calls = Vec::new();
@@ -3426,7 +3450,7 @@ fn materialize_session_context(
                     &mut message_entry_ids,
                     &mut pending_tool_calls,
                 );
-                if let Some((call_id, call_entry_id)) = tool_call_ids.get(item_id) {
+                if let Some((call_id, _)) = tool_call_ids.get(item_id) {
                     history.push(DashMessage {
                         role: DashMessageRole::Tool,
                         content: content
@@ -3438,7 +3462,7 @@ fn materialize_session_context(
                         tool_calls: Vec::new(),
                         is_error: *is_error,
                     });
-                    message_entry_ids.push(call_entry_id.clone());
+                    message_entry_ids.push(entry.entry_id.clone());
                 }
             }
             _ => {}
@@ -3453,12 +3477,18 @@ fn materialize_session_context(
         history.pop();
         message_entry_ids.pop();
     }
-    let system_prompt = render_accepted_context(
+    let frames = materialize_accepted_context_frames(
         surface.as_ref(),
         initial_context.as_ref(),
         compaction_frame.as_ref(),
         &accepted_surface_append_frames(entries),
     );
+    let system_prompt = frames
+        .iter()
+        .map(|frame| frame.rendered_text.as_str())
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
     Ok(MaterializedSessionContext {
         context: DashCoreContext {
             system_prompt,
@@ -3466,6 +3496,8 @@ fn materialize_session_context(
             tools: surface.map(|surface| surface.tools).unwrap_or_default(),
         },
         message_entry_ids,
+        frames,
+        context_revision,
     })
 }
 

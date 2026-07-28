@@ -6,7 +6,7 @@ use ts_rs::TS;
 
 use crate::{
     AgentContextPackageId, AgentContextSchemaVersion, AgentContextSourceCoordinate,
-    AgentContextSourceRevision, AgentPayloadDigest,
+    AgentContextSourceRevision, AgentPayloadDigest, AgentSnapshotRevision, AgentSourceCoordinate,
 };
 
 #[derive(
@@ -123,6 +123,75 @@ pub struct AppliedInitialContextEvidence {
     pub fidelity: crate::InitialContextDeliveryFidelity,
     pub renderer_version: Option<String>,
     pub materialized_digest: Option<AgentPayloadDigest>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentContextAuthority {
+    AgentOwned,
+    AgentObserved,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentContextFidelity {
+    Exact,
+    Observed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentModelInputRole {
+    User,
+    Assistant,
+    Tool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentModelInputToolCall {
+    pub call_id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentContextContribution {
+    Frame {
+        frame: agentdash_agent_protocol::ContextFrame,
+    },
+    Message {
+        source_entry_id: String,
+        role: AgentModelInputRole,
+        content: String,
+        tool_call_id: Option<String>,
+        tool_calls: Vec<AgentModelInputToolCall>,
+        is_error: bool,
+    },
+    Opaque {
+        label: String,
+        evidence: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentContextQuery {
+    pub source: AgentSourceCoordinate,
+    pub at_revision: Option<AgentSnapshotRevision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentContextSnapshot {
+    pub source: AgentSourceCoordinate,
+    pub snapshot_revision: AgentSnapshotRevision,
+    pub context_revision: Option<String>,
+    pub recipe_digest: AgentPayloadDigest,
+    pub authority: AgentContextAuthority,
+    pub fidelity: AgentContextFidelity,
+    pub contributions: Vec<AgentContextContribution>,
 }
 
 impl AppliedInitialContextEvidence {

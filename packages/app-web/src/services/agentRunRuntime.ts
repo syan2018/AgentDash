@@ -1,5 +1,5 @@
 import { api } from "../api/client";
-import type { SessionProjectionViewResponse } from "../generated/session-contracts";
+import type { AgentContextSnapshot } from "../generated/agent-service-api";
 import type {
   AgentRunProductRuntimeCommand,
   AgentRunProductRuntimeCommandRequest as AgentRunProductRuntimeCommandRequestWire,
@@ -32,9 +32,11 @@ export async function fetchAgentRuntimeView(
 
 export async function fetchAgentRunRuntimeContextProjection(
   target: AgentRunRuntimeTarget,
-): Promise<SessionProjectionViewResponse> {
-  return api.get<SessionProjectionViewResponse>(
+  signal?: AbortSignal,
+): Promise<AgentContextSnapshot> {
+  return api.get<AgentContextSnapshot>(
     agentRunScopedPath(target, "/runtime/context/projection"),
+    { signal },
   );
 }
 

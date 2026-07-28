@@ -3,30 +3,8 @@
 
 import type { JsonValue } from "./common-contracts";
 
-export type SessionAttachmentContextContributionResponse = { name: string, tokens: number, };
-
-export type SessionContextUsageAnalysisResponse = { categories: Array<SessionContextUsageCategoryResponse>, items: Array<SessionContextUsageItemResponse>, messages: SessionMessageContextBreakdownResponse, top_tools: Array<SessionToolContextContributionResponse>, top_attachments: Array<SessionAttachmentContextContributionResponse>, };
-
-export type SessionContextUsageCategoryResponse = { kind: string, label: string, token_estimate: number, source: string, deferred: boolean, };
-
-export type SessionContextUsageItemResponse = { kind: string, label: string, name: string, token_estimate: number, source: string, deferred: boolean, source_event_seq?: number, turn_id?: string, };
-
 export type SessionEventResponse = { session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: JsonValue, };
 
 export type SessionEventsPageResponse = { snapshot_seq: number, events: Array<SessionEventResponse>, has_more: boolean, next_after_seq: number, };
 
-export type SessionMessageContextBreakdownResponse = { user_message_tokens: number, assistant_message_tokens: number, tool_call_tokens: number, tool_result_tokens: number, attachment_tokens: number, };
-
 export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number, ephemeral_epoch: number, } | { "type": "event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: JsonValue, } | { "type": "ephemeral_event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: JsonValue, } | { "type": "heartbeat", timestamp: number, };
-
-export type SessionProjectionMessageRefResponse = { turn_id: string, entry_index: number, };
-
-export type SessionProjectionSegmentProvenanceResponse = { compaction_id?: string, projection_version?: number, segment_type?: string, strategy?: string, trigger?: string, phase?: string, };
-
-export type SessionProjectionSegmentViewResponse = { id: string, sort_order: number, segment_type: string, role: string, origin: string, synthetic: boolean, projection_kind: string, message_ref: SessionProjectionMessageRefResponse, source_event_seq?: number, source_range?: SessionProjectionSourceRangeResponse, projection_segment_id?: string, preview: string, token_estimate?: number, attachment_tokens?: number, attachment_names?: Array<string>, tool_names?: Array<string>, provenance: SessionProjectionSegmentProvenanceResponse, };
-
-export type SessionProjectionSourceRangeResponse = { start_event_seq: number, end_event_seq: number, };
-
-export type SessionProjectionViewResponse = { session_id: string, projection_kind: string, projection_version: number, head_event_seq: number, active_compaction_id?: string, token_estimate?: number, message_count: number, segments: Array<SessionProjectionSegmentViewResponse>, context_usage: SessionContextUsageAnalysisResponse, };
-
-export type SessionToolContextContributionResponse = { name: string, call_tokens: number, result_tokens: number, };

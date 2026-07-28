@@ -105,7 +105,7 @@ function ContextUsageRing({
 }: {
   usage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  refreshKey: number;
+  refreshKey: bigint;
   compactContextCommand?: SessionChatCommandModel;
   onCompactContext?: () => Promise<void>;
 }) {
@@ -680,7 +680,7 @@ export function SessionChatComposer({
   workspaceId?: string | null;
   tokenUsage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  projectionRefreshKey: number;
+  projectionRefreshKey: bigint;
   compactContextCommand?: SessionChatCommandModel;
   onCompactContext?: () => Promise<void>;
   onAtTrigger: (query: string) => void;

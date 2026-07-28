@@ -99,3 +99,94 @@ completed。
 - Unsupported/Observed 不满足 required exact。
 - Runtime reconnect只读 snapshot revision + durable change tail，不 replay presentation
   journal 或 Agent 内部 history。
+
+## 9. Scenario: Typed Compaction Checkpoint 与 Exact Recipe
+
+### 9.1 Scope / Trigger
+
+修改Dash compaction applied fact、summary frame、provider materializer或context query时适用。
+checkpoint必须能从source history重放，因为成功压缩会改变下一轮模型输入。
+
+### 9.2 Signatures
+
+```rust
+HistoryPayload::CompactionApplied {
+    compaction_id: CompactionId,
+    checkpoint: CompactionCheckpoint,
+}
+
+pub struct CompactionCheckpoint {
+    pub operation_id: EffectId,
+    pub context_revision: ContextRevision,
+    pub base_history_revision: u64,
+    pub applied_history_revision: u64,
+    pub source_head: Option<HistoryEntryId>,
+    pub source_digest: String,
+    pub summary: String,
+    pub summary_frame: ContextFrame,
+    pub compacted_entry_ids: Vec<HistoryEntryId>,
+    pub retained_from: Option<HistoryEntryId>,
+    pub retained_entry_ids: Vec<HistoryEntryId>,
+    pub tool_pairs: Vec<CompactionToolPairMembership>,
+    pub checkpoint_digest: String,
+    pub usage: Option<CompactionUsageEvidence>,
+    pub created_at_ms: u64,
+}
+```
+
+```rust
+pub struct AgentContextSnapshot {
+    pub source: AgentSourceCoordinate,
+    pub snapshot_revision: AgentSnapshotRevision,
+    pub context_revision: Option<String>,
+    pub recipe_digest: AgentPayloadDigest,
+    pub authority: AgentContextAuthority,
+    pub fidelity: AgentContextFidelity,
+    pub contributions: Vec<AgentContextContribution>,
+}
+```
+
+### 9.3 Contracts
+
+- 只有`CompactionApplied + CompactionCompleted`共同出现的checkpoint进入current recipe。
+- `summary_frame.sections`使用`ContextFrameSection::CompactionSummary`，并保存identity、trigger、
+  source range、first-kept coordinate、统计、usage evidence与真实created time。
+- normal provider round、compaction input、post-compaction continuation和context query调用同一个
+  history materializer；frame排序、retained boundary和tool pairing只有一份实现。
+- tool call message使用call entry identity，tool result message使用result entry identity；
+  checkpoint另存typed pair membership。
+- failed/lost/cancelled只写terminal evidence，current context revision与recipe保持上一个成功值。
+
+### 9.4 Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| checkpoint operation/source digest与active compaction不一致 | history fold拒绝transition |
+| provider side effect尚未started | Applied被拒绝 |
+| 同一compaction重复Applied | history fold拒绝transition |
+| Completed没有checkpoint | history fold拒绝transition |
+| retained boundary命中tool pair | call/result都保留并按原顺序物化 |
+| query要求旧snapshot revision | 返回conflict |
+
+### 9.5 Good / Base / Bad Cases
+
+- Good：checkpoint保存typed frame、成员坐标和tool pairs，reload后recipe digest稳定。
+- Base：`retained_from=None`表示无历史suffix，summary frame仍是完整recipe contribution。
+- Bad：只保存summary字符串和timeline event位置；reload无法证明真实retained membership。
+
+### 9.6 Tests Required
+
+- history fold覆盖Applied transition、重复Applied、无Applied Completed与terminal不推进recipe。
+- materializer fixture比较compactor输入、下一轮provider输入和context query。
+- canonical projection验证同一summary frame进入timeline与current inspector。
+- reload验证checkpoint identity、真实时间、usage和tool pair membership。
+
+### 9.7 Wrong vs Correct
+
+```rust
+// Wrong：summary字符串不足以证明当前模型输入。
+CompactionApplied { summary, retained_from }
+
+// Correct：一次Applied提交完整、可重放的typed checkpoint。
+CompactionApplied { compaction_id, checkpoint }
+```

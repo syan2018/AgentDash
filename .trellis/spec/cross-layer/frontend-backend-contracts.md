@@ -603,86 +603,89 @@ Wrong: nullable_fields = { "durationMs" } -> 全局修改每个variant
 Correct: nullable_paths = { "CommandExecution.durationMs", ... } -> 只修改对应discriminator branch
 ```
 
-## 10. Scenario: Agent Runtime 历史上下文投影
+## 10. Scenario: Complete Agent Context Snapshot
 
 ### 10.1 Scope / Trigger
 
-修改Runtime context popup、canonical conversation history、context compaction、Agent Runtime
-snapshot或AgentRun Runtime router时适用。该投影只负责读取当前上下文构成，不拥有第二份会话状态。
+修改context inspector、compaction checkpoint、Complete Agent查询、Product context route或前端
+刷新提交规则时适用。当前模型输入成员只能由concrete Agent证明。
 
 ### 10.2 Signatures
 
-```text
-GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
-  -> SessionProjectionViewResponse
+```rust
+async fn CompleteAgentService::context(
+    AgentContextQuery {
+        source: AgentSourceCoordinate,
+        at_revision: Option<AgentSnapshotRevision>,
+    },
+) -> Result<AgentContextSnapshot, AgentServiceError>;
 ```
 
-```rust
-pub fn project_agent_runtime_context(
-    snapshot: &AgentRuntimeView,
-) -> SessionProjectionViewResponse;
+```text
+GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
+  -> AgentContextSnapshot {
+       source,
+       snapshot_revision,
+       context_revision,
+       recipe_digest,
+       authority,
+       fidelity,
+       contributions: Frame | Message | Opaque,
+     }
 ```
 
 ### 10.3 Contracts
 
-- API先按`run_id + agent_id`完成`ProjectPermission::Use`授权，再通过
-  `AgentRunProductProjectionQueryPort::runtime_view`读取concrete Agent权威快照。
-- projector只消费durable canonical records。用户输入、终态assistant/reasoning、终态工具item与
-  每个frame identity的最新`ContextFrameChanged`进入响应；ephemeral delta不计入可恢复投影。
-- 最新`ContextCompaction`是消息有效边界。更早消息仍保留在canonical history中用于审计，但不再
-  计入当前模型上下文；最新ContextFrame仍按frame identity投影。
-- `projection_version`来自Agent Runtime revision。projector不持久化segment、token估算或
-  category，因此不会产生与Complete Agent竞争的状态owner。
-- UI上下文环形用量仍读取provider确认的`token_usage_updated`；context projection负责解释
-  构成，字符token估算不能覆盖provider事实。
+- API完成AgentRun Use授权和committed binding解析后，直接调用绑定的Complete Agent
+  `context()`；Product与Runtime不从canonical timeline重建模型输入成员。
+- Native Dash返回`AgentOwned/Exact`。`Frame`按provider system input顺序排列，随后是保留的
+  `Message`；tool call与tool result保持独立source entry identity和明确call pairing。
+- Codex仅返回可证明的`AgentObserved/Observed`，provider-private部分使用`Opaque`解释证据边界。
+- `recipe_digest`覆盖有序frames、messages与context revision。相同history/surface/checkpoint必须
+  产生相同digest。
+- 前端以`run_id + agent_id`作为target key，并用AbortController与request generation提交响应；
+  Agent Runtime view revision变化触发重新查询，因此terminal后的checkpoint无需presentation事件刷新。
+- `ContextFrame`同时展示`rendered_text`与完整typed结构；provider token usage继续来自provider
+  usage事实，不由字符估算覆盖。
 
 ### 10.4 Validation & Error Matrix
 
 | Condition | Required behavior |
 | --- | --- |
-| AgentRun target不存在、跨Project或无Use权限 | 在读取Runtime前返回对应授权/not found错误 |
-| target尚未建立committed Runtime binding | 返回conflict，不构造空投影 |
-| Runtime snapshot读取失败 | 映射typed Product projection错误，不使用旧Session Runtime |
-| canonical history为空 | 返回versioned空segments及全零message breakdown |
-| 只有ephemeral record | 不进入投影，等待durable snapshot收敛 |
-| 已发生ContextCompaction | 只统计边界后的消息，并返回`active_compaction_id` |
-| frontend收到404/5xx | 展示加载错误；不得静默转为null |
+| target无Use权限或不存在 | 查询Complete Agent前返回授权/not found |
+| target没有committed binding | 返回conflict |
+| `at_revision`不是当前source revision | Complete Agent返回conflict |
+| Complete Agent不可用 | 返回typed unavailable |
+| Native recipe可精确物化 | `AgentOwned/Exact`且所有成员有source identity |
+| provider不公开输入recipe | `AgentObserved/Observed`并包含Opaque evidence |
+| target切换或旧请求后返回 | 前端丢弃旧generation响应 |
+| 404/5xx | 前端展示错误，不能提交空snapshot |
 
 ### 10.5 Good / Base / Bad Cases
 
-- Good：Native会话历史包含用户消息、助手消息与工具终态，popup同时展示三类非零构成；刷新后结果
-  由同一snapshot稳定重建。
-- Base：空会话返回合法空投影；只有provider usage时环形用量可显示，但构成保持全零。
-- Bad：保留前端service却删除router，再捕获404返回null；这会把合同断链伪装成正常空状态。
+- Good：成功压缩后查询返回typed summary frame、retained tool pair和retained messages，顺序与下一次
+  provider request一致。
+- Base：无压缩的Native source仍返回active frames与完整消息；Codex source返回Observed/Opaque。
+- Bad：按最后一个`ContextCompaction` timeline位置截断canonical records；该位置不是
+  `retained_from`，无法证明provider成员。
 
 ### 10.6 Tests Required
 
-- application projector unit test断言用户、助手、工具调用/结果进入对应breakdown和top tools。
-- compaction unit test断言边界前消息不计入segments，`active_compaction_id`保持最新item identity。
-- API route ledger断言生产`lifecycle_agents::router()`包含context projection入口。
-- frontend service test断言URL编码及精确route；错误透传测试不得接受404空投影。
-- popup rendering test以非零breakdown断言用户、助手、工具和附件数字可见。
+- Native provider capture与context query逐项比较frame/message顺序、tool pairing和digest稳定性。
+- failed/lost/cancelled验证context revision与recipe不推进。
+- Runtime Wire round-trip验证Context request/response及protocol revision。
+- API route验证授权、binding解析和typed Agent error映射。
+- 前端验证完整frame/retained message/Observed-Opaque渲染、target切换取消和旧响应不提交。
 
 ### 10.7 Wrong vs Correct
 
-```ts
-// Wrong：把消失的后端合同伪装成正常空数据。
-try {
-  return await api.get(path);
-} catch (error) {
-  if (error.status === 404) return null;
-  throw error;
-}
-
-// Correct：route是必需产品合同，断链必须直接暴露。
-return api.get<SessionProjectionViewResponse>(path);
-```
-
 ```rust
-// Wrong：恢复一份独立Session Runtime历史镜像。
-let projection = legacy_session_runtime.load_projection(session_id).await?;
+// Wrong：presentation只能证明审计顺序，不能证明当前provider recipe。
+let current = truncate_after_latest_compaction(snapshot.conversation);
 
-// Correct：从Complete Agent权威快照无状态投影。
-let snapshot = product_projection.runtime_view(&target).await?;
-let projection = project_agent_runtime_context(&snapshot);
+// Correct：模型输入owner按source revision返回完整typed recipe。
+let current = complete_agent.context(AgentContextQuery {
+    source,
+    at_revision,
+}).await?;
 ```

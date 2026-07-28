@@ -202,11 +202,7 @@ pub enum HistoryPayload {
     },
     CompactionApplied {
         compaction_id: CompactionId,
-        revision: ContextRevision,
-        summary: String,
-        retained_from: Option<HistoryEntryId>,
-        source_digest: String,
-        context_frame: ContextFrame,
+        checkpoint: CompactionCheckpoint,
     },
     CompactionCompleted {
         compaction_id: CompactionId,
@@ -239,10 +235,53 @@ pub enum HistoryPayload {
     Closed,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionToolPairMembership {
+    pub call_entry_id: HistoryEntryId,
+    pub result_entry_id: Option<HistoryEntryId>,
+    pub call_id: String,
+    pub retained: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionUsageEvidence {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub context_window: u64,
+    pub observed_turn_id: AgentTurnId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionCheckpoint {
+    pub operation_id: EffectId,
+    pub context_revision: ContextRevision,
+    pub base_history_revision: u64,
+    pub applied_history_revision: u64,
+    pub source_head: Option<HistoryEntryId>,
+    pub source_digest: String,
+    pub summary: String,
+    pub summary_frame: ContextFrame,
+    pub compacted_entry_ids: Vec<HistoryEntryId>,
+    pub retained_from: Option<HistoryEntryId>,
+    pub retained_entry_ids: Vec<HistoryEntryId>,
+    pub tool_pairs: Vec<CompactionToolPairMembership>,
+    pub checkpoint_digest: String,
+    pub usage: Option<CompactionUsageEvidence>,
+    pub created_at_ms: u64,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn accepted_compaction_summary_frame(
     compaction_id: &CompactionId,
     revision: &ContextRevision,
     summary: &str,
+    mode: CompactionMode,
+    tokens_before: u64,
+    messages_compacted: u32,
+    source_start_event_seq: Option<u64>,
+    source_end_event_seq: Option<u64>,
+    first_kept_event_seq: Option<u64>,
+    created_at_ms: u64,
 ) -> ContextFrame {
     use agentdash_agent_protocol::{
         ContextAgentConsumption, ContextAgentConsumptionMode, ContextConnectorProfile,
@@ -277,12 +316,29 @@ pub fn accepted_compaction_summary_frame(
         message_role: role,
         delivery_metadata: metadata,
         rendered_text: rendered_text.clone(),
-        sections: vec![ContextFrameSection::SystemNotice {
+        sections: vec![ContextFrameSection::CompactionSummary {
             title: "Compaction Summary".to_owned(),
-            summary: "Accepted compacted conversation context".to_owned(),
-            body: Some(rendered_text),
+            summary: summary.to_owned(),
+            tokens_before,
+            messages_compacted,
+            compaction_id: Some(compaction_id.0.clone()),
+            projection_version: Some(1),
+            strategy: Some("agent_owned_summary".to_owned()),
+            trigger: Some(
+                match mode {
+                    CompactionMode::Manual => "manual",
+                    CompactionMode::AutomaticOverflow => "automatic_overflow",
+                }
+                .to_owned(),
+            ),
+            phase: Some("applied".to_owned()),
+            source_start_event_seq,
+            source_end_event_seq,
+            first_kept_event_seq,
+            compacted_until_ref: None,
+            timestamp_ms: Some(created_at_ms),
         }],
-        created_at_ms: 0,
+        created_at_ms: i64::try_from(created_at_ms).unwrap_or(i64::MAX),
     }
 }
 
@@ -525,9 +581,7 @@ pub struct CompactionState {
     pub operation_id: EffectId,
     pub mode: CompactionMode,
     pub status: ActivityStatus,
-    pub revision: Option<ContextRevision>,
-    pub summary: Option<String>,
-    pub retained_from: Option<HistoryEntryId>,
+    pub checkpoint: Option<CompactionCheckpoint>,
     pub source_digest: String,
     pub started_at_ms: u64,
     pub side_effect_started_at_ms: Option<u64>,
@@ -968,9 +1022,7 @@ fn apply_payload(
                         operation_id: operation_id.clone(),
                         mode: *mode,
                         status: ActivityStatus::Active,
-                        revision: None,
-                        summary: None,
-                        retained_from: None,
+                        checkpoint: None,
                         source_digest: source_digest.clone(),
                         started_at_ms: *started_at_ms,
                         side_effect_started_at_ms: None,
@@ -1038,28 +1090,23 @@ fn apply_payload(
         }
         HistoryPayload::CompactionApplied {
             compaction_id,
-            revision,
-            summary,
-            retained_from,
-            source_digest,
-            ..
+            checkpoint,
         } => {
             ensure_active_compaction(state, compaction_id)?;
             let compaction = state
                 .compactions
                 .get_mut(compaction_id)
                 .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?;
-            if compaction.source_digest != *source_digest
+            if compaction.source_digest != checkpoint.source_digest
+                || compaction.operation_id != checkpoint.operation_id
                 || compaction.side_effect_started_at_ms.is_none()
-                || compaction.revision.is_some()
+                || compaction.checkpoint.is_some()
             {
                 return Err(HistoryError::InvalidCompactionTransition(
                     compaction_id.clone(),
                 ));
             }
-            compaction.revision = Some(revision.clone());
-            compaction.summary = Some(summary.clone());
-            compaction.retained_from = retained_from.clone();
+            compaction.checkpoint = Some(checkpoint.clone());
         }
         HistoryPayload::CompactionCompleted {
             compaction_id,
@@ -1070,7 +1117,7 @@ fn apply_payload(
                 .compactions
                 .get_mut(compaction_id)
                 .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?;
-            if compaction.revision.is_none() {
+            if compaction.checkpoint.is_none() {
                 return Err(HistoryError::InvalidCompactionTransition(
                     compaction_id.clone(),
                 ));
@@ -1126,7 +1173,7 @@ fn apply_payload(
                 .compactions
                 .get_mut(compaction_id)
                 .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?;
-            if compaction.side_effect_started_at_ms.is_some() || compaction.revision.is_some() {
+            if compaction.side_effect_started_at_ms.is_some() || compaction.checkpoint.is_some() {
                 return Err(HistoryError::InvalidCompactionTransition(
                     compaction_id.clone(),
                 ));

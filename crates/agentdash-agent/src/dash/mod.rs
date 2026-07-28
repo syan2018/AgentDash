@@ -15,9 +15,10 @@ pub use core_execution::{
 };
 pub use history::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryReplayer, AgentHistoryState,
-    AgentItemId, AgentSessionId, AgentTurnId, BranchId, CompactionId, CompactionMode,
-    CompactionState, ContextDeliveryFidelity, ContextRevision, DashSurface, DashSurfaceInstruction,
-    ForkCutoff, ForkLineage, HistoryContribution, HistoryEntryId, HistoryError, HistoryPayload,
+    AgentItemId, AgentSessionId, AgentTurnId, BranchId, CompactionCheckpoint, CompactionId,
+    CompactionMode, CompactionState, CompactionToolPairMembership, CompactionUsageEvidence,
+    ContextDeliveryFidelity, ContextRevision, DashSurface, DashSurfaceInstruction, ForkCutoff,
+    ForkLineage, HistoryContribution, HistoryEntryId, HistoryError, HistoryPayload,
     InitialContextContribution, InitialContextInstallation, InitialContextMode, InteractionId,
     InteractionState, ItemDetails, ItemKind, ItemState, SessionStatus, ToolActivityResult,
     TurnState, accepted_compaction_summary_frame, fold_history,
@@ -29,10 +30,11 @@ pub use lifecycle::{
 pub use service::{
     DashAgentChanges, DashAgentRead, DashAgentRepository, DashAgentRepositoryState,
     DashAgentRepositoryStore, DashAgentService, DashCommandReceipt, DashCommandRequest,
-    DashCompactionRequest, DashCompactionResult, DashCompactor, DashConversationNamer,
-    DashConversationNamingRequest, DashEffectInspection, DashExecutionDependencies,
-    DashHistoryCallbacks, DashHistoryCommit, DashPublicCommand, DashReceiptState, DashServiceError,
-    DashTerminalOutcome, NoopDashConversationNamer, NoopDashHistoryCallbacks,
+    DashCompactionRequest, DashCompactionResult, DashCompactor, DashContextRecipe,
+    DashContextRecipeMessage, DashConversationNamer, DashConversationNamingRequest,
+    DashEffectInspection, DashExecutionDependencies, DashHistoryCallbacks, DashHistoryCommit,
+    DashPublicCommand, DashReceiptState, DashServiceError, DashTerminalOutcome,
+    NoopDashConversationNamer, NoopDashHistoryCallbacks,
 };
 pub use store::{
     CommandSettlement, DashAgentChange, DashAgentChangePayload, DashAgentCommit, DashAgentStore,

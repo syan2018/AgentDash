@@ -1,11 +1,11 @@
 use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentChange, AgentChangePage, AgentChangesQuery, AgentCommandEnvelope,
-    AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection, AgentHookDecision,
-    AgentHookInvocation, AgentHostCallbackError, AgentReadQuery, AgentServiceDescriptor,
-    AgentServiceError, AgentServiceInstanceId, AgentSnapshot, AgentSourceCoordinate,
-    AgentToolInvocation, AgentToolResult, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface,
-    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, ResumeAgentCommand,
-    RevokeBoundAgentSurface,
+    AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot, AgentEffectIdentity,
+    AgentEffectInspection, AgentHookDecision, AgentHookInvocation, AgentHostCallbackError,
+    AgentReadQuery, AgentServiceDescriptor, AgentServiceError, AgentServiceInstanceId,
+    AgentSnapshot, AgentSourceCoordinate, AgentToolInvocation, AgentToolResult,
+    AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand,
+    ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,10 @@ pub enum RuntimeWireAgentServiceRequest {
         target: RuntimeWireAgentBindingTarget,
         query: AgentReadQuery,
     },
+    Context {
+        target: RuntimeWireAgentBindingTarget,
+        query: AgentContextQuery,
+    },
     Changes {
         target: RuntimeWireAgentBindingTarget,
         query: AgentChangesQuery,
@@ -93,9 +97,11 @@ impl RuntimeWireAgentServiceRequest {
     /// generation authority. Describe is instance-scoped and intentionally precedes binding.
     pub fn validate_generation(&self) -> Result<(), RuntimeWireGenerationFenceError> {
         let (target, carried) = match self {
-            Self::Describe(_) | Self::Read { .. } | Self::Changes { .. } | Self::Inspect { .. } => {
-                return Ok(());
-            }
+            Self::Describe(_)
+            | Self::Read { .. }
+            | Self::Context { .. }
+            | Self::Changes { .. }
+            | Self::Inspect { .. } => return Ok(()),
             Self::Create { target, command } => (target, command.meta.binding_generation),
             Self::Resume { target, command } => (target, command.meta.binding_generation),
             Self::Fork { target, command } => (target, command.meta.binding_generation),
@@ -122,6 +128,7 @@ impl RuntimeWireAgentServiceRequest {
             | Self::Fork { target, .. }
             | Self::Execute { target, .. }
             | Self::Read { target, .. }
+            | Self::Context { target, .. }
             | Self::Changes { target, .. }
             | Self::Inspect { target, .. }
             | Self::ApplySurface { target, .. }
@@ -147,6 +154,7 @@ pub enum RuntimeWireAgentServiceResponse {
     Fork(Result<Box<ForkAgentReceipt>, AgentServiceError>),
     Execute(Result<Box<AgentCommandReceipt>, AgentServiceError>),
     Read(Result<Box<AgentSnapshot>, AgentServiceError>),
+    Context(Result<Box<AgentContextSnapshot>, AgentServiceError>),
     Changes(Result<Box<AgentChangePage>, AgentServiceError>),
     Inspect(Result<Box<AgentEffectInspection>, AgentServiceError>),
     ApplySurface(Result<Box<AppliedAgentSurfaceReceipt>, AgentServiceError>),

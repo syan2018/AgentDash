@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use super::{
     AgentHistory, AgentHistoryEntry, AgentHistoryReplayer, AgentTurnId, CommandId, CommandOutcome,
-    CommandStatus, CompactionId, ContextRevision, DashCommand, DashCommandKind, DashLifecycle,
+    CommandStatus, CompactionCheckpoint, CompactionId, CompactionToolPairMembership,
+    CompactionUsageEvidence, ContextRevision, DashCommand, DashCommandKind, DashLifecycle,
     EffectId, EffectOutcome, HistoryContribution, HistoryEntryId, HistoryError, HistoryPayload,
     LifecycleError,
 };
@@ -178,16 +180,168 @@ impl DashAgentStore {
         applied_entry_id: HistoryEntryId,
         completed_entry_id: HistoryEntryId,
     ) -> Result<(), StoreError> {
-        let source_digest = self
-            .history
-            .state()?
+        let history_state = self.history.state()?;
+        let compaction = history_state
             .compactions
             .get(&compaction_id)
-            .ok_or_else(|| StoreError::UnknownCompaction(compaction_id.clone()))?
-            .source_digest
-            .clone();
-        let context_frame =
-            super::history::accepted_compaction_summary_frame(&compaction_id, &revision, &summary);
+            .ok_or_else(|| StoreError::UnknownCompaction(compaction_id.clone()))?;
+        let source_digest = compaction.source_digest.clone();
+        let operation_id = compaction.operation_id.clone();
+        let mode = compaction.mode;
+        let entries = self.history.entries();
+        let retained_index = retained_from
+            .as_ref()
+            .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
+            .unwrap_or(entries.len());
+        let is_recipe_entry = |entry: &&AgentHistoryEntry| {
+            matches!(
+                entry.payload,
+                HistoryPayload::InputAccepted { .. }
+                    | HistoryPayload::AgentOutput { .. }
+                    | HistoryPayload::ToolCall { .. }
+                    | HistoryPayload::ToolResult { .. }
+            )
+        };
+        let compacted_entry_ids = entries[..retained_index]
+            .iter()
+            .filter(is_recipe_entry)
+            .map(|entry| entry.entry_id.clone())
+            .collect::<Vec<_>>();
+        let retained_entry_ids = entries[retained_index..]
+            .iter()
+            .filter(is_recipe_entry)
+            .map(|entry| entry.entry_id.clone())
+            .collect::<Vec<_>>();
+        let mut tool_calls = std::collections::BTreeMap::new();
+        let mut tool_pairs = Vec::new();
+        for (index, entry) in entries.iter().enumerate() {
+            match &entry.payload {
+                HistoryPayload::ToolCall {
+                    item_id, call_id, ..
+                } => {
+                    tool_calls.insert(
+                        item_id.clone(),
+                        (
+                            entry.entry_id.clone(),
+                            call_id.clone(),
+                            index >= retained_index,
+                        ),
+                    );
+                }
+                HistoryPayload::ToolResult { item_id, .. } => {
+                    if let Some((call_entry_id, call_id, retained)) = tool_calls.remove(item_id) {
+                        tool_pairs.push(CompactionToolPairMembership {
+                            call_entry_id,
+                            result_entry_id: Some(entry.entry_id.clone()),
+                            call_id,
+                            retained,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        tool_pairs.extend(
+            tool_calls
+                .into_values()
+                .map(
+                    |(call_entry_id, call_id, retained)| CompactionToolPairMembership {
+                        call_entry_id,
+                        result_entry_id: None,
+                        call_id,
+                        retained,
+                    },
+                ),
+        );
+        let created_at_ms = crate::model::message::now_millis();
+        let usage = history_state
+            .token_usage
+            .last
+            .map(|usage| CompactionUsageEvidence {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                context_window: usage.context_window,
+                observed_turn_id: usage.turn_id,
+            });
+        let tokens_before = usage.as_ref().map_or(0, |usage| usage.input_tokens);
+        let source_start_event_seq = compacted_entry_ids
+            .first()
+            .and_then(|id| entries.iter().find(|entry| &entry.entry_id == id))
+            .map(|entry| entry.sequence);
+        let source_end_event_seq = compacted_entry_ids
+            .last()
+            .and_then(|id| entries.iter().find(|entry| &entry.entry_id == id))
+            .map(|entry| entry.sequence);
+        let first_kept_event_seq = retained_entry_ids
+            .first()
+            .and_then(|id| entries.iter().find(|entry| &entry.entry_id == id))
+            .map(|entry| entry.sequence);
+        let summary_frame = super::history::accepted_compaction_summary_frame(
+            &compaction_id,
+            &revision,
+            &summary,
+            mode,
+            tokens_before,
+            u32::try_from(compacted_entry_ids.len()).unwrap_or(u32::MAX),
+            source_start_event_seq,
+            source_end_event_seq,
+            first_kept_event_seq,
+            created_at_ms,
+        );
+        let source_head = entries
+            .iter()
+            .find_map(|entry| match &entry.payload {
+                HistoryPayload::CompactionStarted {
+                    compaction_id: started,
+                    source_head,
+                    ..
+                } if started == &compaction_id => Some(source_head.clone()),
+                _ => None,
+            })
+            .flatten();
+        let base_history_revision = source_head
+            .as_ref()
+            .and_then(|id| entries.iter().find(|entry| &entry.entry_id == id))
+            .map_or(0, |entry| entry.sequence);
+        let applied_history_revision = history_state.entry_count + 1;
+        let checkpoint_digest = format!(
+            "sha256:{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&(
+                    &operation_id,
+                    &revision,
+                    base_history_revision,
+                    applied_history_revision,
+                    &source_head,
+                    &source_digest,
+                    &summary_frame,
+                    &compacted_entry_ids,
+                    &retained_from,
+                    &retained_entry_ids,
+                    &tool_pairs,
+                    &usage,
+                    created_at_ms,
+                ))
+                .expect("typed compaction checkpoint serialization cannot fail")
+            )
+        );
+        let checkpoint = CompactionCheckpoint {
+            operation_id,
+            context_revision: revision,
+            base_history_revision,
+            applied_history_revision,
+            source_head,
+            source_digest,
+            summary,
+            summary_frame,
+            compacted_entry_ids,
+            retained_from,
+            retained_entry_ids,
+            tool_pairs,
+            checkpoint_digest,
+            usage,
+            created_at_ms,
+        };
         self.commit(DashAgentCommit {
             expected_head: self.history.head().cloned(),
             command_settlement: Some(CommandSettlement {
@@ -203,11 +357,7 @@ impl DashAgentStore {
                     entry_id: applied_entry_id,
                     payload: HistoryPayload::CompactionApplied {
                         compaction_id: compaction_id.clone(),
-                        revision,
-                        summary,
-                        retained_from,
-                        source_digest,
-                        context_frame,
+                        checkpoint,
                     },
                 },
                 HistoryContribution {

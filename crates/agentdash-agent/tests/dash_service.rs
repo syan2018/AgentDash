@@ -713,10 +713,11 @@ async fn compaction_receives_the_same_materialized_session_context_as_a_normal_t
             .expect("fixture history must be valid");
     }
     let compactor = Arc::new(CapturingCompactor::default());
+    let provider = Arc::new(CapturingProvider::default());
     let service = create_service(
         history,
         DashExecutionDependencies {
-            provider: Arc::new(CapturingProvider::default()),
+            provider: provider.clone(),
             tools: Arc::new(NoTools),
             callbacks: Arc::new(NoCallbacks),
             history_callbacks: Arc::new(NoopDashHistoryCallbacks),
@@ -773,10 +774,65 @@ async fn compaction_receives_the_same_materialized_session_context_as_a_normal_t
         vec![
             HistoryEntryId::new("input"),
             HistoryEntryId::new("tool-call"),
-            HistoryEntryId::new("tool-call"),
+            HistoryEntryId::new("tool-result"),
         ]
     );
     drop(requests);
+    let recipe = service
+        .context_recipe()
+        .await
+        .expect("exact recipe should be queryable");
+    assert!(
+        recipe
+            .frames
+            .iter()
+            .any(|frame| frame.rendered_text.contains("captured summary"))
+    );
+    assert_eq!(
+        recipe
+            .messages
+            .iter()
+            .map(|entry| entry.source_entry_id.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            HistoryEntryId::new("tool-call"),
+            HistoryEntryId::new("tool-result"),
+        ]
+    );
+    service
+        .execute(DashCommandRequest {
+            command_id: CommandId::new("continue"),
+            effect_id: EffectId::new("continue-effect"),
+            command: DashPublicCommand::SubmitInput {
+                content: "continue".into(),
+            },
+        })
+        .await
+        .expect("post-compaction turn should complete");
+    let provider_requests = provider.requests.lock().await;
+    let provider_request = provider_requests
+        .last()
+        .expect("post-compaction provider request should be captured");
+    assert_eq!(
+        provider_request.system_prompt,
+        recipe
+            .frames
+            .iter()
+            .map(|frame| frame.rendered_text.as_str())
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    );
+    assert_eq!(
+        &provider_request.messages[..recipe.messages.len()],
+        recipe
+            .messages
+            .iter()
+            .map(|entry| entry.message.clone())
+            .collect::<Vec<_>>()
+            .as_slice()
+    );
+    drop(provider_requests);
     let read = service
         .read()
         .await

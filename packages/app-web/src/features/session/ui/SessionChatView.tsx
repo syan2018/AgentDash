@@ -28,7 +28,6 @@ import {
   SessionChatStream,
 } from "./SessionChatViewParts";
 import {
-  computeProjectionRefreshKey,
   applyAgentRuntimeControlToChatCommandState,
   rawEventsBelongToRuntimeStreamTarget,
   resolveSessionInitialSubmit,
@@ -297,10 +296,7 @@ export function SessionChatView({
     [productCommandState, runtimeView],
   );
 
-  const projectionRefreshKey = useMemo(
-    () => computeProjectionRefreshKey(rawEvents),
-    [rawEvents],
-  );
+  const projectionRefreshKey = runtimeView?.view_revision ?? 0n;
   const rawEventsBelongToCurrentSession = useMemo(
     () =>
       rawEventsBelongToRuntimeStreamTarget({

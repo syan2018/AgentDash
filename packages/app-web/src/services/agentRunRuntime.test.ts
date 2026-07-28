@@ -107,6 +107,7 @@ describe("AgentRun runtime service", () => {
     })).resolves.toEqual(projection);
     expect(mocks.apiGetMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/runtime/context/projection",
+      { signal: undefined },
     );
   });
 

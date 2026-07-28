@@ -25,10 +25,15 @@ Slice 5的Runtime/Frontend接线已解除前置阻塞。
 - [x] Slice 2：typed active Turn、typed queued compaction、terminal outcome、owner command
   policy、Runtime无损映射、Codex observed projection、manual queue、deferred input、
   pre-side-effect cancel与前端门禁已完成。
-- [ ] Slice 3：进入typed checkpoint与Exact context query实施。
-- [ ] Slice 4：manual/automatic compaction已迁移到Accepted后的source-owned worker，具备
-  claim lease、heartbeat、过期Lost recovery、幂等terminal与正式migration；outer effect
-  单一账本收束继续实施。
+- [x] Slice 3：typed checkpoint、typed summary frame、单一recipe materializer、Exact/Observed
+  context query、Runtime Wire与Product route已完成；position-based projector已删除。
+- [x] Slice 4：manual/automatic compaction已迁移到Accepted后的source-owned worker，具备
+  claim lease、heartbeat、过期Lost recovery、幂等terminal与正式migration。
+- [x] Slice 5：前端使用统一Runtime view revision刷新context query，完整展示typed frame、
+  retained messages与Observed/Opaque；target/request generation fence已完成。
+- [x] Slice 6：规范、Agent/Native/Remote纵向测试、前端typecheck与定向测试、受影响文件lint及
+  generated contracts检查已完成。API测试二进制受正在运行的`agentdash-server.exe`文件锁阻止链接，
+  API与Application package的`cargo check`已通过。
 
 ## Slice 2/3 实施前复核（2026-07-28）
 

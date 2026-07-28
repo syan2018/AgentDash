@@ -9,11 +9,11 @@ use agentdash_agent::dash::{
     CompactionMode, ContextDeliveryFidelity, DashAgentChange, DashAgentChangePayload,
     DashAgentRepositoryState, DashAgentRepositoryStore, DashAgentService, DashChangeCursor,
     DashCommandRequest, DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies,
-    DashExecutionEvent, DashHistoryCallbacks, DashHistoryCommit, DashPublicCommand,
-    DashReceiptState, DashServiceError, DashSurface, DashSurfaceInstruction, DashTerminalOutcome,
-    DashToolDefinition, ForkCutoff, HistoryPayload, InitialContextContribution,
-    InitialContextInstallation, InitialContextMode, InteractionId as DashInteractionId,
-    InteractionState,
+    DashExecutionEvent, DashHistoryCallbacks, DashHistoryCommit, DashMessageRole,
+    DashPublicCommand, DashReceiptState, DashServiceError, DashSurface, DashSurfaceInstruction,
+    DashTerminalOutcome, DashToolDefinition, ForkCutoff, HistoryPayload,
+    InitialContextContribution, InitialContextInstallation, InitialContextMode,
+    InteractionId as DashInteractionId, InteractionState,
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
@@ -27,13 +27,15 @@ use agentdash_agent_service_api::{
     AgentCapabilityProfile, AgentChange, AgentChangePage, AgentChangePayload, AgentChangesQuery,
     AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
     AgentCompactionMode, AgentCompactionOutcomeSnapshot, AgentCompactionOutcomeStatus,
-    AgentConfigurationBoundary, AgentEffectIdentity, AgentEffectInspection,
-    AgentEffectInspectionState, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint,
-    AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet,
-    AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbacks, AgentInput, AgentInputContent,
-    AgentInteractionRequest, AgentInteractionResolution, AgentInteractionSnapshot,
-    AgentInteractionStatus, AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveEvent,
-    AgentLiveEventStream, AgentObservation, AgentObservationQuery, AgentPayloadDigest,
+    AgentConfigurationBoundary, AgentContextAuthority, AgentContextContribution,
+    AgentContextFidelity, AgentContextQuery, AgentContextSnapshot, AgentEffectIdentity,
+    AgentEffectInspection, AgentEffectInspectionState, AgentForkCapability, AgentForkCutoffKind,
+    AgentForkPoint, AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint,
+    AgentHookSemanticFacet, AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbacks,
+    AgentInput, AgentInputContent, AgentInteractionRequest, AgentInteractionResolution,
+    AgentInteractionSnapshot, AgentInteractionStatus, AgentLifecycleCapability,
+    AgentLifecycleStatus, AgentLiveEvent, AgentLiveEventStream, AgentModelInputRole,
+    AgentModelInputToolCall, AgentObservation, AgentObservationQuery, AgentPayloadDigest,
     AgentQueuedCompactionSnapshot, AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId,
     AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
     AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
@@ -953,6 +955,60 @@ impl CompleteAgentService for DashAgentCompleteService {
         })
     }
 
+    async fn context(
+        &self,
+        query: AgentContextQuery,
+    ) -> Result<AgentContextSnapshot, AgentServiceError> {
+        let (service, _) = self.open_source(&query.source).await?;
+        let recipe = service.context_recipe().await.map_err(map_dash_error)?;
+        let snapshot_revision = AgentSnapshotRevision(recipe.snapshot_revision);
+        if query
+            .at_revision
+            .is_some_and(|expected| expected != snapshot_revision)
+        {
+            return Err(conflict(
+                "requested Dash Agent context revision is not current",
+            ));
+        }
+        let mut contributions = recipe
+            .frames
+            .into_iter()
+            .map(|frame| AgentContextContribution::Frame { frame })
+            .collect::<Vec<_>>();
+        contributions.extend(recipe.messages.into_iter().map(|entry| {
+            let message = entry.message;
+            AgentContextContribution::Message {
+                source_entry_id: entry.source_entry_id.0,
+                role: match message.role {
+                    DashMessageRole::User => AgentModelInputRole::User,
+                    DashMessageRole::Assistant => AgentModelInputRole::Assistant,
+                    DashMessageRole::Tool => AgentModelInputRole::Tool,
+                },
+                content: message.content,
+                tool_call_id: message.tool_call_id,
+                tool_calls: message
+                    .tool_calls
+                    .into_iter()
+                    .map(|call| AgentModelInputToolCall {
+                        call_id: call.call_id,
+                        name: call.name,
+                        arguments: call.arguments,
+                    })
+                    .collect(),
+                is_error: message.is_error,
+            }
+        }));
+        Ok(AgentContextSnapshot {
+            source: query.source,
+            snapshot_revision,
+            context_revision: recipe.context_revision.map(|revision| revision.0),
+            recipe_digest: AgentPayloadDigest::new(recipe.digest).map_err(internal)?,
+            authority: AgentContextAuthority::AgentOwned,
+            fidelity: AgentContextFidelity::Exact,
+            contributions,
+        })
+    }
+
     async fn observe(
         &self,
         query: AgentObservationQuery,
@@ -1680,7 +1736,8 @@ fn dash_execution_snapshot(
                 } else {
                     AgentActiveTurnKind::Conversation
                 },
-                phase: if active_compaction.is_some_and(|compaction| compaction.revision.is_some())
+                phase: if active_compaction
+                    .is_some_and(|compaction| compaction.checkpoint.is_some())
                 {
                     AgentActiveTurnPhase::Applied
                 } else {

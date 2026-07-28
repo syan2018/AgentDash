@@ -6,11 +6,7 @@ import type { ProjectAgentExecutor } from "../../../types";
 import type { SessionEventEnvelope } from "../model/types";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { AgentRuntimeView } from "../../../generated/agent-runtime-validators";
-import {
-  extractContextFrameValue,
-  extractPlatformEventType,
-  isRecord,
-} from "../model/platformEvent";
+import { extractPlatformEventType } from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 import type {
   SessionChatCommandModel,
@@ -237,47 +233,3 @@ export function collectRenderableSystemEvents(
 }
 
 export const collectNewSystemEvents = collectRenderableSystemEvents;
-
-function isCompactionSummaryFrame(event: BackboneEvent): boolean {
-  return extractContextFrameValue(event)?.kind === "compaction_summary";
-}
-
-function isSessionRewindRefreshEvent(event: BackboneEvent): boolean {
-  if (event.type !== "platform") {
-    return false;
-  }
-  if (isRecord(event.payload)) {
-    const kind = typeof event.payload.kind === "string" ? event.payload.kind : null;
-    if (kind === "session_rewound") {
-      return true;
-    }
-  }
-  const eventType = extractPlatformEventType(event);
-  return eventType === "session_rewound" ||
-    eventType === "session_rebuilt" ||
-    eventType === "turn_discarded" ||
-    eventType === "projection_invalidated";
-}
-
-function isProjectionRefreshEvent(event: BackboneEvent): boolean {
-  const turnLifecycleType = extractTurnLifecycleEventType(event);
-  if (turnLifecycleType && turnLifecycleType !== "turn_started") {
-    return true;
-  }
-  if (event.type !== "platform") {
-    return false;
-  }
-  return extractPlatformEventType(event) === "context_compacted" ||
-    isSessionRewindRefreshEvent(event) ||
-    isCompactionSummaryFrame(event);
-}
-
-export function computeProjectionRefreshKey(rawEvents: SessionEventEnvelope[]): number {
-  let refreshKey = 0;
-  for (const event of rawEvents) {
-    if (isProjectionRefreshEvent(event.notification.event)) {
-      refreshKey = Math.max(refreshKey, event.event_seq);
-    }
-  }
-  return refreshKey;
-}

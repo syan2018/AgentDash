@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_service_api::AgentServiceErrorCode;
+use agentdash_agent_service_api::{AgentContextSnapshot, AgentServiceErrorCode};
 use agentdash_application::agent_run_list::{
     AgentRunListChildModel, ProjectAgentRunListInput, ProjectAgentRunListQuery,
     ProjectAgentRunListQueryDeps,
@@ -11,7 +11,6 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunProductForkError, AgentRunProductForkMessageRef, AgentRunProductForkRequest,
     AgentRunProductForkResult, AgentRunProductForkService, AgentRunProductInputDeliveryError,
     AgentRunProductProjectionError, AgentRunTerminalChangeSequence, DeliverAgentRunProductInput,
-    project_agent_runtime_context,
 };
 use agentdash_contracts::agent_run_interaction::{
     AgentRunCommandReceipt, AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkResponse,
@@ -555,7 +554,7 @@ async fn get_agent_runtime_context_projection(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<agentdash_contracts::session::SessionProjectionViewResponse>, ApiError> {
+) -> Result<Json<AgentContextSnapshot>, ApiError> {
     let target = authorize_agent_run_target(
         state.as_ref(),
         &current_user,
@@ -564,13 +563,13 @@ async fn get_agent_runtime_context_projection(
         ProjectPermission::Use,
     )
     .await?;
-    let snapshot = state
+    state
         .services
         .agent_run_product_projection
-        .runtime_view(&target)
+        .context_snapshot(&target)
         .await
-        .map_err(agent_run_product_projection_error)?;
-    Ok(Json(project_agent_runtime_context(&snapshot)))
+        .map(Json)
+        .map_err(agent_run_product_projection_error)
 }
 
 async fn get_agent_runtime_updates(

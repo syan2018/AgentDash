@@ -1,9 +1,9 @@
 use agentdash_agent::dash::{
     AgentHistory, AgentSessionId, AgentTurnId, BranchId, CommandDependency, CommandId,
-    CommandOutcome, CommandStatus, CompactionId, CompactionMode, ContextDeliveryFidelity,
-    ContextRevision, DashAgentCommit, DashAgentStore, DashCommand, DashCommandKind,
-    DashExecutionConsistency, EffectId, EffectOutcome, EffectSettlement, ForkCutoff,
-    HistoryContribution, HistoryEntryId, HistoryPayload, InitialContextContribution,
+    CommandOutcome, CommandStatus, CompactionCheckpoint, CompactionId, CompactionMode,
+    ContextDeliveryFidelity, ContextRevision, DashAgentCommit, DashAgentStore, DashCommand,
+    DashCommandKind, DashExecutionConsistency, EffectId, EffectOutcome, EffectSettlement,
+    ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload, InitialContextContribution,
     InitialContextInstallation, InitialContextMode, accepted_compaction_summary_frame,
 };
 
@@ -150,6 +150,19 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
     let mut history = history_with_turn();
     let source_head = history.head().cloned();
     let source_digest = history.digest();
+    let revision = ContextRevision::new("context-r2");
+    let summary_frame = accepted_compaction_summary_frame(
+        &CompactionId::new("compact-b"),
+        &revision,
+        "compacted",
+        CompactionMode::AutomaticOverflow,
+        0,
+        0,
+        None,
+        None,
+        Some(2),
+        2_000,
+    );
     history
         .append_batch(vec![
             contribution(
@@ -158,7 +171,7 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
                     compaction_id: CompactionId::new("compact-b"),
                     operation_id: EffectId::new("effect-compact-b"),
                     mode: CompactionMode::AutomaticOverflow,
-                    source_head,
+                    source_head: source_head.clone(),
                     source_digest: source_digest.clone(),
                     started_at_ms: 1_000,
                 },
@@ -174,15 +187,23 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
                 "entry-compaction-applied",
                 HistoryPayload::CompactionApplied {
                     compaction_id: CompactionId::new("compact-b"),
-                    revision: ContextRevision::new("context-r2"),
-                    summary: "compacted".into(),
-                    retained_from: Some(HistoryEntryId::new("entry-input")),
-                    source_digest,
-                    context_frame: accepted_compaction_summary_frame(
-                        &CompactionId::new("compact-b"),
-                        &ContextRevision::new("context-r2"),
-                        "compacted",
-                    ),
+                    checkpoint: CompactionCheckpoint {
+                        operation_id: EffectId::new("effect-compact-b"),
+                        context_revision: revision,
+                        base_history_revision: 5,
+                        applied_history_revision: 8,
+                        source_head,
+                        source_digest,
+                        summary: "compacted".into(),
+                        summary_frame,
+                        compacted_entry_ids: Vec::new(),
+                        retained_from: Some(HistoryEntryId::new("entry-input")),
+                        retained_entry_ids: vec![HistoryEntryId::new("entry-input")],
+                        tool_pairs: Vec::new(),
+                        checkpoint_digest: "sha256:test".into(),
+                        usage: None,
+                        created_at_ms: 2_000,
+                    },
                 },
             ),
             contribution(
@@ -201,10 +222,16 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
         .get(&CompactionId::new("compact-b"))
         .unwrap();
     assert_eq!(
-        compaction.revision.as_ref().unwrap(),
+        &compaction.checkpoint.as_ref().unwrap().context_revision,
         &ContextRevision::new("context-r2")
     );
-    assert_eq!(compaction.summary.as_deref(), Some("compacted"));
+    assert_eq!(
+        compaction
+            .checkpoint
+            .as_ref()
+            .map(|value| value.summary.as_str()),
+        Some("compacted")
+    );
     assert!(replayed.active_compaction.is_none());
     let compaction_turn = replayed
         .turns

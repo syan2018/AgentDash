@@ -313,6 +313,34 @@
           "properties": {
             "operation": {
               "type": "string",
+              "const": "context"
+            },
+            "request": {
+              "type": "object",
+              "properties": {
+                "target": {
+                  "$ref": "#/$defs/RuntimeWireAgentBindingTarget"
+                },
+                "query": {
+                  "$ref": "#/$defs/AgentContextQuery"
+                }
+              },
+              "required": [
+                "target",
+                "query"
+              ]
+            }
+          },
+          "required": [
+            "operation",
+            "request"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string",
               "const": "changes"
             },
             "request": {
@@ -1081,6 +1109,27 @@
       ]
     },
     "AgentReadQuery": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "at_revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentSnapshotRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "source"
+      ]
+    },
+    "AgentContextQuery": {
       "type": "object",
       "properties": {
         "source": {
@@ -2486,6 +2535,22 @@
             },
             "result": {
               "$ref": "#/$defs/Result_of_AgentSnapshot_or_AgentServiceError"
+            }
+          },
+          "required": [
+            "operation",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string",
+              "const": "context"
+            },
+            "result": {
+              "$ref": "#/$defs/Result_of_AgentContextSnapshot_or_AgentServiceError"
             }
           },
           "required": [
@@ -11089,6 +11154,192 @@
           "minimum": 0
         }
       }
+    },
+    "Result_of_AgentContextSnapshot_or_AgentServiceError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "$ref": "#/$defs/AgentContextSnapshot"
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "$ref": "#/$defs/AgentServiceError"
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "AgentContextSnapshot": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "snapshot_revision": {
+          "$ref": "#/$defs/AgentSnapshotRevision"
+        },
+        "context_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recipe_digest": {
+          "type": "string"
+        },
+        "authority": {
+          "$ref": "#/$defs/AgentContextAuthority"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/AgentContextFidelity"
+        },
+        "contributions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentContextContribution"
+          }
+        }
+      },
+      "required": [
+        "source",
+        "snapshot_revision",
+        "recipe_digest",
+        "authority",
+        "fidelity",
+        "contributions"
+      ]
+    },
+    "AgentContextAuthority": {
+      "type": "string",
+      "enum": [
+        "agent_owned",
+        "agent_observed"
+      ]
+    },
+    "AgentContextFidelity": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "observed"
+      ]
+    },
+    "AgentContextContribution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "frame": {
+              "$ref": "#/$defs/ContextFrame"
+            },
+            "kind": {
+              "type": "string",
+              "const": "frame"
+            }
+          },
+          "required": [
+            "kind",
+            "frame"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_entry_id": {
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/$defs/AgentModelInputRole"
+            },
+            "content": {
+              "type": "string"
+            },
+            "tool_call_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tool_calls": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentModelInputToolCall"
+              }
+            },
+            "is_error": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "message"
+            }
+          },
+          "required": [
+            "kind",
+            "source_entry_id",
+            "role",
+            "content",
+            "tool_calls",
+            "is_error"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "evidence": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "opaque"
+            }
+          },
+          "required": [
+            "kind",
+            "label",
+            "evidence"
+          ]
+        }
+      ]
+    },
+    "AgentModelInputRole": {
+      "type": "string",
+      "enum": [
+        "user",
+        "assistant",
+        "tool"
+      ]
+    },
+    "AgentModelInputToolCall": {
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "arguments": true
+      },
+      "required": [
+        "call_id",
+        "name",
+        "arguments"
+      ]
     },
     "Result_of_AgentChangePage_or_AgentServiceError": {
       "oneOf": [

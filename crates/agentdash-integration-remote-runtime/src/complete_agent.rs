@@ -16,13 +16,13 @@ use agentdash_agent_runtime_wire::{
 };
 use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentChange, AgentChangePage, AgentChangesQuery,
-    AgentCommandEnvelope, AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection,
-    AgentHookDecision, AgentHookInvocation, AgentHostCallbackError, AgentHostCallbackErrorCode,
-    AgentHostCallbacks, AgentReadQuery, AgentServiceDescriptor, AgentServiceError,
-    AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshot, AgentSourceCoordinate,
-    AgentToolInvocation, AgentToolResult, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface,
-    CompleteAgentService, CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt,
-    ResumeAgentCommand, RevokeBoundAgentSurface,
+    AgentCommandEnvelope, AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot,
+    AgentEffectIdentity, AgentEffectInspection, AgentHookDecision, AgentHookInvocation,
+    AgentHostCallbackError, AgentHostCallbackErrorCode, AgentHostCallbacks, AgentReadQuery,
+    AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
+    AgentSnapshot, AgentSourceCoordinate, AgentToolInvocation, AgentToolResult,
+    AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CompleteAgentService, CreateAgentCommand,
+    ForkAgentCommand, ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
 };
 use async_trait::async_trait;
 use thiserror::Error;
@@ -693,6 +693,22 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         Ok(snapshot)
     }
 
+    async fn context(
+        &self,
+        query: AgentContextQuery,
+    ) -> Result<AgentContextSnapshot, AgentServiceError> {
+        match self
+            .request(RuntimeWireAgentServiceRequest::Context {
+                target: self.target.clone(),
+                query,
+            })
+            .await?
+        {
+            RuntimeWireAgentServiceResponse::Context(result) => result.map(|value| *value),
+            _ => Err(protocol("context received a mismatched response")),
+        }
+    }
+
     async fn changes(
         &self,
         query: AgentChangesQuery,
@@ -1350,6 +1366,11 @@ impl RuntimeWireAgentServiceEndpoint {
             RuntimeWireAgentServiceRequest::Read { query, .. } => {
                 RuntimeWireAgentServiceResponse::Read(self.service.read(query).await.map(Box::new))
             }
+            RuntimeWireAgentServiceRequest::Context { query, .. } => {
+                RuntimeWireAgentServiceResponse::Context(
+                    self.service.context(query).await.map(Box::new),
+                )
+            }
             RuntimeWireAgentServiceRequest::Changes { query, .. } => {
                 RuntimeWireAgentServiceResponse::Changes(
                     self.service.changes(query).await.map(Box::new),
@@ -1468,6 +1489,9 @@ fn response_error(
         RuntimeWireAgentServiceRequest::Read { .. } => {
             RuntimeWireAgentServiceResponse::Read(Err(error))
         }
+        RuntimeWireAgentServiceRequest::Context { .. } => {
+            RuntimeWireAgentServiceResponse::Context(Err(error))
+        }
         RuntimeWireAgentServiceRequest::Changes { .. } => {
             RuntimeWireAgentServiceResponse::Changes(Err(error))
         }
@@ -1492,6 +1516,7 @@ fn response_succeeded(response: &RuntimeWireAgentServiceResponse) -> bool {
         | RuntimeWireAgentServiceResponse::RevokeSurface(result) => result.is_ok(),
         RuntimeWireAgentServiceResponse::Fork(result) => result.is_ok(),
         RuntimeWireAgentServiceResponse::Read(result) => result.is_ok(),
+        RuntimeWireAgentServiceResponse::Context(result) => result.is_ok(),
         RuntimeWireAgentServiceResponse::Changes(result) => result.is_ok(),
         RuntimeWireAgentServiceResponse::Inspect(result) => result.is_ok(),
         RuntimeWireAgentServiceResponse::ApplySurface(result) => result.is_ok(),

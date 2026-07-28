@@ -106,7 +106,22 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
     let terminal_id = RelayMessage::new_id("term");
     let backend_id = target.backend_id.clone();
     let terminal_cwd = body.cwd.clone();
-    let payload = TerminalSpawnPayload {
+    let target_ref = agentdash_domain::agent_run_target::AgentRunTarget {
+        run_id: uuid::Uuid::parse_str(run_id)
+            .map_err(|_| ApiError::BadRequest("无效的 run_id".into()))?,
+        agent_id: uuid::Uuid::parse_str(agent_id)
+            .map_err(|_| ApiError::BadRequest("无效的 agent_id".into()))?,
+    };
+    let runtime = state
+        .services
+        .agent_run_product_projection
+        .runtime_snapshot(&target_ref)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    let source_binding = runtime.source_binding.ok_or_else(|| {
+        ApiError::Conflict("Terminal 缺少 Managed Runtime source evidence".into())
+    })?;
+    let payload = TerminalPreparePayload {
         terminal_id: terminal_id.clone(),
         session_id: runtime_thread_id.to_string(),
         mount_root_ref: target.mount_root_ref,
@@ -122,34 +137,35 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
         .backend_registry
         .send_command(
             &target.backend_id,
-            RelayMessage::CommandTerminalSpawn {
-                id: RelayMessage::new_id("api-term-spawn"),
+            RelayMessage::CommandTerminalPrepare {
+                id: RelayMessage::new_id("api-term-prepare"),
                 payload,
             },
         )
         .await
     {
-        Ok(RelayMessage::ResponseTerminalSpawn {
+        Ok(RelayMessage::ResponseTerminalPrepare {
             payload: Some(resp),
+            error: None,
             ..
         }) => {
-            let target_ref = agentdash_domain::agent_run_target::AgentRunTarget {
-                run_id: uuid::Uuid::parse_str(run_id)
-                    .map_err(|_| ApiError::BadRequest("无效的 run_id".into()))?,
-                agent_id: uuid::Uuid::parse_str(agent_id)
-                    .map_err(|_| ApiError::BadRequest("无效的 agent_id".into()))?,
-            };
-            let runtime = state
-                .services
-                .agent_run_product_projection
-                .runtime_snapshot(&target_ref)
-                .await
-                .map_err(|error| ApiError::Conflict(error.to_string()))?;
-            let source_binding = runtime.source_binding.ok_or_else(|| {
-                ApiError::Conflict("Terminal 缺少 Managed Runtime source evidence".into())
-            })?;
-            let latest_source_sequence = u64::max(resp.latest_source_sequence, 1);
-            state
+            if resp.terminal_id != terminal_id
+                || resp.latest_source_sequence != 1
+                || resp.max_output_bytes != TERMINAL_MAX_OUTPUT_BYTES
+            {
+                abort_prepared_terminal(
+                    state,
+                    &backend_id,
+                    &terminal_id,
+                    &resp.terminal_owner_epoch_id,
+                )
+                .await;
+                return Err(ApiError::Internal(
+                    "Local terminal prepare response violated the source contract".to_string(),
+                ));
+            }
+            let latest_source_sequence = resp.latest_source_sequence;
+            if let Err(error) = state
                 .services
                 .terminal_projection_producer
                 .register_spawned(
@@ -162,9 +178,9 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
                             )
                             .map_err(|error| ApiError::Internal(error.to_string()))?,
                             target: target_ref,
-                            runtime_thread_id: runtime.thread_id,
+                            runtime_thread_id: runtime.thread_id.clone(),
                             source_binding,
-                            backend_id,
+                            backend_id: backend_id.clone(),
                         },
                         mount_id: None,
                         cwd: terminal_cwd,
@@ -176,7 +192,7 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
                             latest_source_sequence,
                         ),
                         exit_code: None,
-                        process_id: resp.process_id,
+                        process_id: None,
                         created_at_ms: now_ms(),
                         exited_at_ms: None,
                         output: AgentRunTerminalOutputProjection {
@@ -192,18 +208,80 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
                     ),
                 )
                 .await
-                .map_err(|error| ApiError::Internal(error.to_string()))?;
-            Ok(Json(serde_json::json!({
-                "terminal_id": resp.terminal_id,
-                "runtime_thread_id": runtime_thread_id,
-                "terminal_owner_epoch_id": resp.terminal_owner_epoch_id,
-                "latest_source_sequence": resp.latest_source_sequence,
-                "max_output_bytes": resp.max_output_bytes,
-                "process_id": resp.process_id,
-            }))
-            .into_response())
+            {
+                abort_prepared_terminal(
+                    state,
+                    &backend_id,
+                    &resp.terminal_id,
+                    &resp.terminal_owner_epoch_id,
+                )
+                .await;
+                return Err(ApiError::Internal(error.to_string()));
+            }
+
+            let activation = state
+                .services
+                .backend_registry
+                .send_command(
+                    &backend_id,
+                    RelayMessage::CommandTerminalActivate {
+                        id: RelayMessage::new_id("api-term-activate"),
+                        payload: TerminalActivatePayload {
+                            terminal_id: resp.terminal_id.clone(),
+                            terminal_owner_epoch_id: resp.terminal_owner_epoch_id.clone(),
+                        },
+                    },
+                )
+                .await;
+            match activation {
+                Ok(RelayMessage::ResponseTerminalActivate {
+                    payload: Some(activation),
+                    error: None,
+                    ..
+                }) => {
+                    if activation.terminal_id != resp.terminal_id
+                        || activation.terminal_owner_epoch_id != resp.terminal_owner_epoch_id
+                    {
+                        return Err(ApiError::Internal(
+                            "Local terminal activation response violated the owner contract"
+                                .to_string(),
+                        ));
+                    }
+                    Ok(Json(serde_json::json!({
+                        "terminal_id": activation.terminal_id,
+                        "runtime_thread_id": runtime_thread_id,
+                        "terminal_owner_epoch_id": activation.terminal_owner_epoch_id,
+                        "latest_source_sequence": resp.latest_source_sequence,
+                        "max_output_bytes": resp.max_output_bytes,
+                        "process_id": activation.process_id,
+                    }))
+                    .into_response())
+                }
+                Ok(RelayMessage::ResponseTerminalActivate {
+                    error: Some(error), ..
+                }) => Ok((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": error.message })),
+                )
+                    .into_response()),
+                Ok(other) => Ok((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "unexpected terminal activation response: {}",
+                            other.id()
+                        )
+                    })),
+                )
+                    .into_response()),
+                Err(error) => Err(terminal_command_send_error(
+                    error,
+                    TerminalCommandResponseKind::Activate,
+                    &resp.terminal_id,
+                )),
+            }
         }
-        Ok(RelayMessage::ResponseTerminalSpawn {
+        Ok(RelayMessage::ResponseTerminalPrepare {
             error: Some(err), ..
         }) => Ok((
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -215,6 +293,42 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
             Json(serde_json::json!({ "error": "unexpected response" })),
         )
             .into_response()),
+    }
+}
+
+async fn abort_prepared_terminal(
+    state: &Arc<AppState>,
+    backend_id: &str,
+    terminal_id: &str,
+    terminal_owner_epoch_id: &str,
+) {
+    let result = state
+        .services
+        .backend_registry
+        .send_command(
+            backend_id,
+            RelayMessage::CommandTerminalAbortPrepared {
+                id: RelayMessage::new_id("api-term-abort-prepared"),
+                payload: TerminalAbortPreparedPayload {
+                    terminal_id: terminal_id.to_string(),
+                    terminal_owner_epoch_id: terminal_owner_epoch_id.to_string(),
+                },
+            },
+        )
+        .await;
+    if !matches!(
+        result,
+        Ok(RelayMessage::ResponseTerminalAbortPrepared {
+            payload: Some(_),
+            error: None,
+            ..
+        })
+    ) {
+        diag!(Warn, Subsystem::Relay,
+            backend_id = %backend_id,
+            terminal_id = %terminal_id,
+            "Terminal Product 注册失败后取消本机 prepared terminal 失败"
+        );
     }
 }
 
@@ -380,6 +494,7 @@ fn now_ms() -> u64 {
 
 #[derive(Debug, Clone, Copy)]
 enum TerminalCommandResponseKind {
+    Activate,
     Input,
     Resize,
     Kill,
@@ -388,6 +503,7 @@ enum TerminalCommandResponseKind {
 impl TerminalCommandResponseKind {
     fn action_label(self) -> &'static str {
         match self {
+            Self::Activate => "终端激活",
             Self::Input => "终端输入",
             Self::Resize => "终端尺寸调整",
             Self::Kill => "终端结束",
@@ -396,6 +512,7 @@ impl TerminalCommandResponseKind {
 
     fn command_name(self) -> &'static str {
         match self {
+            Self::Activate => "terminal activate",
             Self::Input => "terminal input",
             Self::Resize => "terminal resize",
             Self::Kill => "terminal kill",
@@ -406,6 +523,13 @@ impl TerminalCommandResponseKind {
         matches!(
             (self, response),
             (
+                Self::Activate,
+                RelayMessage::ResponseTerminalActivate {
+                    payload: Some(_),
+                    error: None,
+                    ..
+                }
+            ) | (
                 Self::Input,
                 RelayMessage::ResponseTerminalInput {
                     payload: Some(_),
@@ -442,6 +566,12 @@ fn validate_terminal_command_response(
 
     match (expected, response) {
         (
+            TerminalCommandResponseKind::Activate,
+            RelayMessage::ResponseTerminalActivate {
+                error: Some(error), ..
+            },
+        )
+        | (
             TerminalCommandResponseKind::Input,
             RelayMessage::ResponseTerminalInput {
                 error: Some(error), ..

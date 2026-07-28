@@ -561,10 +561,22 @@ pub enum RelayMessage {
     },
 
     // ── 交互式终端命令（云端 → 本机）──
-    #[serde(rename = "command.terminal.spawn")]
-    CommandTerminalSpawn {
+    #[serde(rename = "command.terminal.prepare")]
+    CommandTerminalPrepare {
         id: String,
-        payload: TerminalSpawnPayload,
+        payload: TerminalPreparePayload,
+    },
+
+    #[serde(rename = "command.terminal.activate")]
+    CommandTerminalActivate {
+        id: String,
+        payload: TerminalActivatePayload,
+    },
+
+    #[serde(rename = "command.terminal.abort_prepared")]
+    CommandTerminalAbortPrepared {
+        id: String,
+        payload: TerminalAbortPreparedPayload,
     },
 
     #[serde(rename = "command.terminal.input")]
@@ -592,11 +604,29 @@ pub enum RelayMessage {
     },
 
     // ── 交互式终端响应（本机 → 云端）──
-    #[serde(rename = "response.terminal.spawn")]
-    ResponseTerminalSpawn {
+    #[serde(rename = "response.terminal.prepare")]
+    ResponseTerminalPrepare {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        payload: Option<TerminalSpawnResponse>,
+        payload: Option<TerminalPrepareResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.terminal.activate")]
+    ResponseTerminalActivate {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<TerminalActivateResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.terminal.abort_prepared")]
+    ResponseTerminalAbortPrepared {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<TerminalAbortPreparedResponse>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -726,12 +756,16 @@ impl RelayMessage {
             | Self::EventCapabilitiesChanged { id, .. }
             | Self::EventDiscoverOptionsPatch { id, .. }
             | Self::EventToolShellOutput { id, .. }
-            | Self::CommandTerminalSpawn { id, .. }
+            | Self::CommandTerminalPrepare { id, .. }
+            | Self::CommandTerminalActivate { id, .. }
+            | Self::CommandTerminalAbortPrepared { id, .. }
             | Self::CommandTerminalInput { id, .. }
             | Self::CommandTerminalResize { id, .. }
             | Self::CommandTerminalKill { id, .. }
             | Self::CommandTerminalInventory { id, .. }
-            | Self::ResponseTerminalSpawn { id, .. }
+            | Self::ResponseTerminalPrepare { id, .. }
+            | Self::ResponseTerminalActivate { id, .. }
+            | Self::ResponseTerminalAbortPrepared { id, .. }
             | Self::ResponseTerminalInput { id, .. }
             | Self::ResponseTerminalResize { id, .. }
             | Self::ResponseTerminalKill { id, .. }
@@ -784,6 +818,51 @@ mod tests {
 
         let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize");
         assert_eq!(decoded.id(), "pty-terminal-1");
+    }
+
+    #[test]
+    fn interactive_terminal_lifecycle_commands_roundtrip() {
+        let prepare = RelayMessage::CommandTerminalPrepare {
+            id: "prepare-1".to_string(),
+            payload: TerminalPreparePayload {
+                terminal_id: "terminal-1".to_string(),
+                session_id: "session-1".to_string(),
+                mount_root_ref: "D:/workspace".to_string(),
+                cwd: None,
+                shell: None,
+                cols: 80,
+                rows: 24,
+                max_output_bytes: 65_536,
+            },
+        };
+        let json = serde_json::to_value(&prepare).expect("serialize prepare");
+        assert_eq!(json["type"], "command.terminal.prepare");
+        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize prepare");
+        assert_eq!(decoded.id(), "prepare-1");
+
+        let activate = RelayMessage::CommandTerminalActivate {
+            id: "activate-1".to_string(),
+            payload: TerminalActivatePayload {
+                terminal_id: "terminal-1".to_string(),
+                terminal_owner_epoch_id: "owner-1".to_string(),
+            },
+        };
+        let json = serde_json::to_value(&activate).expect("serialize activate");
+        assert_eq!(json["type"], "command.terminal.activate");
+        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize activate");
+        assert_eq!(decoded.id(), "activate-1");
+
+        let abort = RelayMessage::CommandTerminalAbortPrepared {
+            id: "abort-1".to_string(),
+            payload: TerminalAbortPreparedPayload {
+                terminal_id: "terminal-1".to_string(),
+                terminal_owner_epoch_id: "owner-1".to_string(),
+            },
+        };
+        let json = serde_json::to_value(&abort).expect("serialize abort");
+        assert_eq!(json["type"], "command.terminal.abort_prepared");
+        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize abort");
+        assert_eq!(decoded.id(), "abort-1");
     }
 
     #[test]

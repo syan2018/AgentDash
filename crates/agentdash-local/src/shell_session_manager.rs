@@ -30,14 +30,14 @@ pub struct ShellSessionManager {
 #[derive(Default)]
 struct ShellSessionTable {
     sessions: HashMap<String, ShellSession>,
+    prepared_terminals: HashMap<String, PreparedTerminal>,
 }
 
 struct ShellSession {
     session_id: String,
     call_id: Option<String>,
     terminal_id: Option<String>,
-    terminal_owner_epoch_id: String,
-    latest_source_sequence: u64,
+    product_source: Option<TerminalProductSource>,
     tty: bool,
     state: ToolShellSessionState,
     exit_code: Option<i32>,
@@ -48,6 +48,17 @@ struct ShellSession {
     created_at: Instant,
     updated_at: Instant,
     exited_at: Option<Instant>,
+}
+
+struct PreparedTerminal {
+    spec: ShellSpawnSpec,
+    source: TerminalProductSource,
+}
+
+#[derive(Clone)]
+struct TerminalProductSource {
+    terminal_owner_epoch_id: String,
+    latest_source_sequence: u64,
 }
 
 struct ShellSpawnSpec {
@@ -303,14 +314,13 @@ impl ShellSessionManager {
         })
     }
 
-    pub async fn spawn_terminal(
+    pub async fn prepare_terminal(
         &self,
-        payload: &TerminalSpawnPayload,
+        payload: &TerminalPreparePayload,
         workspace_root: &Path,
-    ) -> Result<TerminalSpawnResponse, String> {
+    ) -> Result<TerminalPrepareResponse, String> {
         let cwd = resolve_terminal_cwd(workspace_root, payload.cwd.as_deref())?;
         let shell = payload.shell.clone().unwrap_or_else(default_shell);
-        let session_id = payload.terminal_id.clone();
         let spec = ShellSpawnSpec {
             program: shell,
             args: Vec::new(),
@@ -324,20 +334,106 @@ impl ShellSessionManager {
             max_output_bytes: payload.max_output_bytes,
             timeout_ms: None,
         };
-        self.spawn_session(session_id.clone(), spec)
+        self.prune_finished_sessions()
             .await
             .map_err(|error| error.to_string())?;
-        let table = self.inner.lock().await;
-        let session = table
-            .sessions
-            .get(&session_id)
-            .ok_or_else(|| format!("terminal not found after spawn: {session_id}"))?;
-        Ok(TerminalSpawnResponse {
+        let source = TerminalProductSource {
+            terminal_owner_epoch_id: RelayMessage::new_id("terminal-owner"),
+            latest_source_sequence: 1,
+        };
+        let mut table = self.inner.lock().await;
+        if table.sessions.contains_key(&payload.terminal_id)
+            || table.prepared_terminals.contains_key(&payload.terminal_id)
+        {
+            return Err(format!("terminal already exists: {}", payload.terminal_id));
+        }
+        table.prepared_terminals.insert(
+            payload.terminal_id.clone(),
+            PreparedTerminal {
+                spec,
+                source: source.clone(),
+            },
+        );
+        Ok(TerminalPrepareResponse {
             terminal_id: payload.terminal_id.clone(),
-            terminal_owner_epoch_id: session.terminal_owner_epoch_id.clone(),
-            latest_source_sequence: session.latest_source_sequence,
-            max_output_bytes: session.buffer.max_bytes,
+            terminal_owner_epoch_id: source.terminal_owner_epoch_id,
+            latest_source_sequence: source.latest_source_sequence,
+            max_output_bytes: payload.max_output_bytes,
+        })
+    }
+
+    pub async fn activate_terminal(
+        &self,
+        payload: &TerminalActivatePayload,
+    ) -> Result<TerminalActivateResponse, String> {
+        let prepared = {
+            let mut table = self.inner.lock().await;
+            let prepared = table
+                .prepared_terminals
+                .remove(&payload.terminal_id)
+                .ok_or_else(|| format!("prepared terminal not found: {}", payload.terminal_id))?;
+            if prepared.source.terminal_owner_epoch_id != payload.terminal_owner_epoch_id {
+                table
+                    .prepared_terminals
+                    .insert(payload.terminal_id.clone(), prepared);
+                return Err("prepared terminal owner fence mismatch".to_string());
+            }
+            prepared
+        };
+
+        let spawned = match spawn_process(&prepared.spec).await {
+            Ok(spawned) => spawned,
+            Err(error) => {
+                let source = TerminalSourceFence {
+                    terminal_owner_epoch_id: prepared.source.terminal_owner_epoch_id.clone(),
+                    source_sequence: prepared.source.latest_source_sequence.saturating_add(1),
+                };
+                let _ = self
+                    .event_tx
+                    .send(RelayMessage::EventPtyTerminalStateChanged {
+                        id: RelayMessage::new_id("term-state"),
+                        payload: PtyTerminalStateChangedPayload {
+                            terminal_id: payload.terminal_id.clone(),
+                            source,
+                            state: PtyTerminalProcessState::Exited,
+                            exit_code: None,
+                            message: Some(format!("terminal activation failed: {error}")),
+                        },
+                    });
+                return Err(error.to_string());
+            }
+        };
+
+        self.insert_spawned_session(
+            payload.terminal_id.clone(),
+            prepared.spec,
+            spawned,
+            Some(prepared.source),
+        )
+        .await;
+        Ok(TerminalActivateResponse {
+            terminal_id: payload.terminal_id.clone(),
+            terminal_owner_epoch_id: payload.terminal_owner_epoch_id.clone(),
             process_id: None,
+        })
+    }
+
+    pub async fn abort_prepared_terminal(
+        &self,
+        payload: &TerminalAbortPreparedPayload,
+    ) -> Result<TerminalAbortPreparedResponse, String> {
+        let mut table = self.inner.lock().await;
+        let prepared = table
+            .prepared_terminals
+            .get(&payload.terminal_id)
+            .ok_or_else(|| format!("prepared terminal not found: {}", payload.terminal_id))?;
+        if prepared.source.terminal_owner_epoch_id != payload.terminal_owner_epoch_id {
+            return Err("prepared terminal owner fence mismatch".to_string());
+        }
+        table.prepared_terminals.remove(&payload.terminal_id);
+        Ok(TerminalAbortPreparedResponse {
+            terminal_id: payload.terminal_id.clone(),
+            terminal_owner_epoch_id: payload.terminal_owner_epoch_id.clone(),
         })
     }
 
@@ -463,8 +559,9 @@ impl ShellSessionManager {
                 session.exited_at = Some(Instant::now());
                 session.updated_at = Instant::now();
                 session.notify.notify_waiters();
-                if let Some(terminal_id) = session.terminal_id.clone() {
-                    let source = advance_terminal_source(session);
+                if let Some(terminal_id) = session.terminal_id.clone()
+                    && let Some(source) = advance_terminal_source(session)
+                {
                     event = Some(PtyTerminalStateChangedPayload {
                         terminal_id,
                         source,
@@ -523,10 +620,11 @@ impl ShellSessionManager {
             .values()
             .filter_map(|session| {
                 let terminal_id = session.terminal_id.clone()?;
+                let source = session.product_source.as_ref()?;
                 Some(TerminalSourceSnapshot {
                     terminal_id,
-                    terminal_owner_epoch_id: session.terminal_owner_epoch_id.clone(),
-                    latest_source_sequence: session.latest_source_sequence,
+                    terminal_owner_epoch_id: source.terminal_owner_epoch_id.clone(),
+                    latest_source_sequence: source.latest_source_sequence,
                     max_output_bytes: session.buffer.max_bytes,
                     state: terminal_process_state(session.state),
                     exit_code: session.exit_code,
@@ -536,6 +634,22 @@ impl ShellSessionManager {
                 })
             })
             .collect::<Vec<_>>();
+        terminals.extend(
+            table
+                .prepared_terminals
+                .iter()
+                .map(|(terminal_id, prepared)| TerminalSourceSnapshot {
+                    terminal_id: terminal_id.clone(),
+                    terminal_owner_epoch_id: prepared.source.terminal_owner_epoch_id.clone(),
+                    latest_source_sequence: prepared.source.latest_source_sequence,
+                    max_output_bytes: prepared.spec.max_output_bytes,
+                    state: PtyTerminalProcessState::Starting,
+                    exit_code: None,
+                    chunks: Vec::new(),
+                    next_output_sequence: 0,
+                    truncation: ToolShellTruncationInfo::default(),
+                }),
+        );
         terminals.sort_by(|left, right| left.terminal_id.cmp(&right.terminal_id));
         TerminalInventoryResponse {
             captured_at_ms: SystemTime::now()
@@ -554,25 +668,9 @@ impl ShellSessionManager {
         spec: ShellSpawnSpec,
     ) -> Result<(), ToolError> {
         self.prune_finished_sessions().await?;
-        let spawned = if spec.tty {
-            spawn_pty_process(
-                &spec.program,
-                &spec.args,
-                &spec.cwd,
-                &spec.env,
-                &None,
-                TerminalSize {
-                    rows: spec.rows,
-                    cols: spec.cols,
-                },
-            )
-            .await
-        } else {
-            spawn_pipe_process(&spec.program, &spec.args, &spec.cwd, &spec.env, &None).await
-        }
-        .map_err(|error| ToolError::Io(std::io::Error::other(error)))?;
-
-        self.insert_spawned_session(session_id, spec, spawned).await;
+        let spawned = spawn_process(&spec).await?;
+        self.insert_spawned_session(session_id, spec, spawned, None)
+            .await;
         Ok(())
     }
 
@@ -581,6 +679,7 @@ impl ShellSessionManager {
         session_id: String,
         spec: ShellSpawnSpec,
         spawned: SpawnedProcess,
+        product_source: Option<TerminalProductSource>,
     ) {
         let SpawnedProcess {
             session,
@@ -592,12 +691,11 @@ impl ShellSessionManager {
         let notify = Arc::new(Notify::new());
         let now = Instant::now();
         let terminal_id = spec.terminal_id.clone();
-        let session = ShellSession {
+        let mut session = ShellSession {
             session_id: session_id.clone(),
             call_id: spec.call_id.clone(),
             terminal_id: terminal_id.clone(),
-            terminal_owner_epoch_id: RelayMessage::new_id("terminal-owner"),
-            latest_source_sequence: u64::from(terminal_id.is_some()),
+            product_source,
             tty: spec.tty,
             state: ToolShellSessionState::Running,
             exit_code: None,
@@ -609,25 +707,30 @@ impl ShellSessionManager {
             updated_at: now,
             exited_at: None,
         };
-        let initial_terminal_source = terminal_id.as_ref().map(|_| TerminalSourceFence {
-            terminal_owner_epoch_id: session.terminal_owner_epoch_id.clone(),
-            source_sequence: session.latest_source_sequence,
-        });
+        let initial_terminal_source = terminal_id
+            .as_ref()
+            .zip(session.product_source.as_mut())
+            .map(|(_, source)| {
+                source.latest_source_sequence = source.latest_source_sequence.saturating_add(1);
+                TerminalSourceFence {
+                    terminal_owner_epoch_id: source.terminal_owner_epoch_id.clone(),
+                    source_sequence: source.latest_source_sequence,
+                }
+            });
         self.inner
             .lock()
             .await
             .sessions
             .insert(session_id.clone(), session);
 
-        if let Some(terminal_id) = terminal_id {
+        if let (Some(terminal_id), Some(source)) = (terminal_id, initial_terminal_source) {
             let _ = self
                 .event_tx
                 .send(RelayMessage::EventPtyTerminalStateChanged {
                     id: RelayMessage::new_id("term-state"),
                     payload: PtyTerminalStateChangedPayload {
                         terminal_id,
-                        source: initial_terminal_source
-                            .expect("terminal sessions always have an initial source fence"),
+                        source,
                         state: PtyTerminalProcessState::Running,
                         exit_code: None,
                         message: None,
@@ -690,8 +793,8 @@ impl ShellSessionManager {
             let chunk = session.buffer.push(stream, data.clone());
             let live_output = session.live_output.push(&chunk.data);
             session.updated_at = Instant::now();
-            let terminal_event = session.terminal_id.clone().map(|terminal_id| {
-                let source = advance_terminal_source(session);
+            let terminal_event = session.terminal_id.clone().and_then(|terminal_id| {
+                let source = advance_terminal_source(session)?;
                 let delta = match &live_output {
                     Some((data, truncation)) if !truncation.truncated => {
                         TerminalOutputDelta::Appended {
@@ -708,11 +811,11 @@ impl ShellSessionManager {
                         retained_output: String::new(),
                     },
                 };
-                TerminalOutputPayload {
+                Some(TerminalOutputPayload {
                     terminal_id,
                     source,
                     delta,
-                }
+                })
             });
             (
                 chunk,
@@ -765,19 +868,19 @@ impl ShellSessionManager {
             session.exited_at = Some(Instant::now());
             session.updated_at = Instant::now();
             session.notify.notify_waiters();
-            session.terminal_id.clone().map(|terminal_id| {
+            session.terminal_id.clone().and_then(|terminal_id| {
                 let state = match session.state {
                     ToolShellSessionState::Killed => PtyTerminalProcessState::Killed,
                     _ => PtyTerminalProcessState::Exited,
                 };
-                let source = advance_terminal_source(session);
-                PtyTerminalStateChangedPayload {
+                let source = advance_terminal_source(session)?;
+                Some(PtyTerminalStateChangedPayload {
                     terminal_id,
                     source,
                     state,
                     exit_code: Some(code),
                     message: None,
-                }
+                })
             })
         };
         if let Some(payload) = event {
@@ -804,15 +907,15 @@ impl ShellSessionManager {
             session.exited_at = Some(Instant::now());
             session.updated_at = Instant::now();
             session.notify.notify_waiters();
-            session.terminal_id.clone().map(|terminal_id| {
-                let source = advance_terminal_source(session);
-                PtyTerminalStateChangedPayload {
+            session.terminal_id.clone().and_then(|terminal_id| {
+                let source = advance_terminal_source(session)?;
+                Some(PtyTerminalStateChangedPayload {
                     terminal_id,
                     source,
                     state: PtyTerminalProcessState::Killed,
                     exit_code: None,
                     message: Some("timeout reached".to_string()),
-                }
+                })
             })
         };
         if let Some(payload) = event {
@@ -880,12 +983,33 @@ fn shell_read_snapshot(
     }
 }
 
-fn advance_terminal_source(session: &mut ShellSession) -> TerminalSourceFence {
-    session.latest_source_sequence = session.latest_source_sequence.saturating_add(1);
-    TerminalSourceFence {
-        terminal_owner_epoch_id: session.terminal_owner_epoch_id.clone(),
-        source_sequence: session.latest_source_sequence,
+async fn spawn_process(spec: &ShellSpawnSpec) -> Result<SpawnedProcess, ToolError> {
+    if spec.tty {
+        spawn_pty_process(
+            &spec.program,
+            &spec.args,
+            &spec.cwd,
+            &spec.env,
+            &None,
+            TerminalSize {
+                rows: spec.rows,
+                cols: spec.cols,
+            },
+        )
+        .await
+    } else {
+        spawn_pipe_process(&spec.program, &spec.args, &spec.cwd, &spec.env, &None).await
     }
+    .map_err(|error| ToolError::Io(std::io::Error::other(error)))
+}
+
+fn advance_terminal_source(session: &mut ShellSession) -> Option<TerminalSourceFence> {
+    let source = session.product_source.as_mut()?;
+    source.latest_source_sequence = source.latest_source_sequence.saturating_add(1);
+    Some(TerminalSourceFence {
+        terminal_owner_epoch_id: source.terminal_owner_epoch_id.clone(),
+        source_sequence: source.latest_source_sequence,
+    })
 }
 
 fn terminal_output_stream(stream: ShellOutputStream) -> TerminalOutputStream {
@@ -1067,6 +1191,157 @@ mod tests {
                 .expect("read shell session");
         }
         latest
+    }
+
+    fn terminal_prepare_payload(
+        terminal_id: &str,
+        workspace_root: &Path,
+    ) -> TerminalPreparePayload {
+        TerminalPreparePayload {
+            terminal_id: terminal_id.to_string(),
+            session_id: "session-1".to_string(),
+            mount_root_ref: workspace_root.to_string_lossy().to_string(),
+            cwd: None,
+            shell: None,
+            cols: 80,
+            rows: 24,
+            max_output_bytes: 16 * 1024,
+        }
+    }
+
+    #[tokio::test]
+    async fn prepared_terminal_is_visible_without_emitting_product_events() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let workspace_root = std::fs::canonicalize(workspace.path()).expect("canonical workspace");
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let manager =
+            ShellSessionManager::new(ToolExecutor::new(vec![workspace_root.clone()]), event_tx);
+
+        let prepared = manager
+            .prepare_terminal(
+                &terminal_prepare_payload("term-prepared", &workspace_root),
+                &workspace_root,
+            )
+            .await
+            .expect("prepare terminal");
+
+        assert_eq!(prepared.latest_source_sequence, 1);
+        assert!(event_rx.try_recv().is_err());
+        let inventory = manager
+            .terminal_inventory(&TerminalInventoryRequest {
+                cursors: Vec::new(),
+            })
+            .await;
+        assert_eq!(inventory.terminals.len(), 1);
+        assert_eq!(inventory.terminals[0].terminal_id, "term-prepared");
+        assert_eq!(
+            inventory.terminals[0].state,
+            PtyTerminalProcessState::Starting
+        );
+        assert_eq!(inventory.terminals[0].latest_source_sequence, 1);
+    }
+
+    #[tokio::test]
+    async fn terminal_activation_emits_running_after_prepared_source_sequence() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let workspace_root = std::fs::canonicalize(workspace.path()).expect("canonical workspace");
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let manager =
+            ShellSessionManager::new(ToolExecutor::new(vec![workspace_root.clone()]), event_tx);
+        let prepared = manager
+            .prepare_terminal(
+                &terminal_prepare_payload("term-activate", &workspace_root),
+                &workspace_root,
+            )
+            .await
+            .expect("prepare terminal");
+
+        manager
+            .activate_terminal(&TerminalActivatePayload {
+                terminal_id: prepared.terminal_id.clone(),
+                terminal_owner_epoch_id: prepared.terminal_owner_epoch_id.clone(),
+            })
+            .await
+            .expect("activate terminal");
+
+        let event = event_rx.recv().await.expect("running event");
+        assert!(matches!(
+            event,
+            RelayMessage::EventPtyTerminalStateChanged {
+                payload: PtyTerminalStateChangedPayload {
+                    terminal_id,
+                    source: TerminalSourceFence {
+                        terminal_owner_epoch_id,
+                        source_sequence: 2,
+                    },
+                    state: PtyTerminalProcessState::Running,
+                    ..
+                },
+                ..
+            } if terminal_id == prepared.terminal_id
+                && terminal_owner_epoch_id == prepared.terminal_owner_epoch_id
+        ));
+
+        manager
+            .terminate_shell(ToolShellTerminatePayload {
+                session_id: prepared.terminal_id,
+            })
+            .await
+            .expect("terminate terminal");
+    }
+
+    #[tokio::test]
+    async fn tool_shell_terminal_id_does_not_publish_interactive_product_events() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let manager = ShellSessionManager::new(
+            ToolExecutor::new(vec![workspace.path().to_path_buf()]),
+            event_tx,
+        );
+        let command = if cfg!(windows) {
+            "Write-Output done"
+        } else {
+            "printf 'done\\n'"
+        };
+
+        let response = manager
+            .start_shell(ToolShellExecPayload {
+                call_id: "call-tool-terminal".to_string(),
+                command: command.to_string(),
+                terminal_id: Some("term-tool-continuation".to_string()),
+                mount_root_ref: workspace.path().to_string_lossy().to_string(),
+                cwd: None,
+                timeout_ms: None,
+                yield_time_ms: Some(5_000),
+                max_output_bytes: Some(16 * 1024),
+                tty: false,
+                cols: None,
+                rows: None,
+            })
+            .await
+            .expect("start tool shell");
+        let _ = wait_until_terminal(
+            &manager,
+            &response.session_id,
+            response.next_seq.checked_sub(1),
+        )
+        .await;
+
+        let events = std::iter::from_fn(|| event_rx.try_recv().ok()).collect::<Vec<_>>();
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                RelayMessage::EventTerminalOutput { .. }
+                    | RelayMessage::EventPtyTerminalStateChanged { .. }
+            )),
+            "tool shell must not publish interactive Product events: {events:?}"
+        );
+        let inventory = manager
+            .terminal_inventory(&TerminalInventoryRequest {
+                cursors: Vec::new(),
+            })
+            .await;
+        assert!(inventory.terminals.is_empty());
     }
 
     #[tokio::test]

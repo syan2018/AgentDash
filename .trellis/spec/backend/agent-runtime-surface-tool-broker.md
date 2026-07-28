@@ -96,6 +96,85 @@ locator -> ExecutionAuthority
           -> ToolBroker execution grant
 ```
 
+## Scenario: Interactive Terminal Product Registration Barrier
+
+### 1. Scope / Trigger
+
+交互式终端的 Relay 启动协议、Local process source 或 AgentRun terminal Product projection
+发生变化时适用。进程一旦启动就可能立即产生 Running、output 或 exit 事实，因此 Product owner
+必须在任何此类事实进入 Relay 前完成持久化，才能让 source sequence 始终有可解析的聚合根。
+
+### 2. Signatures
+
+```rust
+CommandTerminalPrepare(TerminalPreparePayload)
+    -> TerminalPrepareResponse { terminal_owner_epoch_id, latest_source_sequence: 1, .. }
+CommandTerminalActivate(TerminalActivatePayload { terminal_id, terminal_owner_epoch_id })
+    -> TerminalActivateResponse
+CommandTerminalAbortPrepared(TerminalAbortPreparedPayload)
+    -> TerminalAbortPreparedResponse
+```
+
+API 执行顺序固定为：
+
+```text
+Local prepare(seq=1, Starting, no process)
+  -> Product register_spawned(Starting, seq=1)
+  -> Local activate
+  -> Relay Running(seq=2)
+  -> Relay output/terminal state(seq>2)
+```
+
+### 3. Contracts
+
+- `prepare` 只校验 workspace/shell 并预留 `terminal_id + terminal_owner_epoch_id + seq=1`；
+  prepared terminal 可被 inventory 读取为 Starting，但不启动进程、不发布 Product 事件。
+- `register_spawned` 成功是 `activate` 的前置 barrier；注册失败时 API 使用同一 owner fence
+  取消 prepared reservation。
+- `activate` 只接受 prepare 返回的 owner fence。进程启动成功后首先发布 Running seq=2，
+  后续 output/state 共用该 epoch 并严格递增。
+- 激活阶段进程启动失败时，Local 发布 Exited seq=2，使已经注册的 Product terminal 收敛为终态。
+- `shell_exec.terminal_id` 是 ProcessShell continuation identity；它只发布
+  `EventToolShellOutput`，不进入交互式 Product terminal inventory，也不发布
+  `EventTerminalOutput`/`EventPtyTerminalStateChanged`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| terminal ID 已 active 或 prepared | prepare 返回 typed runtime error |
+| activate/abort 的 owner epoch 不匹配 | 拒绝操作并保留原 reservation |
+| Product register 失败 | abort prepared；进程从未启动 |
+| activate 的进程启动失败 | 返回 activation error，并发布 Exited seq=2 |
+| shell tool 带 continuation terminal ID | 保留 shell read/input/terminate 路由；不产生 Product terminal source fact |
+
+### 5. Good / Base / Bad Cases
+
+- Good：Product Starting seq=1 已提交后，Local 激活并发出 Running seq=2；高速 shell output
+  也只能排在已存在的 Product owner 之后。
+- Base：prepared terminal 在激活前被 inventory 观察到，只呈现 Starting seq=1 和空 output。
+- Bad：Local spawn 在 API 注册 Product 之前发生，进程的首个 Running/output 会以不存在的
+  terminal owner 投影，持续形成 `terminal projection conflict`。
+
+### 6. Tests Required
+
+- Relay roundtrip 覆盖 prepare/activate/abort 的 wire name 与 owner fence。
+- Local prepare 测试断言 seq=1、inventory Starting 且 event channel 为空。
+- Local activate 测试断言首个 Product 事件为相同 owner epoch 的 Running seq=2。
+- shell tool 测试显式传 `terminal_id`，断言仍可 continuation，但交互式 Product event
+  与 inventory 均为空。
+- API/集成测试断言 `register_spawned` 完成前 Local 不会收到 activate；注册失败会触发 abort。
+
+### 7. Wrong vs Correct
+
+```text
+Wrong:  Local spawn -> Running/output -> Product register
+        首个 source fact 到达时没有可投影的 Product owner。
+
+Correct: Local prepare -> Product register -> Local activate -> Running/output
+         Product owner 是进程副作用与全部 source sequence 的持久化 barrier。
+```
+
 ## 1. Scope / Trigger
 
 本规范适用于 Business Agent Surface 的 capability contribution 编译与 profile binding，以及平台 callable tool 通过 Direct Callback 或 session-scoped MCP façade 执行的统一 Broker 状态机。修改 Capability Pack、HookPlan 编译、ToolCatalog、Workspace/Skill 适配、tool policy顺序、approval、credential、VFS或tool-call persistence时必须复核本规范。

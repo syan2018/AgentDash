@@ -483,12 +483,16 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
             "response.extension_backend_service_invoke"
         }
         RelayMessage::EventToolShellOutput { .. } => "event.tool.shell_output",
-        RelayMessage::CommandTerminalSpawn { .. } => "command.terminal.spawn",
+        RelayMessage::CommandTerminalPrepare { .. } => "command.terminal.prepare",
+        RelayMessage::CommandTerminalActivate { .. } => "command.terminal.activate",
+        RelayMessage::CommandTerminalAbortPrepared { .. } => "command.terminal.abort_prepared",
         RelayMessage::CommandTerminalInput { .. } => "command.terminal.input",
         RelayMessage::CommandTerminalResize { .. } => "command.terminal.resize",
         RelayMessage::CommandTerminalKill { .. } => "command.terminal.kill",
         RelayMessage::CommandTerminalInventory { .. } => "command.terminal.inventory",
-        RelayMessage::ResponseTerminalSpawn { .. } => "response.terminal.spawn",
+        RelayMessage::ResponseTerminalPrepare { .. } => "response.terminal.prepare",
+        RelayMessage::ResponseTerminalActivate { .. } => "response.terminal.activate",
+        RelayMessage::ResponseTerminalAbortPrepared { .. } => "response.terminal.abort_prepared",
         RelayMessage::ResponseTerminalInput { .. } => "response.terminal.input",
         RelayMessage::ResponseTerminalResize { .. } => "response.terminal.resize",
         RelayMessage::ResponseTerminalKill { .. } => "response.terminal.kill",

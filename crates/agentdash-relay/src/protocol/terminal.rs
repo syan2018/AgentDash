@@ -4,8 +4,8 @@ use super::tool::{ToolShellOutputChunk, ToolShellTruncationInfo, truncate_live_o
 
 // ─── 交互式终端 Payload ─────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalSpawnPayload {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalPreparePayload {
     pub terminal_id: String,
     pub session_id: String,
     pub mount_root_ref: String,
@@ -27,14 +27,38 @@ fn default_rows() -> u16 {
     24
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalSpawnResponse {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalPrepareResponse {
     pub terminal_id: String,
     pub terminal_owner_epoch_id: String,
     pub latest_source_sequence: u64,
     pub max_output_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalActivatePayload {
+    pub terminal_id: String,
+    pub terminal_owner_epoch_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalActivateResponse {
+    pub terminal_id: String,
+    pub terminal_owner_epoch_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub process_id: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalAbortPreparedPayload {
+    pub terminal_id: String,
+    pub terminal_owner_epoch_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalAbortPreparedResponse {
+    pub terminal_id: String,
+    pub terminal_owner_epoch_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

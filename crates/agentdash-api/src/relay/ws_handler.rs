@@ -919,7 +919,9 @@ fn is_pending_response_message(msg: &RelayMessage) -> bool {
             | RelayMessage::ResponseExtensionProtocolInvoke { .. }
             | RelayMessage::ResponseExtensionBackendServiceInvoke { .. }
             | RelayMessage::ResponseVfsMaterialize { .. }
-            | RelayMessage::ResponseTerminalSpawn { .. }
+            | RelayMessage::ResponseTerminalPrepare { .. }
+            | RelayMessage::ResponseTerminalActivate { .. }
+            | RelayMessage::ResponseTerminalAbortPrepared { .. }
             | RelayMessage::ResponseTerminalInput { .. }
             | RelayMessage::ResponseTerminalResize { .. }
             | RelayMessage::ResponseTerminalKill { .. }

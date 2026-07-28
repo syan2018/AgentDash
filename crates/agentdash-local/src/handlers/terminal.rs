@@ -1,4 +1,4 @@
-//! 交互式终端命令处理——spawn / input / resize / kill
+//! 交互式终端命令处理——prepare / activate / input / resize / kill
 
 use std::sync::Arc;
 
@@ -35,7 +35,9 @@ impl TerminalCommandHandler {
 
     pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
         match msg {
-            RelayMessage::CommandTerminalSpawn { .. }
+            RelayMessage::CommandTerminalPrepare { .. }
+            | RelayMessage::CommandTerminalActivate { .. }
+            | RelayMessage::CommandTerminalAbortPrepared { .. }
             | RelayMessage::CommandTerminalInput { .. }
             | RelayMessage::CommandTerminalResize { .. }
             | RelayMessage::CommandTerminalKill { .. }
@@ -44,10 +46,10 @@ impl TerminalCommandHandler {
         }
     }
 
-    pub(super) async fn handle_terminal_spawn(
+    pub(super) async fn handle_terminal_prepare(
         &self,
         id: String,
-        payload: TerminalSpawnPayload,
+        payload: TerminalPreparePayload,
     ) -> RelayMessage {
         let workspace_root = match self
             .tool_executor
@@ -55,7 +57,7 @@ impl TerminalCommandHandler {
         {
             Ok(path) => path,
             Err(error) => {
-                return RelayMessage::ResponseTerminalSpawn {
+                return RelayMessage::ResponseTerminalPrepare {
                     id,
                     payload: None,
                     error: Some(RelayError::runtime_error(format!(
@@ -67,18 +69,56 @@ impl TerminalCommandHandler {
 
         match self
             .shell_sessions
-            .spawn_terminal(&payload, &workspace_root)
+            .prepare_terminal(&payload, &workspace_root)
             .await
         {
-            Ok(resp) => RelayMessage::ResponseTerminalSpawn {
+            Ok(resp) => RelayMessage::ResponseTerminalPrepare {
                 id,
                 payload: Some(resp),
                 error: None,
             },
-            Err(e) => RelayMessage::ResponseTerminalSpawn {
+            Err(e) => RelayMessage::ResponseTerminalPrepare {
                 id,
                 payload: None,
                 error: Some(RelayError::runtime_error(e)),
+            },
+        }
+    }
+
+    pub(super) async fn handle_terminal_activate(
+        &self,
+        id: String,
+        payload: TerminalActivatePayload,
+    ) -> RelayMessage {
+        match self.shell_sessions.activate_terminal(&payload).await {
+            Ok(resp) => RelayMessage::ResponseTerminalActivate {
+                id,
+                payload: Some(resp),
+                error: None,
+            },
+            Err(error) => RelayMessage::ResponseTerminalActivate {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(error)),
+            },
+        }
+    }
+
+    pub(super) async fn handle_terminal_abort_prepared(
+        &self,
+        id: String,
+        payload: TerminalAbortPreparedPayload,
+    ) -> RelayMessage {
+        match self.shell_sessions.abort_prepared_terminal(&payload).await {
+            Ok(resp) => RelayMessage::ResponseTerminalAbortPrepared {
+                id,
+                payload: Some(resp),
+                error: None,
+            },
+            Err(error) => RelayMessage::ResponseTerminalAbortPrepared {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(error)),
             },
         }
     }

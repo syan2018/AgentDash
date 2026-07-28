@@ -238,8 +238,18 @@ impl LocalCommandRouter {
             }
 
             // ── 交互式终端 ──
-            RelayMessage::CommandTerminalSpawn { id, payload } => {
-                vec![self.terminal.handle_terminal_spawn(id, payload).await]
+            RelayMessage::CommandTerminalPrepare { id, payload } => {
+                vec![self.terminal.handle_terminal_prepare(id, payload).await]
+            }
+            RelayMessage::CommandTerminalActivate { id, payload } => {
+                vec![self.terminal.handle_terminal_activate(id, payload).await]
+            }
+            RelayMessage::CommandTerminalAbortPrepared { id, payload } => {
+                vec![
+                    self.terminal
+                        .handle_terminal_abort_prepared(id, payload)
+                        .await,
+                ]
             }
             RelayMessage::CommandTerminalInput { id, payload } => {
                 vec![self.terminal.handle_terminal_input(id, payload).await]

@@ -1046,7 +1046,7 @@ fn render_tool_schema_delta(
             "### Added Tool Schemas\n{}",
             added_tools
                 .iter()
-                .map(render_tool_schema_entry)
+                .map(|tool| render_tool_schema_entry(tool, ToolSchemaRenderMode::Summary))
                 .collect::<Vec<_>>()
                 .join("\n\n")
         ));
@@ -1057,14 +1057,23 @@ fn render_tool_schema_delta(
             "### Changed Tool Schemas\n{}",
             changed_tools
                 .iter()
-                .map(render_tool_schema_entry)
+                .map(|tool| render_tool_schema_entry(tool, ToolSchemaRenderMode::Summary))
                 .collect::<Vec<_>>()
                 .join("\n\n")
         ));
     }
 }
 
-fn render_tool_schema_entry(tool: &RuntimeToolSchemaEntry) -> String {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolSchemaRenderMode {
+    Summary,
+    Complete,
+}
+
+pub(crate) fn render_tool_schema_entry(
+    tool: &RuntimeToolSchemaEntry,
+    mode: ToolSchemaRenderMode,
+) -> String {
     let mut lines = vec![format!("#### `{}`", tool.name)];
     let mut provenance = Vec::new();
     if let Some(capability_key) = tool.capability_key.as_deref() {
@@ -1087,12 +1096,14 @@ fn render_tool_schema_entry(tool: &RuntimeToolSchemaEntry) -> String {
     let mut parameters = Vec::new();
     render_schema_node(&tool.parameters_schema, "$", None, 0, &mut parameters);
     lines.extend(parameters);
-    lines.push("Complete JSON Schema:".to_owned());
-    lines.push(format!(
-        "```json\n{}\n```",
-        serde_json::to_string_pretty(&tool.parameters_schema)
-            .unwrap_or_else(|_| tool.parameters_schema.to_string())
-    ));
+    if mode == ToolSchemaRenderMode::Complete {
+        lines.push("Complete JSON Schema:".to_owned());
+        lines.push(format!(
+            "```json\n{}\n```",
+            serde_json::to_string_pretty(&tool.parameters_schema)
+                .unwrap_or_else(|_| tool.parameters_schema.to_string())
+        ));
+    }
     lines.join("\n")
 }
 
@@ -1208,30 +1219,26 @@ fn schema_type(schema: &Value) -> String {
 }
 
 fn schema_constraints(schema: &Value) -> Vec<String> {
-    [
-        "format",
-        "pattern",
-        "minimum",
-        "maximum",
-        "exclusiveMinimum",
-        "exclusiveMaximum",
-        "multipleOf",
-        "minLength",
-        "maxLength",
-        "minItems",
-        "maxItems",
-        "uniqueItems",
-        "minProperties",
-        "maxProperties",
-        "additionalProperties",
-    ]
-    .into_iter()
-    .filter_map(|key| {
-        schema
-            .get(key)
-            .map(|value| format!("{key}={}", compact_json(value)))
-    })
-    .collect()
+    const RENDERED_KEYS: &[&str] = &[
+        "type",
+        "description",
+        "required",
+        "properties",
+        "items",
+        "enum",
+        "const",
+        "allOf",
+        "anyOf",
+        "oneOf",
+    ];
+
+    schema
+        .as_object()
+        .into_iter()
+        .flat_map(|object| object.iter())
+        .filter(|(key, _)| !RENDERED_KEYS.contains(&key.as_str()))
+        .map(|(key, value)| format!("{key}={}", compact_json(value)))
+        .collect()
 }
 
 fn compact_json(value: &Value) -> String {
@@ -1430,7 +1437,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_schema_frame_renders_nested_schema_and_provenance_without_omission() {
+    fn tool_schema_frame_renders_complete_readable_summary_and_retains_structured_schema() {
         let mut surface = DashSurface {
             revision: 7,
             digest: "surface-7".to_owned(),
@@ -1483,7 +1490,19 @@ mod tests {
         assert!(frame.rendered_text.contains("`document.format`"));
         assert!(frame.rendered_text.contains("enum \"markdown\" | \"json\""));
         assert!(frame.rendered_text.contains("`document.blocks[].text`"));
-        assert!(frame.rendered_text.contains("minLength=1"));
-        assert!(!frame.rendered_text.contains("omitted"));
+        assert!(!frame.rendered_text.contains("Complete JSON Schema"));
+        assert!(!frame.rendered_text.contains("\"properties\""));
+        let ContextFrameSection::ToolSchemaDelta { added_tools, .. } = &frame.sections[0] else {
+            panic!("tool frame should retain its structured ToolSchemaDelta");
+        };
+        assert_eq!(
+            added_tools[0].parameters_schema["properties"]["document"]["properties"]["blocks"]["items"]
+                ["properties"]["text"]["minLength"],
+            1
+        );
+        let complete = render_tool_schema_entry(&added_tools[0], ToolSchemaRenderMode::Complete);
+        assert!(complete.contains("Complete JSON Schema"));
+        assert!(complete.contains("\"properties\""));
+        assert!(complete.contains("\"minLength\": 1"));
     }
 }

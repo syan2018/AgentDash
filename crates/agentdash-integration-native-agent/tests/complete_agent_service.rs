@@ -2255,8 +2255,8 @@ async fn surface_projection_reports_tool_changes_instead_of_replaying_full_schem
     assert_eq!(deltas[2].1, &vec!["read".to_owned()]);
     assert!(deltas[1].3.contains("Added Tool Schemas"));
     assert!(deltas[1].3.contains("Changed Tool Schemas"));
-    assert!(deltas[1].3.contains("Complete JSON Schema"));
-    assert!(deltas[1].3.contains("\"properties\""));
+    assert!(!deltas[1].3.contains("Complete JSON Schema"));
+    assert!(!deltas[1].3.contains("\"properties\""));
 }
 
 #[tokio::test]

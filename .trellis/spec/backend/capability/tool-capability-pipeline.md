@@ -490,9 +490,12 @@ Correct: task runtime capability exposes task_read/task_write and execution arti
   以`context/system_append`投递该文本，并把精确同一frame发布给平台展示。首次投递是
   empty→current，运行中revision只包含真正变化的section，语义无变化时不生成frame。
 
-可读renderer必须覆盖名称、description、capability/source/path、required/optional、object/array
-嵌套、enum/const与schema constraints，并附带无损完整JSON Schema；section中的
-`parameters_schema`保持原样，前端可按需展开。
+可读renderer完整覆盖名称、description、capability/source/path、required/optional、object/array
+嵌套、enum/const与schema constraints；未被专门格式化的schema字段使用紧凑片段表达，原因是展示
+优化只负责改变表达方式，不应改变工具语义。无损原始JSON只保存在provider `tools[]`机器合同与section的
+`parameters_schema`中，前端可按需展开；这样ToolSchemaDelta仍作为
+系统message表达能力变化，但不会把同一机器schema重复注入上下文。附带原始JSON的完整文本renderer
+作为显式模式保留，供未来deferred tool在独立按需读取路径使用，默认delta渲染不得启用。
 provider bridge只做vendor structured field映射，不追加工具PromptText，原因是ContextFrame owner
 需要独立管理context更新、缓存与compaction。Dash从native history恢复当前active surface的append
 序列，而不是要求最新surface重放完整schema；这样增量语义、热更新顺序与revoke都由平台控制。

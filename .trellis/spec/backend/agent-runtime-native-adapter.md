@@ -134,7 +134,10 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   Native Adapter把capability manifest各维度与`ToolSchemaDelta`合并到同一个
   `CapabilityStateDelta` ContextFrame：首次接纳按empty→current生成完整初始增量，后续revision只
   保留真正变化的section，语义未变时不生成空frame。ToolSchema renderer从同一列表生成完整、
-  确定性的nested-schema说明与无损JSON Schema，同时保存added/removed/changed结构化证据。
+  确定性的可读参数说明；已知结构使用可读路径表达，其余schema字段保留为紧凑片段，因为展示优化
+  只改变表达方式，不改变工具语义。无损JSON Schema只保存在provider `tools[]`机器合同与
+  added/removed/changed结构化证据中，避免重复进入系统message。renderer保留显式完整模式，供未来
+  deferred tool按需读取独立调用，不作为默认ToolSchemaDelta投递内容。
   合并为单frame的原因是capability状态和它开放的工具说明属于同一次surface transition，不能让
   模型与审计分别观察两个可独立漂移的revision。
 - Dash对`CapabilityStateDelta`固定声明`context/system_append`。Native history按当前active
@@ -334,8 +337,8 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - intrinsic surface测试断言内建`.md`进入provider request与Identity ContextFrame，Product applied
   receipt不认领该contribution，且Product binding digest不同于Dash materialization digest。
 - surface delta tests连续应用三版surface，覆盖tool新增、修改、删除，断言read重放只返回真实
-  变化、capability与ToolSchema只形成一个`context/system_append` frame、`rendered_text`包含完整
-  nested字段说明与无损JSON Schema且section保留原始schema；context channel矩阵覆盖system、
+  变化、capability与ToolSchema只形成一个`context/system_append` frame、`rendered_text`完整表达
+  可读参数语义且不重复原始JSON，section保留原始schema；context channel矩阵覆盖system、
   identity、workspace、workflow、skills、MCP、memory与user context的typed frame映射。
 - active-turn测试在第一轮tool callback期间替换surface，断言旧call沿已接纳route完成、下一round
   读取新ContextFrame/tools/projector、provider prompt仍包含同一active surface链的早期append

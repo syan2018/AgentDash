@@ -179,7 +179,17 @@ pub enum AgentContextContribution {
 #[serde(rename_all = "snake_case")]
 pub struct AgentContextQuery {
     pub source: AgentSourceCoordinate,
-    pub at_revision: Option<AgentSnapshotRevision>,
+    pub required_revision: Option<AgentSnapshotRevision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentContextCoordinate {
+    pub snapshot_revision: AgentSnapshotRevision,
+    pub context_revision: Option<String>,
+    pub recipe_digest: AgentPayloadDigest,
+    pub authority: AgentContextAuthority,
+    pub fidelity: AgentContextFidelity,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -192,6 +202,18 @@ pub struct AgentContextSnapshot {
     pub authority: AgentContextAuthority,
     pub fidelity: AgentContextFidelity,
     pub contributions: Vec<AgentContextContribution>,
+}
+
+impl AgentContextSnapshot {
+    pub fn coordinate(&self) -> AgentContextCoordinate {
+        AgentContextCoordinate {
+            snapshot_revision: self.snapshot_revision,
+            context_revision: self.context_revision.clone(),
+            recipe_digest: self.recipe_digest.clone(),
+            authority: self.authority,
+            fidelity: self.fidelity,
+        }
+    }
 }
 
 impl AppliedInitialContextEvidence {

@@ -523,6 +523,16 @@ mod tests {
         AgentSnapshot {
             source: agentdash_agent_service_api::AgentSourceCoordinate::new("source-1").unwrap(),
             revision,
+            context: agentdash_agent_service_api::AgentContextCoordinate {
+                snapshot_revision: revision,
+                context_revision: Some("context-1".to_owned()),
+                recipe_digest: agentdash_agent_service_api::AgentPayloadDigest::new(
+                    "sha256:context-1",
+                )
+                .unwrap(),
+                authority: agentdash_agent_service_api::AgentContextAuthority::AgentOwned,
+                fidelity: agentdash_agent_service_api::AgentContextFidelity::Exact,
+            },
             lifecycle: agentdash_agent_service_api::AgentLifecycleStatus::Active,
             command_availability: execution.command_availability(
                 agentdash_agent_service_api::AgentLifecycleStatus::Active,
@@ -568,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn submit_maps_to_steer_only_when_owner_admits_steering() {
+    fn submit_maps_to_owner_admitted_command_for_active_turn_kind() {
         let input = AgentRunProductCommand::SubmitInput {
             content: vec![AgentRuntimeContentBlock::Text {
                 text: "continue".to_owned(),
@@ -588,8 +598,8 @@ mod tests {
             false,
         );
         assert!(matches!(
-            map_command(input, &compaction),
-            Err(AgentRunProductCommandError::InvalidCommand(_))
+            map_command(input, &compaction).unwrap(),
+            AgentCommand::SubmitInput { .. }
         ));
     }
 

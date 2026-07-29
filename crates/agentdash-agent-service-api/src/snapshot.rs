@@ -327,6 +327,7 @@ impl AgentExecutionSnapshot {
 pub struct AgentSnapshot {
     pub source: AgentSourceCoordinate,
     pub revision: AgentSnapshotRevision,
+    pub context: crate::AgentContextCoordinate,
     pub lifecycle: AgentLifecycleStatus,
     pub execution: AgentExecutionSnapshot,
     pub command_availability: BTreeMap<AgentControlKind, AgentControlAvailability>,

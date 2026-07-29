@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { AgentContextSnapshot } from "../../../generated/agent-service-api";
 import type { ContextFrame } from "../../../generated/backbone-protocol";
-import { SessionProjectionViewPanel } from "./SessionProjectionView";
+import {
+  SessionProjectionViewPanel,
+} from "./SessionProjectionView";
+import { validateContextSnapshotCommit } from "../model/contextSnapshotFence";
 import type { SessionChatCommandModel } from "./SessionChatViewTypes";
 
 const mocks = vi.hoisted(() => ({
@@ -86,7 +89,13 @@ describe("SessionProjectionView", () => {
 
     SessionProjectionView({
       agentRunTarget: { runId: "run-1", agentId: "agent-1" },
-      refreshKey: 0,
+      contextCoordinate: {
+        snapshot_revision: 42n,
+        context_revision: "context-revision-2",
+        recipe_digest: "sha256:recipe",
+        authority: "source_authoritative",
+        fidelity: "exact",
+      },
       tokenUsage: null,
       embedded: false,
     });
@@ -95,7 +104,39 @@ describe("SessionProjectionView", () => {
     expect(mocks.fetchAgentRunRuntimeContextProjection).toHaveBeenCalledWith({
       runId: "run-1",
       agentId: "agent-1",
-    }, expect.any(AbortSignal));
+    }, 42n, expect.any(AbortSignal));
+  });
+
+  it("拒绝低于 required revision 的 context snapshot", () => {
+    expect(() => validateContextSnapshotCommit(
+      { ...sampleProjection(), snapshot_revision: "41" as AgentContextSnapshot["snapshot_revision"] },
+      sampleContextCoordinate(),
+      null,
+    )).toThrow("低于当前 required revision");
+  });
+
+  it("拒绝覆盖已提交 revision 的旧 context snapshot", () => {
+    expect(() => validateContextSnapshotCommit(
+      sampleProjection(),
+      sampleContextCoordinate(),
+      43n,
+    )).toThrow("低于当前 required revision");
+  });
+
+  it("拒绝同 revision 但 recipe coordinate 不一致的 snapshot", () => {
+    expect(() => validateContextSnapshotCommit(
+      { ...sampleProjection(), recipe_digest: "sha256:stale" },
+      sampleContextCoordinate(),
+      null,
+    )).toThrow("与 Runtime context coordinate 不一致");
+  });
+
+  it("允许高于 required revision 的新 context snapshot", () => {
+    expect(validateContextSnapshotCommit(
+      { ...sampleProjection(), snapshot_revision: "43" as AgentContextSnapshot["snapshot_revision"] },
+      sampleContextCoordinate(),
+      42n,
+    )).toBe(43n);
   });
 });
 
@@ -215,5 +256,15 @@ function sampleProjection(): AgentContextSnapshot {
         is_error: false,
       },
     ],
+  };
+}
+
+function sampleContextCoordinate() {
+  return {
+    snapshot_revision: 42n,
+    context_revision: "context-revision-2",
+    recipe_digest: "sha256:recipe",
+    authority: "source_authoritative" as const,
+    fidelity: "exact" as const,
   };
 }

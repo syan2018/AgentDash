@@ -20,6 +20,13 @@ describe("Agent Runtime update transport boundary", () => {
       last_compaction_outcome: null,
       latest_turn_id: "turn-1",
     },
+    context: {
+      snapshot_revision: "2",
+      context_revision: "context-2",
+      recipe_digest: "sha256:context-2",
+      authority: "source_authoritative",
+      fidelity: "exact",
+    },
     command_availability: {},
     interactions: [],
     presentations: [],
@@ -36,6 +43,10 @@ describe("Agent Runtime update transport boundary", () => {
           ...update.execution.active_turn,
           started_at_ms: 1000n,
         },
+      },
+      context: {
+        ...update.context,
+        snapshot_revision: 2n,
       },
     });
   });

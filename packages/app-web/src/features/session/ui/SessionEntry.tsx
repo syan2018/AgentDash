@@ -176,14 +176,18 @@ export function SingleEntry({
         outputText: accumulatedText,
         agentRunTarget,
         companionSubagents,
+        itemLifecycle:
+          event.type === "item_started"
+            ? "started"
+            : event.type === "item_updated"
+              ? "updated"
+              : "completed",
       });
       return (
         <ToolCallCardShell
           kind={card.kind}
           header={card.header}
-          status={threadItem.type === "contextCompaction"
-            ? event.type === "item_completed" ? "completed" : "inProgress"
-            : card.status}
+          status={card.status}
           isPendingApproval={isPendingApproval}
           agentRunTarget={agentRunTarget}
           itemId={threadItem.id}

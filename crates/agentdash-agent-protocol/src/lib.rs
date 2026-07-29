@@ -68,9 +68,10 @@ pub mod codex_app_server_protocol {
 }
 
 pub use thread_item::{
-    AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus,
-    DynamicToolCallOutputContentItem, DynamicToolCallStatus, McpToolCallStatus, PatchApplyStatus,
-    ShellExecExecutionMode, ToolProtocolProjector,
+    AgentDashCompactionMode, AgentDashCompactionStatus, AgentDashNativeThreadItem,
+    AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus, DynamicToolCallOutputContentItem,
+    DynamicToolCallStatus, McpToolCallStatus, PatchApplyStatus, ShellExecExecutionMode,
+    ToolProtocolProjector,
 };
 
 #[cfg(test)]

@@ -95,11 +95,13 @@ export type AgentContextAuthority = "agent_owned" | "agent_observed";
 
 export type AgentContextContribution = { "kind": "frame", frame: ContextFrame, } | { "kind": "message", source_entry_id: string, role: AgentModelInputRole, content: string, tool_call_id: string | null, tool_calls: Array<AgentModelInputToolCall>, is_error: boolean, } | { "kind": "opaque", label: string, evidence: string, };
 
+export type AgentContextCoordinate = { snapshot_revision: AgentSnapshotRevision, context_revision: string | null, recipe_digest: AgentPayloadDigest, authority: AgentContextAuthority, fidelity: AgentContextFidelity, };
+
 export type AgentContextFidelity = "exact" | "observed";
 
 export type AgentContextPackageId = string;
 
-export type AgentContextQuery = { source: AgentSourceCoordinate, at_revision: AgentSnapshotRevision | null, };
+export type AgentContextQuery = { source: AgentSourceCoordinate, required_revision: AgentSnapshotRevision | null, };
 
 export type AgentContextSchemaVersion = AgentServiceU64;
 
@@ -221,7 +223,7 @@ export type AgentServiceErrorCode = "invalid_argument" | "not_found" | "conflict
 
 export type AgentServiceInstanceId = string;
 
-export type AgentSnapshot = { source: AgentSourceCoordinate, revision: AgentSnapshotRevision, lifecycle: AgentLifecycleStatus, execution: AgentExecutionSnapshot, command_availability: { [key in AgentControlKind]?: AgentControlAvailability }, interactions: Array<AgentInteractionSnapshot>, thread_name: AgentThreadNameSnapshot | null, source_info: AgentSnapshotSource, applied_surface: AppliedAgentSurface | null, initial_context: AppliedInitialContextEvidence | null, conversation_history: Array<CanonicalConversationRecord>, };
+export type AgentSnapshot = { source: AgentSourceCoordinate, revision: AgentSnapshotRevision, context: AgentContextCoordinate, lifecycle: AgentLifecycleStatus, execution: AgentExecutionSnapshot, command_availability: { [key in AgentControlKind]?: AgentControlAvailability }, interactions: Array<AgentInteractionSnapshot>, thread_name: AgentThreadNameSnapshot | null, source_info: AgentSnapshotSource, applied_surface: AppliedAgentSurface | null, initial_context: AppliedInitialContextEvidence | null, conversation_history: Array<CanonicalConversationRecord>, };
 
 export type AgentSnapshotAuthority = "agent_authoritative" | "agent_observed" | "derived";
 

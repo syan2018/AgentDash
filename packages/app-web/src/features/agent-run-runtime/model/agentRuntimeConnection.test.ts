@@ -67,6 +67,13 @@ function update(
       last_compaction_outcome: null,
       latest_turn_id: "turn-live",
     },
+    context: {
+      snapshot_revision: sequence + 10n,
+      context_revision: `context-${sequence + 10n}`,
+      recipe_digest: `sha256:context-${sequence + 10n}`,
+      authority: "source_authoritative",
+      fidelity: "exact",
+    },
     command_availability:
       agentRuntimeTestFixtures.snapshots.started.command_availability,
     interactions: [],

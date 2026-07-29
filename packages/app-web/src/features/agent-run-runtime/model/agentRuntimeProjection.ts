@@ -28,6 +28,7 @@ export function applyAgentRuntimeUpdate(
     ...view,
     view_revision: update.view_revision,
     execution: update.execution,
+    context: update.context,
     interactions: update.interactions,
     command_availability: update.command_availability,
     thread_name: threadName,

@@ -141,6 +141,7 @@ pub struct DashAgentRead {
     pub history: AgentHistory,
     pub history_digest: String,
     pub surface: Option<DashSurface>,
+    pub context_recipe: DashContextRecipe,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -789,11 +790,13 @@ impl DashAgentService {
     pub async fn read(&self) -> Result<DashAgentRead, DashServiceError> {
         let state = self.repository.load().await?;
         let history_state = state.store.history().state()?;
+        let context_recipe = context_recipe_from_repository(&state)?;
         Ok(DashAgentRead {
             surface: history_state.surface.clone(),
             state: history_state,
             history: state.store.history().clone(),
             history_digest: state.store.history().digest(),
+            context_recipe,
         })
     }
 
@@ -828,33 +831,7 @@ impl DashAgentService {
 
     pub async fn context_recipe(&self) -> Result<DashContextRecipe, DashServiceError> {
         let repository = self.repository.load().await?;
-        let materialized = materialize_session_context(&repository, None, false)?;
-        let snapshot_revision = repository.store.history().state()?.entry_count;
-        let messages = materialized
-            .context
-            .history
-            .into_iter()
-            .zip(materialized.message_entry_ids)
-            .map(|(message, source_entry_id)| DashContextRecipeMessage {
-                source_entry_id,
-                message,
-            })
-            .collect::<Vec<_>>();
-        let encoded = serde_json::to_vec(&(
-            &materialized.frames,
-            &messages,
-            &materialized.context_revision,
-        ))
-        .map_err(|error| DashServiceError::Internal {
-            message: format!("encode Dash context recipe: {error}"),
-        })?;
-        Ok(DashContextRecipe {
-            snapshot_revision,
-            context_revision: materialized.context_revision,
-            frames: materialized.frames,
-            messages,
-            digest: format!("sha256:{:x}", Sha256::digest(encoded)),
-        })
+        context_recipe_from_repository(&repository)
     }
 
     pub async fn export_store(&self) -> Result<DashAgentStore, DashServiceError> {
@@ -3334,6 +3311,38 @@ struct MaterializedSessionContext {
     message_entry_ids: Vec<HistoryEntryId>,
     frames: Vec<agentdash_agent_protocol::ContextFrame>,
     context_revision: Option<ContextRevision>,
+}
+
+fn context_recipe_from_repository(
+    repository: &DashAgentRepositoryState,
+) -> Result<DashContextRecipe, DashServiceError> {
+    let materialized = materialize_session_context(repository, None, false)?;
+    let snapshot_revision = repository.store.history().state()?.entry_count;
+    let messages = materialized
+        .context
+        .history
+        .into_iter()
+        .zip(materialized.message_entry_ids)
+        .map(|(message, source_entry_id)| DashContextRecipeMessage {
+            source_entry_id,
+            message,
+        })
+        .collect::<Vec<_>>();
+    let encoded = serde_json::to_vec(&(
+        &materialized.frames,
+        &messages,
+        &materialized.context_revision,
+    ))
+    .map_err(|error| DashServiceError::Internal {
+        message: format!("encode Dash context recipe: {error}"),
+    })?;
+    Ok(DashContextRecipe {
+        snapshot_revision,
+        context_revision: materialized.context_revision,
+        frames: materialized.frames,
+        messages,
+        digest: format!("sha256:{:x}", Sha256::digest(encoded)),
+    })
 }
 
 fn materialize_session_context(

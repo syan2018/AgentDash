@@ -627,7 +627,7 @@ export function getThreadItemStatus(item: AgentDashThreadItem): string {
     case "fsGlob":
       return item.status;
     case "contextCompaction":
-      return "completed";
+      return "status" in item ? item.status : "completed";
     default:
       return "completed";
   }

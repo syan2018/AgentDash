@@ -34,15 +34,27 @@ pub enum ToolProtocolProjector {
 #[serde(untagged)]
 #[ts(export_to = "agentdash/")]
 pub enum AgentDashThreadItem {
+    AgentDash(AgentDashNativeThreadItem),
     #[ts(type = "ThreadItem")]
     Codex(codex::ThreadItem),
-    AgentDash(AgentDashNativeThreadItem),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
 #[ts(tag = "type", export_to = "agentdash/")]
 pub enum AgentDashNativeThreadItem {
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    ContextCompaction {
+        id: String,
+        operation_id: String,
+        mode: AgentDashCompactionMode,
+        status: AgentDashCompactionStatus,
+        error: Option<String>,
+        started_at_ms: u64,
+        completed_at_ms: Option<u64>,
+        context_revision: Option<String>,
+    },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
     ShellExec {
@@ -117,6 +129,25 @@ pub enum AgentDashNativeThreadItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "agentdash/")]
+pub enum AgentDashCompactionMode {
+    Manual,
+    Automatic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "agentdash/")]
+pub enum AgentDashCompactionStatus {
+    InProgress,
+    Succeeded,
+    Failed,
+    Lost,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "agentdash/")]
 pub enum ShellExecExecutionMode {
     Platform,
     MountExec,
@@ -147,6 +178,9 @@ impl AgentDashThreadItem {
                 | codex::ThreadItem::CollabAgentToolCall { id, .. } => Some(id.as_str()),
                 _ => None,
             },
+            AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ContextCompaction {
+                ..
+            }) => None,
             AgentDashThreadItem::AgentDash(item) => Some(item.id()),
         }
     }
@@ -163,17 +197,20 @@ impl AgentDashThreadItem {
     }
 
     pub fn is_tool_activity(&self) -> bool {
-        !matches!(
-            self,
+        match self {
             AgentDashThreadItem::Codex(
                 codex::ThreadItem::UserMessage { .. }
-                    | codex::ThreadItem::HookPrompt { .. }
-                    | codex::ThreadItem::AgentMessage { .. }
-                    | codex::ThreadItem::Plan { .. }
-                    | codex::ThreadItem::Reasoning { .. }
-                    | codex::ThreadItem::ContextCompaction { .. }
-            )
-        )
+                | codex::ThreadItem::HookPrompt { .. }
+                | codex::ThreadItem::AgentMessage { .. }
+                | codex::ThreadItem::Plan { .. }
+                | codex::ThreadItem::Reasoning { .. }
+                | codex::ThreadItem::ContextCompaction { .. },
+            ) => false,
+            AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ContextCompaction {
+                ..
+            }) => false,
+            _ => true,
+        }
     }
 
     pub fn is_file_change(&self) -> bool {
@@ -187,6 +224,9 @@ impl AgentDashThreadItem {
         matches!(
             self,
             AgentDashThreadItem::Codex(codex::ThreadItem::ContextCompaction { .. })
+                | AgentDashThreadItem::AgentDash(
+                    AgentDashNativeThreadItem::ContextCompaction { .. }
+                )
         )
     }
 
@@ -224,7 +264,8 @@ fn codex_item_id(item: &codex::ThreadItem) -> &str {
 impl AgentDashNativeThreadItem {
     pub fn id(&self) -> &str {
         match self {
-            AgentDashNativeThreadItem::ShellExec { id, .. }
+            AgentDashNativeThreadItem::ContextCompaction { id, .. }
+            | AgentDashNativeThreadItem::ShellExec { id, .. }
             | AgentDashNativeThreadItem::TerminalControl { id, .. }
             | AgentDashNativeThreadItem::FsRead { id, .. }
             | AgentDashNativeThreadItem::FsGrep { id, .. }
@@ -234,6 +275,7 @@ impl AgentDashNativeThreadItem {
 
     pub fn tool_name(&self) -> &'static str {
         match self {
+            AgentDashNativeThreadItem::ContextCompaction { .. } => "context_compaction",
             AgentDashNativeThreadItem::ShellExec { .. } => "shell_exec",
             AgentDashNativeThreadItem::TerminalControl { .. } => "terminal_control",
             AgentDashNativeThreadItem::FsRead { .. } => "fs_read",
@@ -249,16 +291,18 @@ impl AgentDashNativeThreadItem {
             | AgentDashNativeThreadItem::FsRead { arguments, .. }
             | AgentDashNativeThreadItem::FsGrep { arguments, .. }
             | AgentDashNativeThreadItem::FsGlob { arguments, .. } => Some(arguments),
+            AgentDashNativeThreadItem::ContextCompaction { .. } => None,
         }
     }
 
-    pub fn status(&self) -> &codex::DynamicToolCallStatus {
+    pub fn status(&self) -> Option<&codex::DynamicToolCallStatus> {
         match self {
             AgentDashNativeThreadItem::ShellExec { status, .. }
             | AgentDashNativeThreadItem::TerminalControl { status, .. }
             | AgentDashNativeThreadItem::FsRead { status, .. }
             | AgentDashNativeThreadItem::FsGrep { status, .. }
-            | AgentDashNativeThreadItem::FsGlob { status, .. } => status,
+            | AgentDashNativeThreadItem::FsGlob { status, .. } => Some(status),
+            AgentDashNativeThreadItem::ContextCompaction { .. } => None,
         }
     }
 
@@ -268,7 +312,8 @@ impl AgentDashNativeThreadItem {
             | AgentDashNativeThreadItem::FsGrep { content_items, .. }
             | AgentDashNativeThreadItem::FsGlob { content_items, .. } => content_items.as_ref(),
             AgentDashNativeThreadItem::ShellExec { .. }
-            | AgentDashNativeThreadItem::TerminalControl { .. } => None,
+            | AgentDashNativeThreadItem::TerminalControl { .. }
+            | AgentDashNativeThreadItem::ContextCompaction { .. } => None,
         }
     }
 
@@ -279,6 +324,13 @@ impl AgentDashNativeThreadItem {
             | AgentDashNativeThreadItem::FsRead { success, .. }
             | AgentDashNativeThreadItem::FsGrep { success, .. }
             | AgentDashNativeThreadItem::FsGlob { success, .. } => *success,
+            AgentDashNativeThreadItem::ContextCompaction { status, .. } => match status {
+                AgentDashCompactionStatus::Succeeded => Some(true),
+                AgentDashCompactionStatus::Failed | AgentDashCompactionStatus::Lost => Some(false),
+                AgentDashCompactionStatus::InProgress | AgentDashCompactionStatus::Cancelled => {
+                    None
+                }
+            },
         }
     }
 
@@ -315,7 +367,10 @@ impl From<AgentDashNativeThreadItem> for AgentDashThreadItem {
 
 #[cfg(test)]
 mod tests {
-    use super::ToolProtocolProjector;
+    use super::{
+        AgentDashCompactionMode, AgentDashCompactionStatus, AgentDashNativeThreadItem,
+        AgentDashThreadItem, ToolProtocolProjector,
+    };
 
     #[test]
     fn dynamic_projector_has_only_its_card_family() {
@@ -323,5 +378,23 @@ mod tests {
             serde_json::to_value(ToolProtocolProjector::Dynamic).expect("serialize projector"),
             serde_json::json!({"family": "dynamic"})
         );
+    }
+
+    #[test]
+    fn typed_context_compaction_round_trip_preserves_terminal_evidence() {
+        let item = AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ContextCompaction {
+            id: "compact-1".to_owned(),
+            operation_id: "operation-1".to_owned(),
+            mode: AgentDashCompactionMode::Manual,
+            status: AgentDashCompactionStatus::Lost,
+            error: Some("provider outcome unknown".to_owned()),
+            started_at_ms: 1_000,
+            completed_at_ms: Some(2_000),
+            context_revision: None,
+        });
+        let json = serde_json::to_value(&item).expect("serialize typed compaction item");
+        let decoded: AgentDashThreadItem =
+            serde_json::from_value(json).expect("deserialize typed compaction item");
+        assert_eq!(decoded, item);
     }
 }

@@ -296,7 +296,7 @@ export function SessionChatView({
     [productCommandState, runtimeView],
   );
 
-  const projectionRefreshKey = runtimeView?.view_revision ?? 0n;
+  const contextCoordinate = runtimeView?.context ?? null;
   const rawEventsBelongToCurrentSession = useMemo(
     () =>
       rawEventsBelongToRuntimeStreamTarget({
@@ -724,7 +724,7 @@ export function SessionChatView({
           workspaceId={workspaceId}
           tokenUsage={tokenUsage}
           agentRunTarget={agentRunTarget}
-          projectionRefreshKey={projectionRefreshKey}
+          contextCoordinate={contextCoordinate}
           compactContextCommand={commandState.commands.find(
             (command) => command.runtimeCommand === "request_compaction"
               || command.kind === "compact_context",

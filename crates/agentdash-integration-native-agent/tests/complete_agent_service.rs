@@ -1207,13 +1207,34 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
     let context = service
         .context(AgentContextQuery {
             source: parent.clone(),
-            at_revision: Some(parent_snapshot.revision),
+            required_revision: Some(parent_snapshot.revision),
         })
         .await
         .unwrap();
     assert_eq!(context.authority, AgentContextAuthority::AgentOwned);
     assert_eq!(context.fidelity, AgentContextFidelity::Exact);
     assert_eq!(context.snapshot_revision, parent_snapshot.revision);
+    let lower_bound_context = service
+        .context(AgentContextQuery {
+            source: parent.clone(),
+            required_revision: Some(AgentSnapshotRevision(
+                parent_snapshot.revision.0.saturating_sub(1),
+            )),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        lower_bound_context.snapshot_revision,
+        parent_snapshot.revision
+    );
+    let ahead_error = service
+        .context(AgentContextQuery {
+            source: parent.clone(),
+            required_revision: Some(AgentSnapshotRevision(parent_snapshot.revision.0 + 1)),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(ahead_error.code, AgentServiceErrorCode::Conflict);
     assert!(context.contributions.iter().any(|contribution| matches!(
         contribution,
         AgentContextContribution::Frame { frame }

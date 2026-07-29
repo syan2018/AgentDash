@@ -32,10 +32,12 @@ export async function fetchAgentRuntimeView(
 
 export async function fetchAgentRunRuntimeContextProjection(
   target: AgentRunRuntimeTarget,
+  requiredRevision: bigint,
   signal?: AbortSignal,
 ): Promise<AgentContextSnapshot> {
+  const path = agentRunScopedPath(target, "/runtime/context/projection");
   return api.get<AgentContextSnapshot>(
-    agentRunScopedPath(target, "/runtime/context/projection"),
+    `${path}?required_revision=${requiredRevision}`,
     { signal },
   );
 }

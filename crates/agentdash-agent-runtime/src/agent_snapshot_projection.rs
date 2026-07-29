@@ -4,18 +4,19 @@ use agentdash_agent_protocol::{BackboneEvent, CanonicalConversationView};
 
 use agentdash_agent_runtime_contract::{
     AgentRuntimeActiveTurn, AgentRuntimeAvailabilityEvidence, AgentRuntimeCommandAvailability,
-    AgentRuntimeCommandKind, AgentRuntimeCompactionOutcome, AgentRuntimeExecutionStatus,
-    AgentRuntimeExecutionView, AgentRuntimeInteraction, AgentRuntimeInteractionRequest,
-    AgentRuntimeInteractionResolution, AgentRuntimeInteractionStatus, AgentRuntimeLifecycleStatus,
-    AgentRuntimeProjectionAuthority, AgentRuntimeProjectionFidelity, AgentRuntimeQueuedCompaction,
-    AgentRuntimeThreadNameSource, AgentRuntimeUnavailabilityReason, AgentRuntimeView,
-    RuntimeInteractionId, RuntimeItemId, RuntimeOperationId, RuntimePayloadDigest,
-    RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
+    AgentRuntimeCommandKind, AgentRuntimeCompactionOutcome, AgentRuntimeContextCoordinate,
+    AgentRuntimeExecutionStatus, AgentRuntimeExecutionView, AgentRuntimeInteraction,
+    AgentRuntimeInteractionRequest, AgentRuntimeInteractionResolution,
+    AgentRuntimeInteractionStatus, AgentRuntimeLifecycleStatus, AgentRuntimeProjectionAuthority,
+    AgentRuntimeProjectionFidelity, AgentRuntimeQueuedCompaction, AgentRuntimeThreadNameSource,
+    AgentRuntimeUnavailabilityReason, AgentRuntimeView, RuntimeInteractionId, RuntimeItemId,
+    RuntimeOperationId, RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId,
+    RuntimeTurnId, SurfaceRevision,
 };
 use agentdash_agent_service_api::{
-    AgentControlAvailability, AgentControlKind, AgentControlUnavailabilityReason,
-    AgentInteractionStatus, AgentLifecycleStatus, AgentSnapshot, AgentSnapshotAuthority,
-    AgentSnapshotSource, SemanticFidelity,
+    AgentContextAuthority, AgentContextFidelity, AgentControlAvailability, AgentControlKind,
+    AgentControlUnavailabilityReason, AgentInteractionStatus, AgentLifecycleStatus, AgentSnapshot,
+    AgentSnapshotAuthority, AgentSnapshotSource, SemanticFidelity,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -40,6 +41,27 @@ pub fn project_authoritative_agent_view(
 ) -> Result<AgentRuntimeView, AgentSnapshotProjectionError> {
     validate_conversation_history(&snapshot)?;
     let revision = RuntimeProjectionRevision(snapshot.revision.0);
+    if snapshot.context.snapshot_revision != snapshot.revision {
+        return invalid("snapshot context coordinate does not match snapshot revision");
+    }
+    let context = AgentRuntimeContextCoordinate {
+        snapshot_revision: RuntimeProjectionRevision(snapshot.context.snapshot_revision.0),
+        context_revision: snapshot.context.context_revision,
+        recipe_digest: RuntimePayloadDigest::new(
+            snapshot.context.recipe_digest.as_str().to_owned(),
+        )
+        .map_err(|error| presentation(error.to_string()))?,
+        authority: match snapshot.context.authority {
+            AgentContextAuthority::AgentOwned => {
+                AgentRuntimeProjectionAuthority::SourceAuthoritative
+            }
+            AgentContextAuthority::AgentObserved => AgentRuntimeProjectionAuthority::SourceObserved,
+        },
+        fidelity: match snapshot.context.fidelity {
+            AgentContextFidelity::Exact => AgentRuntimeProjectionFidelity::Exact,
+            AgentContextFidelity::Observed => AgentRuntimeProjectionFidelity::Observed,
+        },
+    };
     let captured_at_ms = snapshot.source_info.observed_at_ms;
     let applied_surface_revision = snapshot
         .applied_surface
@@ -175,6 +197,7 @@ pub fn project_authoritative_agent_view(
         captured_at_ms,
         lifecycle: project_lifecycle(snapshot.lifecycle),
         execution,
+        context,
         interactions,
         thread_name,
         thread_name_source,
@@ -450,10 +473,11 @@ fn presentation(reason: impl Into<String>) -> AgentSnapshotProjectionError {
 #[cfg(test)]
 mod tests {
     use agentdash_agent_service_api::{
-        AgentActiveTurnKind, AgentActiveTurnPhase, AgentActiveTurnSnapshot,
-        AgentControlAvailability, AgentControlAvailabilityEvidence, AgentControlKind,
-        AgentControlUnavailabilityReason, AgentExecutionSnapshot, AgentSnapshot,
-        AgentSnapshotRevision, AgentSnapshotSource, AgentSourceCoordinate,
+        AgentActiveTurnKind, AgentActiveTurnPhase, AgentActiveTurnSnapshot, AgentContextAuthority,
+        AgentContextCoordinate, AgentContextFidelity, AgentControlAvailability,
+        AgentControlAvailabilityEvidence, AgentControlKind, AgentControlUnavailabilityReason,
+        AgentExecutionSnapshot, AgentPayloadDigest, AgentSnapshot, AgentSnapshotRevision,
+        AgentSnapshotSource, AgentSourceCoordinate,
     };
 
     use super::*;
@@ -462,6 +486,13 @@ mod tests {
         AgentSnapshot {
             source: AgentSourceCoordinate::new("source-1").expect("source"),
             revision: AgentSnapshotRevision(7),
+            context: AgentContextCoordinate {
+                snapshot_revision: AgentSnapshotRevision(7),
+                context_revision: Some("context-7".to_owned()),
+                recipe_digest: AgentPayloadDigest::new("sha256:context-7").unwrap(),
+                authority: AgentContextAuthority::AgentOwned,
+                fidelity: AgentContextFidelity::Exact,
+            },
             lifecycle: AgentLifecycleStatus::Active,
             execution: AgentExecutionSnapshot {
                 active_turn: None,
@@ -525,6 +556,15 @@ mod tests {
             projected.authority,
             AgentRuntimeProjectionAuthority::SourceAuthoritative
         );
+        assert_eq!(
+            projected.context.snapshot_revision,
+            RuntimeProjectionRevision(7)
+        );
+        assert_eq!(
+            projected.context.context_revision.as_deref(),
+            Some("context-7")
+        );
+        assert_eq!(projected.context.recipe_digest.as_str(), "sha256:context-7");
     }
 
     #[test]

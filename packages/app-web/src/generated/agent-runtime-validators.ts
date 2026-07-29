@@ -378,6 +378,7 @@ function encodeExecution(
 
 export function decodeAgentRuntimeView(value: unknown): AgentRuntimeView {
   const view = record(value, "$");
+  const context = record(view.context, "$.context");
   const threadNameSource =
     view.thread_name_source === null
       ? null
@@ -396,6 +397,13 @@ export function decodeAgentRuntimeView(value: unknown): AgentRuntimeView {
     view_revision: runtimeU64(view.view_revision, "$.view_revision"),
     captured_at_ms: runtimeU64(view.captured_at_ms, "$.captured_at_ms"),
     execution: decodeExecution(view.execution, "$.execution"),
+    context: {
+      ...context,
+      snapshot_revision: runtimeU64(
+        context.snapshot_revision,
+        "$.context.snapshot_revision",
+      ),
+    },
     thread_name_source: threadNameSource,
     operations: array(view.operations, "$.operations").map((operation, index) =>
       decodeOperation(operation, `$.operations[${index}]`)
@@ -419,6 +427,10 @@ export function encodeAgentRuntimeView(
     view_revision: encodeRuntimeU64(view.view_revision),
     captured_at_ms: encodeRuntimeU64(view.captured_at_ms),
     execution: encodeExecution(view.execution),
+    context: {
+      ...view.context,
+      snapshot_revision: encodeRuntimeU64(view.context.snapshot_revision),
+    },
     thread_name_source:
       view.thread_name_source === null
         ? null
@@ -437,11 +449,19 @@ export function encodeAgentRuntimeView(
 
 export function decodeAgentRuntimeUpdate(value: unknown): AgentRuntimeUpdate {
   const update = record(value, "$");
+  const context = record(update.context, "$.context");
   return {
     ...(update as unknown as AgentRuntimeUpdateWire),
     lane_sequence: runtimeU64(update.lane_sequence, "$.lane_sequence"),
     view_revision: runtimeU64(update.view_revision, "$.view_revision"),
     execution: decodeExecution(update.execution, "$.execution"),
+    context: {
+      ...context,
+      snapshot_revision: runtimeU64(
+        context.snapshot_revision,
+        "$.context.snapshot_revision",
+      ),
+    },
     command_availability: decodeAvailabilityMap(
       update.command_availability,
       "$.command_availability",
@@ -458,6 +478,10 @@ export function encodeAgentRuntimeUpdate(
     lane_sequence: encodeRuntimeU64(update.lane_sequence),
     view_revision: encodeRuntimeU64(update.view_revision),
     execution: encodeExecution(update.execution),
+    context: {
+      ...update.context,
+      snapshot_revision: encodeRuntimeU64(update.context.snapshot_revision),
+    },
     command_availability: encodeAvailabilityMap(update.command_availability),
   } as AgentRuntimeUpdateWire;
 }

@@ -46,6 +46,14 @@ function threadItemId(item: AgentDashThreadItem): string {
   return item.id;
 }
 
+function isTerminalThreadItem(item: AgentDashThreadItem): boolean {
+  return (
+    item.type === "contextCompaction" &&
+    "status" in item &&
+    item.status !== "inProgress"
+  );
+}
+
 function getItemIdFromEvent(event: BackboneEvent): string | undefined {
   switch (event.type) {
     case "item_started":
@@ -408,9 +416,13 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
               ...merged,
               event: bbEvent,
               accumulatedText: finalCommandOutput ?? existing.accumulatedText,
-              isStreaming: bbEvent.type !== "item_completed",
+              isStreaming:
+                bbEvent.type !== "item_completed" &&
+                !isTerminalThreadItem(bbEvent.payload.item),
               isPendingApproval:
-                bbEvent.type === "item_completed" ? false : existing.isPendingApproval,
+                bbEvent.type === "item_completed" || isTerminalThreadItem(bbEvent.payload.item)
+                  ? false
+                  : existing.isPendingApproval,
             }
           : merged;
         return next;
@@ -421,7 +433,9 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
       {
         ...makeDisplayEntry(event, bbEvent),
         accumulatedText: finalCommandOutput ?? undefined,
-        isStreaming: bbEvent.type !== "item_completed",
+        isStreaming:
+          bbEvent.type !== "item_completed" &&
+          !isTerminalThreadItem(bbEvent.payload.item),
       },
     ];
   }

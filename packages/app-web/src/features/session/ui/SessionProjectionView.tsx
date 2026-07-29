@@ -4,16 +4,18 @@ import type {
   AgentContextSnapshot,
 } from "../../../generated/agent-service-api";
 import type { ContextFrame } from "../../../generated/backbone-protocol";
+import type { AgentRuntimeView } from "../../../generated/agent-runtime-validators";
 import {
   fetchAgentRunRuntimeContextProjection,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
 import type { TokenUsageInfo } from "../model/types";
+import { validateContextSnapshotCommit } from "../model/contextSnapshotFence";
 import type { SessionChatCommandModel } from "./SessionChatViewTypes";
 
 export interface SessionProjectionViewProps {
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  refreshKey?: number | bigint;
+  contextCoordinate?: AgentRuntimeView["context"] | null;
   tokenUsage?: TokenUsageInfo | null;
   compactContextCommand?: SessionChatCommandModel;
   onCompactContext?: () => Promise<void>;
@@ -307,7 +309,7 @@ export function SessionProjectionViewPanel({
 
 export function SessionProjectionView({
   agentRunTarget = null,
-  refreshKey = 0,
+  contextCoordinate = null,
   tokenUsage = null,
   compactContextCommand,
   onCompactContext,
@@ -318,14 +320,46 @@ export function SessionProjectionView({
   const [error, setError] = useState<string | null>(null);
   const requestGeneration = useRef(0);
   const activeRequest = useRef<AbortController | null>(null);
+  const committedRevision = useRef<bigint | null>(null);
+  const committedTarget = useRef<string | null>(null);
+  const requestedCoordinate = useRef<string | null>(null);
   const targetRunId = agentRunTarget?.runId;
   const targetAgentId = agentRunTarget?.agentId;
+  const requiredSnapshotRevision = contextCoordinate?.snapshot_revision;
+  const requiredContextRevision = contextCoordinate?.context_revision;
+  const requiredRecipeDigest = contextCoordinate?.recipe_digest;
+  const requiredAuthority = contextCoordinate?.authority;
+  const requiredFidelity = contextCoordinate?.fidelity;
 
   const refresh = useCallback(async () => {
-    if (!targetRunId || !targetAgentId) {
+    if (
+      !targetRunId ||
+      !targetAgentId ||
+      requiredSnapshotRevision == null ||
+      requiredRecipeDigest == null ||
+      requiredAuthority == null ||
+      requiredFidelity == null
+    ) {
       activeRequest.current?.abort();
+      committedRevision.current = null;
+      committedTarget.current = null;
+      requestedCoordinate.current = null;
       setProjection(null);
+      setIsLoading(false);
       return;
+    }
+    const targetKey = `${targetRunId}:${targetAgentId}`;
+    if (committedTarget.current !== targetKey) {
+      committedTarget.current = targetKey;
+      committedRevision.current = null;
+      requestedCoordinate.current = null;
+      setProjection(null);
+    }
+    const coordinateKey =
+      `${requiredSnapshotRevision}:${requiredContextRevision ?? ""}:${requiredRecipeDigest}`;
+    if (requestedCoordinate.current !== coordinateKey) {
+      requestedCoordinate.current = coordinateKey;
+      setProjection(null);
     }
     activeRequest.current?.abort();
     const controller = new AbortController();
@@ -337,8 +371,20 @@ export function SessionProjectionView({
       const next = await fetchAgentRunRuntimeContextProjection({
         runId: targetRunId,
         agentId: targetAgentId,
-      }, controller.signal);
+      }, requiredSnapshotRevision, controller.signal);
       if (requestGeneration.current === generation && !controller.signal.aborted) {
+        const nextRevision = validateContextSnapshotCommit(
+          next,
+          {
+            snapshot_revision: requiredSnapshotRevision,
+            context_revision: requiredContextRevision ?? null,
+            recipe_digest: requiredRecipeDigest,
+            authority: requiredAuthority,
+            fidelity: requiredFidelity,
+          },
+          committedRevision.current,
+        );
+        committedRevision.current = nextRevision;
         setProjection(next);
       }
     } catch (err) {
@@ -350,7 +396,15 @@ export function SessionProjectionView({
         setIsLoading(false);
       }
     }
-  }, [targetAgentId, targetRunId]);
+  }, [
+    requiredAuthority,
+    requiredContextRevision,
+    requiredFidelity,
+    requiredRecipeDigest,
+    requiredSnapshotRevision,
+    targetAgentId,
+    targetRunId,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -361,7 +415,7 @@ export function SessionProjectionView({
       cancelled = true;
       activeRequest.current?.abort();
     };
-  }, [refresh, refreshKey]);
+  }, [refresh]);
 
   return (
     <SessionProjectionViewPanel

@@ -102,6 +102,68 @@ describe("session stream tool progress", () => {
     });
   });
 
+  it.each(["succeeded", "failed", "lost", "cancelled"] as const)(
+    "stops streaming when context compaction reaches %s",
+    (status) => {
+      const item = {
+        type: "contextCompaction" as const,
+        id: "compaction-1",
+        operationId: "operation-1",
+        mode: "manual" as const,
+        status,
+        error: status === "failed" ? "checkpoint write failed" : null,
+        startedAtMs: 1n,
+        completedAtMs: 2n,
+        contextRevision: status === "succeeded" ? "context-2" : null,
+      };
+      const started = event(
+        1,
+        {
+          type: "item_started",
+          payload: {
+            threadId: "session-1",
+            turnId: "turn-1",
+            startedAtMs: 1,
+            item: { ...item, status: "inProgress", completedAtMs: null },
+          },
+        },
+        false,
+      );
+      const terminalEvent: BackboneEvent =
+        status === "succeeded"
+          ? {
+              type: "item_completed",
+              payload: {
+                threadId: "session-1",
+                turnId: "turn-1",
+                completedAtMs: 2,
+                item,
+              },
+            }
+          : {
+              type: "item_updated",
+              payload: {
+                threadId: "session-1",
+                turnId: "turn-1",
+                updatedAtMs: 2,
+                item,
+              },
+            };
+      const terminal = event(2, terminalEvent, false);
+
+      const state = reduceStreamState(
+        createInitialStreamState([]),
+        [started, terminal],
+      );
+
+      expect(state.entries).toHaveLength(1);
+      expect(state.entries[0]?.isStreaming).toBe(false);
+      expect(state.entries[0]?.event).toMatchObject({
+        payload: { item: { status } },
+      });
+    },
+  );
+
   it("continues to merge generic item_updated events by item ID", () => {
     const started = event(
       1,

@@ -402,6 +402,16 @@ mod tests {
                 last_compaction_outcome: None,
                 latest_turn_id: None,
             },
+            context: agentdash_agent_runtime_contract::AgentRuntimeContextCoordinate {
+                snapshot_revision: revision,
+                context_revision: Some("context-7".to_owned()),
+                recipe_digest: agentdash_agent_runtime_contract::RuntimePayloadDigest::new(
+                    "sha256:context-7",
+                )
+                .unwrap(),
+                authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
+                fidelity: AgentRuntimeProjectionFidelity::Exact,
+            },
             interactions: Vec::new(),
             thread_name: None,
             thread_name_source: None,

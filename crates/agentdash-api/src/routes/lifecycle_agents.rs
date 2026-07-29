@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_agent_service_api::{AgentContextSnapshot, AgentServiceErrorCode};
+use agentdash_agent_service_api::{
+    AgentContextSnapshot, AgentServiceErrorCode, AgentSnapshotRevision,
+};
 use agentdash_application::agent_run_list::{
     AgentRunListChildModel, ProjectAgentRunListInput, ProjectAgentRunListQuery,
     ProjectAgentRunListQueryDeps,
@@ -44,6 +46,11 @@ const MAX_PRODUCT_CHANGE_PAGE_LIMIT: usize = 256;
 pub struct ProductProjectionChangesQuery {
     pub after: Option<u64>,
     pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RuntimeContextProjectionQuery {
+    pub required_revision: Option<u64>,
 }
 
 pub fn router() -> axum::Router<Arc<AppState>> {
@@ -554,6 +561,7 @@ async fn get_agent_runtime_context_projection(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<RuntimeContextProjectionQuery>,
 ) -> Result<Json<AgentContextSnapshot>, ApiError> {
     let target = authorize_agent_run_target(
         state.as_ref(),
@@ -566,7 +574,7 @@ async fn get_agent_runtime_context_projection(
     state
         .services
         .agent_run_product_projection
-        .context_snapshot(&target)
+        .context_snapshot(&target, query.required_revision.map(AgentSnapshotRevision))
         .await
         .map(Json)
         .map_err(agent_run_product_projection_error)

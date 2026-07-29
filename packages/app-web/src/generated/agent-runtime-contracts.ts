@@ -34,6 +34,8 @@ export type AgentRuntimeCompactionOutcomeStatus = "succeeded" | "failed" | "lost
 
 export type AgentRuntimeContextAuthority = "agent_history" | "agent_snapshot" | "workflow" | "constraint";
 
+export type AgentRuntimeContextCoordinate = { snapshot_revision: RuntimeProjectionRevision, context_revision: string | null, recipe_digest: RuntimePayloadDigest, authority: AgentRuntimeProjectionAuthority, fidelity: AgentRuntimeProjectionFidelity, };
+
 export type AgentRuntimeContextProvenance = { authority: AgentRuntimeContextAuthority, source: RuntimeContextSourceRef, revision: RuntimeContextSourceRevision, digest: RuntimePayloadDigest, };
 
 export type AgentRuntimeContractSchema = { initial_context: AgentRuntimeInitialContextPackage, interaction_response: AgentRuntimeInteractionResponse, operation_receipt: AgentRuntimeOperationReceipt, view: AgentRuntimeView, };
@@ -96,9 +98,9 @@ export type AgentRuntimeThreadNameSource = { authority: AgentRuntimeProjectionAu
 
 export type AgentRuntimeUnavailabilityReason = "runtime_not_active" | "admission_denied" | "bound_surface_unavailable" | "applied_surface_mismatch" | "active_turn_required" | "no_active_turn_required" | "pending_interaction_required" | "operation_in_flight" | "source_unavailable" | "active_turn_not_steerable" | "compaction_in_progress" | "turn_not_cancellable";
 
-export type AgentRuntimeUpdate = { lane_sequence: RuntimeU64, view_revision: RuntimeProjectionRevision, execution: AgentRuntimeExecutionView, command_availability: { [key in AgentRuntimeCommandKind]?: AgentRuntimeCommandAvailability }, interactions: Array<AgentRuntimeInteraction>, presentations: Array<CanonicalConversationRecord>, };
+export type AgentRuntimeUpdate = { lane_sequence: RuntimeU64, view_revision: RuntimeProjectionRevision, execution: AgentRuntimeExecutionView, context: AgentRuntimeContextCoordinate, command_availability: { [key in AgentRuntimeCommandKind]?: AgentRuntimeCommandAvailability }, interactions: Array<AgentRuntimeInteraction>, presentations: Array<CanonicalConversationRecord>, };
 
-export type AgentRuntimeView = { thread_id: RuntimeThreadId, view_revision: RuntimeProjectionRevision, captured_at_ms: RuntimeU64, lifecycle: AgentRuntimeLifecycleStatus, execution: AgentRuntimeExecutionView, interactions: Array<AgentRuntimeInteraction>, thread_name: string | null, thread_name_source: AgentRuntimeThreadNameSource | null, operations: Array<AgentRuntimeOperation>, source_binding: AgentRuntimeSourceBindingEvidence | null, authority: AgentRuntimeProjectionAuthority, fidelity: AgentRuntimeProjectionFidelity, command_availability: { [key in AgentRuntimeCommandKind]?: AgentRuntimeCommandAvailability }, conversation: Array<CanonicalConversationRecord>, };
+export type AgentRuntimeView = { thread_id: RuntimeThreadId, view_revision: RuntimeProjectionRevision, captured_at_ms: RuntimeU64, lifecycle: AgentRuntimeLifecycleStatus, execution: AgentRuntimeExecutionView, context: AgentRuntimeContextCoordinate, interactions: Array<AgentRuntimeInteraction>, thread_name: string | null, thread_name_source: AgentRuntimeThreadNameSource | null, operations: Array<AgentRuntimeOperation>, source_binding: AgentRuntimeSourceBindingEvidence | null, authority: AgentRuntimeProjectionAuthority, fidelity: AgentRuntimeProjectionFidelity, command_availability: { [key in AgentRuntimeCommandKind]?: AgentRuntimeCommandAvailability }, conversation: Array<CanonicalConversationRecord>, };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
 

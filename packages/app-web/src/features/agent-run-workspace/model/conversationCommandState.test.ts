@@ -118,8 +118,8 @@ describe("AgentRun conversation command state", () => {
     expect(projected.commands.find(
       (item) => item.command_id === "cmd-submit",
     )).toEqual(expect.objectContaining({
-      enabled: false,
-      unavailable_reason: "compaction_in_progress",
+      enabled: true,
+      unavailable_reason: undefined,
     }));
   });
 

@@ -79,6 +79,13 @@ function runtimeSnapshot(
           },
       latest_turn_id: "turn-compaction",
     },
+    context: {
+      snapshot_revision: revision,
+      context_revision: `context-${revision}`,
+      recipe_digest: `sha256:context-${revision}`,
+      authority: "source_authoritative",
+      fidelity: "exact",
+    },
     conversation: [],
     interactions: [],
     thread_name: null,

@@ -58,6 +58,13 @@ describe("Agent Runtime projection", () => {
           last_compaction_outcome: null,
           latest_turn_id: "turn-1",
         },
+        context: {
+          snapshot_revision: 9n,
+          context_revision: "context-9",
+          recipe_digest: "sha256:context-9",
+          authority: "source_authoritative",
+          fidelity: "exact",
+        },
         command_availability:
           agentRuntimeTestFixtures.snapshots.started.command_availability,
         interactions: [],

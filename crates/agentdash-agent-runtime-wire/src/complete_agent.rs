@@ -289,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn every_closed_applied_outcome_round_trips_on_revision_five() {
+    fn every_closed_applied_outcome_round_trips_on_revision_seven() {
         let command_id = id("command-inspect", AgentCommandId::new);
         let effect_id = id("effect-inspect", AgentEffectIdentity::new);
         let source = id("source-parent", AgentSourceCoordinate::new);

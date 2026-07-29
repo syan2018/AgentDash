@@ -99,13 +99,13 @@ function getItemKey(item: SessionDisplayItem): string {
 function ContextUsageRing({
   usage,
   agentRunTarget,
-  refreshKey,
+  contextCoordinate,
   compactContextCommand,
   onCompactContext,
 }: {
   usage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  refreshKey: bigint;
+  contextCoordinate: AgentRuntimeView["context"] | null;
   compactContextCommand?: SessionChatCommandModel;
   onCompactContext?: () => Promise<void>;
 }) {
@@ -212,7 +212,7 @@ function ContextUsageRing({
         <div className="absolute bottom-full right-0 z-50 mb-1.5 w-[min(680px,calc(100vw-2rem))]">
           <SessionProjectionView
             agentRunTarget={agentRunTarget}
-            refreshKey={refreshKey}
+            contextCoordinate={contextCoordinate}
             tokenUsage={usage}
             compactContextCommand={compactContextCommand}
             onCompactContext={onCompactContext}
@@ -647,7 +647,7 @@ export function SessionChatComposer({
   workspaceId,
   tokenUsage,
   agentRunTarget,
-  projectionRefreshKey,
+  contextCoordinate,
   compactContextCommand,
   onCompactContext,
   onAtTrigger,
@@ -680,7 +680,7 @@ export function SessionChatComposer({
   workspaceId?: string | null;
   tokenUsage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  projectionRefreshKey: bigint;
+  contextCoordinate: AgentRuntimeView["context"] | null;
   compactContextCommand?: SessionChatCommandModel;
   onCompactContext?: () => Promise<void>;
   onAtTrigger: (query: string) => void;
@@ -847,7 +847,7 @@ export function SessionChatComposer({
             <ContextUsageRing
               usage={tokenUsage}
               agentRunTarget={agentRunTarget}
-              refreshKey={projectionRefreshKey}
+              contextCoordinate={contextCoordinate}
               compactContextCommand={compactContextCommand}
               onCompactContext={onCompactContext}
             />

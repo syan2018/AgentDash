@@ -28,21 +28,21 @@ use agentdash_agent_service_api::{
     AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
     AgentCompactionMode, AgentCompactionOutcomeSnapshot, AgentCompactionOutcomeStatus,
     AgentConfigurationBoundary, AgentContextAuthority, AgentContextContribution,
-    AgentContextFidelity, AgentContextQuery, AgentContextSnapshot, AgentEffectIdentity,
-    AgentEffectInspection, AgentEffectInspectionState, AgentForkCapability, AgentForkCutoffKind,
-    AgentForkPoint, AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint,
-    AgentHookSemanticFacet, AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbacks,
-    AgentInput, AgentInputContent, AgentInteractionRequest, AgentInteractionResolution,
-    AgentInteractionSnapshot, AgentInteractionStatus, AgentLifecycleCapability,
-    AgentLifecycleStatus, AgentLiveEvent, AgentLiveEventStream, AgentModelInputRole,
-    AgentModelInputToolCall, AgentObservation, AgentObservationQuery, AgentPayloadDigest,
-    AgentQueuedCompactionSnapshot, AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId,
-    AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
-    AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
-    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
-    AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot, AgentToolDelivery,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnObservation,
+    AgentContextCoordinate, AgentContextFidelity, AgentContextQuery, AgentContextSnapshot,
+    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkCapability,
+    AgentForkCutoffKind, AgentForkPoint, AgentHookBlockingSemantics, AgentHookMutationKind,
+    AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming, AgentHostCallbackBinding,
+    AgentHostCallbacks, AgentInput, AgentInputContent, AgentInteractionRequest,
+    AgentInteractionResolution, AgentInteractionSnapshot, AgentInteractionStatus,
+    AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveEvent, AgentLiveEventStream,
+    AgentModelInputRole, AgentModelInputToolCall, AgentObservation, AgentObservationQuery,
+    AgentPayloadDigest, AgentQueuedCompactionSnapshot, AgentReadQuery, AgentReceiptState,
+    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
+    AgentServiceInstanceId, AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority,
+    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
+    AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile,
+    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot,
+    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnObservation,
     AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
     AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
     AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
@@ -898,6 +898,7 @@ impl CompleteAgentService for DashAgentCompleteService {
         let read = service.read().await.map_err(map_dash_error)?;
         let conversation_history =
             crate::canonical_projection::history_records(&read.history).map_err(internal)?;
+        let context = dash_context_coordinate(&read.context_recipe)?;
         let history_state = read.state;
         let revision = AgentSnapshotRevision(history_state.entry_count);
         if query
@@ -934,6 +935,7 @@ impl CompleteAgentService for DashAgentCompleteService {
         Ok(AgentSnapshot {
             source: query.source,
             revision,
+            context,
             lifecycle,
             execution,
             command_availability,
@@ -963,11 +965,11 @@ impl CompleteAgentService for DashAgentCompleteService {
         let recipe = service.context_recipe().await.map_err(map_dash_error)?;
         let snapshot_revision = AgentSnapshotRevision(recipe.snapshot_revision);
         if query
-            .at_revision
-            .is_some_and(|expected| expected != snapshot_revision)
+            .required_revision
+            .is_some_and(|required| snapshot_revision < required)
         {
             return Err(conflict(
-                "requested Dash Agent context revision is not current",
+                "Dash Agent context has not reached the required snapshot revision",
             ));
         }
         let mut contributions = recipe
@@ -1322,6 +1324,21 @@ impl CompleteAgentService for DashAgentCompleteService {
             .await?;
         Ok(receipt)
     }
+}
+
+fn dash_context_coordinate(
+    recipe: &agentdash_agent::dash::DashContextRecipe,
+) -> Result<AgentContextCoordinate, AgentServiceError> {
+    Ok(AgentContextCoordinate {
+        snapshot_revision: AgentSnapshotRevision(recipe.snapshot_revision),
+        context_revision: recipe
+            .context_revision
+            .as_ref()
+            .map(|revision| revision.0.clone()),
+        recipe_digest: AgentPayloadDigest::new(recipe.digest.clone()).map_err(internal)?,
+        authority: AgentContextAuthority::AgentOwned,
+        fidelity: AgentContextFidelity::Exact,
+    })
 }
 
 struct NativeCompleteAgentServiceFactory {

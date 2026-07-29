@@ -6,6 +6,7 @@ use agentdash_agent::dash::{
 use agentdash_agent_protocol::AgentCapabilityManifest;
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
+    AgentDashCompactionMode, AgentDashCompactionStatus, AgentDashNativeThreadItem,
     AgentDashThreadItem, BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
     CanonicalConversationRecord, ContextAgentConsumption, ContextAgentConsumptionMode,
     ContextConnectorProfile, ContextDeliveryChannel, ContextDeliveryMetadata,
@@ -223,9 +224,10 @@ pub(crate) fn entry_records(
             compaction_id,
             error,
             lost,
-            ..
+            completed_at_ms,
         } => {
             let turn_id = AgentTurnId::new(compaction_id.0.clone());
+            let item_id = AgentItemId::new(compaction_id.0.clone());
             let failure = DashExecutionFailure {
                 code: if *lost {
                     "compaction_lost".to_owned()
@@ -235,13 +237,29 @@ pub(crate) fn entry_records(
                 message: error.clone(),
                 retryable: false,
             };
+            events.push(BackboneEvent::ItemUpdated(ItemUpdatedNotification {
+                item: item(state, &item_id)?,
+                thread_id: session_id.to_owned(),
+                turn_id: compaction_id.0.clone(),
+                updated_at_ms: *completed_at_ms as i64,
+            }));
             events.push(BackboneEvent::TurnCompleted(TurnCompletedNotification {
                 thread_id: session_id.to_owned(),
                 turn: turn(state, &turn_id, Some(&failure))?,
             }));
         }
-        HistoryPayload::CompactionCancelled { compaction_id, .. } => {
+        HistoryPayload::CompactionCancelled {
+            compaction_id,
+            completed_at_ms,
+        } => {
             let turn_id = AgentTurnId::new(compaction_id.0.clone());
+            let item_id = AgentItemId::new(compaction_id.0.clone());
+            events.push(BackboneEvent::ItemUpdated(ItemUpdatedNotification {
+                item: item(state, &item_id)?,
+                thread_id: session_id.to_owned(),
+                turn_id: compaction_id.0.clone(),
+                updated_at_ms: *completed_at_ms as i64,
+            }));
             events.push(BackboneEvent::TurnCompleted(TurnCompletedNotification {
                 thread_id: session_id.to_owned(),
                 turn: turn(state, &turn_id, None)?,
@@ -463,10 +481,44 @@ fn item(
             "arguments": {"prompt": prompt},
             "status": status(item.status),
         }),
-        ItemDetails::ContextCompaction => serde_json::json!({
-            "type": "contextCompaction",
-            "id": item_id.0,
-        }),
+        ItemDetails::ContextCompaction => {
+            let compaction = state
+                .compactions
+                .get(&agentdash_agent::dash::CompactionId::new(item_id.0.clone()))
+                .ok_or_else(|| {
+                    <serde_json::Error as serde::de::Error>::custom(format!(
+                        "folded compaction item {} is missing compaction state",
+                        item_id.0
+                    ))
+                })?;
+            return Ok(AgentDashNativeThreadItem::ContextCompaction {
+                id: item_id.0.clone(),
+                operation_id: compaction.operation_id.0.clone(),
+                mode: match compaction.mode {
+                    agentdash_agent::dash::CompactionMode::Manual => {
+                        AgentDashCompactionMode::Manual
+                    }
+                    agentdash_agent::dash::CompactionMode::AutomaticOverflow => {
+                        AgentDashCompactionMode::Automatic
+                    }
+                },
+                status: match item.status {
+                    ActivityStatus::Active => AgentDashCompactionStatus::InProgress,
+                    ActivityStatus::Completed => AgentDashCompactionStatus::Succeeded,
+                    ActivityStatus::Failed => AgentDashCompactionStatus::Failed,
+                    ActivityStatus::Lost => AgentDashCompactionStatus::Lost,
+                    ActivityStatus::Interrupted => AgentDashCompactionStatus::Cancelled,
+                },
+                error: compaction.error.clone(),
+                started_at_ms: compaction.started_at_ms,
+                completed_at_ms: compaction.completed_at_ms,
+                context_revision: compaction
+                    .checkpoint
+                    .as_ref()
+                    .map(|checkpoint| checkpoint.context_revision.0.clone()),
+            }
+            .into());
+        }
         ItemDetails::Pending => match item.kind {
             agentdash_agent::dash::ItemKind::AssistantMessage => serde_json::json!({
                 "type": "agentMessage",
@@ -630,6 +682,38 @@ mod tests {
         AgentCapabilityMcpServer, AgentCapabilityMemorySource, AgentCapabilityMount,
         AgentCapabilitySkill, AgentCapabilityVfs, AgentCapabilityWorkspaceModule,
     };
+
+    fn compaction_history_with_terminal(
+        id: &str,
+        terminal: impl FnOnce(agentdash_agent::dash::CompactionId) -> HistoryPayload,
+    ) -> AgentHistory {
+        let compaction_id = agentdash_agent::dash::CompactionId::new(id);
+        let mut history =
+            AgentHistory::empty(AgentSessionId::new("session-1"), BranchId::new("branch-1"));
+        let source_digest = history.digest();
+        history
+            .append_batch(vec![
+                HistoryContribution {
+                    entry_id: HistoryEntryId::new(format!("{id}-started")),
+                    payload: HistoryPayload::CompactionStarted {
+                        compaction_id: compaction_id.clone(),
+                        operation_id: agentdash_agent::dash::EffectId::new(format!(
+                            "{id}-operation"
+                        )),
+                        mode: agentdash_agent::dash::CompactionMode::Manual,
+                        source_head: None,
+                        source_digest,
+                        started_at_ms: 1_000,
+                    },
+                },
+                HistoryContribution {
+                    entry_id: HistoryEntryId::new(format!("{id}-terminal")),
+                    payload: terminal(compaction_id),
+                },
+            ])
+            .expect("valid terminal compaction history");
+        history
+    }
 
     #[test]
     fn accepted_capability_manifest_projects_the_complete_platform_basket() {
@@ -1049,43 +1133,47 @@ mod tests {
         assert_eq!(completed_turn.items.len(), 1);
         assert_eq!(completed_turn.started_at, Some(1));
         assert_eq!(completed_turn.duration_ms, Some(2_000));
+        assert!(matches!(
+            completed_turn.items.as_slice(),
+            [AgentDashThreadItem::AgentDash(
+                AgentDashNativeThreadItem::ContextCompaction {
+                    status: AgentDashCompactionStatus::Succeeded,
+                    context_revision: Some(context_revision),
+                    ..
+                }
+            )] if context_revision == "revision-1"
+        ));
     }
 
     #[test]
     fn failed_compaction_terminates_the_turn_without_a_successful_item_boundary() {
-        let compaction_id = agentdash_agent::dash::CompactionId::new("compact-failed");
-        let mut history =
-            AgentHistory::empty(AgentSessionId::new("session-1"), BranchId::new("branch-1"));
-        let source_digest = history.digest();
-        history
-            .append_batch(vec![
-                HistoryContribution {
-                    entry_id: HistoryEntryId::new("compact-started"),
-                    payload: HistoryPayload::CompactionStarted {
-                        compaction_id: compaction_id.clone(),
-                        operation_id: agentdash_agent::dash::EffectId::new("compact-failed-effect"),
-                        mode: agentdash_agent::dash::CompactionMode::Manual,
-                        source_head: None,
-                        source_digest,
-                        started_at_ms: 1_000,
-                    },
-                },
-                HistoryContribution {
-                    entry_id: HistoryEntryId::new("compact-failed"),
-                    payload: HistoryPayload::CompactionFailed {
-                        compaction_id: compaction_id.clone(),
-                        error: "provider unavailable".to_owned(),
-                        lost: false,
-                        completed_at_ms: 3_000,
-                    },
-                },
-            ])
-            .expect("valid failed compaction history");
+        let history = compaction_history_with_terminal("compact-failed", |compaction_id| {
+            HistoryPayload::CompactionFailed {
+                compaction_id,
+                error: "provider unavailable".to_owned(),
+                lost: false,
+                completed_at_ms: 3_000,
+            }
+        });
 
         let records = history_records(&history).expect("canonical compaction records");
         assert!(!records.iter().any(|record| matches!(
             &record.presentation.envelope.event,
             BackboneEvent::ItemCompleted(_)
+        )));
+        assert!(records.iter().any(|record| matches!(
+            &record.presentation.envelope.event,
+            BackboneEvent::ItemUpdated(notification)
+                if matches!(
+                    &notification.item,
+                    AgentDashThreadItem::AgentDash(
+                        AgentDashNativeThreadItem::ContextCompaction {
+                            status: AgentDashCompactionStatus::Failed,
+                            error: Some(error),
+                            ..
+                        }
+                    ) if error == "provider unavailable"
+                )
         )));
         let completed_turn = records
             .iter()
@@ -1104,5 +1192,57 @@ mod tests {
                 .map(|error| error.message.as_str()),
             Some("provider unavailable")
         );
+    }
+
+    #[test]
+    fn lost_compaction_projects_typed_terminal_item() {
+        let history = compaction_history_with_terminal("compact-lost", |compaction_id| {
+            HistoryPayload::CompactionFailed {
+                compaction_id,
+                error: "provider outcome unknown".to_owned(),
+                lost: true,
+                completed_at_ms: 3_000,
+            }
+        });
+
+        let records = history_records(&history).expect("canonical lost compaction records");
+        assert!(records.iter().any(|record| matches!(
+            &record.presentation.envelope.event,
+            BackboneEvent::ItemUpdated(notification)
+                if matches!(
+                    &notification.item,
+                    AgentDashThreadItem::AgentDash(
+                        AgentDashNativeThreadItem::ContextCompaction {
+                            status: AgentDashCompactionStatus::Lost,
+                            ..
+                        }
+                    )
+                )
+        )));
+    }
+
+    #[test]
+    fn cancelled_compaction_projects_typed_terminal_item() {
+        let history = compaction_history_with_terminal("compact-cancelled", |compaction_id| {
+            HistoryPayload::CompactionCancelled {
+                compaction_id,
+                completed_at_ms: 2_000,
+            }
+        });
+
+        let records = history_records(&history).expect("canonical cancelled compaction records");
+        assert!(records.iter().any(|record| matches!(
+            &record.presentation.envelope.event,
+            BackboneEvent::ItemUpdated(notification)
+                if matches!(
+                    &notification.item,
+                    AgentDashThreadItem::AgentDash(
+                        AgentDashNativeThreadItem::ContextCompaction {
+                            status: AgentDashCompactionStatus::Cancelled,
+                            ..
+                        }
+                    )
+                )
+        )));
     }
 }

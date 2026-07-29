@@ -1511,6 +1511,9 @@
         "revision": {
           "$ref": "#/$defs/AgentSnapshotRevision"
         },
+        "context": {
+          "$ref": "#/$defs/AgentContextCoordinate"
+        },
         "lifecycle": {
           "$ref": "#/$defs/AgentLifecycleStatus"
         },
@@ -1593,12 +1596,56 @@
       "required": [
         "source",
         "revision",
+        "context",
         "lifecycle",
         "execution",
         "command_availability",
         "interactions",
         "source_info",
         "conversation_history"
+      ]
+    },
+    "AgentContextCoordinate": {
+      "type": "object",
+      "properties": {
+        "snapshot_revision": {
+          "$ref": "#/$defs/AgentSnapshotRevision"
+        },
+        "context_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recipe_digest": {
+          "type": "string"
+        },
+        "authority": {
+          "$ref": "#/$defs/AgentContextAuthority"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/AgentContextFidelity"
+        }
+      },
+      "required": [
+        "snapshot_revision",
+        "recipe_digest",
+        "authority",
+        "fidelity"
+      ]
+    },
+    "AgentContextAuthority": {
+      "type": "string",
+      "enum": [
+        "agent_owned",
+        "agent_observed"
+      ]
+    },
+    "AgentContextFidelity": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "observed"
       ]
     },
     "AgentLifecycleStatus": {
@@ -3006,10 +3053,467 @@
     "AgentDashThreadItem": {
       "anyOf": [
         {
-          "$ref": "#/$defs/ThreadItem"
+          "$ref": "#/$defs/AgentDashNativeThreadItem"
         },
         {
-          "$ref": "#/$defs/AgentDashNativeThreadItem"
+          "$ref": "#/$defs/ThreadItem"
+        }
+      ]
+    },
+    "AgentDashNativeThreadItem": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "operationId": {
+              "type": "string"
+            },
+            "mode": {
+              "$ref": "#/$defs/AgentDashCompactionMode"
+            },
+            "status": {
+              "$ref": "#/$defs/AgentDashCompactionStatus"
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "startedAtMs": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "completedAtMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "contextRevision": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "contextCompaction"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "operationId",
+            "mode",
+            "status",
+            "startedAtMs"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "command": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "executionMode": {
+              "$ref": "#/$defs/ShellExecExecutionMode"
+            },
+            "arguments": true,
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "aggregatedOutput": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "exitCode": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "shellExec"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "command",
+            "executionMode",
+            "arguments",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "terminalId": {
+              "type": "string"
+            },
+            "arguments": true,
+            "input": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cols": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "rows": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "state": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "aggregatedOutput": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "exitCode": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "terminalControl"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "operation",
+            "terminalId",
+            "arguments",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "offset": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "arguments": true,
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "contentItems": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+              }
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "fsRead"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "path",
+            "arguments",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "glob": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "fileType": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "outputMode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "headLimit": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "offset": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "arguments": true,
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "contentItems": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+              }
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "fsGrep"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "pattern",
+            "arguments",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "maxResults": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "arguments": true,
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "contentItems": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+              }
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "fsGlob"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "pattern",
+            "arguments",
+            "status"
+          ]
+        }
+      ]
+    },
+    "AgentDashCompactionMode": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "automatic"
+      ]
+    },
+    "AgentDashCompactionStatus": {
+      "type": "string",
+      "enum": [
+        "inProgress",
+        "succeeded",
+        "failed",
+        "lost",
+        "cancelled"
+      ]
+    },
+    "ShellExecExecutionMode": {
+      "type": "string",
+      "enum": [
+        "platform",
+        "mountExec"
+      ]
+    },
+    "DynamicToolCallStatus": {
+      "description": "`DynamicToolCallStatus`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"inProgress\",\n   \"completed\",\n   \"failed\"\n ]\n}\n```\n</details>",
+      "type": "string",
+      "enum": [
+        "inProgress",
+        "completed",
+        "failed"
+      ]
+    },
+    "DynamicToolCallOutputContentItem": {
+      "description": "`DynamicToolCallOutputContentItem`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"oneOf\": [\n   {\n     \"title\": \"InputTextDynamicToolCallOutputContentItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"text\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"text\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"InputTextDynamicToolCallOutputContentItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"inputText\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"InputImageDynamicToolCallOutputContentItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"imageUrl\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"imageUrl\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"InputImageDynamicToolCallOutputContentItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"inputImage\"\n         ]\n       }\n     }\n   }\n ]\n}\n```\n</details>",
+      "oneOf": [
+        {
+          "description": "InputTextDynamicToolCallOutputContentItem",
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "inputText"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "description": "InputImageDynamicToolCallOutputContentItem",
+          "type": "object",
+          "properties": {
+            "imageUrl": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "inputImage"
+            }
+          },
+          "required": [
+            "type",
+            "imageUrl"
+          ]
         }
       ]
     },
@@ -4222,54 +4726,6 @@
         "failed"
       ]
     },
-    "DynamicToolCallOutputContentItem": {
-      "description": "`DynamicToolCallOutputContentItem`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"oneOf\": [\n   {\n     \"title\": \"InputTextDynamicToolCallOutputContentItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"text\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"text\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"InputTextDynamicToolCallOutputContentItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"inputText\"\n         ]\n       }\n     }\n   },\n   {\n     \"title\": \"InputImageDynamicToolCallOutputContentItem\",\n     \"type\": \"object\",\n     \"required\": [\n       \"imageUrl\",\n       \"type\"\n     ],\n     \"properties\": {\n       \"imageUrl\": {\n         \"type\": \"string\"\n       },\n       \"type\": {\n         \"title\": \"InputImageDynamicToolCallOutputContentItemType\",\n         \"type\": \"string\",\n         \"enum\": [\n           \"inputImage\"\n         ]\n       }\n     }\n   }\n ]\n}\n```\n</details>",
-      "oneOf": [
-        {
-          "description": "InputTextDynamicToolCallOutputContentItem",
-          "type": "object",
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "inputText"
-            }
-          },
-          "required": [
-            "type",
-            "text"
-          ]
-        },
-        {
-          "description": "InputImageDynamicToolCallOutputContentItem",
-          "type": "object",
-          "properties": {
-            "imageUrl": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "inputImage"
-            }
-          },
-          "required": [
-            "type",
-            "imageUrl"
-          ]
-        }
-      ]
-    },
-    "DynamicToolCallStatus": {
-      "description": "`DynamicToolCallStatus`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"string\",\n \"enum\": [\n   \"inProgress\",\n   \"completed\",\n   \"failed\"\n ]\n}\n```\n</details>",
-      "type": "string",
-      "enum": [
-        "inProgress",
-        "completed",
-        "failed"
-      ]
-    },
     "CollabAgentState": {
       "description": "`CollabAgentState`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"type\": \"object\",\n \"required\": [\n   \"status\"\n ],\n \"properties\": {\n   \"message\": {\n     \"oneOf\": [\n       {\n         \"type\": \"string\"\n       },\n       {\n         \"type\": \"null\"\n       }\n     ]\n   },\n   \"status\": {\n     \"$ref\": \"#/definitions/CollabAgentStatus\"\n   }\n }\n}\n```\n</details>",
       "type": "object",
@@ -4421,344 +4877,6 @@
             "type"
           ]
         }
-      ]
-    },
-    "AgentDashNativeThreadItem": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "command": {
-              "type": "string"
-            },
-            "cwd": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "executionMode": {
-              "$ref": "#/$defs/ShellExecExecutionMode"
-            },
-            "arguments": true,
-            "status": {
-              "$ref": "#/$defs/DynamicToolCallStatus"
-            },
-            "aggregatedOutput": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "exitCode": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            },
-            "success": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "shellExec"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "command",
-            "executionMode",
-            "arguments",
-            "status"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "operation": {
-              "type": "string"
-            },
-            "terminalId": {
-              "type": "string"
-            },
-            "arguments": true,
-            "input": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "cols": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint16",
-              "minimum": 0,
-              "maximum": 65535
-            },
-            "rows": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint16",
-              "minimum": 0,
-              "maximum": 65535
-            },
-            "state": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "aggregatedOutput": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "exitCode": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            },
-            "status": {
-              "$ref": "#/$defs/DynamicToolCallStatus"
-            },
-            "success": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "terminalControl"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "operation",
-            "terminalId",
-            "arguments",
-            "status"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "offset": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint",
-              "minimum": 0
-            },
-            "limit": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint",
-              "minimum": 0
-            },
-            "arguments": true,
-            "status": {
-              "$ref": "#/$defs/DynamicToolCallStatus"
-            },
-            "contentItems": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
-              }
-            },
-            "success": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "fsRead"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "path",
-            "arguments",
-            "status"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "pattern": {
-              "type": "string"
-            },
-            "path": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "glob": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "fileType": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "outputMode": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "headLimit": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint",
-              "minimum": 0
-            },
-            "offset": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint",
-              "minimum": 0
-            },
-            "arguments": true,
-            "status": {
-              "$ref": "#/$defs/DynamicToolCallStatus"
-            },
-            "contentItems": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
-              }
-            },
-            "success": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "fsGrep"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "pattern",
-            "arguments",
-            "status"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "pattern": {
-              "type": "string"
-            },
-            "path": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "maxResults": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint",
-              "minimum": 0
-            },
-            "arguments": true,
-            "status": {
-              "$ref": "#/$defs/DynamicToolCallStatus"
-            },
-            "contentItems": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
-              }
-            },
-            "success": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "fsGlob"
-            }
-          },
-          "required": [
-            "type",
-            "id",
-            "pattern",
-            "arguments",
-            "status"
-          ]
-        }
-      ]
-    },
-    "ShellExecExecutionMode": {
-      "type": "string",
-      "enum": [
-        "platform",
-        "mountExec"
       ]
     },
     "ItemUpdatedNotification": {
@@ -9440,7 +9558,7 @@
         "source": {
           "type": "string"
         },
-        "at_revision": {
+        "required_revision": {
           "anyOf": [
             {
               "$ref": "#/$defs/AgentSnapshotRevision"
@@ -9493,20 +9611,6 @@
         "authority",
         "fidelity",
         "contributions"
-      ]
-    },
-    "AgentContextAuthority": {
-      "type": "string",
-      "enum": [
-        "agent_owned",
-        "agent_observed"
-      ]
-    },
-    "AgentContextFidelity": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "observed"
       ]
     },
     "AgentContextContribution": {

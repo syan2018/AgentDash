@@ -1258,9 +1258,12 @@ impl CompleteAgentService for CodexCompleteAgentService {
             AgentSnapshotRevision(source.revision),
             !source.pending_interactions.is_empty(),
         );
+        let revision = AgentSnapshotRevision(source.revision);
+        let context = codex_context_snapshot(&query.source, revision)?.coordinate();
         Ok(AgentSnapshot {
             source: query.source,
-            revision: AgentSnapshotRevision(source.revision),
+            revision,
+            context,
             lifecycle: source.lifecycle,
             execution,
             command_availability,
@@ -1298,43 +1301,16 @@ impl CompleteAgentService for CodexCompleteAgentService {
             })
             .await?;
         if query
-            .at_revision
-            .is_some_and(|expected| expected != snapshot.revision)
+            .required_revision
+            .is_some_and(|required| snapshot.revision < required)
         {
             return Err(service_error(
                 AgentServiceErrorCode::Conflict,
-                "requested Codex context observation revision is not current",
+                "Codex context observation has not reached the required snapshot revision",
                 false,
             ));
         }
-        let contributions = vec![AgentContextContribution::Opaque {
-            label: "Codex provider context".to_owned(),
-            evidence: "Codex App Server does not expose its private model-input context recipe"
-                .to_owned(),
-        }];
-        let canonical =
-            serde_json::to_vec(&(query.source.as_str(), &contributions)).map_err(|error| {
-                service_error(
-                    AgentServiceErrorCode::Internal,
-                    format!("encode Codex context observation: {error}"),
-                    false,
-                )
-            })?;
-        Ok(AgentContextSnapshot {
-            source: query.source,
-            snapshot_revision: snapshot.revision,
-            context_revision: None,
-            recipe_digest: AgentPayloadDigest::new(format!(
-                "sha256:{:x}",
-                Sha256::digest(canonical)
-            ))
-            .map_err(|error| {
-                service_error(AgentServiceErrorCode::Internal, error.to_string(), false)
-            })?,
-            authority: AgentContextAuthority::AgentObserved,
-            fidelity: AgentContextFidelity::Observed,
-            contributions,
-        })
+        codex_context_snapshot(&query.source, snapshot.revision)
     }
 
     async fn changes(
@@ -2260,6 +2236,36 @@ fn successful_command_receipt(
         snapshot_revision: Some(revision),
         initial_context,
     }
+}
+
+fn codex_context_snapshot(
+    source: &AgentSourceCoordinate,
+    snapshot_revision: AgentSnapshotRevision,
+) -> Result<AgentContextSnapshot, AgentServiceError> {
+    let contributions = vec![AgentContextContribution::Opaque {
+        label: "Codex provider context".to_owned(),
+        evidence: "Codex App Server does not expose its private model-input context recipe"
+            .to_owned(),
+    }];
+    let canonical = serde_json::to_vec(&(source.as_str(), &contributions)).map_err(|error| {
+        service_error(
+            AgentServiceErrorCode::Internal,
+            format!("encode Codex context observation: {error}"),
+            false,
+        )
+    })?;
+    Ok(AgentContextSnapshot {
+        source: source.clone(),
+        snapshot_revision,
+        context_revision: None,
+        recipe_digest: AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(canonical)))
+            .map_err(|error| {
+            service_error(AgentServiceErrorCode::Internal, error.to_string(), false)
+        })?,
+        authority: AgentContextAuthority::AgentObserved,
+        fidelity: AgentContextFidelity::Observed,
+        contributions,
+    })
 }
 
 fn inspection_from_command(

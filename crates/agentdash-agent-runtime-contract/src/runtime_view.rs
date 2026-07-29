@@ -481,6 +481,16 @@ pub struct AgentRuntimeExecutionView {
     pub latest_turn_id: Option<RuntimeTurnId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRuntimeContextCoordinate {
+    pub snapshot_revision: RuntimeProjectionRevision,
+    pub context_revision: Option<String>,
+    pub recipe_digest: RuntimePayloadDigest,
+    pub authority: AgentRuntimeProjectionAuthority,
+    pub fidelity: AgentRuntimeProjectionFidelity,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeView {
@@ -492,6 +502,7 @@ pub struct AgentRuntimeView {
     pub captured_at_ms: u64,
     pub lifecycle: AgentRuntimeLifecycleStatus,
     pub execution: AgentRuntimeExecutionView,
+    pub context: AgentRuntimeContextCoordinate,
     pub interactions: Vec<AgentRuntimeInteraction>,
     pub thread_name: Option<String>,
     pub thread_name_source: Option<AgentRuntimeThreadNameSource>,
@@ -526,6 +537,7 @@ pub struct AgentRuntimeUpdate {
     pub lane_sequence: u64,
     pub view_revision: RuntimeProjectionRevision,
     pub execution: AgentRuntimeExecutionView,
+    pub context: AgentRuntimeContextCoordinate,
     pub command_availability: BTreeMap<AgentRuntimeCommandKind, AgentRuntimeCommandAvailability>,
     pub interactions: Vec<AgentRuntimeInteraction>,
     #[ts(type = "Array<CanonicalConversationRecord>")]
@@ -587,6 +599,13 @@ mod tests {
             last_compaction_outcome: None,
             latest_turn_id: Some(active_turn_id),
         };
+        let context = AgentRuntimeContextCoordinate {
+            snapshot_revision: RuntimeProjectionRevision(5),
+            context_revision: Some("context-5".to_owned()),
+            recipe_digest: id("sha256:context-5", RuntimePayloadDigest::new),
+            authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
+            fidelity: AgentRuntimeProjectionFidelity::Exact,
+        };
         let contract = AgentRuntimeProjectionSchema {
             view: AgentRuntimeView {
                 thread_id,
@@ -594,6 +613,7 @@ mod tests {
                 captured_at_ms: 42,
                 lifecycle: AgentRuntimeLifecycleStatus::Active,
                 execution: execution.clone(),
+                context: context.clone(),
                 interactions: Vec::new(),
                 conversation: Vec::new(),
                 thread_name: None,
@@ -608,6 +628,7 @@ mod tests {
                 lane_sequence: 7,
                 view_revision: RuntimeProjectionRevision(6),
                 execution,
+                context,
                 command_availability,
                 interactions: Vec::new(),
                 presentations: Vec::new(),

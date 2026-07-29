@@ -651,3 +651,66 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 73: 收束 Compaction 上下文控制面与状态面
+
+**Date**: 2026-07-28
+**Task**: 收束 Compaction 上下文控制面与状态面
+**Branch**: `codex/compaction-context-integration`
+
+### Summary
+
+完成 Slice 0-6：收束压缩活动与持久恢复语义，建立类型化 checkpoint 和权威 ContextFrame 查询链，补齐 Runtime/Product/前端展示与陈旧请求隔离，并完成定向质量验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9e3b585ef` | (see git log) |
+| `8a22b594d` | (see git log) |
+| `09691fed0` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 74: Agent Runtime 跨层状态收束
+
+**Date**: 2026-07-29
+**Task**: Agent Runtime 跨层状态收束
+**Branch**: `codex/compaction-context-integration`
+
+### Summary
+
+统一 Agent observation 与 context state plane、canonical item lifecycle 和 schema 驱动 encoding，并以共享 fixture、负向架构门禁和完整验证固化边界。
+
+### Main Changes
+
+- 将 source observation/context fence 收进 Runtime 深模块
+- 统一异步 item terminal outcome 与前端 lifecycle reducer
+- 以共享 schema traversal 生成 Runtime Contract/Wire codec
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9828df7f4` | (see git log) |
+| `470d26a67` | (see git log) |
+| `0ecab434e` | (see git log) |
+| `371300f7a` | (see git log) |
+| `e33f776c5` | (see git log) |
+
+### Testing
+
+- [OK] 相关 Rust suites、workspace all-target check、contracts check 通过
+- [OK] 前端 typecheck 与 521 项测试通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 审阅并合并本分支 PR

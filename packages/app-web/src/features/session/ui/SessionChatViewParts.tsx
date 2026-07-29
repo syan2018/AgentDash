@@ -4,6 +4,7 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 import { SessionProjectionView } from "./SessionProjectionView";
 
 import type { SessionMessageRefDto } from "../../../generated/agent-run-interaction-contracts";
+import type { AgentRuntimeView } from "../../../generated/agent-runtime-codecs";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 import type {
@@ -32,6 +33,13 @@ import { ComposerSendButton } from "./composer/ComposerSendButton";
 import { ComposerPlusMenu } from "./composer/ComposerPlusMenu";
 import { DisclosureRow } from "../../../components/ui/disclosure";
 import { getTurnSectionKey } from "./turnSectionIdentity";
+
+type AgentRuntimeActiveTurn = NonNullable<
+  AgentRuntimeView["observation"]["execution"]["active_turn"]
+>;
+type AgentRuntimeQueuedCompaction = NonNullable<
+  AgentRuntimeView["observation"]["execution"]["queued_compaction"]
+>;
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
 type ExecutorConfigState = ReturnType<typeof useExecutorConfig>;
@@ -93,13 +101,13 @@ function getItemKey(item: SessionDisplayItem): string {
 function ContextUsageRing({
   usage,
   agentRunTarget,
-  refreshKey,
+  contextCoordinate,
   compactContextCommand,
   onCompactContext,
 }: {
   usage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  refreshKey: number;
+  contextCoordinate: AgentRuntimeView["observation"]["context"] | null;
   compactContextCommand?: SessionChatCommandModel;
   onCompactContext?: () => Promise<void>;
 }) {
@@ -206,7 +214,7 @@ function ContextUsageRing({
         <div className="absolute bottom-full right-0 z-50 mb-1.5 w-[min(680px,calc(100vw-2rem))]">
           <SessionProjectionView
             agentRunTarget={agentRunTarget}
-            refreshKey={refreshKey}
+            contextCoordinate={contextCoordinate}
             tokenUsage={usage}
             compactContextCommand={compactContextCommand}
             onCompactContext={onCompactContext}
@@ -244,6 +252,8 @@ export function SessionChatStream({
   hasRuntimeStreamTarget,
   isLoading,
   streamingEntryId,
+  activeTurn,
+  queuedCompaction,
   streamPrefixContent,
   onForkFromMessageRef,
   onScroll,
@@ -256,6 +266,8 @@ export function SessionChatStream({
   hasRuntimeStreamTarget: boolean;
   isLoading: boolean;
   streamingEntryId: string | null;
+  activeTurn?: AgentRuntimeActiveTurn | null;
+  queuedCompaction?: AgentRuntimeQueuedCompaction | null;
   streamPrefixContent?: ReactNode;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   onScroll: () => void;
@@ -280,6 +292,8 @@ export function SessionChatStream({
                 agentRunTarget={agentRunTarget}
                 companionSubagents={companionSubagents}
                 streamingEntryId={streamingEntryId}
+                activeTurn={activeTurn}
+                queuedCompaction={queuedCompaction}
                 onForkFromMessageRef={onForkFromMessageRef}
               />
             ))
@@ -428,16 +442,30 @@ function TurnSection({
   agentRunTarget,
   companionSubagents,
   streamingEntryId,
+  activeTurn,
+  queuedCompaction,
   onForkFromMessageRef,
 }: {
   segment: TurnSegment;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   streamingEntryId: string | null;
+  activeTurn?: AgentRuntimeActiveTurn | null;
+  queuedCompaction?: AgentRuntimeQueuedCompaction | null;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
 }) {
   const terminalLabel = segment.turnId ? terminalTurnLabel(segment.status) : null;
-  const headerLabel = terminalLabel ?? (segment.turnId ? "执行中" : null);
+  const currentActivity = activeTurn?.turn_id === segment.turnId ? activeTurn : null;
+  const headerLabel = terminalLabel
+    ?? (currentActivity?.kind === "context_compaction"
+      ? currentActivity.phase === "applied"
+        ? "正在应用上下文压缩"
+        : "正在压缩上下文"
+      : segment.turnId
+        ? queuedCompaction
+          ? "执行中 · 已排队上下文压缩"
+          : "执行中"
+        : null);
   const activeElapsedMs = useActiveTurnElapsedMs(segment.startedAtMs, segment.status === "active");
   const displayDurationMs = segment.durationMs ?? activeElapsedMs;
   const [collapsed, setCollapsed] = useState(false);
@@ -621,7 +649,7 @@ export function SessionChatComposer({
   workspaceId,
   tokenUsage,
   agentRunTarget,
-  projectionRefreshKey,
+  contextCoordinate,
   compactContextCommand,
   onCompactContext,
   onAtTrigger,
@@ -654,7 +682,7 @@ export function SessionChatComposer({
   workspaceId?: string | null;
   tokenUsage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  projectionRefreshKey: number;
+  contextCoordinate: AgentRuntimeView["observation"]["context"] | null;
   compactContextCommand?: SessionChatCommandModel;
   onCompactContext?: () => Promise<void>;
   onAtTrigger: (query: string) => void;
@@ -821,7 +849,7 @@ export function SessionChatComposer({
             <ContextUsageRing
               usage={tokenUsage}
               agentRunTarget={agentRunTarget}
-              refreshKey={projectionRefreshKey}
+              contextCoordinate={contextCoordinate}
               compactContextCommand={compactContextCommand}
               onCompactContext={onCompactContext}
             />

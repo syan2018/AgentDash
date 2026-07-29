@@ -59,7 +59,7 @@ describe("session stream tool progress", () => {
       },
       false,
     );
-    const patchUpdated = event(
+    const firstPatchUpdated = event(
       1,
       {
         type: "file_change_patch_updated",
@@ -71,7 +71,26 @@ describe("session stream tool progress", () => {
             {
               path: "src/main.ts",
               kind: { type: "update", move_path: null },
-              diff: "@@ -1 +1 @@\n-old\n+new",
+              diff: "@@ -1 +1 @@\n-old\n+first",
+            },
+          ],
+        },
+      },
+      true,
+    );
+    const secondPatchUpdated = event(
+      2,
+      {
+        type: "file_change_patch_updated",
+        payload: {
+          threadId: "session-1",
+          turnId: "turn-1",
+          itemId: "patch-1",
+          changes: [
+            {
+              path: "src/main.ts",
+              kind: { type: "update", move_path: null },
+              diff: "@@ -1 +1 @@\n-old\n+second",
             },
           ],
         },
@@ -81,7 +100,7 @@ describe("session stream tool progress", () => {
 
     const state = reduceStreamState(
       createInitialStreamState([]),
-      [started, patchUpdated],
+      [started, firstPatchUpdated, secondPatchUpdated],
     );
 
     expect(state.entries).toHaveLength(1);
@@ -96,10 +115,168 @@ describe("session stream tool progress", () => {
       changes: [
         expect.objectContaining({
           path: "src/main.ts",
-          diff: expect.stringContaining("+new"),
+          diff: expect.stringContaining("+second"),
         }),
       ],
     });
+  });
+
+  it.each(["succeeded", "failed", "lost", "cancelled"] as const)(
+    "stops streaming when context compaction reaches %s",
+    (status) => {
+      const item = {
+        type: "contextCompaction" as const,
+        id: "compaction-1",
+        status,
+        error: status === "failed" ? "compaction apply failed" : null,
+        startedAtMs: 1n,
+        completedAtMs: 2n,
+        contextRevision: status === "succeeded" ? "context-2" : null,
+      };
+      const started = event(
+        1,
+        {
+          type: "item_started",
+          payload: {
+            threadId: "session-1",
+            turnId: "turn-1",
+            startedAtMs: 1,
+            item: { ...item, status: "inProgress", completedAtMs: null },
+          },
+        },
+        false,
+      );
+      const terminalEvent: BackboneEvent = {
+        type: "item_completed",
+        payload: {
+          threadId: "session-1",
+          turnId: "turn-1",
+          completedAtMs: 2,
+          terminal: {
+            outcome: status,
+            error: item.error,
+          },
+          item,
+        },
+      };
+      const terminal = event(2, terminalEvent, false);
+
+      const state = reduceStreamState(
+        createInitialStreamState([]),
+        [started, terminal],
+      );
+
+      expect(state.entries).toHaveLength(1);
+      expect(state.entries[0]?.isStreaming).toBe(false);
+      expect(state.entries[0]?.itemLifecycle).toEqual({
+        phase: "terminal",
+        outcome: status,
+        error: item.error,
+      });
+      expect(state.entries[0]?.event).toMatchObject({
+        payload: { item: { status } },
+      });
+    },
+  );
+
+  it("materializes a terminal item even when its start was not observed", () => {
+    const terminal = event(
+      2,
+      {
+        type: "item_completed",
+        payload: {
+          threadId: "session-1",
+          turnId: "turn-1",
+          completedAtMs: 2,
+          terminal: {
+            outcome: "lost",
+            error: "terminal recovered after reconnect",
+          },
+          item: {
+            type: "contextCompaction",
+            id: "compaction-1",
+            status: "lost",
+            error: "terminal recovered after reconnect",
+            startedAtMs: null,
+            completedAtMs: 2n,
+            contextRevision: null,
+          },
+        },
+      },
+      false,
+    );
+
+    const state = reduceStreamState(createInitialStreamState([]), [terminal]);
+
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]).toMatchObject({
+      itemFreshness: "completed",
+      itemLifecycle: {
+        phase: "terminal",
+        outcome: "lost",
+        error: "terminal recovered after reconnect",
+      },
+      isStreaming: false,
+    });
+  });
+
+  it("does not let late progress overwrite terminal evidence", () => {
+    const terminal = event(
+      2,
+      {
+        type: "item_completed",
+        payload: {
+          threadId: "session-1",
+          turnId: "turn-1",
+          completedAtMs: 2,
+          terminal: { outcome: "cancelled", error: null },
+          item: {
+            type: "contextCompaction",
+            id: "compaction-1",
+            status: "cancelled",
+            error: null,
+            startedAtMs: 1n,
+            completedAtMs: 2n,
+            contextRevision: null,
+          },
+        },
+      },
+      false,
+    );
+    const lateProgress = event(
+      3,
+      {
+        type: "item_updated",
+        payload: {
+          threadId: "session-1",
+          turnId: "turn-1",
+          updatedAtMs: 3,
+          item: {
+            type: "contextCompaction",
+            id: "compaction-1",
+            status: "inProgress",
+            error: null,
+            startedAtMs: 1n,
+            completedAtMs: null,
+            contextRevision: null,
+          },
+        },
+      },
+      false,
+    );
+
+    const state = reduceStreamState(
+      createInitialStreamState([]),
+      [terminal, lateProgress],
+    );
+
+    expect(state.entries[0]?.event.type).toBe("item_completed");
+    expect(state.entries[0]?.itemLifecycle).toEqual({
+      phase: "terminal",
+      outcome: "cancelled",
+      error: null,
+    });
+    expect(state.entries[0]?.isStreaming).toBe(false);
   });
 
   it("continues to merge generic item_updated events by item ID", () => {
@@ -161,5 +338,6 @@ describe("session stream tool progress", () => {
         },
       },
     });
+    expect(state.entries[0]?.itemLifecycle).toEqual({ phase: "progress" });
   });
 });

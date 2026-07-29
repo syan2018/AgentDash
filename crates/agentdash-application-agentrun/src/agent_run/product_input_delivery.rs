@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::{AgentRuntimeContentBlock, AgentRuntimeOperationReceipt};
-use agentdash_agent_service_api::AgentInputContent;
+use agentdash_agent_runtime_contract::{AgentInputContent, AgentRuntimeOperationReceipt};
 use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::workflow::LifecycleAgentRepository;
@@ -115,7 +114,12 @@ impl AgentRunProductInputDeliveryService {
             .runtime_view(target)
             .await
             .map_err(|error| error.to_string())?;
-        if let Some(title) = snapshot.thread_name.as_deref() {
+        if let Some(title) = snapshot
+            .observation
+            .thread_name
+            .as_ref()
+            .and_then(|name| name.thread_name.as_deref())
+        {
             self.agents
                 .initialize_title_from_agent(target, title)
                 .await
@@ -200,24 +204,22 @@ fn stable_handoff_id(target: &AgentRunTarget, client_command_id: &str) -> Uuid {
 
 fn managed_content(
     content: &[AgentInputContent],
-) -> Result<Vec<AgentRuntimeContentBlock>, AgentRunProductInputDeliveryError> {
+) -> Result<Vec<AgentInputContent>, AgentRunProductInputDeliveryError> {
     if content.is_empty() || !content.iter().any(non_empty_input) {
         return Err(AgentRunProductInputDeliveryError::EmptyInput);
     }
     Ok(content
         .iter()
         .map(|block| match block {
-            AgentInputContent::Text { text } => {
-                AgentRuntimeContentBlock::Text { text: text.clone() }
-            }
+            AgentInputContent::Text { text } => AgentInputContent::Text { text: text.clone() },
             AgentInputContent::Image {
                 media_type,
                 source,
                 digest,
-            } => AgentRuntimeContentBlock::Image {
+            } => AgentInputContent::Image {
                 media_type: media_type.clone(),
                 source: source.clone(),
-                digest: agentdash_agent_runtime_contract::RuntimePayloadDigest::new(
+                digest: agentdash_agent_runtime_contract::AgentPayloadDigest::new(
                     digest.as_str().to_owned(),
                 )
                 .expect("Agent input digest is already validated"),
@@ -226,22 +228,20 @@ fn managed_content(
                 uri,
                 media_type,
                 digest,
-            } => AgentRuntimeContentBlock::Resource {
+            } => AgentInputContent::Resource {
                 uri: uri.clone(),
                 media_type: media_type.clone(),
                 digest: digest.as_ref().map(|digest| {
-                    agentdash_agent_runtime_contract::RuntimePayloadDigest::new(
+                    agentdash_agent_runtime_contract::AgentPayloadDigest::new(
                         digest.as_str().to_owned(),
                     )
                     .expect("Agent input digest is already validated")
                 }),
             },
-            AgentInputContent::Structured { schema, value } => {
-                AgentRuntimeContentBlock::Structured {
-                    schema: schema.clone(),
-                    value: value.clone(),
-                }
-            }
+            AgentInputContent::Structured { schema, value } => AgentInputContent::Structured {
+                schema: schema.clone(),
+                value: value.clone(),
+            },
         })
         .collect())
 }

@@ -1,30 +1,27 @@
-import type { AgentRuntimeOperationStatus } from "../../../generated/agent-runtime-contracts";
 import type {
-  AgentRuntimeCommandAvailability,
-  AgentRuntimeView,
-} from "../../../generated/agent-runtime-validators";
+  AgentControlUnavailabilityReason,
+} from "../../../generated/agent-runtime-contracts";
+import type { AgentRuntimeView } from "../../../generated/agent-runtime-codecs";
 
 type FixtureStatus = "running" | "completed" | "failed" | "lost";
-
-function operationStatus(status: FixtureStatus): AgentRuntimeOperationStatus {
-  if (status === "completed") return "succeeded";
-  return status;
-}
+type AgentControlAvailability = NonNullable<
+  AgentRuntimeView["observation"]["command_availability"]["submit_input"]
+>;
 
 function availability(
   status: FixtureStatus,
+  revision: bigint,
   available: boolean,
-): AgentRuntimeCommandAvailability {
+  unavailableReason?: AgentControlUnavailabilityReason,
+): AgentControlAvailability {
   const evidence = {
-    blocking_operation_id:
-      status === "running" ? "operation-compaction" : null,
-    bound_surface_revision: null,
-    applied_surface_revision: null,
+    expected_snapshot_revision: revision,
+    expected_turn_id: status === "running" ? "turn-compaction" : null,
   };
   if (status === "lost") {
     return {
       status: "unavailable",
-      reason: "source_unavailable",
+      reason: "source_lost",
       evidence,
     };
   }
@@ -33,7 +30,7 @@ function availability(
     : {
       status: "unavailable",
       reason: status === "running"
-        ? "operation_in_flight"
+        ? (unavailableReason ?? "pending_interaction_required")
         : "active_turn_required",
       evidence,
     };
@@ -46,35 +43,52 @@ function runtimeSnapshot(
   const active = status === "running";
   return {
     thread_id: "runtime-thread-child",
-    view_revision: revision,
-    captured_at_ms: 1000n + revision,
-    lifecycle: "active",
-    execution: {
-      status: active ? "active" : "idle",
-      active_turn_id: active ? "turn-compaction" : null,
-      latest_turn_id: "turn-compaction",
-    },
-    conversation: [],
-    interactions: [],
-    thread_name: null,
-    thread_name_source: null,
-    operations: [
-      {
-        id: "operation-compaction",
-        turn_id: "turn-compaction",
-        status: operationStatus(status),
-        evidence: null,
+    observation: {
+      revision,
+      lifecycle: status === "lost" ? "lost" : "active",
+      execution: {
+        active_turn: active
+          ? {
+              turn_id: "turn-compaction",
+              kind: "context_compaction",
+              phase: "running",
+              started_at_ms: 1000n,
+              cancellable: false,
+            }
+          : null,
+        queued_compaction: null,
+        last_compaction_outcome: active
+          ? null
+          : {
+              turn_id: "turn-compaction",
+              status: status === "completed" ? "succeeded" : status,
+              completed_at_ms: 1000n + revision,
+              error: status === "failed" || status === "lost" ? status : null,
+            },
       },
-    ],
-    source_binding: null,
-    authority: "source_authoritative",
-    fidelity: "exact",
-    command_availability: {
-      submit_input: availability(status, !active),
-      steer: availability(status, active),
-      interrupt: availability(status, active),
-      request_compaction: availability(status, !active),
-      resolve_interaction: availability(status, false),
+      context: {
+        snapshot_revision: revision,
+        context_revision: `context-${revision}`,
+        recipe_digest: `sha256:context-${revision}`,
+        authority: "agent_owned",
+        fidelity: "exact",
+      },
+      conversation: [],
+      interactions: [],
+      thread_name: null,
+      source_info: {
+        authority: "agent_authoritative",
+        source_revision: `source-${revision}`,
+        fidelity: "exact",
+        observed_at_ms: 1000n + revision,
+      },
+      command_availability: {
+        submit_input: availability(status, revision, true),
+        steer: availability(status, revision, false, "active_turn_not_steerable"),
+        interrupt: availability(status, revision, false, "turn_not_cancellable"),
+        request_compaction: availability(status, revision, !active, "compaction_in_progress"),
+        resolve_interaction: availability(status, revision, false),
+      },
     },
   };
 }

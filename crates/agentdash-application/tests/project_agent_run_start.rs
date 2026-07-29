@@ -105,12 +105,14 @@ impl AgentRunProductLaunchPort for RecordingLaunch {
             target: request.provisioning.target.clone(),
             runtime_thread_id: request.provisioning.runtime_thread_id.clone(),
             agent: agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
-                service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
+                service_instance_id: agentdash_agent_runtime_contract::AgentServiceInstanceId::new(
                     "fixture-agent",
                 )
                 .unwrap(),
-                source: agentdash_agent_service_api::AgentSourceCoordinate::new("fixture-source")
-                    .unwrap(),
+                source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new(
+                    "fixture-source",
+                )
+                .unwrap(),
             },
             launch_frame: request.provisioning.frame.clone(),
             execution_profile_digest: request
@@ -122,17 +124,21 @@ impl AgentRunProductLaunchPort for RecordingLaunch {
         };
         Ok(AgentRunProductLaunchOutcome {
             binding,
-            create_receipt: agentdash_agent_service_api::AgentCommandReceipt {
-                command_id: agentdash_agent_service_api::AgentCommandId::new("fixture-create")
+            create_receipt: agentdash_agent_runtime_contract::AgentCommandReceipt {
+                command_id: agentdash_agent_runtime_contract::AgentCommandId::new("fixture-create")
                     .unwrap(),
-                effect_id: agentdash_agent_service_api::AgentEffectIdentity::new("fixture-create")
-                    .unwrap(),
-                source: agentdash_agent_service_api::AgentSourceCoordinate::new("fixture-source")
-                    .unwrap(),
-                state: agentdash_agent_service_api::AgentReceiptState::Terminal {
-                    outcome: agentdash_agent_service_api::AgentTerminalOutcome::Succeeded,
+                effect_id: agentdash_agent_runtime_contract::AgentEffectIdentity::new(
+                    "fixture-create",
+                )
+                .unwrap(),
+                source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new(
+                    "fixture-source",
+                )
+                .unwrap(),
+                state: agentdash_agent_runtime_contract::AgentReceiptState::Terminal {
+                    outcome: agentdash_agent_runtime_contract::AgentTerminalOutcome::Succeeded,
                 },
-                snapshot_revision: Some(agentdash_agent_service_api::AgentSnapshotRevision(1)),
+                snapshot_revision: Some(agentdash_agent_runtime_contract::AgentSnapshotRevision(1)),
                 initial_context: None,
             },
             input_receipt: None,

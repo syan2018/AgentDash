@@ -1,18 +1,19 @@
 import { api } from "../api/client";
-import type { SessionProjectionViewResponse } from "../generated/session-contracts";
+import type {
+  AgentInteractionResponse,
+} from "../generated/agent-runtime-contracts";
 import type {
   AgentRunProductRuntimeCommand,
   AgentRunProductRuntimeCommandRequest as AgentRunProductRuntimeCommandRequestWire,
 } from "../generated/agent-run-product-projection-contracts";
-import type {
-  AgentRuntimeInteractionResponse,
-} from "../generated/agent-runtime-contracts";
 import {
   decodeAgentRuntimeOperationReceipt,
+  decodeAgentRuntimeContextProjection,
   decodeAgentRuntimeView,
+  type AgentRuntimeContextProjection,
   type AgentRuntimeOperationReceipt,
   type AgentRuntimeView,
-} from "../generated/agent-runtime-validators";
+} from "../generated/agent-runtime-codecs";
 
 export interface AgentRunRuntimeTarget {
   runId: string;
@@ -32,10 +33,21 @@ export async function fetchAgentRuntimeView(
 
 export async function fetchAgentRunRuntimeContextProjection(
   target: AgentRunRuntimeTarget,
-): Promise<SessionProjectionViewResponse> {
-  return api.get<SessionProjectionViewResponse>(
-    agentRunScopedPath(target, "/runtime/context/projection"),
-  );
+  required: AgentRuntimeView["observation"]["context"],
+  signal?: AbortSignal,
+): Promise<AgentRuntimeContextProjection> {
+  const path = agentRunScopedPath(target, "/runtime/context/projection");
+  const query = new URLSearchParams({
+    snapshot_revision: required.snapshot_revision.toString(),
+    recipe_digest: required.recipe_digest,
+    authority: required.authority,
+    fidelity: required.fidelity,
+  });
+  if (required.context_revision != null) {
+    query.set("context_revision", required.context_revision);
+  }
+  const payload = await api.get<unknown>(`${path}?${query}`, { signal });
+  return decodeAgentRuntimeContextProjection(payload);
 }
 
 export interface AgentRunProductRuntimeCommandRequest {
@@ -61,7 +73,7 @@ export async function executeAgentRunRuntimeCommand(
 export async function respondAgentRunInteraction(
   target: AgentRunRuntimeTarget,
   interactionId: string,
-  response: AgentRuntimeInteractionResponse,
+  response: AgentInteractionResponse,
   clientCommandId: string,
 ): Promise<AgentRuntimeOperationReceipt> {
   return executeAgentRunRuntimeCommand(target, {

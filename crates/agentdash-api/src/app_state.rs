@@ -11,12 +11,12 @@ use crate::relay::{
     registry::BackendRegistry, runtime_wire::CloudRuntimeWirePlacementRegistry,
 };
 use agentdash_agent_runtime::{PlatformToolBroker, RuntimeToolExecutor};
+use agentdash_agent_runtime_contract::{
+    AgentHostCallbacks, AgentPayloadDigest, AgentServiceErrorCode, AgentServiceInstanceId,
+};
 use agentdash_agent_runtime_host::{
     CompleteAgentHostError, CompleteAgentLiveCatalog, CompleteAgentLiveCatalogError,
     CompleteAgentVerificationMethod, CompleteAgentVerificationRecord, RuntimePlatformToolHandler,
-};
-use agentdash_agent_service_api::{
-    AgentHostCallbacks, AgentPayloadDigest, AgentServiceErrorCode, AgentServiceInstanceId,
 };
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::companion::RuntimeThreadToolServices;
@@ -888,7 +888,7 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_service_api::{AgentServiceError, AgentServiceErrorCode};
+    use agentdash_agent_runtime_contract::{AgentServiceError, AgentServiceErrorCode};
     use agentdash_infrastructure::CompleteAgentCompositionError;
     use agentdash_integration_api::{
         CompleteAgentContributionError, CompleteAgentServiceFactoryError,

@@ -9,12 +9,13 @@ use ts_rs::TS;
 
 use crate::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentChangePage, AgentChangesQuery,
-    AgentCommandEnvelope, AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection,
-    AgentHookAction, AgentHookDefinitionId, AgentHookPoint, AgentHookTiming, AgentIdempotencyKey,
-    AgentInteractionId, AgentItemId, AgentLiveEventStream, AgentObservation, AgentObservationQuery,
-    AgentReadQuery, AgentServiceDescriptor, AgentSnapshot, AgentSourceCoordinate, AgentToolName,
-    AgentTurnId, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CreateAgentCommand,
-    ForkAgentCommand, ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
+    AgentCommandEnvelope, AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot,
+    AgentEffectIdentity, AgentEffectInspection, AgentHookAction, AgentHookDefinitionId,
+    AgentHookPoint, AgentHookTiming, AgentIdempotencyKey, AgentInteractionId, AgentItemId,
+    AgentLiveEventStream, AgentObservationQuery, AgentReadQuery, AgentServiceDescriptor,
+    AgentSnapshot, AgentSourceCoordinate, AgentSourceState, AgentToolName, AgentTurnId,
+    AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand,
+    ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
 };
 
 #[derive(
@@ -65,8 +66,8 @@ pub struct AgentHostCallbackMeta {
     pub idempotency_key: AgentIdempotencyKey,
     /// Absolute Unix epoch deadline. The Host must not start a callback after it.
     #[serde(with = "crate::wire_u64")]
-    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
-    #[ts(type = "AgentServiceU64")]
+    #[schemars(with = "crate::wire_u64::RuntimeU64")]
+    #[ts(type = "RuntimeU64")]
     pub deadline_at_ms: u64,
 }
 
@@ -189,17 +190,28 @@ pub trait CompleteAgentService: Send + Sync {
 
     async fn read(&self, query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError>;
 
+    async fn context(
+        &self,
+        _query: AgentContextQuery,
+    ) -> Result<AgentContextSnapshot, AgentServiceError> {
+        Err(AgentServiceError::new(
+            AgentServiceErrorCode::Unsupported,
+            "Complete Agent does not expose a context recipe",
+            false,
+        ))
+    }
+
     async fn observe(
         &self,
         query: AgentObservationQuery,
-    ) -> Result<AgentObservation, AgentServiceError> {
+    ) -> Result<AgentSourceState, AgentServiceError> {
         let snapshot = self
             .read(AgentReadQuery {
                 source: query.source,
                 at_revision: None,
             })
             .await?;
-        AgentObservation::from_snapshot(&snapshot).map_err(|message| {
+        AgentSourceState::from_snapshot(&snapshot).map_err(|message| {
             AgentServiceError::new(AgentServiceErrorCode::Internal, message, false)
         })
     }

@@ -1,6 +1,6 @@
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeContentBlock, AgentRuntimeInteractionResponse, AgentRuntimeOperationReceipt,
-    AgentRuntimeSourceBindingEvidence, RuntimeInteractionId,
+    AgentInputContent, AgentInteractionId, AgentInteractionResponse, AgentRuntimeOperationReceipt,
+    AgentRuntimeSourceBindingEvidence,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -16,14 +16,13 @@ pub struct AgentRunProjectionTarget {
 pub enum AgentRunProductRuntimeCommand {
     Resume,
     SubmitInput {
-        content: Vec<AgentRuntimeContentBlock>,
+        content: Vec<AgentInputContent>,
     },
     Interrupt,
     RequestCompaction,
-    Rebind,
     ResolveInteraction {
-        interaction_id: RuntimeInteractionId,
-        response: AgentRuntimeInteractionResponse,
+        interaction_id: AgentInteractionId,
+        response: AgentInteractionResponse,
     },
     Close,
 }

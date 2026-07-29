@@ -787,10 +787,10 @@ fn _closed_is_availability_only(_closed: RuntimeWirePlacementClosed) {}
 
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_runtime_wire::RuntimeWireAdvertisementRevision;
-    use agentdash_agent_service_api::{
+    use agentdash_agent_runtime_contract::{
         AgentBindingGeneration, AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId,
     };
+    use agentdash_agent_runtime_wire::RuntimeWireAdvertisementRevision;
 
     use super::*;
 

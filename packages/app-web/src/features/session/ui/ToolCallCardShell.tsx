@@ -15,6 +15,8 @@ export type DisplayStatus =
   | "inProgress"
   | "completed"
   | "failed"
+  | "lost"
+  | "cancelled"
   | "declined"
   | "pending";
 
@@ -43,7 +45,12 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
   defaultExpanded,
   children,
 }: ToolCallCardShellProps) {
-  const needsAttention = Boolean(isPendingApproval) || status === "failed" || status === "declined";
+  const needsAttention =
+    Boolean(isPendingApproval) ||
+    status === "failed" ||
+    status === "lost" ||
+    status === "cancelled" ||
+    status === "declined";
 
   const shouldDefaultExpand =
     defaultExpanded ?? needsAttention;
@@ -98,8 +105,10 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
   // 状态差异仅通过标题栏背景色和状态指示器体现
 
   const headerBg =
-    renderStatus === "failed" || renderStatus === "declined"
+    renderStatus === "failed" || renderStatus === "lost"
       ? "bg-destructive/5"
+      : renderStatus === "cancelled" || renderStatus === "declined"
+        ? "bg-warning/5"
       : isPendingApproval
         ? "bg-warning/5"
         : renderStatus === "inProgress" || renderStatus === "pending"
@@ -206,6 +215,10 @@ function getStatusConfig(
       return { label: "已完成", color: "text-success", dot: "bg-success" };
     case "failed":
       return { label: "失败", color: "text-destructive", dot: "bg-destructive" };
+    case "lost":
+      return { label: "状态丢失", color: "text-destructive", dot: "bg-destructive" };
+    case "cancelled":
+      return { label: "已取消", color: "text-warning", dot: "bg-warning" };
     case "declined":
       return { label: "已拒绝", color: "text-warning", dot: "bg-warning" };
     default:

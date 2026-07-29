@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agentdash_agent_runtime::{
     PlatformToolBroker, RuntimeToolBrokerError, RuntimeToolResolvedContext,
 };
-use agentdash_agent_service_api::{AgentHostCallbackError, AgentToolResult};
+use agentdash_agent_runtime_contract::{AgentHostCallbackError, AgentToolResult};
 use async_trait::async_trait;
 
 use crate::{CompleteAgentToolHandler, ResolvedCompleteAgentToolCallback};

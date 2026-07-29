@@ -26,8 +26,8 @@ pub mod external;
 pub mod integration;
 
 // 复用已有 trait，不重新定义
-pub use agentdash_agent_service_api;
-pub use agentdash_agent_service_api::{
+pub use agentdash_agent_runtime_contract;
+pub use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentConfigurationBoundary, AgentPayloadDigest, AgentProfileDigest,
     AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceInstanceId, CompleteAgentService,
 };

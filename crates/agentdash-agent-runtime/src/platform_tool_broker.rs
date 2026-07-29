@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentEffectIdentity, AgentItemId, AgentSurfaceRevision, AgentToolName,
     AgentToolResult, AgentTurnId,
 };

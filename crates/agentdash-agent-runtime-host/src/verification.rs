@@ -1,4 +1,4 @@
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId,
 };
 use async_trait::async_trait;

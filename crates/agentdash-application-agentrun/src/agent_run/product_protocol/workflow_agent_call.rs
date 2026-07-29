@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeContextAuthority, AgentRuntimeContextProvenance,
-    AgentRuntimeInitialContextContribution, AgentRuntimeInitialContextContributionContent,
-    AgentRuntimeInitialContextMode, AgentRuntimeInitialContextPackage,
-    RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
-    RuntimeContextSourceRevision, RuntimePayloadDigest, RuntimeThreadId,
+    AgentContextPackageId, AgentContextSchemaVersion, AgentContextSourceCoordinate,
+    AgentContextSourceRevision, AgentPayloadDigest, ContextAuthorityKind, ContextProvenance,
+    InitialAgentContextPackage, InitialContextContribution, InitialContextMode, RuntimeThreadId,
+    TypedContextPayload,
 };
 use agentdash_application_workflow::{
     WorkflowAgentCallContentBlock, WorkflowAgentCallDispatchError,
@@ -206,61 +205,65 @@ fn runtime_thread_id(
 
 fn initial_context(
     request: &WorkflowAgentCallRequest,
-) -> Result<AgentRuntimeInitialContextPackage, WorkflowAgentCallDispatchError> {
-    let payload_digest = RuntimePayloadDigest::new(request.payload_digest.clone())
+) -> Result<InitialAgentContextPackage, WorkflowAgentCallDispatchError> {
+    let payload_digest = AgentPayloadDigest::new(request.payload_digest.clone())
         .map_err(|error| permanent("agent_call_context_invalid", error.to_string()))?;
-    let provenance = AgentRuntimeContextProvenance {
-        authority: AgentRuntimeContextAuthority::Workflow,
-        source: RuntimeContextSourceRef::new(format!(
+    let provenance = ContextProvenance {
+        authority: ContextAuthorityKind::Workflow,
+        source: AgentContextSourceCoordinate::new(format!(
             "workflow-agent-call:{}",
             request.identity.request_id
         ))
         .map_err(|error| permanent("agent_call_context_invalid", error.to_string()))?,
-        revision: RuntimeContextSourceRevision::new(request.payload_digest.clone())
+        revision: AgentContextSourceRevision::new(request.payload_digest.clone())
             .map_err(|error| permanent("agent_call_context_invalid", error.to_string()))?,
         digest: payload_digest,
     };
-    let mut contribution = AgentRuntimeInitialContextContribution {
-        contribution_id: RuntimeContextContributionId::new("workflow-agent-call-procedure")
-            .map_err(|error| permanent("agent_call_context_invalid", error.to_string()))?,
-        digest: RuntimePayloadDigest::new("pending").expect("non-empty digest placeholder"),
-        content: AgentRuntimeInitialContextContributionContent::WorkflowContext {
+    let contribution = InitialContextContribution::WorkflowContext {
+        payload: TypedContextPayload {
             schema: "agentdash.workflow.agent-call.procedure.v1".to_owned(),
             value: serde_json::json!({
                 "procedure_key": request.procedure_key,
                 "contract": request.procedure_contract,
                 "target": request.target_intent.target(),
             }),
-            provenance,
         },
+        provenance,
     };
-    contribution.digest = contribution.calculated_digest();
-    let mut package = AgentRuntimeInitialContextPackage {
-        package_id: RuntimeContextPackageId::new(format!(
-            "workflow-agent-call-context:{}",
-            request.identity.request_id
-        ))
-        .map_err(|error| permanent("agent_call_context_invalid", error.to_string()))?,
-        schema_version: 1,
-        mode: AgentRuntimeInitialContextMode::WorkflowOnly,
-        contributions: vec![contribution],
-        digest: RuntimePayloadDigest::new("pending").expect("non-empty digest placeholder"),
-    };
-    package.digest = package.calculated_digest();
-    Ok(package)
+    let package_id = AgentContextPackageId::new(format!(
+        "workflow-agent-call-context:{}",
+        request.identity.request_id
+    ))
+    .map_err(|error| permanent("agent_call_context_invalid", error.to_string()))?;
+    let schema_version = AgentContextSchemaVersion(1);
+    let mode = InitialContextMode::WorkflowOnly;
+    let contributions = vec![contribution];
+    let digest = InitialAgentContextPackage::calculated_digest(
+        &package_id,
+        schema_version,
+        mode,
+        &contributions,
+    );
+    Ok(InitialAgentContextPackage {
+        package_id,
+        schema_version,
+        mode,
+        contributions,
+        digest,
+    })
 }
 
 fn workflow_input_blocks(
     input: &[WorkflowAgentCallContentBlock],
-) -> Vec<agentdash_agent_service_api::AgentInputContent> {
+) -> Vec<agentdash_agent_runtime_contract::AgentInputContent> {
     input
         .iter()
         .map(|block| match block {
             WorkflowAgentCallContentBlock::Text { text } => {
-                agentdash_agent_service_api::AgentInputContent::Text { text: text.clone() }
+                agentdash_agent_runtime_contract::AgentInputContent::Text { text: text.clone() }
             }
             WorkflowAgentCallContentBlock::Structured { schema, value } => {
-                agentdash_agent_service_api::AgentInputContent::Structured {
+                agentdash_agent_runtime_contract::AgentInputContent::Structured {
                     schema: schema.clone(),
                     value: value.clone(),
                 }

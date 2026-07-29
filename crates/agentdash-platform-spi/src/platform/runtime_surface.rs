@@ -5,7 +5,7 @@ use std::{
 };
 
 use agentdash_agent::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
-use agentdash_agent_runtime_contract::{RuntimeItemId, RuntimeThreadId, RuntimeTurnId};
+use agentdash_agent_runtime_contract::{AgentItemId, AgentTurnId, RuntimeThreadId};
 use agentdash_domain::backend::{
     BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
 };
@@ -239,8 +239,8 @@ pub struct PlatformToolExecutionContext {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlatformToolInvocationCoordinates {
-    pub runtime_turn_id: RuntimeTurnId,
-    pub runtime_item_id: RuntimeItemId,
+    pub runtime_turn_id: AgentTurnId,
+    pub runtime_item_id: AgentItemId,
 }
 
 /// 连接器拿到的一次 `prompt(...)` 调用上下文。

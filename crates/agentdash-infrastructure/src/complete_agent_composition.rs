@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
+use agentdash_agent_runtime_contract::{AgentHostCallbacks, AgentServiceInstanceId};
 use agentdash_agent_runtime_host::{
     CompleteAgentCallbackBroker, CompleteAgentHookHandler, CompleteAgentHost,
     CompleteAgentHostError, CompleteAgentLiveSelection, CompleteAgentPlacement,
@@ -9,7 +10,6 @@ use agentdash_agent_runtime_host::{
     CompleteAgentVerifiedBuildEvidence, CompleteAgentVerifiedServiceRegistration,
     ProcessCompleteAgentLiveCatalog,
 };
-use agentdash_agent_service_api::{AgentHostCallbacks, AgentServiceInstanceId};
 use agentdash_integration_api::{
     CompleteAgentContributionError, CompleteAgentPlacementRequirement,
     CompleteAgentRegistrationContribution,
@@ -43,13 +43,13 @@ pub struct PinnedCompleteAgentVerificationCatalog {
 pub struct CompleteAgentVerificationTemplate {
     pub expected_publisher_integration: String,
     pub expected_service_version: String,
-    pub expected_build_digest: agentdash_agent_service_api::AgentPayloadDigest,
-    pub expected_profile_digest: agentdash_agent_service_api::AgentProfileDigest,
+    pub expected_build_digest: agentdash_agent_runtime_contract::AgentPayloadDigest,
+    pub expected_profile_digest: agentdash_agent_runtime_contract::AgentProfileDigest,
     pub expected_conformance_suite_revision: String,
     pub method: agentdash_agent_runtime_host::CompleteAgentVerificationMethod,
     pub verifier_identity: String,
     pub verifier_revision: String,
-    pub evidence_digest: agentdash_agent_service_api::AgentPayloadDigest,
+    pub evidence_digest: agentdash_agent_runtime_contract::AgentPayloadDigest,
 }
 
 impl PinnedCompleteAgentVerificationCatalog {
@@ -361,11 +361,11 @@ impl CompleteAgentComposition {
 
 #[cfg(test)]
 mod tests {
+    use agentdash_agent_runtime_contract::{
+        AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId,
+    };
     use agentdash_agent_runtime_host::{
         CompleteAgentRegistrationVerifier, CompleteAgentVerificationMethod,
-    };
-    use agentdash_agent_service_api::{
-        AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId,
     };
 
     use super::*;

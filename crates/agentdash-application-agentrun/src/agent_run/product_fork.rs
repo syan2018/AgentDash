@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeCommandAvailability, AgentRuntimeCommandKind, AgentRuntimeView, RuntimeThreadId,
+    AgentControlAvailability, AgentControlKind, AgentRuntimeView, RuntimeThreadId,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use chrono::Utc;
@@ -219,9 +219,10 @@ impl AgentRunProductForkService {
 fn ensure_fork_available(snapshot: &AgentRuntimeView) -> Result<(), AgentRunProductForkError> {
     if matches!(
         snapshot
+            .observation
             .command_availability
-            .get(&AgentRuntimeCommandKind::Fork),
-        Some(AgentRuntimeCommandAvailability::Available { .. })
+            .get(&AgentControlKind::Fork),
+        Some(AgentControlAvailability::Available { .. })
     ) {
         Ok(())
     } else {
@@ -234,7 +235,7 @@ fn resolve_cutoff(
     requested: Option<&AgentRunProductForkMessageRef>,
 ) -> Result<
     (
-        agentdash_agent_runtime_contract::RuntimeTurnId,
+        agentdash_agent_runtime_contract::AgentTurnId,
         String,
         Option<u32>,
     ),
@@ -250,7 +251,7 @@ fn resolve_cutoff(
         }
     })?;
     Ok((
-        agentdash_agent_runtime_contract::RuntimeTurnId::new(turn.id.clone())
+        agentdash_agent_runtime_contract::AgentTurnId::new(turn.id.clone())
             .map_err(|_| AgentRunProductForkError::ForkPointNotFound)?,
         turn.id.clone(),
         requested.map(|point| point.entry_index),
@@ -382,43 +383,27 @@ mod tests {
         codex_app_server_protocol as codex,
     };
     use agentdash_agent_runtime_contract::{
-        AgentRuntimeAvailabilityEvidence, AgentRuntimeLifecycleStatus,
-        AgentRuntimeProjectionAuthority, AgentRuntimeProjectionFidelity, RuntimeProjectionRevision,
+        AgentControlAvailabilityEvidence, AgentSnapshotRevision,
     };
+    use agentdash_agent_runtime_test_support::coherent_runtime::CoherentAgentObservationBuilder;
 
     use super::*;
 
     fn snapshot(conversation: Vec<CanonicalConversationRecord>) -> AgentRuntimeView {
-        let revision = RuntimeProjectionRevision(7);
-        AgentRuntimeView {
-            thread_id: RuntimeThreadId::new("runtime-parent").expect("thread"),
-            view_revision: revision,
-            captured_at_ms: 10,
-            lifecycle: AgentRuntimeLifecycleStatus::Active,
-            execution: agentdash_agent_runtime_contract::AgentRuntimeExecutionView {
-                status: agentdash_agent_runtime_contract::AgentRuntimeExecutionStatus::Idle,
-                active_turn_id: None,
-                latest_turn_id: None,
-            },
-            interactions: Vec::new(),
-            thread_name: None,
-            thread_name_source: None,
-            operations: Vec::new(),
-            source_binding: None,
-            authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
-            fidelity: AgentRuntimeProjectionFidelity::Exact,
-            command_availability: BTreeMap::from([(
-                AgentRuntimeCommandKind::Fork,
-                AgentRuntimeCommandAvailability::Available {
-                    evidence: AgentRuntimeAvailabilityEvidence {
-                        blocking_operation_id: None,
-                        bound_surface_revision: None,
-                        applied_surface_revision: None,
+        let revision = AgentSnapshotRevision(7);
+        CoherentAgentObservationBuilder::new(7)
+            .command_availability(BTreeMap::from([(
+                AgentControlKind::Fork,
+                AgentControlAvailability::Available {
+                    evidence: AgentControlAvailabilityEvidence {
+                        expected_snapshot_revision: revision,
+                        expected_turn_id: None,
                     },
                 },
-            )]),
-            conversation,
-        }
+            )]))
+            .conversation(conversation)
+            .observed_at_ms(10)
+            .runtime_view("runtime-parent")
     }
 
     fn turn(

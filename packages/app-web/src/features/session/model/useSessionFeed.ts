@@ -13,7 +13,7 @@ import type { AgentRunProductRuntimeCommandRequest } from "../../../services/age
 import type {
   AgentRuntimeOperationReceipt,
   AgentRuntimeView,
-} from "../../../generated/agent-runtime-validators";
+} from "../../../generated/agent-runtime-codecs";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { parseBoundedOutputText } from "./boundedOutput";
 import { getPlatformEventPolicy } from "./systemEventPolicy";

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_host::{CompleteAgentHookHandler, ResolvedCompleteAgentHookCallback};
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentHookAction, AgentHookDecision, AgentHookPoint, AgentHookTiming, AgentHostCallbackError,
     AgentHostCallbackErrorCode,
 };
+use agentdash_agent_runtime_host::{CompleteAgentHookHandler, ResolvedCompleteAgentHookCallback};
 use agentdash_application_agentrun::agent_run::AgentRunProductRuntimeBindingRepository;
 use agentdash_application_hooks::AppExecutionHookProvider;
 use agentdash_platform_spi::{

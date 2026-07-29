@@ -1,4 +1,4 @@
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentPayloadDigest, AgentProfileDigest, AgentServiceDescriptor,
     AgentServiceInstanceId,
 };
@@ -100,8 +100,8 @@ impl RuntimeWireServiceOfferAdvertisement {
         object.remove("digest");
         object.remove("signed_deployment_evidence");
         sort_json_keys(&mut value);
-        let canonical =
-            serde_json::to_vec(&value).expect("canonical Runtime Wire advertisement must serialize");
+        let canonical = serde_json::to_vec(&value)
+            .expect("canonical Runtime Wire advertisement must serialize");
         AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(canonical)))
             .expect("SHA-256 advertisement digest is non-empty")
     }
@@ -116,7 +116,10 @@ impl RuntimeWireServiceOfferAdvertisement {
                 "claimed_conformance_suite_revision",
                 self.claimed_conformance_suite_revision.as_str(),
             ),
-            ("deployment_manifest_id", self.deployment_manifest_id.as_str()),
+            (
+                "deployment_manifest_id",
+                self.deployment_manifest_id.as_str(),
+            ),
             (
                 "deployment_manifest_revision",
                 self.deployment_manifest_revision.as_str(),
@@ -266,9 +269,7 @@ pub enum RuntimeWirePlacementLossCode {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeWirePlacementProtocolError {
     #[error("runtime wire placement coordinate is invalid: {coordinate}")]
-    InvalidCoordinate {
-        coordinate: String,
-    },
+    InvalidCoordinate { coordinate: String },
     #[error("runtime wire advertisement freshness interval is invalid")]
     InvalidFreshness,
     #[error("runtime wire advertisement revision regressed")]

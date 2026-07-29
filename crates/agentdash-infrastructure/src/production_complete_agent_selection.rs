@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use agentdash_agent_runtime_contract::{AgentPayloadDigest, AgentServiceInstanceId};
 use agentdash_agent_runtime_host::{CompleteAgentAvailability, CompleteAgentLiveCatalog};
-use agentdash_agent_service_api::{AgentPayloadDigest, AgentServiceInstanceId};
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductRuntimeProvisioningError, ProductCredentialScopeRef, ProductExecutionProfileRef,
 };

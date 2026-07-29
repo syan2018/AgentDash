@@ -19,9 +19,8 @@ pub struct CanonicalConversationRecord {
 
 pub struct AgentSnapshot {
     pub source: AgentSourceCoordinate,
-    pub revision: AgentSnapshotRevision,
-    pub conversation_history: Vec<CanonicalConversationRecord>,
-    // lifecycle / interaction / surface evidence omitted
+    pub observation: AgentObservation,
+    // surface / initial context evidence omitted
 }
 
 pub struct AgentLiveEvent {
@@ -70,6 +69,10 @@ type AgentRuntimeUpdate = {
 - `ItemStarted`/`ItemUpdated`/`ItemCompleted` 的 `AgentDashThreadItem` discriminant 决定 UI 形态。
   `agentMessage` 与 `reasoning` 进入消息卡，其余 item 进入对应工具/资源卡；未知 discriminant 是
   协议错误，不降级为“TOOL 未知”。
+- canonical item lifecycle固定为`started -> updated* -> completed(terminal)`。
+  `ItemUpdated`只精化过程内容；`ItemCompletedNotification.terminal`明确携带
+  `succeeded | failed | lost | cancelled`，其中completed表示生命周期闭合，不等同于成功。
+  Session reducer按item identity合并body并输出lifecycle，Card与renderer只消费该lifecycle。
 - 工具结果正文以typed content parts保存在concrete Agent history；canonical projector根据ToolCall
   固定的owner projector生成`fsRead`、`fsApplyPatch`、`commandExecution`等ThreadItem。前端Card只
   消费对应`contentItems/details`，不解析callback或provider原始JSON。
@@ -115,6 +118,8 @@ type AgentRuntimeUpdate = {
 | update.execution 进入 idle | Composer退出运行态；消息、工具和错误仍按 canonical history 渲染 |
 | live 断开或 sequence gap | 丢弃 partial lane并重新 `read` authoritative snapshot |
 | terminal turn 没有 assistant item | 保留 terminal-only segment，并展示 `turn.error` |
+| failed/lost/cancelled item | 发布一次带typed outcome的`ItemCompleted`；同identity卡片退出运行态 |
+| terminal item被投影为`ItemUpdated` | producer违反canonical lifecycle，架构门禁失败 |
 | PTY terminal 退出 | 只更新 terminal resource，不改变 Agent turn |
 | vendor 发送 executor-specific conversation DTO | adapter 边界拒绝或映射为 owned canonical record |
 | tool surface同名定义改变 | `changed_tools`渲染↻；不渲染为第二次新增 |

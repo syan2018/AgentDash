@@ -9,7 +9,7 @@ use agentdash_agent_runtime::{
     RuntimeToolPermission, RuntimeToolProvenance, RuntimeToolResourceGrant,
     RuntimeVfsGrantedOperation, RuntimeVfsPathGrant, ToolProtocolProjector,
 };
-use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
+use agentdash_agent_runtime_contract::{AgentToolName, AgentToolResult};
 use agentdash_application_agentrun::runtime_task_tools::{
     RuntimeTaskToolKind, RuntimeTaskToolOutcome, RuntimeTaskToolRequest, RuntimeTaskToolScope,
     RuntimeTaskToolService,
@@ -649,7 +649,7 @@ mod tests {
         RuntimeToolProvenanceEvidence, RuntimeToolResolvedContext,
     };
     use agentdash_agent_runtime_contract::RuntimeThreadId;
-    use agentdash_agent_service_api::{
+    use agentdash_agent_runtime_contract::{
         AgentBindingGeneration, AgentEffectIdentity, AgentItemId, AgentSurfaceRevision, AgentTurnId,
     };
     use serde_json::Value;

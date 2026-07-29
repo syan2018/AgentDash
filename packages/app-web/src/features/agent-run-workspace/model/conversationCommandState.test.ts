@@ -111,10 +111,16 @@ describe("AgentRun conversation command state", () => {
 
     expect(projected.executionStatus).toBe("running_active");
     expect(projected.activeTurnId).toBe("turn-compaction");
-    expect(projected.cancelCommand?.enabled).toBe(true);
+    expect(projected.cancelCommand).toEqual(expect.objectContaining({
+      enabled: false,
+      unavailable_reason: "turn_not_cancellable",
+    }));
     expect(projected.commands.find(
       (item) => item.command_id === "cmd-submit",
-    )?.enabled).toBe(true);
+    )).toEqual(expect.objectContaining({
+      enabled: true,
+      unavailable_reason: undefined,
+    }));
   });
 
   it("Workspace refresh/error 不覆盖 Runtime 运行态与停止能力", () => {
@@ -132,7 +138,7 @@ describe("AgentRun conversation command state", () => {
     );
 
     expect(projected.executionStatus).toBe("running_active");
-    expect(projected.cancelCommand?.enabled).toBe(true);
+    expect(projected.cancelCommand?.enabled).toBe(false);
   });
 
   it("Workspace 加载失败时保留 Product shell 错误", () => {

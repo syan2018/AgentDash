@@ -19,7 +19,7 @@ import {
   respondAgentRunInteraction,
 } from "./agentRunRuntime";
 import { agentRuntimeTestFixtures } from "../features/agent-run-runtime/model/agentRuntimeTestFixtures";
-import { encodeAgentRuntimeView } from "../generated/agent-runtime-validators";
+import { encodeAgentRuntimeView } from "../generated/agent-runtime-codecs";
 
 describe("AgentRun runtime service", () => {
   beforeEach(() => {
@@ -43,7 +43,6 @@ describe("AgentRun runtime service", () => {
       operation_id: "operation-compaction",
       thread_id: "runtime-thread-child",
       status: "accepted",
-      evidence: null,
       duplicate: false,
     });
 
@@ -78,25 +77,16 @@ describe("AgentRun runtime service", () => {
 
   it("loads context projection from the required AgentRun Runtime route", async () => {
     const projection = {
-      session_id: "thread-1",
-      projection_kind: "agent_runtime_canonical_context",
-      projection_version: 7,
-      head_event_seq: 7,
-      token_estimate: 12,
-      message_count: 2,
-      segments: [],
-      context_usage: {
-        categories: [],
-        items: [],
-        messages: {
-          user_message_tokens: 4,
-          assistant_message_tokens: 8,
-          tool_call_tokens: 0,
-          tool_result_tokens: 0,
-          attachment_tokens: 0,
+      thread_id: "thread-1",
+      recipe: {
+        coordinate: {
+          snapshot_revision: "42",
+          context_revision: "context-42",
+          recipe_digest: "sha256:context-42",
+          authority: "agent_owned",
+          fidelity: "exact",
         },
-        top_tools: [],
-        top_attachments: [],
+        contributions: [],
       },
     };
     mocks.apiGetMock.mockResolvedValue(projection);
@@ -104,9 +94,25 @@ describe("AgentRun runtime service", () => {
     await expect(fetchAgentRunRuntimeContextProjection({
       runId: "run/1",
       agentId: "agent/1",
-    })).resolves.toEqual(projection);
+    }, {
+      snapshot_revision: 42n,
+      context_revision: "context-42",
+      recipe_digest: "sha256:context-42",
+      authority: "agent_owned",
+      fidelity: "exact",
+    })).resolves.toEqual({
+      ...projection,
+      recipe: {
+        ...projection.recipe,
+        coordinate: {
+          ...projection.recipe.coordinate,
+          snapshot_revision: 42n,
+        },
+      },
+    });
     expect(mocks.apiGetMock).toHaveBeenCalledWith(
-      "/agent-runs/run%2F1/agents/agent%2F1/runtime/context/projection",
+      "/agent-runs/run%2F1/agents/agent%2F1/runtime/context/projection?snapshot_revision=42&recipe_digest=sha256%3Acontext-42&authority=agent_owned&fidelity=exact&context_revision=context-42",
+      { signal: undefined },
     );
   });
 
@@ -118,12 +124,15 @@ describe("AgentRun runtime service", () => {
   ])("rejects a non-canonical Runtime u64 encoded as %s", async (_case, revision) => {
     mocks.apiGetMock.mockResolvedValue({
       ...encodeAgentRuntimeView(agentRuntimeTestFixtures.snapshots.started),
-      view_revision: revision,
+      observation: {
+        ...encodeAgentRuntimeView(agentRuntimeTestFixtures.snapshots.started).observation,
+        revision,
+      },
     });
 
     await expect(
       fetchAgentRuntimeView({ runId: "run/1", agentId: "agent/1" }),
-    ).rejects.toThrow("$.view_revision");
+    ).rejects.toThrow("$.observation.revision");
   });
 
   it("rejects a response that is not the canonical Runtime projection", async () => {
@@ -142,7 +151,6 @@ describe("AgentRun runtime service", () => {
       operation_id: "operation-1",
       thread_id: "thread-1",
       status: "accepted",
-      evidence: null,
       duplicate: false,
     });
     await expect(respondAgentRunInteraction(

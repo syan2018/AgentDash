@@ -13,12 +13,18 @@ function completedMessage(id: string): SessionDisplayEntry {
     timestamp: 1,
     eventSeq: 1,
     turnId: "turn-1",
+    itemLifecycle: {
+      phase: "terminal",
+      outcome: "succeeded",
+      error: null,
+    },
     event: {
       type: "item_completed",
       payload: {
         threadId: "session-1",
         turnId: "turn-1",
         completedAtMs: 1,
+        terminal: { outcome: "succeeded", error: null },
         item: {
           type: "agentMessage",
           id,

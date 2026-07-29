@@ -7,6 +7,7 @@ import type {
   SessionDisplayEntry,
   SessionEventEnvelope,
   SessionItemFreshness,
+  SessionItemLifecycle,
   TimelineOrder,
   TokenUsageInfo,
 } from "./types";
@@ -113,6 +114,19 @@ function freshnessForEvent(event: BackboneEvent): SessionItemFreshness | undefin
   }
 }
 
+function lifecycleForEvent(event: BackboneEvent): SessionItemLifecycle | undefined {
+  switch (event.type) {
+    case "item_started":
+      return { phase: "started" };
+    case "item_updated":
+      return { phase: "progress" };
+    case "item_completed":
+      return { phase: "terminal", ...event.payload.terminal };
+    default:
+      return undefined;
+  }
+}
+
 function isFreshEnough(
   existing: SessionDisplayEntry,
   incomingFreshness: SessionItemFreshness,
@@ -136,6 +150,12 @@ function mergeEntryMetadata(
     incomingFreshness && (!existingFreshness || isFreshEnough(existing, incomingFreshness))
       ? incomingFreshness
       : existingFreshness;
+  const incomingLifecycle = lifecycleForEvent(bbEvent);
+  const nextLifecycle =
+    incomingLifecycle && (!existingFreshness || !incomingFreshness
+      || isFreshEnough(existing, incomingFreshness))
+      ? incomingLifecycle
+      : existing.itemLifecycle;
 
   return {
     ...existing,
@@ -148,6 +168,7 @@ function mergeEntryMetadata(
       : timelineOrder,
     progressSeq: event.ephemeral ? event.event_seq : existing.progressSeq,
     itemFreshness: nextFreshness,
+    itemLifecycle: nextLifecycle,
   };
 }
 
@@ -305,6 +326,7 @@ export function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: BackboneE
     timelineOrder: makeTimelineOrder(event, bbEvent),
     progressSeq: event.ephemeral ? event.event_seq : undefined,
     itemFreshness: freshnessForEvent(bbEvent),
+    itemLifecycle: lifecycleForEvent(bbEvent),
     event: bbEvent,
     turnId: event.turn_id ?? undefined,
     entryIndex: event.entry_index ?? undefined,
@@ -410,7 +432,9 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
               accumulatedText: finalCommandOutput ?? existing.accumulatedText,
               isStreaming: bbEvent.type !== "item_completed",
               isPendingApproval:
-                bbEvent.type === "item_completed" ? false : existing.isPendingApproval,
+                bbEvent.type === "item_completed"
+                  ? false
+                  : existing.isPendingApproval,
             }
           : merged;
         return next;

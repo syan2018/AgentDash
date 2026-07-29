@@ -1,4 +1,4 @@
-use agentdash_agent_service_api::AgentInputContent;
+use agentdash_agent_runtime_contract::AgentInputContent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;

@@ -593,11 +593,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use agentdash_agent_runtime_contract::{
-        AgentRuntimeAvailabilityEvidence, AgentRuntimeCommandAvailability, AgentRuntimeCommandKind,
-        AgentRuntimeExecutionStatus, AgentRuntimeExecutionView, AgentRuntimeLifecycleStatus,
-        AgentRuntimeProjectionAuthority, AgentRuntimeProjectionFidelity,
-        AgentRuntimeSourceBindingEvidence, RuntimeProjectionRevision, RuntimeSourceRef,
-        RuntimeThreadId, SurfaceRevision,
+        AgentContextAuthority, AgentContextCoordinate, AgentContextFidelity,
+        AgentControlAvailability, AgentControlAvailabilityEvidence, AgentControlKind,
+        AgentExecutionSnapshot, AgentLifecycleStatus, AgentObservation, AgentPayloadDigest,
+        AgentRuntimeSourceBindingEvidence, AgentSnapshotAuthority, AgentSnapshotRevision,
+        AgentSnapshotSource, RuntimeSourceRef, RuntimeThreadId, SemanticFidelity,
     };
     use agentdash_application_agentrun::agent_run::{
         AgentRunProductProjectionError, AgentRunTerminalChangePage, AgentRunTerminalChangeSequence,
@@ -725,11 +725,11 @@ mod tests {
                 agent:
                     agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
                         service_instance_id:
-                            agentdash_agent_service_api::AgentServiceInstanceId::new(
+                            agentdash_agent_runtime_contract::AgentServiceInstanceId::new(
                                 "fixture-agent",
                             )
                             .unwrap(),
-                        source: agentdash_agent_service_api::AgentSourceCoordinate::new(
+                        source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new(
                             "fixture-source",
                         )
                         .unwrap(),
@@ -737,7 +737,7 @@ mod tests {
                 launch_frame: ProductAgentFrameRef {
                     frame_id: Uuid::new_v4(),
                     agent_id: target.agent_id,
-                    revision: source.applied_surface_revision.0,
+                    revision: 3,
                 },
                 execution_profile_digest: execution_profile.profile_digest.clone(),
                 execution_profile,
@@ -773,43 +773,49 @@ mod tests {
     fn source(name: &str) -> AgentRuntimeSourceBindingEvidence {
         AgentRuntimeSourceBindingEvidence {
             source_ref: RuntimeSourceRef::new(name).unwrap(),
-            committed_at_revision: RuntimeProjectionRevision(2),
-            applied_surface_revision: SurfaceRevision(3),
-            activated_at_revision: Some(RuntimeProjectionRevision(4)),
         }
     }
 
     fn snapshot(
         thread: &str,
-        source_binding: AgentRuntimeSourceBindingEvidence,
+        _source_binding: AgentRuntimeSourceBindingEvidence,
     ) -> AgentRuntimeView {
-        let evidence = AgentRuntimeAvailabilityEvidence {
-            blocking_operation_id: None,
-            bound_surface_revision: Some(SurfaceRevision(3)),
-            applied_surface_revision: Some(SurfaceRevision(3)),
+        let revision = AgentSnapshotRevision(7);
+        let evidence = AgentControlAvailabilityEvidence {
+            expected_snapshot_revision: revision,
+            expected_turn_id: None,
         };
         AgentRuntimeView {
             thread_id: RuntimeThreadId::new(thread).unwrap(),
-            thread_name: None,
-            thread_name_source: None,
-            view_revision: RuntimeProjectionRevision(7),
-            captured_at_ms: 10,
-            lifecycle: AgentRuntimeLifecycleStatus::Active,
-            execution: AgentRuntimeExecutionView {
-                status: AgentRuntimeExecutionStatus::Idle,
-                active_turn_id: None,
-                latest_turn_id: None,
+            observation: AgentObservation {
+                revision,
+                context: AgentContextCoordinate {
+                    snapshot_revision: revision,
+                    context_revision: Some("context-7".to_owned()),
+                    recipe_digest: AgentPayloadDigest::new("sha256:context-7").unwrap(),
+                    authority: AgentContextAuthority::AgentOwned,
+                    fidelity: AgentContextFidelity::Exact,
+                },
+                lifecycle: AgentLifecycleStatus::Active,
+                execution: AgentExecutionSnapshot {
+                    active_turn: None,
+                    queued_compaction: None,
+                    last_compaction_outcome: None,
+                },
+                command_availability: BTreeMap::from([(
+                    AgentControlKind::SubmitInput,
+                    AgentControlAvailability::Available { evidence },
+                )]),
+                interactions: Vec::new(),
+                thread_name: None,
+                source_info: AgentSnapshotSource {
+                    authority: AgentSnapshotAuthority::AgentAuthoritative,
+                    source_revision: None,
+                    fidelity: SemanticFidelity::Exact,
+                    observed_at_ms: 10,
+                },
+                conversation: Vec::new(),
             },
-            interactions: Vec::new(),
-            operations: Vec::new(),
-            source_binding: Some(source_binding),
-            authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
-            fidelity: AgentRuntimeProjectionFidelity::Exact,
-            command_availability: BTreeMap::from([(
-                AgentRuntimeCommandKind::SubmitInput,
-                AgentRuntimeCommandAvailability::Available { evidence },
-            )]),
-            conversation: Vec::new(),
         }
     }
 
@@ -903,8 +909,9 @@ mod tests {
         assert_eq!(binding.runtime_thread_id.as_str(), "thread-direct");
         assert!(
             snapshot
+                .observation
                 .command_availability
-                .contains_key(&AgentRuntimeCommandKind::SubmitInput)
+                .contains_key(&AgentControlKind::SubmitInput)
         );
         assert!(view.agents[0].current_attempt.is_none());
     }

@@ -20,21 +20,22 @@ pub use history::{
     ForkCutoff, ForkLineage, HistoryContribution, HistoryEntryId, HistoryError, HistoryPayload,
     InitialContextContribution, InitialContextInstallation, InitialContextMode, InteractionId,
     InteractionState, ItemDetails, ItemKind, ItemState, SessionStatus, ToolActivityResult,
-    TurnState, accepted_compaction_summary_frame, fold_history,
+    TurnState, accepted_compaction_summary_frame, compaction_context_revision, fold_history,
 };
 pub use lifecycle::{
     CommandDependency, CommandId, CommandOutcome, CommandStatus, DashCommand, DashCommandKind,
-    DashExecutionConsistency, DashLifecycle, EffectId, EffectOutcome, LifecycleError,
+    DashExecutionConsistency, DashLifecycle, EffectId, LifecycleError,
 };
 pub use service::{
     DashAgentChanges, DashAgentRead, DashAgentRepository, DashAgentRepositoryState,
     DashAgentRepositoryStore, DashAgentService, DashCommandReceipt, DashCommandRequest,
-    DashCompactionRequest, DashCompactionResult, DashCompactor, DashConversationNamer,
-    DashConversationNamingRequest, DashEffectInspection, DashExecutionDependencies,
-    DashHistoryCallbacks, DashHistoryCommit, DashPublicCommand, DashReceiptState, DashServiceError,
-    DashTerminalOutcome, NoopDashConversationNamer, NoopDashHistoryCallbacks,
+    DashCompactionRequest, DashCompactionResult, DashCompactor, DashContextRecipe,
+    DashContextRecipeMessage, DashConversationNamer, DashConversationNamingRequest,
+    DashEffectInspection, DashExecutionDependencies, DashHistoryCallbacks, DashHistoryCommit,
+    DashPublicCommand, DashReceiptState, DashServiceError, DashTerminalOutcome,
+    NoopDashConversationNamer, NoopDashHistoryCallbacks,
 };
 pub use store::{
-    CommandSettlement, DashAgentChange, DashAgentChangePayload, DashAgentCommit, DashAgentStore,
-    DashChangeCursor, DashExecutionInspection, EffectSettlement, StoreError,
+    CommandSettlement, DashAgentChange, DashAgentCommit, DashAgentStore, DashChangeCursor,
+    StoreError,
 };

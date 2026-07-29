@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentRuntimeOperationReceipt,
   AgentRuntimeView,
-} from "../../../generated/agent-runtime-validators";
+} from "../../../generated/agent-runtime-codecs";
 import type {
   AgentRunProductRuntimeCommandRequest,
   AgentRunRuntimeTarget,
@@ -73,7 +73,7 @@ export function useAgentRuntimeConnection({
       onBaseline: (loaded) => {
         setView(loaded);
         setBaselinePresentationIds(new Set(
-          loaded.conversation.map((record) => record.presentation_id),
+          loaded.observation.conversation.map((record) => record.presentation_id),
         ));
         setBoundTargetKey(
           `${agentRunTarget.runId}:${agentRunTarget.agentId}`,

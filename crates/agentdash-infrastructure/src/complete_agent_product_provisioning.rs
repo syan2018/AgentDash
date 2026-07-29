@@ -13,12 +13,7 @@ use agentdash_agent_runtime::{
     AgentRuntimeDispatchContext, AgentRuntimeLifecyclePort, PlatformToolBroker,
     RuntimeToolDefinition, map_initial_context_package,
 };
-use agentdash_agent_runtime_contract::{AgentRuntimeInitialContextPackage, RuntimeThreadId};
-use agentdash_agent_runtime_host::{
-    CompleteAgentBindingTarget, CompleteAgentHost, CompleteAgentHostError,
-    CompleteAgentRuntimeTargetProvisioningRequest, CompleteAgentRuntimeTargetRecoveryRequest,
-};
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentEffectIdentity, AgentForkPoint, AgentHookAction,
     AgentHookBlockingSemantics, AgentHookDefinitionId, AgentHookEffectKind, AgentHookMutationKind,
     AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming, AgentIdempotencyKey,
@@ -26,6 +21,11 @@ use agentdash_agent_service_api::{
     AgentSurfaceRequirement, AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
     AgentSurfaceSnapshot, AgentToolDelivery, AgentToolProvenance, AgentToolSemanticFacet,
     AgentToolUpdateSemantics, SemanticFidelity,
+};
+use agentdash_agent_runtime_contract::{InitialAgentContextPackage, RuntimeThreadId};
+use agentdash_agent_runtime_host::{
+    CompleteAgentBindingTarget, CompleteAgentHost, CompleteAgentHostError,
+    CompleteAgentRuntimeTargetProvisioningRequest, CompleteAgentRuntimeTargetRecoveryRequest,
 };
 use agentdash_application_agentrun::agent_run::frame::{
     AgentContextSourceSnapshot, runtime_backend_anchor_from_vfs,
@@ -384,7 +384,7 @@ impl AgentRunProductRuntimeProvisioningPort for CompleteAgentProductRuntimeProvi
     async fn create_agent_source(
         &self,
         request: &AgentRunProductRuntimeProvisioningRequest,
-        initial_context: Option<AgentRuntimeInitialContextPackage>,
+        initial_context: Option<InitialAgentContextPackage>,
     ) -> Result<AgentRunProductAgentCreateEvidence, AgentRunProductRuntimeProvisioningError> {
         request.validate()?;
         let identity = format!(
@@ -1482,11 +1482,11 @@ fn failed(reason: impl Into<String>) -> AgentRunProductRuntimeProvisioningError 
 
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_runtime_host::CompleteAgentPlacement;
-    use agentdash_agent_service_api::{
+    use agentdash_agent_runtime_contract::{
         AgentProfileDigest, AgentServiceDefinitionId, AgentServiceInstanceId,
         CompleteAgentLiveAttachmentId,
     };
+    use agentdash_agent_runtime_host::CompleteAgentPlacement;
 
     use super::*;
 
@@ -1662,7 +1662,7 @@ mod tests {
 
         let dynamic = tool_requirements(
             vec![RuntimeToolDefinition {
-                name: agentdash_agent_service_api::AgentToolName::new(
+                name: agentdash_agent_runtime_contract::AgentToolName::new(
                     "mcp_agentdash_workflow_tools_get_lifecycle",
                 )
                 .unwrap(),

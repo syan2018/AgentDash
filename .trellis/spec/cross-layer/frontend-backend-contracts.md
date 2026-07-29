@@ -111,9 +111,10 @@ AgentRunCommandReceipt {
   route，最终由
   concrete Agent command/inspection证明；不存在独立 session command 或 vendor DTO 路径。
 - Interaction response使用generated `InteractionResponse` union；approval、user input、MCP elicitation与dynamic tool result共用一个`/respond` route。UI只有在刷新后的Runtime snapshot声明`interaction_respond=available`时才启用对应控件。
-- Runtime context popup读取由`AgentRuntimeView.conversation`无状态生成的
-  `SessionProjectionViewResponse`；target切换以`run_id + agent_id`为request generation，
-  旧target迟到响应不能覆盖当前popup。
+- Runtime context popup只读取`AgentRuntimeContextProjection`，并以
+  `AgentRuntimeView.observation.context`作为required coordinate；source query与snapshot校验由
+  Runtime observation封装。target切换以`run_id + agent_id`为request generation，旧target或旧
+  context revision迟到响应不能覆盖当前popup。
 - RuntimeWire/Relay 只承载 Complete Agent transport；其 connection epoch、route 与 generation
   不进入浏览器合同或 Product persistence。
 - LifecycleGate 等 Product owner 的 waiting facts单独展示；Agent input handoff不形成 mailbox
@@ -135,7 +136,7 @@ AgentRunCommandReceipt {
 | client command id 为空 | `400 Bad Request` |
 | Agent turn/interaction coordinate 已过期 | typed stale error；前端刷新 authoritative view |
 | interaction event已到但Runtime inspect尚未刷新 | 控件保持disabled；`interaction_requested`触发inspect refresh后按availability启用 |
-| context target A响应晚于target B | A响应丢弃；popup只提交与当前target key匹配的结果 |
+| context target A响应晚于target B，或snapshot低于required/committed revision | 旧响应丢弃；popup只提交匹配当前target与context coordinate的结果 |
 | Driver回报与`runtime_turn_id`不同的Turn | critical protocol violation；matching identity只作为Observed ack |
 | command availability=false | UI 禁用且 API 在副作用前拒绝 |
 | Agent unavailable | 当前请求 typed unavailable；无 queued Product row |
@@ -162,7 +163,7 @@ AgentRunCommandReceipt {
 - Command-state tests 证明 availability 只取 Runtime view/update。
 - Connection tests 覆盖 authoritative view baseline、duplicate update、disconnect/gap、reconnect
   与 typed stream error。
-- Interaction feed tests保留`interaction_id/kind/prompt/terminal`并证明response控件只消费刷新后的availability；context popup tests覆盖target切换迟到响应。
+- Interaction feed tests保留`interaction_id/kind/prompt/terminal`并证明response控件只消费刷新后的availability；context popup tests覆盖target切换、revision fence与digest coordinate。
 - Connection URL test断言完整AgentRun scoped view/updates endpoint，不请求已删除的 mailbox 或
   Runtime change-tail endpoint。
 - Stream state测试覆盖target切换、连接lane变化、重复sequence、terminal与Lagged后snapshot
@@ -177,6 +178,118 @@ AgentRunCommandReceipt {
 - Project Agent create E2E 覆盖 lifecycle facts → Agent create/source association → synchronous
   first input → operation response → Runtime update → reconnect view。
 - Create-run contract generation test断言 generated TypeScript 只暴露 `model_selection` 与 `backend_selection`，不重新引入可覆盖 executor 的请求字段。
+
+### Scenario: Typed Active Turn 与 Owner Command Policy
+
+#### 1. Scope / Trigger
+
+修改 Complete Agent execution snapshot、Compaction Turn、Runtime command mapper、Product command
+facade或Session命令门禁时适用。活动类型和控制权限必须来自同一次Agent owner observation，原因是
+普通对话Turn与Compaction Turn虽然都处于active，但可执行命令不同。
+
+#### 2. Signatures
+
+```rust
+AgentExecutionSnapshot {
+    active_turn: Option<AgentActiveTurnSnapshot>,
+    queued_compaction: Option<AgentQueuedCompactionSnapshot>,
+    last_compaction_outcome: Option<AgentCompactionOutcomeSnapshot>,
+}
+
+AgentActiveTurnSnapshot {
+    turn_id,
+    kind: conversation | context_compaction,
+    phase: running | applied,
+    started_at_ms,
+    cancellable,
+}
+
+AgentSnapshot {
+    execution,
+    command_availability: BTreeMap<AgentControlKind, AgentControlAvailability>,
+    ...
+}
+
+AgentChangePayload::ExecutionChanged {
+    execution,
+    command_availability,
+}
+```
+
+Runtime无损映射为`AgentRuntimeExecutionView.active_turn/queued_compaction`、
+`last_compaction_outcome`和带`expected_view_revision/expected_turn_id/
+bound_surface_revision/applied_surface_revision`证据的command availability。
+
+#### 3. Contracts
+
+- concrete Agent从同一durable history或provider observation构造typed active Turn；snapshot是
+  execution presentation，不重复承担public effect lookup。
+- manual compaction在普通Turn活动期间先发布`queued_compaction`命令事实；只有promotion提交
+  `CompactionStarted`后才成为`active_turn`，避免把排队意图伪装成正在执行。
+- `AgentExecutionSnapshot::command_availability`是Submit、Steer、Interrupt、Compact、
+  interaction、Close与Fork的共享owner policy；adapter只决定可观察的kind/phase与
+  `cancellable`。
+- Compaction active时Submit表示durable deferred input并保持可用；Steer、重复Compact、Fork与
+  Close关闭。Interrupt只在provider side-effect claim前的`cancellable=true`阶段开放。草稿编辑
+  与只读浏览不属于Agent command。
+- Product command facade先读取owner availability：只有Steer可用时才把产品Submit映射为
+  `AgentCommand::Steer`；否则只在Submit可用时提交新Turn。
+- `SourceObservation.state=ExecutionChanged`与同次canonical presentation共同发布
+  running/applied/terminal；Runtime update继续在同一lane携带execution、commands和presentation。
+- Native Compaction item携带`mode/status/error/started_at_ms/completed_at_ms/
+  context_revision`。success用`ItemCompleted`，failed/lost/cancelled用terminal
+  `ItemUpdated`后再结束Turn；前端按item status停止streaming并展示对应终态。
+- Codex只投影`thread/read`实际可观察的ContextCompaction item，保留Observed语义。
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| active conversation Turn | Steer/可取消的Interrupt可用；Submit按Steer执行 |
+| active conversation Turn + queued compaction | 保持当前Steer；重复Compact/Fork/Close不可用 |
+| active Compaction、`cancellable=false` | deferred Submit可用；Steer/Interrupt/重复Compact/Fork/Close不可用 |
+| active Compaction、`cancellable=true` | deferred Submit与Interrupt按owner证据开放 |
+| `phase=applied` | active Turn保持到terminal；context revision已应用但Turn尚未结束 |
+| terminal success/failure/lost/cancelled | `active_turn=None`并发布typed `last_compaction_outcome` |
+| failed/lost/cancelled | canonical `ItemCompleted.terminal`携带最终outcome；UI不得保持进行中 |
+| Product请求与owner availability不符 | side effect前拒绝，不根据`execution.status`改写命令 |
+| snapshot command map缺项 | Runtime projection拒绝该snapshot |
+
+#### 5. Good / Base / Bad Cases
+
+- Good：Native reload在Compaction running阶段恢复同一turn identity、开始时间和命令矩阵；等待
+  effect的调用方继续使用提交时获得的receipt。
+- Base：普通Turn继续通过owner开放Steer；Compaction期间相同Submit入口按owner事实写入deferred
+  command，不复制Turn类型判断。
+- Bad：只根据`execution.status=active`启用Steer/Interrupt，会把Compaction误当普通对话Turn。
+
+#### 6. Tests Required
+
+- Native blocking-compactor集成测试在provider返回前读取snapshot，断言kind、phase、
+  cancellable与完整命令矩阵；terminal后断言typed outcome。
+- Native changes测试断言running → applied → terminal均以`ExecutionChanged`发布，并与canonical
+  Compaction Turn presentation同lane出现。
+- Runtime mapper测试断言typed Turn和owner unavailable reason无损映射。
+- Product command facade测试断言普通Turn的Submit映射Steer，Compaction Turn的Submit映射
+  deferred input。
+- frontend selector测试断言Compaction期间Submit保持可用，Cancel/Compact按phase与owner
+  reason门禁；queued状态来自Runtime view。
+- canonical projection与frontend reducer/card测试覆盖succeeded/failed/lost/cancelled四类终态。
+- Codex fixture断言可观察ContextCompaction进入typed active Turn。
+
+#### 7. Wrong vs Correct
+
+```ts
+// 状态猜测：active无法区分对话Turn和Compaction Turn。
+const submitGate = view.execution.status === "active" ? "steer" : "submit_input";
+
+// Owner事实：优先消费具体命令availability及其stale evidence。
+const submitGate = isAvailable(view, "submit_input")
+  ? "submit_input"
+  : isAvailable(view, "steer")
+    ? "steer"
+    : "submit_input";
+```
 
 ## 4. Companion and Workflow Product Facts
 
@@ -494,86 +607,126 @@ Wrong: nullable_fields = { "durationMs" } -> 全局修改每个variant
 Correct: nullable_paths = { "CommandExecution.durationMs", ... } -> 只修改对应discriminator branch
 ```
 
-## 10. Scenario: Agent Runtime 历史上下文投影
+## 10. Scenario: Complete Agent Context Snapshot
 
 ### 10.1 Scope / Trigger
 
-修改Runtime context popup、canonical conversation history、context compaction、Agent Runtime
-snapshot或AgentRun Runtime router时适用。该投影只负责读取当前上下文构成，不拥有第二份会话状态。
+修改context inspector、compaction checkpoint、Complete Agent查询、Product context route或前端
+刷新提交规则时适用。当前模型输入成员只能由concrete Agent证明。
 
 ### 10.2 Signatures
 
-```text
-GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
-  -> SessionProjectionViewResponse
+```rust
+async fn CompleteAgentService::context(
+    AgentContextQuery {
+        source: AgentSourceCoordinate,
+        required_revision: Option<AgentSnapshotRevision>,
+    },
+) -> Result<AgentContextSnapshot, AgentServiceError>;
+
+AgentSnapshot {
+    revision: AgentSnapshotRevision,
+    context: AgentContextCoordinate {
+        snapshot_revision,
+        context_revision,
+        recipe_digest,
+        authority,
+        fidelity,
+    },
+    ...
+}
+
+AgentRuntimeView / AgentRuntimeUpdate {
+    context: AgentRuntimeContextCoordinate,
+    ...
+}
 ```
 
-```rust
-pub fn project_agent_runtime_context(
-    snapshot: &AgentRuntimeView,
-) -> SessionProjectionViewResponse;
+```text
+GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
+    ?required_revision={AgentSnapshotRevision}
+  -> AgentRuntimeContextProjection {
+       thread_id,
+       recipe: {
+         coordinate: {
+           snapshot_revision,
+           context_revision,
+           recipe_digest,
+           authority,
+           fidelity,
+         },
+         contributions: Frame | Message | Opaque,
+       },
+     }
 ```
 
 ### 10.3 Contracts
 
-- API先按`run_id + agent_id`完成`ProjectPermission::Use`授权，再通过
-  `AgentRunProductProjectionQueryPort::runtime_view`读取concrete Agent权威快照。
-- projector只消费durable canonical records。用户输入、终态assistant/reasoning、终态工具item与
-  每个frame identity的最新`ContextFrameChanged`进入响应；ephemeral delta不计入可恢复投影。
-- 最新`ContextCompaction`是消息有效边界。更早消息仍保留在canonical history中用于审计，但不再
-  计入当前模型上下文；最新ContextFrame仍按frame identity投影。
-- `projection_version`来自Agent Runtime revision。projector不持久化segment、token估算或
-  category，因此不会产生与Complete Agent竞争的状态owner。
-- UI上下文环形用量仍读取provider确认的`token_usage_updated`；context projection负责解释
-  构成，字符token估算不能覆盖provider事实。
+- API完成AgentRun Use授权后调用Product projection gateway；gateway解析committed binding并把
+  source交给`AgentRuntimeObservation.read_context()`。只有Runtime observation构造
+  `AgentContextQuery`并校验source、required revision、same-revision coordinate与fidelity。
+- Native Dash返回`AgentOwned/Exact`。`Frame`按provider system input顺序排列，随后是保留的
+  `Message`；tool call与tool result保持独立source entry identity和明确call pairing。
+- Codex仅返回可证明的`AgentObserved/Observed`，provider-private部分使用`Opaque`解释证据边界。
+- `recipe_digest`覆盖有序frames、messages与context revision。相同history/surface/checkpoint必须
+  产生相同digest。
+- concrete Agent的同一次`read()`原子返回execution、conversation与`AgentContextCoordinate`；
+  `AgentSnapshot.context.snapshot_revision`必须等于snapshot revision。Runtime view/update无损携带该
+  coordinate，不能在Product或浏览器中按timeline推导digest/revision。
+- `required_revision`是最低版本门禁：context snapshot revision大于等于它时可以返回，低于它时
+  返回conflict；更快到达的新recipe不是冲突。
+- `RuntimeProjectionController`以`run_id + agent_id`作为target key，以Runtime context coordinate
+  变化触发查询，并统一拥有AbortController、request generation、required/committed revision
+  fence与已提交recipe。Session popup只消费controller state；响应低于required或committed revision
+  时不得提交，响应恰好等于required revision时recipe digest与context revision必须一致。
+- `ContextFrame`同时展示`rendered_text`与完整typed结构；provider token usage继续来自provider
+  usage事实，不由字符估算覆盖。
 
 ### 10.4 Validation & Error Matrix
 
 | Condition | Required behavior |
 | --- | --- |
-| AgentRun target不存在、跨Project或无Use权限 | 在读取Runtime前返回对应授权/not found错误 |
-| target尚未建立committed Runtime binding | 返回conflict，不构造空投影 |
-| Runtime snapshot读取失败 | 映射typed Product projection错误，不使用旧Session Runtime |
-| canonical history为空 | 返回versioned空segments及全零message breakdown |
-| 只有ephemeral record | 不进入投影，等待durable snapshot收敛 |
-| 已发生ContextCompaction | 只统计边界后的消息，并返回`active_compaction_id` |
-| frontend收到404/5xx | 展示加载错误；不得静默转为null |
+| target无Use权限或不存在 | 查询Complete Agent前返回授权/not found |
+| target没有committed binding | 返回conflict |
+| 当前context revision低于`required_revision` | Complete Agent返回conflict |
+| 当前context revision高于`required_revision` | 返回当前新snapshot，不要求exact revision相等 |
+| Agent snapshot的context coordinate revision与snapshot revision不同 | Runtime projection拒绝snapshot |
+| Complete Agent不可用 | 返回typed unavailable |
+| Native recipe可精确物化 | `AgentOwned/Exact`且所有成员有source identity |
+| provider不公开输入recipe | `AgentObserved/Observed`并包含Opaque evidence |
+| target切换或旧请求后返回 | 前端丢弃旧generation响应 |
+| 响应revision低于required或已提交revision | 前端拒绝提交并展示一致性错误 |
+| 响应revision等于required但digest/context revision不同 | 前端拒绝提交并展示coordinate错误 |
+| 404/5xx | 前端展示错误，不能提交空snapshot |
 
 ### 10.5 Good / Base / Bad Cases
 
-- Good：Native会话历史包含用户消息、助手消息与工具终态，popup同时展示三类非零构成；刷新后结果
-  由同一snapshot稳定重建。
-- Base：空会话返回合法空投影；只有provider usage时环形用量可显示，但构成保持全零。
-- Bad：保留前端service却删除router，再捕获404返回null；这会把合同断链伪装成正常空状态。
+- Good：成功压缩后查询返回typed summary frame、retained tool pair和retained messages，顺序与下一次
+  provider request一致。
+- Base：无压缩的Native source仍返回active frames与完整消息；Codex source返回Observed/Opaque。
+- Bad：按最后一个`ContextCompaction` timeline位置截断canonical records；该位置不是
+  `retained_from`，无法证明provider成员。
 
 ### 10.6 Tests Required
 
-- application projector unit test断言用户、助手、工具调用/结果进入对应breakdown和top tools。
-- compaction unit test断言边界前消息不计入segments，`active_compaction_id`保持最新item identity。
-- API route ledger断言生产`lifecycle_agents::router()`包含context projection入口。
-- frontend service test断言URL编码及精确route；错误透传测试不得接受404空投影。
-- popup rendering test以非零breakdown断言用户、助手、工具和附件数字可见。
+- Native provider capture与context query逐项比较frame/message顺序、tool pairing和digest稳定性。
+- failed/lost/cancelled验证context revision与recipe不推进。
+- Runtime Wire round-trip验证Context request/response及protocol revision。
+- API route验证授权、binding解析和typed Agent error映射。
+- Complete Agent测试断言同次read的context coordinate与snapshot revision一致，并覆盖
+  lower-bound接受、ahead-required conflict。
+- Runtime mapper/view/update与generated codec测试断言context coordinate无损传递。
+- 前端验证完整frame/retained message/Observed-Opaque渲染、target切换取消、required/
+  committed revision单调门禁和同revision digest fence。
 
 ### 10.7 Wrong vs Correct
 
-```ts
-// Wrong：把消失的后端合同伪装成正常空数据。
-try {
-  return await api.get(path);
-} catch (error) {
-  if (error.status === 404) return null;
-  throw error;
-}
-
-// Correct：route是必需产品合同，断链必须直接暴露。
-return api.get<SessionProjectionViewResponse>(path);
-```
-
 ```rust
-// Wrong：恢复一份独立Session Runtime历史镜像。
-let projection = legacy_session_runtime.load_projection(session_id).await?;
+// Wrong：presentation只能证明审计顺序，不能证明当前provider recipe。
+let current = truncate_after_latest_compaction(snapshot.conversation);
 
-// Correct：从Complete Agent权威快照无状态投影。
-let snapshot = product_projection.runtime_view(&target).await?;
-let projection = project_agent_runtime_context(&snapshot);
+// Correct：Runtime observation按Product requirement返回完整typed recipe。
+let current = runtime_observation.read_context(AgentRuntimeContextRequirement {
+    at_least: runtime_view.observation.context,
+}).await?;
 ```

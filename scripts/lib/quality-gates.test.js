@@ -29,22 +29,38 @@ test("quality gate manifest exposes the required gates", () => {
   assert.equal(result.ok, true, result.errors.join("\n"));
 });
 
-test("pr_quick composes migration, test support, shared, frontend, and backend checks", () => {
+test("pr_quick composes architecture, contract, TypeScript, and Rust checks", () => {
   assert.deepEqual(
     resolveGateSteps("pr_quick").map((step) => step.id),
-    ["migration_guard", "test_support_guard", "shared_check", "frontend_check", "backend_check"],
+    [
+      "migration_guard",
+      "test_support_guard",
+      "agent_runtime_guard",
+      "contracts_check",
+      "shared_check",
+      "frontend_check",
+      "backend_check",
+    ],
   );
 
   assert.equal(
     gateCommand("pr_quick"),
-    "pnpm run migration:guard && pnpm run test-support:guard && pnpm run shared:check && pnpm run frontend:check && pnpm run backend:check",
+    "pnpm run migration:guard && pnpm run test-support:guard && pnpm run agent-runtime:guard && pnpm run contracts:check && pnpm run shared:check && pnpm run frontend:check && pnpm run backend:check",
   );
 });
 
 test("cloud_image_preflight reuses pr_quick checks before packaging", () => {
   assert.deepEqual(
     resolveGateSteps("cloud_image_preflight").map((step) => step.id),
-    ["migration_guard", "test_support_guard", "shared_check", "frontend_check", "backend_check"],
+    [
+      "migration_guard",
+      "test_support_guard",
+      "agent_runtime_guard",
+      "contracts_check",
+      "shared_check",
+      "frontend_check",
+      "backend_check",
+    ],
   );
 });
 
@@ -82,6 +98,7 @@ test("full_local includes migration, contract, backend, frontend, desktop, and e
   assert.deepEqual(stepIds, [
     "migration_guard",
     "test_support_guard",
+    "agent_runtime_guard",
     "contracts_check",
     "backend_check",
     "backend_clippy",
@@ -108,15 +125,15 @@ test("quality gate CLI run entry can expand a gate without executing it", () => 
   const result = spawnQualityGates(["run", "pr_quick", "--dry-run"]);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /> \[1\/5\] migration_guard: pnpm run migration:guard/);
-  assert.match(result.stdout, /> \[5\/5\] backend_check: pnpm run backend:check/);
+  assert.match(result.stdout, /> \[1\/7\] migration_guard: pnpm run migration:guard/);
+  assert.match(result.stdout, /> \[7\/7\] backend_check: pnpm run backend:check/);
 });
 
 test("quality gate CLI tolerates a forwarded argument separator", () => {
   const result = spawnQualityGates(["--", "run", "pr_quick", "--dry-run"]);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /> \[1\/5\] migration_guard: pnpm run migration:guard/);
+  assert.match(result.stdout, /> \[1\/7\] migration_guard: pnpm run migration:guard/);
 });
 
 test("quality gate CLI reports unknown gate names", () => {
@@ -132,6 +149,7 @@ test("root scripts delegate gate composition to the manifest runner", () => {
   assert.equal(packageJson.scripts.check, "node scripts/quality-gates.js run full_local");
   assert.equal(packageJson.scripts["desktop:check"], "node scripts/quality-gates.js run desktop_check");
   assert.equal(packageJson.scripts["test-support:guard"], "node scripts/check-test-support-boundaries.js");
+  assert.equal(packageJson.scripts["agent-runtime:guard"], "node scripts/check-agent-runtime-boundaries.js");
   assert.equal(packageJson.scripts["check:quick"], "node scripts/quality-gates.js run pr_quick");
   assert.equal(
     packageJson.scripts["check:deployment"],

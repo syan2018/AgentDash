@@ -162,13 +162,7 @@ use agentdash_contracts::routine::{
     RoutineTriggerConfigResponse, UpdateRoutineRequest,
 };
 use agentdash_contracts::session::{
-    SessionAttachmentContextContributionResponse, SessionContextUsageAnalysisResponse,
-    SessionContextUsageCategoryResponse, SessionContextUsageItemResponse, SessionEventResponse,
-    SessionEventsPageResponse, SessionMessageContextBreakdownResponse, SessionMessageRefDto,
-    SessionNdjsonEnvelope, SessionProjectionMessageRefResponse,
-    SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
-    SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
-    SessionToolContextContributionResponse,
+    SessionEventResponse, SessionEventsPageResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
 };
 use agentdash_contracts::settings::{
     SettingResponse, SettingUpdate, SettingsScopeKind, SettingsScopeQuery, UpdateSettingsRequest,
@@ -257,20 +251,17 @@ use agentdash_contracts::workspace_module::{
 use ts_rs::TS;
 
 const AGENT_RUN_PRODUCT_RUNTIME_IMPORTS: &[(&str, &str)] = &[
-    ("AgentRuntimeContentBlock", "./agent-runtime-contracts"),
-    (
-        "AgentRuntimeInteractionResponse",
-        "./agent-runtime-contracts",
-    ),
+    ("AgentInputContent", "./agent-runtime-contracts"),
+    ("AgentInteractionResponse", "./agent-runtime-contracts"),
     ("AgentRuntimeOperationReceipt", "./agent-runtime-contracts"),
     (
         "AgentRuntimeSourceBindingEvidence",
         "./agent-runtime-contracts",
     ),
-    ("RuntimeInteractionId", "./agent-runtime-contracts"),
+    ("AgentInteractionId", "./agent-runtime-contracts"),
     ("RuntimeSourceRef", "./agent-runtime-contracts"),
-    ("RuntimeProjectionRevision", "./agent-runtime-contracts"),
-    ("SurfaceRevision", "./agent-runtime-contracts"),
+    ("AgentSnapshotRevision", "./agent-runtime-contracts"),
+    ("AgentSurfaceRevision", "./agent-runtime-contracts"),
 ];
 
 const LIFECYCLE_RUNTIME_IMPORTS: &[(&str, &str)] = &[
@@ -651,17 +642,6 @@ fn main() {
             export_all::<SessionEventsPageResponse>(dir);
             export_all::<SessionNdjsonEnvelope>(dir);
             export_all::<SessionMessageRefDto>(dir);
-            export_all::<SessionProjectionSourceRangeResponse>(dir);
-            export_all::<SessionProjectionMessageRefResponse>(dir);
-            export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
-            export_all::<SessionProjectionSegmentViewResponse>(dir);
-            export_all::<SessionContextUsageCategoryResponse>(dir);
-            export_all::<SessionContextUsageItemResponse>(dir);
-            export_all::<SessionMessageContextBreakdownResponse>(dir);
-            export_all::<SessionToolContextContributionResponse>(dir);
-            export_all::<SessionAttachmentContextContributionResponse>(dir);
-            export_all::<SessionContextUsageAnalysisResponse>(dir);
-            export_all::<SessionProjectionViewResponse>(dir);
         },
     );
 
@@ -1365,8 +1345,8 @@ mod tests {
         for runtime_owned in [
             "AgentRuntimeSourceBindingEvidence",
             "RuntimeSourceRef",
-            "RuntimeProjectionRevision",
-            "SurfaceRevision",
+            "AgentSnapshotRevision",
+            "AgentSurfaceRevision",
         ] {
             assert!(
                 !exported.contains(runtime_owned),

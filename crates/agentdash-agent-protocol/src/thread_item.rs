@@ -5,7 +5,8 @@
 
 use crate::codex_app_server_protocol as codex;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
+use thiserror::Error;
 use ts_rs::TS;
 
 pub use codex::{
@@ -34,15 +35,33 @@ pub enum ToolProtocolProjector {
 #[serde(untagged)]
 #[ts(export_to = "agentdash/")]
 pub enum AgentDashThreadItem {
-    #[ts(type = "ThreadItem")]
-    Codex(codex::ThreadItem),
     AgentDash(AgentDashNativeThreadItem),
+    #[ts(type = "Exclude<ThreadItem, { type: \"contextCompaction\" }>")]
+    Codex(AgentDashCodexThreadItem),
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema, TS)]
+#[serde(transparent)]
+#[ts(
+    type = "Exclude<ThreadItem, { type: \"contextCompaction\" }>",
+    export_to = "agentdash/"
+)]
+pub struct AgentDashCodexThreadItem(codex::ThreadItem);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
 #[ts(tag = "type", export_to = "agentdash/")]
 pub enum AgentDashNativeThreadItem {
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    ContextCompaction {
+        id: String,
+        status: AgentDashCompactionStatus,
+        error: Option<String>,
+        started_at_ms: Option<u64>,
+        completed_at_ms: Option<u64>,
+        context_revision: Option<String>,
+    },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
     ShellExec {
@@ -117,6 +136,41 @@ pub enum AgentDashNativeThreadItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "agentdash/")]
+pub enum AgentDashCompactionStatus {
+    InProgress,
+    Succeeded,
+    Failed,
+    Lost,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "agentdash/")]
+pub enum AgentDashItemTerminalOutcome {
+    Succeeded,
+    Failed,
+    Lost,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "agentdash/")]
+pub struct AgentDashItemTerminal {
+    pub outcome: AgentDashItemTerminalOutcome,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("item `{item_id}` is not terminal and cannot carry terminal evidence")]
+pub struct AgentDashItemNotTerminal {
+    pub item_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "agentdash/")]
 pub enum ShellExecExecutionMode {
     Platform,
     MountExec,
@@ -125,21 +179,21 @@ pub enum ShellExecExecutionMode {
 impl AgentDashThreadItem {
     pub fn id(&self) -> &str {
         match self {
-            AgentDashThreadItem::Codex(item) => codex_item_id(item),
+            AgentDashThreadItem::Codex(item) => codex_item_id(item.as_ref()),
             AgentDashThreadItem::AgentDash(item) => item.id(),
         }
     }
 
     pub fn as_codex(&self) -> Option<&codex::ThreadItem> {
         match self {
-            AgentDashThreadItem::Codex(item) => Some(item),
+            AgentDashThreadItem::Codex(item) => Some(item.as_ref()),
             AgentDashThreadItem::AgentDash(_) => None,
         }
     }
 
     pub fn tool_call_id(&self) -> Option<&str> {
         match self {
-            AgentDashThreadItem::Codex(item) => match item {
+            AgentDashThreadItem::Codex(item) => match item.as_ref() {
                 codex::ThreadItem::DynamicToolCall { id, .. }
                 | codex::ThreadItem::CommandExecution { id, .. }
                 | codex::ThreadItem::McpToolCall { id, .. }
@@ -147,6 +201,9 @@ impl AgentDashThreadItem {
                 | codex::ThreadItem::CollabAgentToolCall { id, .. } => Some(id.as_str()),
                 _ => None,
             },
+            AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ContextCompaction {
+                ..
+            }) => None,
             AgentDashThreadItem::AgentDash(item) => Some(item.id()),
         }
     }
@@ -154,24 +211,25 @@ impl AgentDashThreadItem {
     pub fn is_message(&self) -> bool {
         matches!(
             self,
-            AgentDashThreadItem::Codex(
+            AgentDashThreadItem::Codex(AgentDashCodexThreadItem(
                 codex::ThreadItem::UserMessage { .. }
                     | codex::ThreadItem::HookPrompt { .. }
                     | codex::ThreadItem::AgentMessage { .. }
-            )
+            ))
         )
     }
 
     pub fn is_tool_activity(&self) -> bool {
         !matches!(
             self,
-            AgentDashThreadItem::Codex(
+            AgentDashThreadItem::Codex(AgentDashCodexThreadItem(
                 codex::ThreadItem::UserMessage { .. }
                     | codex::ThreadItem::HookPrompt { .. }
                     | codex::ThreadItem::AgentMessage { .. }
                     | codex::ThreadItem::Plan { .. }
-                    | codex::ThreadItem::Reasoning { .. }
-                    | codex::ThreadItem::ContextCompaction { .. }
+                    | codex::ThreadItem::Reasoning { .. },
+            )) | AgentDashThreadItem::AgentDash(
+                AgentDashNativeThreadItem::ContextCompaction { .. }
             )
         )
     }
@@ -179,14 +237,16 @@ impl AgentDashThreadItem {
     pub fn is_file_change(&self) -> bool {
         matches!(
             self,
-            AgentDashThreadItem::Codex(codex::ThreadItem::FileChange { .. })
+            AgentDashThreadItem::Codex(AgentDashCodexThreadItem(
+                codex::ThreadItem::FileChange { .. },
+            ))
         )
     }
 
     pub fn is_context_compaction(&self) -> bool {
         matches!(
             self,
-            AgentDashThreadItem::Codex(codex::ThreadItem::ContextCompaction { .. })
+            AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ContextCompaction { .. })
         )
     }
 
@@ -195,6 +255,128 @@ impl AgentDashThreadItem {
             self,
             AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::TerminalControl { .. })
         )
+    }
+
+    pub fn terminal_evidence(&self) -> Result<AgentDashItemTerminal, AgentDashItemNotTerminal> {
+        let (outcome, error) = match self {
+            AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ContextCompaction {
+                status,
+                error,
+                ..
+            }) => {
+                let outcome = match status {
+                    AgentDashCompactionStatus::Succeeded => AgentDashItemTerminalOutcome::Succeeded,
+                    AgentDashCompactionStatus::Failed => AgentDashItemTerminalOutcome::Failed,
+                    AgentDashCompactionStatus::Lost => AgentDashItemTerminalOutcome::Lost,
+                    AgentDashCompactionStatus::Cancelled => AgentDashItemTerminalOutcome::Cancelled,
+                    AgentDashCompactionStatus::InProgress => {
+                        return Err(AgentDashItemNotTerminal {
+                            item_id: self.id().to_owned(),
+                        });
+                    }
+                };
+                (outcome, error.clone())
+            }
+            AgentDashThreadItem::AgentDash(item) => {
+                if item
+                    .status()
+                    .is_some_and(|status| *status == codex::DynamicToolCallStatus::InProgress)
+                {
+                    return Err(AgentDashItemNotTerminal {
+                        item_id: self.id().to_owned(),
+                    });
+                }
+                let failed = item.success() == Some(false)
+                    || item
+                        .status()
+                        .is_some_and(|status| *status == codex::DynamicToolCallStatus::Failed);
+                (
+                    if failed {
+                        AgentDashItemTerminalOutcome::Failed
+                    } else {
+                        AgentDashItemTerminalOutcome::Succeeded
+                    },
+                    None,
+                )
+            }
+            AgentDashThreadItem::Codex(item) => codex_terminal_evidence(item.as_ref())?,
+        };
+        Ok(AgentDashItemTerminal { outcome, error })
+    }
+}
+
+impl AsRef<codex::ThreadItem> for AgentDashCodexThreadItem {
+    fn as_ref(&self) -> &codex::ThreadItem {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentDashCodexThreadItem {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let item = codex::ThreadItem::deserialize(deserializer)?;
+        if matches!(item, codex::ThreadItem::ContextCompaction { .. }) {
+            return Err(de::Error::custom(
+                "Codex contextCompaction must enter the canonical AgentDash item shape",
+            ));
+        }
+        Ok(Self(item))
+    }
+}
+
+fn codex_terminal_evidence(
+    item: &codex::ThreadItem,
+) -> Result<(AgentDashItemTerminalOutcome, Option<String>), AgentDashItemNotTerminal> {
+    use AgentDashItemTerminalOutcome::{Cancelled, Failed, Succeeded};
+
+    let outcome = match item {
+        codex::ThreadItem::CommandExecution { status, .. } => match status {
+            codex::CommandExecutionStatus::InProgress => return Err(not_terminal(item)),
+            codex::CommandExecutionStatus::Failed => Failed,
+            codex::CommandExecutionStatus::Declined => Cancelled,
+            _ => Succeeded,
+        },
+        codex::ThreadItem::FileChange { status, .. } => match status {
+            codex::PatchApplyStatus::InProgress => return Err(not_terminal(item)),
+            codex::PatchApplyStatus::Failed => Failed,
+            codex::PatchApplyStatus::Declined => Cancelled,
+            _ => Succeeded,
+        },
+        codex::ThreadItem::McpToolCall { status, .. } => {
+            if *status == codex::McpToolCallStatus::InProgress {
+                return Err(not_terminal(item));
+            } else if *status == codex::McpToolCallStatus::Failed {
+                Failed
+            } else {
+                Succeeded
+            }
+        }
+        codex::ThreadItem::DynamicToolCall {
+            status, success, ..
+        } => {
+            if *status == codex::DynamicToolCallStatus::InProgress {
+                return Err(not_terminal(item));
+            } else if *status == codex::DynamicToolCallStatus::Failed
+                || success.as_ref().and_then(|value| *value) == Some(false)
+            {
+                Failed
+            } else {
+                Succeeded
+            }
+        }
+        codex::ThreadItem::ContextCompaction { .. } => {
+            unreachable!("canonical wrapper rejects Codex context compaction")
+        }
+        _ => Succeeded,
+    };
+    Ok((outcome, None))
+}
+
+fn not_terminal(item: &codex::ThreadItem) -> AgentDashItemNotTerminal {
+    AgentDashItemNotTerminal {
+        item_id: codex_item_id(item).to_owned(),
     }
 }
 
@@ -224,7 +406,8 @@ fn codex_item_id(item: &codex::ThreadItem) -> &str {
 impl AgentDashNativeThreadItem {
     pub fn id(&self) -> &str {
         match self {
-            AgentDashNativeThreadItem::ShellExec { id, .. }
+            AgentDashNativeThreadItem::ContextCompaction { id, .. }
+            | AgentDashNativeThreadItem::ShellExec { id, .. }
             | AgentDashNativeThreadItem::TerminalControl { id, .. }
             | AgentDashNativeThreadItem::FsRead { id, .. }
             | AgentDashNativeThreadItem::FsGrep { id, .. }
@@ -234,6 +417,7 @@ impl AgentDashNativeThreadItem {
 
     pub fn tool_name(&self) -> &'static str {
         match self {
+            AgentDashNativeThreadItem::ContextCompaction { .. } => "context_compaction",
             AgentDashNativeThreadItem::ShellExec { .. } => "shell_exec",
             AgentDashNativeThreadItem::TerminalControl { .. } => "terminal_control",
             AgentDashNativeThreadItem::FsRead { .. } => "fs_read",
@@ -249,16 +433,18 @@ impl AgentDashNativeThreadItem {
             | AgentDashNativeThreadItem::FsRead { arguments, .. }
             | AgentDashNativeThreadItem::FsGrep { arguments, .. }
             | AgentDashNativeThreadItem::FsGlob { arguments, .. } => Some(arguments),
+            AgentDashNativeThreadItem::ContextCompaction { .. } => None,
         }
     }
 
-    pub fn status(&self) -> &codex::DynamicToolCallStatus {
+    pub fn status(&self) -> Option<&codex::DynamicToolCallStatus> {
         match self {
             AgentDashNativeThreadItem::ShellExec { status, .. }
             | AgentDashNativeThreadItem::TerminalControl { status, .. }
             | AgentDashNativeThreadItem::FsRead { status, .. }
             | AgentDashNativeThreadItem::FsGrep { status, .. }
-            | AgentDashNativeThreadItem::FsGlob { status, .. } => status,
+            | AgentDashNativeThreadItem::FsGlob { status, .. } => Some(status),
+            AgentDashNativeThreadItem::ContextCompaction { .. } => None,
         }
     }
 
@@ -268,7 +454,8 @@ impl AgentDashNativeThreadItem {
             | AgentDashNativeThreadItem::FsGrep { content_items, .. }
             | AgentDashNativeThreadItem::FsGlob { content_items, .. } => content_items.as_ref(),
             AgentDashNativeThreadItem::ShellExec { .. }
-            | AgentDashNativeThreadItem::TerminalControl { .. } => None,
+            | AgentDashNativeThreadItem::TerminalControl { .. }
+            | AgentDashNativeThreadItem::ContextCompaction { .. } => None,
         }
     }
 
@@ -279,6 +466,13 @@ impl AgentDashNativeThreadItem {
             | AgentDashNativeThreadItem::FsRead { success, .. }
             | AgentDashNativeThreadItem::FsGrep { success, .. }
             | AgentDashNativeThreadItem::FsGlob { success, .. } => *success,
+            AgentDashNativeThreadItem::ContextCompaction { status, .. } => match status {
+                AgentDashCompactionStatus::Succeeded => Some(true),
+                AgentDashCompactionStatus::Failed | AgentDashCompactionStatus::Lost => Some(false),
+                AgentDashCompactionStatus::InProgress | AgentDashCompactionStatus::Cancelled => {
+                    None
+                }
+            },
         }
     }
 
@@ -294,16 +488,29 @@ impl AgentDashNativeThreadItem {
 
 impl From<codex::ThreadItem> for AgentDashThreadItem {
     fn from(value: codex::ThreadItem) -> Self {
-        AgentDashThreadItem::Codex(value)
+        match value {
+            codex::ThreadItem::ContextCompaction { id } => {
+                AgentDashNativeThreadItem::ContextCompaction {
+                    id,
+                    status: AgentDashCompactionStatus::InProgress,
+                    error: None,
+                    started_at_ms: None,
+                    completed_at_ms: None,
+                    context_revision: None,
+                }
+                .into()
+            }
+            item => AgentDashThreadItem::Codex(AgentDashCodexThreadItem(item)),
+        }
     }
 }
 
 impl From<crate::generated::codex_v2::server_notification::ThreadItem> for AgentDashThreadItem {
     fn from(value: crate::generated::codex_v2::server_notification::ThreadItem) -> Self {
         let value = serde_json::to_value(value).expect("generated server item serializes");
-        let item = serde_json::from_value(value)
+        let item: codex::ThreadItem = serde_json::from_value(value)
             .expect("generated server item conforms to owned ThreadItem schema");
-        AgentDashThreadItem::Codex(item)
+        item.into()
     }
 }
 
@@ -315,7 +522,10 @@ impl From<AgentDashNativeThreadItem> for AgentDashThreadItem {
 
 #[cfg(test)]
 mod tests {
-    use super::ToolProtocolProjector;
+    use super::{
+        AgentDashCompactionStatus, AgentDashItemTerminalOutcome, AgentDashNativeThreadItem,
+        AgentDashThreadItem, ToolProtocolProjector, codex,
+    };
 
     #[test]
     fn dynamic_projector_has_only_its_card_family() {
@@ -323,5 +533,58 @@ mod tests {
             serde_json::to_value(ToolProtocolProjector::Dynamic).expect("serialize projector"),
             serde_json::json!({"family": "dynamic"})
         );
+    }
+
+    #[test]
+    fn typed_context_compaction_round_trip_preserves_terminal_evidence() {
+        let item = AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ContextCompaction {
+            id: "compact-1".to_owned(),
+            status: AgentDashCompactionStatus::Lost,
+            error: Some("provider outcome unknown".to_owned()),
+            started_at_ms: Some(1_000),
+            completed_at_ms: Some(2_000),
+            context_revision: None,
+        });
+        let json = serde_json::to_value(&item).expect("serialize typed compaction item");
+        let decoded: AgentDashThreadItem =
+            serde_json::from_value(json).expect("deserialize typed compaction item");
+        assert_eq!(decoded, item);
+        assert_eq!(
+            decoded
+                .terminal_evidence()
+                .expect("lost compaction is terminal")
+                .outcome,
+            AgentDashItemTerminalOutcome::Lost
+        );
+    }
+
+    #[test]
+    fn codex_compaction_is_normalized_before_serialization() {
+        let item = AgentDashThreadItem::from(codex::ThreadItem::ContextCompaction {
+            id: "compact-1".to_owned(),
+        });
+        let json = serde_json::to_value(item).expect("serialize canonical compaction");
+
+        assert_eq!(json["type"], "contextCompaction");
+        assert_eq!(json["status"], "inProgress");
+        assert!(json.get("mode").is_none());
+    }
+
+    #[test]
+    fn in_progress_item_cannot_claim_terminal_evidence() {
+        let item = AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ContextCompaction {
+            id: "compact-1".to_owned(),
+            status: AgentDashCompactionStatus::InProgress,
+            error: None,
+            started_at_ms: Some(1_000),
+            completed_at_ms: None,
+            context_revision: None,
+        });
+
+        let error = item
+            .terminal_evidence()
+            .expect_err("progress item must not become terminal");
+
+        assert_eq!(error.item_id, "compact-1");
     }
 }

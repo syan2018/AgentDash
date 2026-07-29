@@ -2,7 +2,7 @@ import type {
   AgentRuntimeOperationReceipt,
   AgentRuntimeUpdate,
   AgentRuntimeView,
-} from "../../../generated/agent-runtime-validators";
+} from "../../../generated/agent-runtime-codecs";
 import {
   executeAgentRunRuntimeCommand,
   fetchAgentRuntimeView,
@@ -68,10 +68,7 @@ function overlayPendingPresentations(
   for (const update of pending.values()) {
     projected = applyAgentRuntimeUpdate(projected, {
       ...update,
-      view_revision: projected.view_revision,
-      execution: projected.execution,
-      interactions: projected.interactions,
-      command_availability: projected.command_availability,
+      observation: projected.observation,
     });
   }
   return projected;
@@ -118,13 +115,11 @@ export function connectAgentRuntimeConnection(
       return;
     }
     rememberDurablePresentations(update);
-    const projectedUpdate = update.view_revision < currentView.view_revision
+    const projectedUpdate =
+      update.observation.revision < currentView.observation.revision
       ? {
           ...update,
-          view_revision: currentView.view_revision,
-          execution: currentView.execution,
-          interactions: currentView.interactions,
-          command_availability: currentView.command_availability,
+          observation: currentView.observation,
         }
       : update;
     currentView = applyAgentRuntimeUpdate(currentView, projectedUpdate);
@@ -150,7 +145,7 @@ export function connectAgentRuntimeConnection(
         const publishRecoveredBaseline = recoveryBaselineRequested;
         recoveryBaselineRequested = false;
         const baselinePresentationIds = new Set(
-          view.conversation.map((record) => record.presentation_id),
+          view.observation.conversation.map((record) => record.presentation_id),
         );
         for (const presentationId of baselinePresentationIds) {
           pendingDurableUpdates.delete(presentationId);

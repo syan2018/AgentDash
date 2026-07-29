@@ -102,6 +102,11 @@ function completedMessage(id: string, eventSeq: number): SessionDisplayEntry {
     eventSeq,
     turnId: "turn-1",
     itemFreshness: "completed",
+    itemLifecycle: {
+      phase: "terminal",
+      outcome: "succeeded",
+      error: null,
+    },
     isStreaming: false,
     event: {
       type: "item_completed",
@@ -109,6 +114,7 @@ function completedMessage(id: string, eventSeq: number): SessionDisplayEntry {
         threadId: "session-1",
         turnId: "turn-1",
         completedAtMs: eventSeq,
+        terminal: { outcome: "succeeded", error: null },
         item: {
           type: "agentMessage",
           id,
@@ -160,6 +166,11 @@ describe("session turn segmentation", () => {
       eventSeq: 2,
       turnId: "turn-1",
       itemFreshness: "completed",
+      itemLifecycle: {
+        phase: "terminal",
+        outcome: "succeeded",
+        error: null,
+      },
       isStreaming: false,
       event: {
         type: "item_completed",
@@ -167,6 +178,7 @@ describe("session turn segmentation", () => {
           threadId: "session-1",
           turnId: "turn-1",
           completedAtMs: 2,
+          terminal: { outcome: "succeeded", error: null },
           item: {
             type: "agentMessage",
             id: "assistant-1",

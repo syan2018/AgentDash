@@ -11,6 +11,11 @@ describe("threadItemKind", () => {
     const item: AgentDashThreadItem = {
       type: "contextCompaction",
       id: "ctx-1",
+      status: "inProgress",
+      error: null,
+      startedAtMs: null,
+      completedAtMs: null,
+      contextRevision: null,
     };
 
     expect(resolveKind(item).kind).toBe("context");

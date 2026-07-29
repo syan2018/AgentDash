@@ -115,12 +115,24 @@ pub(crate) async fn spawn_terminal_for_runtime_thread(
     let runtime = state
         .services
         .agent_run_product_projection
-        .runtime_view(&target_ref)
+        .runtime_view_observation(&target_ref)
         .await
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
-    let source_binding = runtime
-        .source_binding
-        .ok_or_else(|| ApiError::Conflict("Terminal 缺少 Agent Runtime source evidence".into()))?;
+    let (product_binding, runtime) = match runtime {
+        agentdash_application_agentrun::agent_run::AgentRunProductRuntimeViewObservation::Current {
+            product_binding,
+            view,
+        } => (product_binding, view),
+        agentdash_application_agentrun::agent_run::AgentRunProductRuntimeViewObservation::Absent {
+            ..
+        } => return Err(ApiError::Conflict("Terminal 缺少 Product Runtime binding".into())),
+    };
+    let source_binding = agentdash_agent_runtime_contract::AgentRuntimeSourceBindingEvidence {
+        source_ref: agentdash_agent_runtime_contract::RuntimeSourceRef::new(
+            product_binding.agent.source.as_str(),
+        )
+        .map_err(|error| ApiError::Internal(error.to_string()))?,
+    };
     let payload = TerminalPreparePayload {
         terminal_id: terminal_id.clone(),
         session_id: runtime_thread_id.to_string(),

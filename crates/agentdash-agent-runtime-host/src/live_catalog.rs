@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentRuntimeOffer, AgentServiceDescriptor, AgentServiceError, AgentServiceInstanceId,
     CompleteAgentLiveAttachmentId, CompleteAgentService,
 };

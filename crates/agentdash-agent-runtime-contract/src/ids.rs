@@ -67,48 +67,7 @@ macro_rules! runtime_id {
 }
 
 runtime_id!(RuntimeThreadId);
-runtime_id!(RuntimeTurnId);
-runtime_id!(RuntimeItemId);
-runtime_id!(RuntimeInteractionId);
-runtime_id!(RuntimeOperationId);
-runtime_id!(RuntimePayloadDigest);
-runtime_id!(RuntimeIdempotencyKey);
 runtime_id!(RuntimeSourceRef);
-runtime_id!(RuntimeContextPackageId);
-runtime_id!(RuntimeContextContributionId);
-runtime_id!(RuntimeContextSourceRef);
-runtime_id!(RuntimeContextSourceRevision);
-
-macro_rules! revision {
-    ($name:ident) => {
-        #[derive(
-            Debug,
-            Clone,
-            Copy,
-            Default,
-            PartialEq,
-            Eq,
-            PartialOrd,
-            Ord,
-            Hash,
-            Serialize,
-            Deserialize,
-            JsonSchema,
-            TS,
-        )]
-        #[serde(transparent)]
-        #[schemars(transparent)]
-        #[ts(type = "RuntimeU64")]
-        pub struct $name(
-            #[serde(with = "crate::wire_u64")]
-            #[schemars(with = "crate::wire_u64::RuntimeU64")]
-            pub u64,
-        );
-    };
-}
-
-revision!(SurfaceRevision);
-revision!(RuntimeProjectionRevision);
 
 #[cfg(test)]
 mod tests {
@@ -122,9 +81,9 @@ mod tests {
     #[test]
     fn runtime_identity_families_remain_distinct() {
         fn thread(_: RuntimeThreadId) {}
-        fn operation(_: RuntimeOperationId) {}
+        fn source_ref(_: RuntimeSourceRef) {}
 
         thread(RuntimeThreadId::new("thread-1").expect("valid id"));
-        operation(RuntimeOperationId::new("operation-1").expect("valid id"));
+        source_ref(RuntimeSourceRef::new("source-1").expect("valid id"));
     }
 }

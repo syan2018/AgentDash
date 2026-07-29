@@ -15,7 +15,6 @@ pub mod project_agent_context;
 pub mod runtime_capability;
 pub mod runtime_capability_projection;
 pub mod runtime_target;
-mod session_context_projection;
 pub mod terminal_projection_protocol;
 pub mod terminal_registry;
 pub mod workspace;
@@ -51,6 +50,5 @@ pub use project_agent_context::{
     ResolvedProjectAgentContext, build_project_agent_context, merge_executor_config_fields,
     resolve_project_workspace,
 };
-pub use session_context_projection::project_agent_runtime_context;
 pub use terminal_projection_protocol::*;
 pub use terminal_registry::*;

@@ -279,6 +279,7 @@ describe("AgentRun control-plane model", () => {
         threadId: "native-thread-1",
         turnId: "turn-1",
         completedAtMs: 10,
+        terminal: { outcome: "succeeded", error: null },
         item: {
           type: "dynamicToolCall",
           id: "task-write-1",
@@ -318,6 +319,10 @@ describe("AgentRun control-plane model", () => {
           threadId: "native-thread-1",
           turnId: "turn-1",
           completedAtMs: 10,
+          terminal: {
+            outcome: item.success ? "succeeded" : "failed",
+            error: item.success ? null : "tool call failed",
+          },
           item,
         },
       })).toEqual({ effects: {} });

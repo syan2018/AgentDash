@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agentdash_agent_runtime_contract::RuntimePayloadDigest;
+use agentdash_agent_runtime_contract::AgentPayloadDigest;
 use agentdash_application_agentrun::agent_run::{
     AgentRunTerminalAvailability, AgentRunTerminalChange, AgentRunTerminalChangeId,
     AgentRunTerminalChangeOrigin, AgentRunTerminalChangeSequence, AgentRunTerminalLifecycleState,
@@ -392,10 +392,10 @@ impl RelayAgentRunTerminalProjectionProducer {
 
 fn payload_digest(
     delta: &AgentRunTerminalProjectionDelta,
-) -> Result<RuntimePayloadDigest, AgentRunTerminalProjectionStoreError> {
+) -> Result<AgentPayloadDigest, AgentRunTerminalProjectionStoreError> {
     let encoded = serde_json::to_vec(delta)
         .map_err(|error| AgentRunTerminalProjectionStoreError::Persistence(error.to_string()))?;
-    RuntimePayloadDigest::new(format!("sha256:{:x}", Sha256::digest(encoded)))
+    AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(encoded)))
         .map_err(|error| AgentRunTerminalProjectionStoreError::Persistence(error.to_string()))
 }
 

@@ -510,7 +510,7 @@ fn applied_vfs_mount(mount: AppliedVfsMount) -> Mount {
 mod tests {
     use std::collections::BTreeSet;
 
-    use agentdash_agent_service_api::{AgentServiceInstanceId, AgentSourceCoordinate};
+    use agentdash_agent_runtime_contract::{AgentServiceInstanceId, AgentSourceCoordinate};
     use agentdash_application_agentrun::agent_run::{
         AgentRunAppliedResourceSurfaceProvenance, AgentRunCompleteAgentAssociation,
         ProductAgentFrameRef, ProductExecutionProfileRef,

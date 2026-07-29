@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use super::AgentRunForkGraph;
 use agentdash_agent_runtime_contract::{
-    RuntimeOperationId, RuntimePayloadDigest, RuntimeThreadId, RuntimeTurnId,
+    AgentEffectIdentity, AgentPayloadDigest, AgentTurnId, RuntimeThreadId,
 };
 use agentdash_application_ports::agent_run_fork::{
     AgentRunForkGraph as PersistenceAgentRunForkGraph, AgentRunForkGraphStore,
@@ -34,7 +34,7 @@ pub struct AgentRunForkRequestId(pub Uuid);
 ///
 /// ```compile_fail
 /// use agentdash_application_agentrun::agent_run::product_protocol::AgentRunForkParent;
-/// use agentdash_agent_runtime_contract::RuntimeTurnId;
+/// use agentdash_agent_runtime_contract::AgentTurnId;
 /// use uuid::Uuid;
 ///
 /// let opaque_agent_source = String::from("agent-source");
@@ -42,7 +42,7 @@ pub struct AgentRunForkRequestId(pub Uuid);
 ///     run_id: Uuid::nil(),
 ///     agent_id: Uuid::nil(),
 ///     runtime_thread_id: opaque_agent_source,
-///     through_turn_id: RuntimeTurnId::new("turn-1").expect("turn id"),
+///     through_turn_id: AgentTurnId::new("turn-1").expect("turn id"),
 /// };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ pub struct AgentRunForkParent {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub runtime_thread_id: RuntimeThreadId,
-    pub through_turn_id: RuntimeTurnId,
+    pub through_turn_id: AgentTurnId,
 }
 
 /// Stable Product and Runtime coordinates allocated before dispatch.
@@ -120,7 +120,7 @@ pub struct AgentRunForkOperationIdentity {
     pub request_id: AgentRunForkRequestId,
     pub operation: AgentRunForkRuntimeOperation,
     pub child_run_id: Uuid,
-    pub runtime_operation_id: RuntimeOperationId,
+    pub runtime_operation_id: AgentEffectIdentity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,7 +169,7 @@ pub struct RequiredInitialContextEvidence {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AcceptedRuntimeOperation {
-    pub operation_id: RuntimeOperationId,
+    pub operation_id: AgentEffectIdentity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,7 +177,7 @@ pub enum RuntimeForkPhaseEvidence {
     ForkProvisioned {
         child_thread_id: RuntimeThreadId,
         child_binding: AgentRunCompleteAgentAssociation,
-        child_history_digest: RuntimePayloadDigest,
+        child_history_digest: AgentPayloadDigest,
         context: Option<CompiledContextApplication>,
         receipt: AcceptedRuntimeOperation,
     },
@@ -199,7 +199,7 @@ pub struct RuntimeForkChildProgress {
     pub identity: AgentRunForkOperationIdentity,
     pub child_thread_id: RuntimeThreadId,
     pub child_binding: AgentRunCompleteAgentAssociation,
-    pub child_history_digest: Option<RuntimePayloadDigest>,
+    pub child_history_digest: Option<AgentPayloadDigest>,
     pub receipt: AcceptedRuntimeOperation,
 }
 
@@ -211,7 +211,7 @@ pub struct ProductGraphCommitEvidence {
     pub child_frame_id: Uuid,
     pub runtime_thread_id: RuntimeThreadId,
     pub child_binding: AgentRunCompleteAgentAssociation,
-    pub child_history_digest: RuntimePayloadDigest,
+    pub child_history_digest: AgentPayloadDigest,
     pub payload_digest: String,
     pub commit_revision: u64,
 }
@@ -230,7 +230,7 @@ pub struct PreparedAgentRunForkGraph {
     lineage: AgentRunLineage,
     runtime_thread_id: RuntimeThreadId,
     child_binding: AgentRunCompleteAgentAssociation,
-    child_history_digest: RuntimePayloadDigest,
+    child_history_digest: AgentPayloadDigest,
     payload_digest: String,
 }
 
@@ -331,7 +331,7 @@ impl PreparedAgentRunForkGraph {
         &self.child_binding
     }
 
-    pub fn child_history_digest(&self) -> &RuntimePayloadDigest {
+    pub fn child_history_digest(&self) -> &AgentPayloadDigest {
         &self.child_history_digest
     }
 
@@ -419,7 +419,7 @@ pub struct AgentRunForkSaga {
     durable_runtime_dispatch: Option<DurableRuntimeDispatch>,
     child_progress: Option<RuntimeForkChildProgress>,
     child_binding: Option<AgentRunCompleteAgentAssociation>,
-    child_history_digest: Option<RuntimePayloadDigest>,
+    child_history_digest: Option<AgentPayloadDigest>,
     required_initial_context: Option<RequiredInitialContextEvidence>,
     child_product_selection: Option<AgentRunForkChildProductSelection>,
     product_intent: Option<AgentRunForkProductIntent>,
@@ -648,7 +648,7 @@ impl AgentRunForkSaga {
         Ok(self)
     }
 
-    pub fn child_history_digest(&self) -> Option<&RuntimePayloadDigest> {
+    pub fn child_history_digest(&self) -> Option<&AgentPayloadDigest> {
         self.child_history_digest.as_ref()
     }
 
@@ -987,7 +987,7 @@ impl AgentRunForkSaga {
             request_id: self.request_id.clone(),
             operation,
             child_run_id: self.child.run_id,
-            runtime_operation_id: RuntimeOperationId::new(format!(
+            runtime_operation_id: AgentEffectIdentity::new(format!(
                 "agent-run-fork:{}:{}",
                 self.request_id.0,
                 match operation {
@@ -1133,7 +1133,7 @@ impl AgentRunForkSaga {
 
     fn pin_child_history_digest(
         &mut self,
-        digest: &RuntimePayloadDigest,
+        digest: &AgentPayloadDigest,
     ) -> Result<(), AgentRunForkSagaError> {
         if self
             .child_history_digest
@@ -1698,7 +1698,7 @@ mod tests {
                 run_id: Uuid::new_v4(),
                 agent_id: Uuid::new_v4(),
                 runtime_thread_id: RuntimeThreadId::new("parent-thread").expect("thread id"),
-                through_turn_id: RuntimeTurnId::new("turn-7").expect("turn id"),
+                through_turn_id: AgentTurnId::new("turn-7").expect("turn id"),
             },
             PreallocatedAgentRunChild {
                 agent_run_id: Uuid::new_v4(),
@@ -1718,12 +1718,14 @@ mod tests {
 
     fn child_binding(_activated_at_revision: Option<u64>) -> AgentRunCompleteAgentAssociation {
         AgentRunCompleteAgentAssociation {
-            service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
+            service_instance_id: agentdash_agent_runtime_contract::AgentServiceInstanceId::new(
                 "dash-test",
             )
             .expect("service"),
-            source: agentdash_agent_service_api::AgentSourceCoordinate::new("source:fork-child")
-                .expect("source"),
+            source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new(
+                "source:fork-child",
+            )
+            .expect("source"),
         }
     }
 
@@ -1738,7 +1740,7 @@ mod tests {
             AgentRunForkRuntimeOperation::Fork => RuntimeForkPhaseEvidence::ForkProvisioned {
                 child_thread_id: saga.child.runtime_thread_id.clone(),
                 child_binding: child_binding(None),
-                child_history_digest: RuntimePayloadDigest::new("sha256:child-history")
+                child_history_digest: AgentPayloadDigest::new("sha256:child-history")
                     .expect("history digest"),
                 context: None,
                 receipt: accepted(&identity),
@@ -1897,7 +1899,7 @@ mod tests {
             child_thread_id: saga.child.runtime_thread_id.clone(),
             child_binding: child_binding(None),
             child_history_digest: Some(
-                RuntimePayloadDigest::new("sha256:known-prefix").expect("digest"),
+                AgentPayloadDigest::new("sha256:known-prefix").expect("digest"),
             ),
             receipt: accepted(&identity),
         };
@@ -1927,13 +1929,13 @@ mod tests {
         let receipt = accepted(&identity);
         let mut drifted = identity.clone();
         drifted.runtime_operation_id =
-            RuntimeOperationId::new("agent-run-fork:drifted").expect("operation");
+            AgentEffectIdentity::new("agent-run-fork:drifted").expect("operation");
         let progress = RuntimeForkChildProgress {
             identity: drifted.clone(),
             child_thread_id: saga.child.runtime_thread_id.clone(),
             child_binding: child_binding(None),
             child_history_digest: Some(
-                RuntimePayloadDigest::new("sha256:known-prefix").expect("digest"),
+                AgentPayloadDigest::new("sha256:known-prefix").expect("digest"),
             ),
             receipt,
         };
@@ -2328,7 +2330,7 @@ mod tests {
             succeeded
                 .child_history_digest
                 .as_ref()
-                .map(RuntimePayloadDigest::as_str),
+                .map(AgentPayloadDigest::as_str),
             Some("sha256:child-history")
         );
         assert!(succeeded.receipts.runtime_admission.is_some());
@@ -2430,7 +2432,7 @@ mod tests {
             .expect("dispatch");
         let mut rebound = child_binding(Some(4));
         rebound.source =
-            agentdash_agent_service_api::AgentSourceCoordinate::new("source:other-child")
+            agentdash_agent_runtime_contract::AgentSourceCoordinate::new("source:other-child")
                 .expect("source");
         let child_thread_id = saga.child.runtime_thread_id.clone();
 
@@ -2472,7 +2474,7 @@ mod tests {
         mismatches.push(evidence);
         let mut evidence = expected;
         evidence.child_history_digest =
-            RuntimePayloadDigest::new("sha256:different-history").expect("history digest");
+            AgentPayloadDigest::new("sha256:different-history").expect("history digest");
         mismatches.push(evidence);
 
         for evidence in mismatches {

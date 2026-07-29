@@ -442,7 +442,7 @@ impl RoutineExecutor {
             .deliver(DeliverAgentRunProductInput {
                 target,
                 origin: AgentInputOrigin::System,
-                content: vec![agentdash_agent_service_api::AgentInputContent::Text {
+                content: vec![agentdash_agent_runtime_contract::AgentInputContent::Text {
                     text: prompt.to_string(),
                 }],
                 source: AgentInputSourceIdentity::routine_trigger()

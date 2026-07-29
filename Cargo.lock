@@ -121,7 +121,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
- "agentdash-agent-service-api",
+ "agentdash-agent-runtime-test-support",
  "async-trait",
  "serde",
  "serde_json",
@@ -151,7 +151,6 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
- "agentdash-agent-service-api",
  "async-trait",
  "serde",
  "serde_json",
@@ -165,6 +164,8 @@ dependencies = [
 name = "agentdash-agent-runtime-test-support"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
+ "agentdash-agent-runtime-contract",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -175,29 +176,12 @@ name = "agentdash-agent-runtime-wire"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-runtime-contract",
- "agentdash-agent-service-api",
  "schemars 1.2.1",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
- "ts-rs",
-]
-
-[[package]]
-name = "agentdash-agent-service-api"
-version = "0.1.0"
-dependencies = [
- "agentdash-agent-protocol",
- "async-trait",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
  "ts-rs",
 ]
 
@@ -211,7 +195,6 @@ dependencies = [
  "agentdash-agent-runtime-host",
  "agentdash-agent-runtime-test-support",
  "agentdash-agent-runtime-wire",
- "agentdash-agent-service-api",
  "agentdash-application",
  "agentdash-application-agentrun",
  "agentdash-application-extension-gateway",
@@ -276,7 +259,6 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
- "agentdash-agent-service-api",
  "agentdash-application-agentrun",
  "agentdash-application-extension-gateway",
  "agentdash-application-hooks",
@@ -332,7 +314,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
- "agentdash-agent-service-api",
+ "agentdash-agent-runtime-test-support",
  "agentdash-application-ports",
  "agentdash-application-skill",
  "agentdash-application-vfs",
@@ -398,7 +380,6 @@ dependencies = [
  "agentdash-agent",
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
- "agentdash-agent-service-api",
  "agentdash-application-agentrun",
  "agentdash-application-ports",
  "agentdash-application-skill",
@@ -565,7 +546,6 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
- "agentdash-agent-service-api",
  "agentdash-application-ports",
  "agentdash-domain",
  "agentdash-platform-spi",
@@ -620,7 +600,6 @@ dependencies = [
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-host",
- "agentdash-agent-service-api",
  "agentdash-application-agentrun",
  "agentdash-application-hooks",
  "agentdash-application-ports",
@@ -661,7 +640,7 @@ dependencies = [
 name = "agentdash-integration-api"
 version = "0.1.0"
 dependencies = [
- "agentdash-agent-service-api",
+ "agentdash-agent-runtime-contract",
  "agentdash-domain",
  "agentdash-platform-spi",
  "async-trait",
@@ -679,7 +658,7 @@ name = "agentdash-integration-codex"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
- "agentdash-agent-service-api",
+ "agentdash-agent-runtime-contract",
  "agentdash-integration-api",
  "agentdash-process",
  "anyhow",
@@ -702,7 +681,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent",
  "agentdash-agent-protocol",
- "agentdash-agent-service-api",
+ "agentdash-agent-runtime-contract",
  "agentdash-integration-api",
  "async-trait",
  "futures",
@@ -717,8 +696,8 @@ dependencies = [
 name = "agentdash-integration-remote-runtime"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-wire",
- "agentdash-agent-service-api",
  "agentdash-integration-api",
  "async-trait",
  "serde_json",
@@ -751,8 +730,8 @@ dependencies = [
 name = "agentdash-local"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-wire",
- "agentdash-agent-service-api",
  "agentdash-application",
  "agentdash-application-ports",
  "agentdash-application-vfs",

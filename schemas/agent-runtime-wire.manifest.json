@@ -1,0 +1,10 @@
+{
+  "root": "RuntimeWireEnvelope",
+  "input": "schemars::schema_for!(RuntimeWireEnvelope) + RuntimeWireU64 encoding kind",
+  "outputs": [
+    "agent-runtime-wire.ts",
+    "agent-runtime-wire-codecs.ts",
+    "agent-runtime-wire.schema.json"
+  ],
+  "digest": "sha256:88334221a6fac7fbb09441c40a58d91d97eb7cd63b6e9877f0263567ee1346c3"
+}

@@ -28,7 +28,6 @@ import {
   SessionChatStream,
 } from "./SessionChatViewParts";
 import {
-  computeProjectionRefreshKey,
   applyAgentRuntimeControlToChatCommandState,
   rawEventsBelongToRuntimeStreamTarget,
   resolveSessionInitialSubmit,
@@ -297,10 +296,7 @@ export function SessionChatView({
     [productCommandState, runtimeView],
   );
 
-  const projectionRefreshKey = useMemo(
-    () => computeProjectionRefreshKey(rawEvents),
-    [rawEvents],
-  );
+  const contextCoordinate = runtimeView?.observation.context ?? null;
   const rawEventsBelongToCurrentSession = useMemo(
     () =>
       rawEventsBelongToRuntimeStreamTarget({
@@ -318,7 +314,7 @@ export function SessionChatView({
 
   // ─── Action running 检测 ──────────────────────────────
 
-  const isActionRunning = runtimeView?.execution.status === "active";
+  const isActionRunning = runtimeView?.observation.execution.active_turn != null;
 
   const onLiveEventRef = useRef(onLiveEvent);
   const dispatchedLivePresentationIdsRef = useRef(new Set<string>());
@@ -692,6 +688,8 @@ export function SessionChatView({
         hasRuntimeStreamTarget={hasRuntimeStreamTarget}
         isLoading={isLoading}
         streamingEntryId={streamingEntryId}
+        activeTurn={runtimeView?.observation.execution.active_turn ?? null}
+        queuedCompaction={runtimeView?.observation.execution.queued_compaction ?? null}
         streamPrefixContent={streamPrefixContent}
         onForkFromMessageRef={intents.forkFromMessageRef}
         onScroll={handleScroll}
@@ -726,7 +724,7 @@ export function SessionChatView({
           workspaceId={workspaceId}
           tokenUsage={tokenUsage}
           agentRunTarget={agentRunTarget}
-          projectionRefreshKey={projectionRefreshKey}
+          contextCoordinate={contextCoordinate}
           compactContextCommand={commandState.commands.find(
             (command) => command.runtimeCommand === "request_compaction"
               || command.kind === "compact_context",

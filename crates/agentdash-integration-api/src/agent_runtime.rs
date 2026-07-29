@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentPayloadDigest, AgentServiceDescriptor, AgentServiceError,
     AgentServiceInstanceId, CompleteAgentService,
 };
@@ -294,7 +294,7 @@ mod tests {
         task::{Context, Poll, Wake, Waker},
     };
 
-    use agentdash_agent_service_api::{
+    use agentdash_agent_runtime_contract::{
         AgentCapabilityProfile, AgentChangePage, AgentChangesQuery, AgentCommandCapability,
         AgentCommandEnvelope, AgentCommandReceipt, AgentCompactionMode, AgentConfigurationBoundary,
         AgentEffectIdentity, AgentEffectInspection, AgentForkCapability, AgentLifecycleCapability,
@@ -590,12 +590,12 @@ mod tests {
     }
 
     #[test]
-    fn agent_registration_module_depends_on_service_api_not_runtime_concrete() {
+    fn agent_registration_module_depends_on_managed_runtime_contract_not_runtime_implementation() {
         let manifest = include_str!("../Cargo.toml");
         let integration_contract = include_str!("integration.rs");
 
-        assert!(manifest.contains("agentdash-agent-service-api"));
-        assert!(!manifest.contains(concat!("agentdash-agent-", "runtime-contract")));
+        assert!(manifest.contains("agentdash-agent-runtime-contract"));
+        assert!(!manifest.contains(concat!("agentdash-agent-runtime", " =")));
         for legacy in [
             concat!("AgentRuntime", "DriverContribution"),
             concat!("AgentRuntime", "TrustManifest"),

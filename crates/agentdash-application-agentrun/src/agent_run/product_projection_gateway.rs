@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime::project_authoritative_agent_view;
-use agentdash_agent_runtime_contract::{AgentRuntimeUpdate, AgentRuntimeView, RuntimeThreadId};
-use agentdash_agent_service_api::{
-    AgentBindingGeneration, AgentLiveEventStream, AgentReadQuery, AgentServiceError,
-    AgentSourceCoordinate, CompleteAgentService,
+use agentdash_agent_runtime::{AgentRuntimeObservation, AgentRuntimeObservationError};
+use agentdash_agent_runtime_contract::{
+    AgentBindingGeneration, AgentLiveEventStream, AgentServiceError, CompleteAgentService,
+};
+use agentdash_agent_runtime_contract::{
+    AgentRuntimeContextProjection, AgentRuntimeContextRequirement, AgentRuntimeUpdate,
+    AgentRuntimeView, RuntimeThreadId,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
@@ -29,9 +31,7 @@ pub trait AgentRuntimeUpdateStream: Send {
 }
 
 struct CompleteAgentRuntimeUpdateStream {
-    service: Arc<dyn CompleteAgentService>,
-    source: AgentSourceCoordinate,
-    runtime_thread_id: RuntimeThreadId,
+    observation: AgentRuntimeObservation,
     live: Box<dyn AgentLiveEventStream>,
 }
 
@@ -46,27 +46,11 @@ impl AgentRuntimeUpdateStream for CompleteAgentRuntimeUpdateStream {
         else {
             return Ok(None);
         };
-        if event.source != self.source {
-            return Err(AgentRunProductProjectionError::TargetMismatch);
-        }
-        let snapshot = self
-            .service
-            .read(AgentReadQuery {
-                source: self.source.clone(),
-                at_revision: None,
-            })
+        self.observation
+            .reconcile_live(event)
             .await
-            .map_err(AgentRunProductProjectionError::Agent)?;
-        let view = project_authoritative_agent_view(self.runtime_thread_id.clone(), snapshot)
-            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))?;
-        Ok(Some(AgentRuntimeUpdate {
-            lane_sequence: event.sequence.0,
-            view_revision: view.view_revision,
-            execution: view.execution,
-            command_availability: view.command_availability,
-            interactions: view.interactions,
-            presentations: vec![event.record],
-        }))
+            .map(Some)
+            .map_err(map_observation_error)
     }
 }
 
@@ -214,16 +198,14 @@ impl AgentRunProductProjectionGateway {
             .resolve(&binding)
             .await
             .map_err(AgentRunProductProjectionError::Runtime)?;
-        let snapshot = resolved
-            .service
-            .read(AgentReadQuery {
-                source: binding.agent.source.clone(),
-                at_revision: None,
-            })
-            .await
-            .map_err(AgentRunProductProjectionError::Agent)?;
-        project_authoritative_agent_view(binding.runtime_thread_id, snapshot)
-            .map_err(|error| AgentRunProductProjectionError::Runtime(error.to_string()))
+        AgentRuntimeObservation::new(
+            binding.runtime_thread_id,
+            binding.agent.source,
+            resolved.service,
+        )
+        .read_view()
+        .await
+        .map_err(map_observation_error)
     }
 
     pub async fn runtime_product_binding(
@@ -242,6 +224,27 @@ impl AgentRunProductProjectionGateway {
             return Err(AgentRunProductProjectionError::TargetMismatch);
         }
         Ok(binding)
+    }
+
+    pub async fn runtime_context(
+        &self,
+        target: &AgentRunTarget,
+        requirement: AgentRuntimeContextRequirement,
+    ) -> Result<AgentRuntimeContextProjection, AgentRunProductProjectionError> {
+        let binding = self.binding(target).await?;
+        let resolved = self
+            .agents
+            .resolve(&binding)
+            .await
+            .map_err(AgentRunProductProjectionError::Runtime)?;
+        AgentRuntimeObservation::new(
+            binding.runtime_thread_id,
+            binding.agent.source,
+            resolved.service,
+        )
+        .read_context(requirement)
+        .await
+        .map_err(map_observation_error)
     }
 
     pub async fn runtime_view_observation(
@@ -284,9 +287,11 @@ impl AgentRunProductProjectionGateway {
             .await
             .map_err(AgentRunProductProjectionError::Agent)?;
         Ok(Box::new(CompleteAgentRuntimeUpdateStream {
-            service: resolved.service,
-            source: binding.agent.source,
-            runtime_thread_id: binding.runtime_thread_id,
+            observation: AgentRuntimeObservation::new(
+                binding.runtime_thread_id,
+                binding.agent.source,
+                resolved.service,
+            ),
             live,
         }))
     }
@@ -351,6 +356,15 @@ pub trait AgentRunProductProjectionQueryPort: Send + Sync {
         &self,
         target: &AgentRunTarget,
     ) -> Result<AgentRuntimeView, AgentRunProductProjectionError>;
+    async fn runtime_context(
+        &self,
+        _target: &AgentRunTarget,
+        _requirement: AgentRuntimeContextRequirement,
+    ) -> Result<AgentRuntimeContextProjection, AgentRunProductProjectionError> {
+        Err(AgentRunProductProjectionError::Runtime(
+            "Product projection does not expose Agent context".to_owned(),
+        ))
+    }
     async fn runtime_view_observation(
         &self,
         target: &AgentRunTarget,
@@ -387,6 +401,14 @@ impl AgentRunProductProjectionQueryPort for AgentRunProductProjectionGateway {
         AgentRunProductProjectionGateway::runtime_view(self, target).await
     }
 
+    async fn runtime_context(
+        &self,
+        target: &AgentRunTarget,
+        requirement: AgentRuntimeContextRequirement,
+    ) -> Result<AgentRuntimeContextProjection, AgentRunProductProjectionError> {
+        AgentRunProductProjectionGateway::runtime_context(self, target, requirement).await
+    }
+
     async fn runtime_view_observation(
         &self,
         target: &AgentRunTarget,
@@ -415,6 +437,16 @@ impl AgentRunProductProjectionQueryPort for AgentRunProductProjectionGateway {
         limit: usize,
     ) -> Result<AgentRunTerminalChangePage, AgentRunProductProjectionError> {
         AgentRunProductProjectionGateway::terminal_changes(self, target, after, limit).await
+    }
+}
+
+fn map_observation_error(error: AgentRuntimeObservationError) -> AgentRunProductProjectionError {
+    match error {
+        AgentRuntimeObservationError::SourceIdentityMismatch
+        | AgentRuntimeObservationError::LiveSourceMismatch => {
+            AgentRunProductProjectionError::TargetMismatch
+        }
+        error => AgentRunProductProjectionError::Runtime(error.to_string()),
     }
 }
 
@@ -476,11 +508,12 @@ mod product_runtime_binding_digest_tests {
                 runtime_thread_id: RuntimeThreadId::new("thread-canonical-digest")
                     .expect("runtime thread"),
                 agent: crate::agent_run::AgentRunCompleteAgentAssociation {
-                    service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
-                        "fixture-agent",
-                    )
-                    .unwrap(),
-                    source: agentdash_agent_service_api::AgentSourceCoordinate::new(
+                    service_instance_id:
+                        agentdash_agent_runtime_contract::AgentServiceInstanceId::new(
+                            "fixture-agent",
+                        )
+                        .unwrap(),
+                    source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new(
                         "fixture-source",
                     )
                     .unwrap(),

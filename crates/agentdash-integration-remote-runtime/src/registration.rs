@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_wire::RuntimeWireAgentBindingTarget;
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentHostCallbacks, AgentServiceDescriptor, AgentServiceInstanceId, CompleteAgentService,
 };
+use agentdash_agent_runtime_wire::RuntimeWireAgentBindingTarget;
 use agentdash_integration_api::{
     AgentDashIntegration, CompleteAgentContributionError, CompleteAgentPlacementRequirement,
     CompleteAgentRegistrationClaim, CompleteAgentRegistrationContribution,
@@ -172,7 +172,7 @@ impl RemoteCompleteAgentRegistration {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_service_api::AgentBindingGeneration;
+    use agentdash_agent_runtime_contract::AgentBindingGeneration;
 
     use super::*;
 

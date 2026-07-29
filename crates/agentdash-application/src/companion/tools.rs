@@ -964,7 +964,7 @@ async fn deliver_companion_input_handoff_message(
         .deliver(DeliverAgentRunProductInput {
             target,
             origin: AgentInputOrigin::Companion,
-            content: vec![agentdash_agent_service_api::AgentInputContent::Text {
+            content: vec![agentdash_agent_runtime_contract::AgentInputContent::Text {
                 text: input.input_text,
             }],
             source: input.source,
@@ -3085,7 +3085,7 @@ async fn compile_durable_companion_plan(
             ))
         })?;
     let through_turn_id = snapshot.conversation().completed_turn(None).map(|turn| {
-        agentdash_agent_runtime_contract::RuntimeTurnId::new(turn.id.clone())
+        agentdash_agent_runtime_contract::AgentTurnId::new(turn.id.clone())
             .expect("canonical turn ids are valid Runtime turn ids")
     });
 
@@ -3101,7 +3101,7 @@ async fn compile_durable_companion_plan(
         .iter()
         .filter(|injection| injection.slot == "constraint")
         .collect::<Vec<_>>();
-    let revision = format!("{:?}", snapshot.view_revision);
+    let revision = format!("{:?}", snapshot.view_revision());
     let provenance = |authority, kind: &str, value: &serde_json::Value| {
         let canonical = serde_json::to_vec(value).expect("companion context must serialize");
         CompanionContextSourceDraft {

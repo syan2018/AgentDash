@@ -4,7 +4,7 @@ use std::{
 };
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentHookAction, AgentHookDecision,
     AgentHookInvocation, AgentHostCallbackBinding, AgentHostCallbackError,
     AgentHostCallbackErrorCode, AgentHostCallbacks, AgentProfileDigest, AgentServiceInstanceId,
@@ -170,7 +170,7 @@ impl CompleteAgentCallbackBroker {
 
     async fn route_and_context(
         &self,
-        meta: &agentdash_agent_service_api::AgentHostCallbackMeta,
+        meta: &agentdash_agent_runtime_contract::AgentHostCallbackMeta,
     ) -> Result<
         (
             CompleteAgentCallbackRoute,
@@ -187,7 +187,7 @@ impl CompleteAgentCallbackBroker {
         &self,
         route: &CompleteAgentCallbackRoute,
         semantic_deadline_ms: Option<u64>,
-        meta: &agentdash_agent_service_api::AgentHostCallbackMeta,
+        meta: &agentdash_agent_runtime_contract::AgentHostCallbackMeta,
     ) -> Result<Duration, AgentHostCallbackError> {
         let now_ms = self.clock.now_ms();
         if now_ms >= meta.deadline_at_ms {

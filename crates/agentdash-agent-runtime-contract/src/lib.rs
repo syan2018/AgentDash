@@ -1,17 +1,20 @@
-//! Application-facing Agent Runtime contract.
+//! AgentDash-owned managed Agent Runtime contract.
 //!
-//! This crate owns only platform command, snapshot, availability, and projection
-//! vocabulary. Complete Agent commands and source coordinates belong to
-//! `agentdash-agent-service-api`; Host coordination and transport details never cross this
-//! boundary.
+//! Complete Agent source commands/reads and Product-facing Runtime wrappers share one contract
+//! vocabulary here. Host coordination, persistence and transport framing remain outside this
+//! crate.
 
 pub mod canonical_json;
+pub mod complete_agent;
+#[doc(hidden)]
+pub mod encoding_codegen;
 pub mod gateway;
 pub mod ids;
 pub mod runtime_view;
 pub mod wire_u64;
 
 pub use canonical_json::*;
+pub use complete_agent::*;
 pub use gateway::*;
 pub use ids::*;
 pub use runtime_view::*;
@@ -19,41 +22,30 @@ pub use wire_u64::*;
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
-
     use ts_rs::TS;
 
     use super::*;
 
     #[test]
     fn runtime_typescript_root_uses_canonical_unsigned_decimal_vocabulary() {
-        let temp = tempfile::tempdir().expect("create TypeScript export directory");
-        AgentRuntimeContractSchema::export_all_to(temp.path())
-            .expect("export Agent Runtime contracts");
-        RuntimeU64::export_all_to(temp.path()).expect("export Runtime u64");
-        let typescript = read_typescript(temp.path());
+        let typescript = [
+            RuntimeU64::decl(),
+            AgentSurfaceRevision::decl(),
+            AgentSnapshotRevision::decl(),
+            AgentObservation::decl(),
+            AgentRuntimeView::decl(),
+        ]
+        .join("\n");
 
         assert!(!typescript.contains("bigint"));
         for declaration in [
-            "export type RuntimeU64 = string & { readonly __runtime_u64: \"canonical_unsigned_decimal\" };",
-            "export type SurfaceRevision = RuntimeU64;",
-            "export type RuntimeProjectionRevision = RuntimeU64;",
-            "captured_at_ms: RuntimeU64",
+            "type RuntimeU64 = string & { readonly __runtime_u64: \"canonical_unsigned_decimal\" };",
+            "type AgentSurfaceRevision = RuntimeU64;",
+            "type AgentSnapshotRevision = RuntimeU64;",
+            "revision: AgentSnapshotRevision",
+            "observation: AgentObservation",
         ] {
             assert!(typescript.contains(declaration), "missing {declaration}");
         }
-    }
-
-    fn read_typescript(directory: &Path) -> String {
-        let mut output = String::new();
-        for entry in fs::read_dir(directory).expect("read TypeScript export directory") {
-            let path = entry.expect("read TypeScript export entry").path();
-            if path.is_dir() {
-                output.push_str(&read_typescript(&path));
-            } else if path.extension().is_some_and(|extension| extension == "ts") {
-                output.push_str(&fs::read_to_string(path).expect("read TypeScript export"));
-            }
-        }
-        output
     }
 }

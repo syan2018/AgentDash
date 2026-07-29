@@ -68,9 +68,11 @@ pub mod codex_app_server_protocol {
 }
 
 pub use thread_item::{
-    AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus,
-    DynamicToolCallOutputContentItem, DynamicToolCallStatus, McpToolCallStatus, PatchApplyStatus,
-    ShellExecExecutionMode, ToolProtocolProjector,
+    AgentDashCodexThreadItem, AgentDashCompactionStatus, AgentDashItemNotTerminal,
+    AgentDashItemTerminal, AgentDashItemTerminalOutcome, AgentDashNativeThreadItem,
+    AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus, DynamicToolCallOutputContentItem,
+    DynamicToolCallStatus, McpToolCallStatus, PatchApplyStatus, ShellExecExecutionMode,
+    ToolProtocolProjector,
 };
 
 #[cfg(test)]
@@ -228,6 +230,10 @@ mod tests {
                     "contentItems": null,
                     "success": true,
                     "durationMs": null
+                },
+                "terminal": {
+                    "outcome": "succeeded",
+                    "error": null
                 },
                 "threadId": "thread-1",
                 "turnId": "turn-1",

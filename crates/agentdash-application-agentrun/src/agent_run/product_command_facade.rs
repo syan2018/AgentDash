@@ -1,15 +1,12 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeContentBlock, AgentRuntimeInteractionResponse, AgentRuntimeOperationReceipt,
-    AgentRuntimeOperationStatus, RuntimeInteractionId, RuntimeOperationId,
-};
-use agentdash_agent_service_api::{
     AgentAppliedEffectOutcome, AgentCommand, AgentCommandEnvelope, AgentCommandId,
-    AgentCommandMeta, AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspectionState,
-    AgentIdempotencyKey, AgentInput, AgentInputContent, AgentInteractionId,
-    AgentInteractionResponse, AgentPayloadDigest, AgentReadQuery, AgentReceiptState,
-    AgentServiceError, AgentTerminalOutcome, ResumeAgentCommand,
+    AgentCommandMeta, AgentCommandReceipt, AgentControlAvailability, AgentControlKind,
+    AgentEffectIdentity, AgentEffectInspectionState, AgentIdempotencyKey, AgentInput,
+    AgentInputContent, AgentInteractionId, AgentInteractionResponse, AgentReadQuery,
+    AgentReceiptState, AgentRuntimeOperationReceipt, AgentRuntimeOperationStatus,
+    AgentServiceError, AgentSnapshot, AgentTerminalOutcome, ResumeAgentCommand,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use serde::{Deserialize, Serialize};
@@ -22,14 +19,13 @@ use super::{AgentRunCompleteAgentResolverPort, AgentRunProductRuntimeBindingRepo
 pub enum AgentRunProductCommand {
     Resume,
     SubmitInput {
-        content: Vec<AgentRuntimeContentBlock>,
+        content: Vec<AgentInputContent>,
     },
     Interrupt,
     RequestCompaction,
-    Rebind,
     ResolveInteraction {
-        interaction_id: RuntimeInteractionId,
-        response: AgentRuntimeInteractionResponse,
+        interaction_id: AgentInteractionId,
+        response: AgentInteractionResponse,
     },
     Close,
 }
@@ -103,14 +99,6 @@ impl AgentRunProductCommandFacade {
             .map_err(AgentRunProductCommandError::Unavailable)?;
         let service = resolved.service;
         let generation = resolved.binding_generation;
-        if matches!(request.command, AgentRunProductCommand::Rebind) {
-            return Ok(operation_receipt(
-                stable_product_command_operation_id(&request.target, client_command_id)?,
-                binding.runtime_thread_id,
-                AgentRuntimeOperationStatus::Succeeded,
-                false,
-            ));
-        }
         let snapshot = service
             .read(AgentReadQuery {
                 source: binding.agent.source.clone(),
@@ -124,7 +112,6 @@ impl AgentRunProductCommandFacade {
         }
 
         let identity = product_command_identity(&request.target, client_command_id);
-        let operation_id = stable_product_command_operation_id(&request.target, client_command_id)?;
         let meta = AgentCommandMeta {
             command_id: AgentCommandId::new(format!("product-command:v2:{identity}"))
                 .map_err(|error| AgentRunProductCommandError::InvalidCommand(error.to_string()))?,
@@ -135,8 +122,10 @@ impl AgentRunProductCommandFacade {
             ))
             .map_err(|error| AgentRunProductCommandError::InvalidCommand(error.to_string()))?,
             binding_generation: generation,
-            expected_snapshot_revision: None,
+            expected_snapshot_revision: Some(snapshot.observation.revision),
         };
+        let operation_id = meta.effect_id.clone();
+        let expected_effect_id = meta.effect_id.clone();
         let inspection = service.inspect(meta.effect_id.clone()).await?;
         if !inspection.validate() || inspection.effect_id != meta.effect_id {
             return Err(AgentRunProductCommandError::InvalidCommand(
@@ -163,6 +152,11 @@ impl AgentRunProductCommandFacade {
             }
             AgentEffectInspectionState::Applied { outcome } => {
                 let receipt = applied_product_command_receipt(&request.command, outcome)?;
+                if receipt.effect_id != expected_effect_id {
+                    return Err(AgentRunProductCommandError::InvalidCommand(
+                        "applied effect receipt has a different identity".to_owned(),
+                    ));
+                }
                 if receipt.source != binding.agent.source {
                     return Err(AgentRunProductCommandError::InvalidCommand(
                         "applied effect belongs to another source".to_owned(),
@@ -186,26 +180,20 @@ impl AgentRunProductCommandFacade {
                             .await?
                     }
                     command => {
-                        let active_turn_id = snapshot
-                            .active_turn_id()
-                            .map(|turn_id| {
-                                agentdash_agent_service_api::AgentTurnId::new(turn_id.to_owned())
-                                    .map_err(|error| {
-                                        AgentRunProductCommandError::InvalidCommand(
-                                            error.to_string(),
-                                        )
-                                    })
-                            })
-                            .transpose()?;
                         service
                             .execute(AgentCommandEnvelope {
                                 meta,
                                 source: binding.agent.source.clone(),
-                                command: map_command(command, active_turn_id.as_ref())?,
+                                command: map_command(command, &snapshot)?,
                             })
                             .await?
                     }
                 };
+                if receipt.effect_id != expected_effect_id {
+                    return Err(AgentRunProductCommandError::InvalidCommand(
+                        "Agent receipt has a different effect identity".to_owned(),
+                    ));
+                }
                 if receipt.source != binding.agent.source {
                     return Err(AgentRunProductCommandError::InvalidCommand(
                         "Agent receipt belongs to another source".to_owned(),
@@ -282,125 +270,83 @@ fn validate_client_command_id(value: &str) -> Result<&str, AgentRunProductComman
 
 fn map_command(
     command: AgentRunProductCommand,
-    active_turn_id: Option<&agentdash_agent_service_api::AgentTurnId>,
+    snapshot: &AgentSnapshot,
 ) -> Result<AgentCommand, AgentRunProductCommandError> {
     Ok(match command {
         AgentRunProductCommand::SubmitInput { content } => {
-            let input = AgentInput {
-                content: map_input(content)?,
-            };
-            active_turn_id.map_or(
-                AgentCommand::SubmitInput {
-                    input: input.clone(),
-                },
-                |expected_turn_id| AgentCommand::Steer {
-                    expected_turn_id: expected_turn_id.clone(),
+            let input = AgentInput { content };
+            if control_available(snapshot, AgentControlKind::Steer) {
+                AgentCommand::Steer {
+                    expected_turn_id: snapshot
+                        .observation
+                        .execution
+                        .active_turn
+                        .as_ref()
+                        .map(|turn| turn.turn_id.clone())
+                        .ok_or(AgentRunProductCommandError::ActiveTurnMissing)?,
                     input,
-                },
-            )
+                }
+            } else {
+                ensure_control_available(snapshot, AgentControlKind::SubmitInput)?;
+                AgentCommand::SubmitInput { input }
+            }
         }
-        AgentRunProductCommand::Interrupt => AgentCommand::Interrupt {
-            expected_turn_id: active_turn_id
-                .cloned()
-                .ok_or(AgentRunProductCommandError::ActiveTurnMissing)?,
-        },
-        AgentRunProductCommand::RequestCompaction => AgentCommand::RequestCompaction,
+        AgentRunProductCommand::Interrupt => {
+            ensure_control_available(snapshot, AgentControlKind::Interrupt)?;
+            AgentCommand::Interrupt {
+                expected_turn_id: snapshot
+                    .observation
+                    .execution
+                    .active_turn
+                    .as_ref()
+                    .map(|turn| turn.turn_id.clone())
+                    .ok_or(AgentRunProductCommandError::ActiveTurnMissing)?,
+            }
+        }
+        AgentRunProductCommand::RequestCompaction => {
+            ensure_control_available(snapshot, AgentControlKind::RequestCompaction)?;
+            AgentCommand::RequestCompaction
+        }
         AgentRunProductCommand::ResolveInteraction {
             interaction_id,
             response,
-        } => AgentCommand::ResolveInteraction {
-            interaction_id: source_interaction_id(interaction_id)?,
-            response: map_interaction_response(response)?,
-        },
-        AgentRunProductCommand::Close => AgentCommand::Close,
+        } => {
+            ensure_control_available(snapshot, AgentControlKind::ResolveInteraction)?;
+            AgentCommand::ResolveInteraction {
+                interaction_id,
+                response,
+            }
+        }
+        AgentRunProductCommand::Close => {
+            ensure_control_available(snapshot, AgentControlKind::Close)?;
+            AgentCommand::Close
+        }
         AgentRunProductCommand::Resume => {
             return Err(AgentRunProductCommandError::InvalidCommand(
                 "Resume uses the Complete Agent lifecycle command".to_owned(),
             ));
         }
-        AgentRunProductCommand::Rebind => {
-            return Err(AgentRunProductCommandError::InvalidCommand(
-                "surface rebind uses the Host live surface workflow".to_owned(),
-            ));
-        }
     })
 }
 
-fn source_interaction_id(
-    interaction_id: RuntimeInteractionId,
-) -> Result<AgentInteractionId, AgentRunProductCommandError> {
-    let source = interaction_id
-        .as_str()
-        .strip_prefix("agent-interaction:")
-        .ok_or_else(|| {
-            AgentRunProductCommandError::InvalidCommand(
-                "interaction id is not an Agent-native presentation identity".to_owned(),
-            )
-        })?;
-    AgentInteractionId::new(source)
-        .map_err(|error| AgentRunProductCommandError::InvalidCommand(error.to_string()))
+fn control_available(snapshot: &AgentSnapshot, command: AgentControlKind) -> bool {
+    matches!(
+        snapshot.observation.command_availability.get(&command),
+        Some(AgentControlAvailability::Available { .. })
+    )
 }
 
-fn map_interaction_response(
-    response: AgentRuntimeInteractionResponse,
-) -> Result<AgentInteractionResponse, AgentRunProductCommandError> {
-    Ok(match response {
-        AgentRuntimeInteractionResponse::Approved => AgentInteractionResponse::Approved,
-        AgentRuntimeInteractionResponse::Denied { reason } => {
-            AgentInteractionResponse::Denied { reason }
-        }
-        AgentRuntimeInteractionResponse::UserInput { content } => {
-            AgentInteractionResponse::UserInput {
-                input: AgentInput {
-                    content: map_input(content)?,
-                },
-            }
-        }
-        AgentRuntimeInteractionResponse::Structured { value, .. } => {
-            AgentInteractionResponse::McpElicitation { response: value }
-        }
-    })
-}
-
-fn map_input(
-    content: Vec<AgentRuntimeContentBlock>,
-) -> Result<Vec<AgentInputContent>, AgentRunProductCommandError> {
-    content
-        .into_iter()
-        .map(|block| {
-            Ok(match block {
-                AgentRuntimeContentBlock::Text { text } => AgentInputContent::Text { text },
-                AgentRuntimeContentBlock::Image {
-                    media_type,
-                    source,
-                    digest,
-                } => AgentInputContent::Image {
-                    media_type,
-                    source,
-                    digest: AgentPayloadDigest::new(digest.into_inner()).map_err(|error| {
-                        AgentRunProductCommandError::InvalidCommand(error.to_string())
-                    })?,
-                },
-                AgentRuntimeContentBlock::Resource {
-                    uri,
-                    media_type,
-                    digest,
-                } => AgentInputContent::Resource {
-                    uri,
-                    media_type,
-                    digest: digest
-                        .map(|digest| AgentPayloadDigest::new(digest.into_inner()))
-                        .transpose()
-                        .map_err(|error| {
-                            AgentRunProductCommandError::InvalidCommand(error.to_string())
-                        })?,
-                },
-                AgentRuntimeContentBlock::Structured { schema, value } => {
-                    AgentInputContent::Structured { schema, value }
-                }
-            })
-        })
-        .collect()
+fn ensure_control_available(
+    snapshot: &AgentSnapshot,
+    command: AgentControlKind,
+) -> Result<(), AgentRunProductCommandError> {
+    if control_available(snapshot, command) {
+        return Ok(());
+    }
+    Err(AgentRunProductCommandError::InvalidCommand(format!(
+        "owner reported {command:?} unavailable: {:?}",
+        snapshot.observation.command_availability.get(&command)
+    )))
 }
 
 fn receipt_status(receipt: &AgentCommandReceipt) -> AgentRuntimeOperationStatus {
@@ -427,7 +373,7 @@ fn terminal_status(outcome: AgentTerminalOutcome) -> AgentRuntimeOperationStatus
 }
 
 fn operation_receipt(
-    operation_id: RuntimeOperationId,
+    operation_id: AgentEffectIdentity,
     thread_id: agentdash_agent_runtime_contract::RuntimeThreadId,
     status: AgentRuntimeOperationStatus,
     duplicate: bool,
@@ -436,21 +382,8 @@ fn operation_receipt(
         operation_id,
         thread_id,
         status,
-        evidence: None,
         duplicate,
     }
-}
-
-pub fn stable_product_command_operation_id(
-    target: &AgentRunTarget,
-    client_command_id: &str,
-) -> Result<RuntimeOperationId, AgentRunProductCommandError> {
-    let client_command_id = validate_client_command_id(client_command_id)?;
-    RuntimeOperationId::new(format!(
-        "product-command:v2:{}",
-        product_command_identity(target, client_command_id)
-    ))
-    .map_err(|_| AgentRunProductCommandError::InvalidClientCommandId)
 }
 
 fn product_command_identity(target: &AgentRunTarget, client_command_id: &str) -> String {
@@ -470,46 +403,87 @@ fn product_command_identity(target: &AgentRunTarget, client_command_id: &str) ->
 
 #[cfg(test)]
 mod tests {
+    use agentdash_agent_runtime_test_support::coherent_runtime::CoherentAgentObservationBuilder;
+
     use super::*;
-    use uuid::Uuid;
 
-    #[test]
-    fn operation_identity_depends_only_on_product_target_and_client_identity() {
-        let target = AgentRunTarget {
-            run_id: Uuid::new_v4(),
-            agent_id: Uuid::new_v4(),
+    fn snapshot_with_active_turn(
+        kind: agentdash_agent_runtime_contract::AgentActiveTurnKind,
+        cancellable: bool,
+    ) -> AgentSnapshot {
+        let execution = agentdash_agent_runtime_contract::AgentExecutionSnapshot {
+            active_turn: Some(agentdash_agent_runtime_contract::AgentActiveTurnSnapshot {
+                turn_id: agentdash_agent_runtime_contract::AgentTurnId::new("turn-1").unwrap(),
+                kind,
+                phase: agentdash_agent_runtime_contract::AgentActiveTurnPhase::Running,
+                started_at_ms: 1,
+                cancellable,
+            }),
+            queued_compaction: None,
+            last_compaction_outcome: None,
         };
-        let first = stable_product_command_operation_id(&target, "client-1").unwrap();
-        let replay = stable_product_command_operation_id(&target, "client-1").unwrap();
-        let other = stable_product_command_operation_id(&target, "client-2").unwrap();
-
-        assert_eq!(first, replay);
-        assert_ne!(first, other);
+        CoherentAgentObservationBuilder::new(1)
+            .execution(execution)
+            .snapshot("source-1")
     }
 
     #[test]
-    fn presentation_interaction_identity_maps_back_to_native_coordinate() {
-        let source = source_interaction_id(
-            RuntimeInteractionId::new("agent-interaction:approval-1").unwrap(),
-        )
-        .unwrap();
-        assert_eq!(source.as_str(), "approval-1");
+    fn interaction_identity_is_shared_with_the_complete_agent_contract() {
+        let interaction = AgentInteractionId::new("approval-1").unwrap();
+        let command = AgentRunProductCommand::ResolveInteraction {
+            interaction_id: interaction.clone(),
+            response: AgentInteractionResponse::Approved,
+        };
+        assert!(matches!(
+            command,
+            AgentRunProductCommand::ResolveInteraction { interaction_id, .. }
+                if interaction_id == interaction
+        ));
+    }
+
+    #[test]
+    fn submit_maps_to_owner_admitted_command_for_active_turn_kind() {
+        let input = AgentRunProductCommand::SubmitInput {
+            content: vec![AgentInputContent::Text {
+                text: "continue".to_owned(),
+            }],
+        };
+        let conversation = snapshot_with_active_turn(
+            agentdash_agent_runtime_contract::AgentActiveTurnKind::Conversation,
+            true,
+        );
+        assert!(matches!(
+            map_command(input.clone(), &conversation).unwrap(),
+            AgentCommand::Steer { .. }
+        ));
+
+        let compaction = snapshot_with_active_turn(
+            agentdash_agent_runtime_contract::AgentActiveTurnKind::ContextCompaction,
+            false,
+        );
+        assert!(matches!(
+            map_command(input, &compaction).unwrap(),
+            AgentCommand::SubmitInput { .. }
+        ));
     }
 
     #[test]
     fn applied_agent_outcome_is_recovered_without_redispatch() {
         let command_id = AgentCommandId::new("command-1").unwrap();
         let effect_id = AgentEffectIdentity::new("effect-1").unwrap();
-        let source = agentdash_agent_service_api::AgentSourceCoordinate::new("source-1").unwrap();
+        let source =
+            agentdash_agent_runtime_contract::AgentSourceCoordinate::new("source-1").unwrap();
         let receipt = applied_product_command_receipt(
             &AgentRunProductCommand::Close,
             AgentAppliedEffectOutcome::Command {
-                receipt: agentdash_agent_service_api::AppliedAgentCommandReceipt {
+                receipt: agentdash_agent_runtime_contract::AppliedAgentCommandReceipt {
                     command_id: command_id.clone(),
                     effect_id: effect_id.clone(),
                     source: source.clone(),
                     terminal: Some(AgentTerminalOutcome::Closed),
-                    snapshot_revision: Some(agentdash_agent_service_api::AgentSnapshotRevision(42)),
+                    snapshot_revision: Some(
+                        agentdash_agent_runtime_contract::AgentSnapshotRevision(42),
+                    ),
                     initial_context: None,
                 },
             },
@@ -527,7 +501,7 @@ mod tests {
         );
         assert_eq!(
             receipt.snapshot_revision,
-            Some(agentdash_agent_service_api::AgentSnapshotRevision(42))
+            Some(agentdash_agent_runtime_contract::AgentSnapshotRevision(42))
         );
     }
 
@@ -536,11 +510,13 @@ mod tests {
         let result = applied_product_command_receipt(
             &AgentRunProductCommand::Resume,
             AgentAppliedEffectOutcome::Command {
-                receipt: agentdash_agent_service_api::AppliedAgentCommandReceipt {
+                receipt: agentdash_agent_runtime_contract::AppliedAgentCommandReceipt {
                     command_id: AgentCommandId::new("command-1").unwrap(),
                     effect_id: AgentEffectIdentity::new("effect-1").unwrap(),
-                    source: agentdash_agent_service_api::AgentSourceCoordinate::new("source-1")
-                        .unwrap(),
+                    source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new(
+                        "source-1",
+                    )
+                    .unwrap(),
                     terminal: None,
                     snapshot_revision: None,
                     initial_context: None,
@@ -552,5 +528,17 @@ mod tests {
             result,
             Err(AgentRunProductCommandError::InvalidCommand(_))
         ));
+    }
+
+    #[test]
+    fn runtime_receipt_identity_is_the_complete_agent_effect_identity() {
+        let effect_id = AgentEffectIdentity::new("product-effect:v2:stable-identity").unwrap();
+        let receipt = operation_receipt(
+            effect_id.clone(),
+            agentdash_agent_runtime_contract::RuntimeThreadId::new("thread-1").unwrap(),
+            AgentRuntimeOperationStatus::Accepted,
+            false,
+        );
+        assert_eq!(receipt.operation_id, effect_id);
     }
 }

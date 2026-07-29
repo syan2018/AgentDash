@@ -4,7 +4,7 @@ use agentdash_agent_runtime::{
     RuntimeToolAuthorizationPolicy, RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolExecutor,
     RuntimeToolInvocation, RuntimeToolPermission, RuntimeToolProvenance, ToolProtocolProjector,
 };
-use agentdash_agent_service_api::{AgentToolName, AgentToolResult};
+use agentdash_agent_runtime_contract::{AgentToolName, AgentToolResult};
 use agentdash_platform_spi::{
     CapabilityState, McpHttpHeader, McpRelayProvider, McpTransportConfig, RelayMcpCallContext,
     RuntimeMcpServer, sanitize_tool_schema,

@@ -153,12 +153,16 @@ export function SingleEntry({
     case "item_updated":
     case "item_completed": {
       const threadItem = event.payload.item;
+      const lifecycle = entry.itemLifecycle;
+      if (!lifecycle) {
+        throw new Error(`item ${threadItem.id} 缺少 canonical lifecycle`);
+      }
       if (threadItem.type === "agentMessage") {
         return (
           <SessionMessageCard
             type="agent"
             content={threadItem.text}
-            isStreaming={event.type !== "item_completed"}
+            isStreaming={lifecycle.phase !== "terminal"}
           />
         );
       }
@@ -167,7 +171,7 @@ export function SingleEntry({
           <SessionMessageCard
             type="thinking"
             content={[...threadItem.summary, ...threadItem.content].join("")}
-            isStreaming={event.type !== "item_completed"}
+            isStreaming={lifecycle.phase !== "terminal"}
           />
         );
       }
@@ -176,6 +180,7 @@ export function SingleEntry({
         outputText: accumulatedText,
         agentRunTarget,
         companionSubagents,
+        itemLifecycle: lifecycle,
       });
       return (
         <ToolCallCardShell

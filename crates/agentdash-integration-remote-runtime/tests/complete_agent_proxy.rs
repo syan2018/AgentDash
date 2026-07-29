@@ -6,14 +6,7 @@ use std::{
     },
 };
 
-use agentdash_agent_runtime_wire::{
-    RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAgentBindingTarget,
-    RuntimeWireAgentChangeNotification, RuntimeWireAgentHostCallbackRequest,
-    RuntimeWireAgentHostCallbackResponse, RuntimeWireAgentServiceRequest,
-    RuntimeWireAgentServiceResponse, RuntimeWireEnvelope, RuntimeWireFrame, RuntimeWireFrameId,
-    RuntimeWireNotification, RuntimeWireRequest, RuntimeWireResponse,
-};
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId, AgentChange,
     AgentChangePayload, AgentChangesQuery, AgentCommand, AgentCommandEnvelope, AgentCommandId,
     AgentCommandMeta, AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState,
@@ -25,6 +18,13 @@ use agentdash_agent_service_api::{
     AgentSurfaceRevision, AgentSurfaceRoute, AgentToolInvocation, AgentToolName, AgentToolResult,
     AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceReceipt,
     ApplyBoundAgentSurface, BoundAgentSurface, CompleteAgentService,
+};
+use agentdash_agent_runtime_wire::{
+    RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAgentBindingTarget,
+    RuntimeWireAgentChangeNotification, RuntimeWireAgentHostCallbackRequest,
+    RuntimeWireAgentHostCallbackResponse, RuntimeWireAgentServiceRequest,
+    RuntimeWireAgentServiceResponse, RuntimeWireEnvelope, RuntimeWireFrame, RuntimeWireFrameId,
+    RuntimeWireNotification, RuntimeWireRequest, RuntimeWireResponse,
 };
 use agentdash_integration_remote_runtime::{
     RemoteCompleteAgentRegistration, RemoteCompleteAgentService, RemoteRuntimeTransportError,
@@ -108,7 +108,7 @@ impl RuntimeWirePlacement for LoopbackPlacement {
                     "proxy must rewrite only at the Runtime Wire boundary"
                 );
                 RuntimeWireAgentServiceResponse::Execute(Ok(Box::new(
-                    agentdash_agent_service_api::AgentCommandReceipt {
+                    agentdash_agent_runtime_contract::AgentCommandReceipt {
                         command_id: command.meta.command_id,
                         effect_id: command.meta.effect_id,
                         source: if self.mismatch_execute_coordinates.load(Ordering::Relaxed) {
@@ -206,13 +206,13 @@ impl AgentHostCallbacks for RecordingCallbacks {
 
     async fn invoke_hook(
         &self,
-        call: agentdash_agent_service_api::AgentHookInvocation,
-    ) -> Result<agentdash_agent_service_api::AgentHookDecision, AgentHostCallbackError> {
+        call: agentdash_agent_runtime_contract::AgentHookInvocation,
+    ) -> Result<agentdash_agent_runtime_contract::AgentHookDecision, AgentHostCallbackError> {
         self.generations
             .lock()
             .await
             .push(call.meta.binding_generation);
-        Ok(agentdash_agent_service_api::AgentHookDecision::Allow)
+        Ok(agentdash_agent_runtime_contract::AgentHookDecision::Allow)
     }
 }
 
@@ -264,8 +264,8 @@ impl AgentHostCallbacks for ReentrantCallbacks {
     async fn invoke_hook(
         &self,
         _: AgentHookInvocation,
-    ) -> Result<agentdash_agent_service_api::AgentHookDecision, AgentHostCallbackError> {
-        Ok(agentdash_agent_service_api::AgentHookDecision::Allow)
+    ) -> Result<agentdash_agent_runtime_contract::AgentHookDecision, AgentHostCallbackError> {
+        Ok(agentdash_agent_runtime_contract::AgentHookDecision::Allow)
     }
 }
 
@@ -287,7 +287,7 @@ impl AgentHostCallbacks for BlockingCallbacks {
     async fn invoke_hook(
         &self,
         _: AgentHookInvocation,
-    ) -> Result<agentdash_agent_service_api::AgentHookDecision, AgentHostCallbackError> {
+    ) -> Result<agentdash_agent_runtime_contract::AgentHookDecision, AgentHostCallbackError> {
         self.invocations.fetch_add(1, Ordering::Relaxed);
         std::future::pending().await
     }
@@ -410,35 +410,35 @@ impl EndpointTracerService {
 impl CompleteAgentService for EndpointTracerService {
     async fn describe(
         &self,
-    ) -> Result<agentdash_agent_service_api::AgentServiceDescriptor, AgentServiceError> {
+    ) -> Result<agentdash_agent_runtime_contract::AgentServiceDescriptor, AgentServiceError> {
         Err(Self::unsupported())
     }
 
     async fn create(
         &self,
-        _: agentdash_agent_service_api::CreateAgentCommand,
-    ) -> Result<agentdash_agent_service_api::AgentCommandReceipt, AgentServiceError> {
+        _: agentdash_agent_runtime_contract::CreateAgentCommand,
+    ) -> Result<agentdash_agent_runtime_contract::AgentCommandReceipt, AgentServiceError> {
         Err(Self::unsupported())
     }
 
     async fn resume(
         &self,
-        _: agentdash_agent_service_api::ResumeAgentCommand,
-    ) -> Result<agentdash_agent_service_api::AgentCommandReceipt, AgentServiceError> {
+        _: agentdash_agent_runtime_contract::ResumeAgentCommand,
+    ) -> Result<agentdash_agent_runtime_contract::AgentCommandReceipt, AgentServiceError> {
         Err(Self::unsupported())
     }
 
     async fn fork(
         &self,
-        _: agentdash_agent_service_api::ForkAgentCommand,
-    ) -> Result<agentdash_agent_service_api::ForkAgentReceipt, AgentServiceError> {
+        _: agentdash_agent_runtime_contract::ForkAgentCommand,
+    ) -> Result<agentdash_agent_runtime_contract::ForkAgentReceipt, AgentServiceError> {
         Err(Self::unsupported())
     }
 
     async fn execute(
         &self,
         command: AgentCommandEnvelope,
-    ) -> Result<agentdash_agent_service_api::AgentCommandReceipt, AgentServiceError> {
+    ) -> Result<agentdash_agent_runtime_contract::AgentCommandReceipt, AgentServiceError> {
         self.executions.fetch_add(1, Ordering::Relaxed);
         let callbacks = self.callbacks.get().expect("endpoint callbacks");
         let callback_meta = AgentHostCallbackMeta {
@@ -502,7 +502,7 @@ impl CompleteAgentService for EndpointTracerService {
                 )
             })?;
 
-        let receipt = agentdash_agent_service_api::AgentCommandReceipt {
+        let receipt = agentdash_agent_runtime_contract::AgentCommandReceipt {
             command_id: command.meta.command_id,
             effect_id: command.meta.effect_id,
             source: command.source,
@@ -532,15 +532,15 @@ impl CompleteAgentService for EndpointTracerService {
     async fn read(
         &self,
         _: AgentReadQuery,
-    ) -> Result<agentdash_agent_service_api::AgentSnapshot, AgentServiceError> {
+    ) -> Result<agentdash_agent_runtime_contract::AgentSnapshot, AgentServiceError> {
         Err(Self::unsupported())
     }
 
     async fn changes(
         &self,
         query: AgentChangesQuery,
-    ) -> Result<agentdash_agent_service_api::AgentChangePage, AgentServiceError> {
-        Ok(agentdash_agent_service_api::AgentChangePage {
+    ) -> Result<agentdash_agent_runtime_contract::AgentChangePage, AgentServiceError> {
+        Ok(agentdash_agent_runtime_contract::AgentChangePage {
             source: query.source,
             changes: Vec::new(),
             next: query.after,
@@ -551,7 +551,7 @@ impl CompleteAgentService for EndpointTracerService {
     async fn inspect(
         &self,
         effect_id: AgentEffectIdentity,
-    ) -> Result<agentdash_agent_service_api::AgentEffectInspection, AgentServiceError> {
+    ) -> Result<agentdash_agent_runtime_contract::AgentEffectInspection, AgentServiceError> {
         self.inspection
             .lock()
             .await
@@ -578,8 +578,8 @@ impl CompleteAgentService for EndpointTracerService {
 
     async fn revoke_surface(
         &self,
-        _: agentdash_agent_service_api::RevokeBoundAgentSurface,
-    ) -> Result<agentdash_agent_service_api::AgentCommandReceipt, AgentServiceError> {
+        _: agentdash_agent_runtime_contract::RevokeBoundAgentSurface,
+    ) -> Result<agentdash_agent_runtime_contract::AgentCommandReceipt, AgentServiceError> {
         Err(Self::unsupported())
     }
 }
@@ -697,7 +697,7 @@ async fn real_endpoint_round_trips_tool_hook_and_replays_duplicate_callback_resu
         .expect_err("stale source generation");
     assert_eq!(
         stale.code,
-        agentdash_agent_service_api::AgentHostCallbackErrorCode::StaleBindingGeneration
+        agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::StaleBindingGeneration
     );
     assert_eq!(host_callbacks.generations.lock().await.len(), 2);
 }
@@ -746,7 +746,7 @@ async fn source_callback_deadline_clears_pending_and_replays_typed_timeout() {
         .expect_err("missing callback response must time out");
     assert_eq!(
         error.code,
-        agentdash_agent_service_api::AgentHostCallbackErrorCode::DeadlineExceeded
+        agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::DeadlineExceeded
     );
     let outbound = endpoint.receive().await.expect("one callback request");
     assert!(matches!(
@@ -765,7 +765,7 @@ async fn source_callback_deadline_clears_pending_and_replays_typed_timeout() {
         .expect_err("deadline result is stable by effect");
     assert_eq!(
         replay.code,
-        agentdash_agent_service_api::AgentHostCallbackErrorCode::DeadlineExceeded
+        agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::DeadlineExceeded
     );
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(20), endpoint.receive())
@@ -811,7 +811,7 @@ async fn proxy_deadline_and_effect_ledger_prevent_duplicate_host_side_effects() 
                         ),
                         ..
                     } if error.code
-                        == agentdash_agent_service_api::AgentHostCallbackErrorCode::DeadlineExceeded
+                        == agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::DeadlineExceeded
                 ))
                 .count()
                 >= 2
@@ -837,7 +837,7 @@ async fn proxy_deadline_and_effect_ledger_prevent_duplicate_host_side_effects() 
                         ),
                         ..
                     } if error.code
-                        == agentdash_agent_service_api::AgentHostCallbackErrorCode::DeadlineExceeded
+                        == agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::DeadlineExceeded
                 ))
                 .count()
                 >= 3
@@ -871,7 +871,7 @@ async fn proxy_deadline_and_effect_ledger_prevent_duplicate_host_side_effects() 
                     ),
                     ..
                 } if error.code
-                    == agentdash_agent_service_api::AgentHostCallbackErrorCode::DuplicateConflict
+                    == agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::DuplicateConflict
             ))
         })
     })

@@ -1,6 +1,6 @@
 use agentdash_agent::dash::{DashSurfaceInstruction, DashToolDefinition};
 use agentdash_agent_protocol::AgentSurfaceInstructionPresentation;
-use agentdash_agent_service_api::AgentProfileDigest;
+use agentdash_agent_runtime_contract::AgentProfileDigest;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 

@@ -5,17 +5,16 @@ use agentdash_agent::{
     ConversationNamingInput, LlmBridge, ProviderErrorKind, StopReason, StreamChunk, ThinkingLevel,
     ToolDefinition,
     dash::{
-        CompactionId, ContextRevision, DashCompactionRequest, DashCompactionResult,
-        DashCompactionTurn, DashCompactor, DashConversationNamer, DashConversationNamingRequest,
-        DashCoreError, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
-        DashFinishReason, DashMessageRole, DashProvider, DashProviderEvent,
-        DashProviderEventStream, DashProviderRequest, DashServiceError, DashToolCall,
-        DashToolCallbacks, DashToolResult, HistoryEntryId, NoopDashHistoryCallbacks,
+        DashCompactionRequest, DashCompactionResult, DashCompactionTurn, DashCompactor,
+        DashConversationNamer, DashConversationNamingRequest, DashCoreError,
+        DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent, DashFinishReason,
+        DashMessageRole, DashProvider, DashProviderEvent, DashProviderEventStream,
+        DashProviderRequest, DashServiceError, DashToolCall, DashToolCallbacks, DashToolResult,
+        NoopDashHistoryCallbacks,
     },
 };
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
-use sha2::{Digest, Sha256};
 
 const DEFAULT_RETAINED_CONVERSATION_MESSAGES: usize = 8;
 
@@ -205,14 +204,7 @@ impl DashCompactor for ProviderDashCompactor {
         .await
         .map_err(map_compaction_turn_error)?;
         let summary = output.summary;
-        let revision = compaction_revision(
-            &request.compaction_id,
-            &request.source_digest,
-            &summary,
-            retained_from.as_ref(),
-        );
         Ok(DashCompactionResult {
-            revision,
             summary,
             retained_from,
         })
@@ -381,32 +373,12 @@ fn map_compaction_turn_error(error: DashCoreError) -> DashServiceError {
     }
 }
 
-fn compaction_revision(
-    compaction_id: &CompactionId,
-    source_digest: &str,
-    summary: &str,
-    retained_from: Option<&HistoryEntryId>,
-) -> ContextRevision {
-    let mut hasher = Sha256::new();
-    hasher.update(b"agentdash.dash-compaction/v1\0");
-    hasher.update(compaction_id.0.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(source_digest.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(summary.as_bytes());
-    hasher.update(b"\0");
-    if let Some(retained_from) = retained_from {
-        hasher.update(retained_from.0.as_bytes());
-    }
-    ContextRevision::new(format!("sha256:{:x}", hasher.finalize()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use agentdash_agent::{
         BridgeResponse, TokenUsage, ToolCallDeltaContent, ToolCallInfo,
-        dash::{DashCoreContext, DashMessage},
+        dash::{CompactionId, DashCoreContext, DashMessage, HistoryEntryId},
     };
     use futures::stream;
 
@@ -625,6 +597,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.retained_from, Some(HistoryEntryId::new("tool-call")));
-        assert!(result.revision.0.starts_with("sha256:"));
+        assert_eq!(result.summary, "durable summary");
     }
 }

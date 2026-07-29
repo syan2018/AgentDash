@@ -6,7 +6,7 @@ use std::{
 use agentdash_agent::dash::{
     DashBeforeToolDecision, DashToolCall, DashToolCallbacks, DashToolResult,
 };
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentHookAction, AgentHookDecision,
     AgentHookDefinitionId, AgentHookInvocation, AgentHookPoint, AgentHookTiming,
     AgentHostCallbackError, AgentHostCallbackErrorCode, AgentHostCallbacks, AgentPayloadDigest,
@@ -138,10 +138,10 @@ fn hook_contribution(
         route: AgentSurfaceRoute::AgentNativeCallback,
         fidelity: SemanticFidelity::Exact,
         semantics: AgentSurfaceSemanticFacet::Hook(
-            agentdash_agent_service_api::AgentHookSemanticFacet {
+            agentdash_agent_runtime_contract::AgentHookSemanticFacet {
                 point,
                 timing,
-                blocking: agentdash_agent_service_api::AgentHookBlockingSemantics::Blocking {
+                blocking: agentdash_agent_runtime_contract::AgentHookBlockingSemantics::Blocking {
                     fidelity: SemanticFidelity::Exact,
                 },
                 mutations: std::collections::BTreeMap::new(),

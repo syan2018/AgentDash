@@ -1,11 +1,11 @@
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentChange, AgentChangePage, AgentChangesQuery, AgentCommandEnvelope,
-    AgentCommandReceipt, AgentEffectIdentity, AgentEffectInspection, AgentHookDecision,
-    AgentHookInvocation, AgentHostCallbackError, AgentReadQuery, AgentServiceDescriptor,
-    AgentServiceError, AgentServiceInstanceId, AgentSnapshot, AgentSourceCoordinate,
-    AgentToolInvocation, AgentToolResult, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface,
-    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, ResumeAgentCommand,
-    RevokeBoundAgentSurface,
+    AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot, AgentEffectIdentity,
+    AgentEffectInspection, AgentHookDecision, AgentHookInvocation, AgentHostCallbackError,
+    AgentReadQuery, AgentServiceDescriptor, AgentServiceError, AgentServiceInstanceId,
+    AgentSnapshot, AgentSourceCoordinate, AgentToolInvocation, AgentToolResult,
+    AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand,
+    ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,10 @@ pub enum RuntimeWireAgentServiceRequest {
         target: RuntimeWireAgentBindingTarget,
         query: AgentReadQuery,
     },
+    Context {
+        target: RuntimeWireAgentBindingTarget,
+        query: AgentContextQuery,
+    },
     Changes {
         target: RuntimeWireAgentBindingTarget,
         query: AgentChangesQuery,
@@ -93,9 +97,11 @@ impl RuntimeWireAgentServiceRequest {
     /// generation authority. Describe is instance-scoped and intentionally precedes binding.
     pub fn validate_generation(&self) -> Result<(), RuntimeWireGenerationFenceError> {
         let (target, carried) = match self {
-            Self::Describe(_) | Self::Read { .. } | Self::Changes { .. } | Self::Inspect { .. } => {
-                return Ok(());
-            }
+            Self::Describe(_)
+            | Self::Read { .. }
+            | Self::Context { .. }
+            | Self::Changes { .. }
+            | Self::Inspect { .. } => return Ok(()),
             Self::Create { target, command } => (target, command.meta.binding_generation),
             Self::Resume { target, command } => (target, command.meta.binding_generation),
             Self::Fork { target, command } => (target, command.meta.binding_generation),
@@ -122,6 +128,7 @@ impl RuntimeWireAgentServiceRequest {
             | Self::Fork { target, .. }
             | Self::Execute { target, .. }
             | Self::Read { target, .. }
+            | Self::Context { target, .. }
             | Self::Changes { target, .. }
             | Self::Inspect { target, .. }
             | Self::ApplySurface { target, .. }
@@ -147,6 +154,7 @@ pub enum RuntimeWireAgentServiceResponse {
     Fork(Result<Box<ForkAgentReceipt>, AgentServiceError>),
     Execute(Result<Box<AgentCommandReceipt>, AgentServiceError>),
     Read(Result<Box<AgentSnapshot>, AgentServiceError>),
+    Context(Result<Box<AgentContextSnapshot>, AgentServiceError>),
     Changes(Result<Box<AgentChangePage>, AgentServiceError>),
     Inspect(Result<Box<AgentEffectInspection>, AgentServiceError>),
     ApplySurface(Result<Box<AppliedAgentSurfaceReceipt>, AgentServiceError>),
@@ -191,7 +199,7 @@ pub enum RuntimeWireAgentHostCallbackResponse {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_service_api::{
+    use agentdash_agent_runtime_contract::{
         AgentAppliedEffectOutcome, AgentCallbackRouteId, AgentCommandId, AgentCommandMeta,
         AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkPoint,
         AgentHostCallbackMeta, AgentIdempotencyKey, AgentItemId, AgentPayloadDigest,
@@ -212,7 +220,7 @@ mod tests {
         constructor: impl FnOnce(
             String,
         )
-            -> Result<T, agentdash_agent_service_api::InvalidAgentServiceId>,
+            -> Result<T, agentdash_agent_runtime_contract::InvalidAgentServiceId>,
     ) -> T {
         constructor(value.to_owned()).expect("valid id")
     }
@@ -281,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn every_closed_applied_outcome_round_trips_on_revision_five() {
+    fn every_closed_applied_outcome_round_trips_on_revision_seven() {
         let command_id = id("command-inspect", AgentCommandId::new);
         let effect_id = id("effect-inspect", AgentEffectIdentity::new);
         let source = id("source-parent", AgentSourceCoordinate::new);
@@ -418,13 +426,14 @@ mod tests {
             change: AgentChange {
                 cursor: id(
                     "cursor-41",
-                    agentdash_agent_service_api::AgentSourceCursor::new,
+                    agentdash_agent_runtime_contract::AgentSourceCursor::new,
                 ),
                 source_revision: None,
                 occurred_at_ms: 99,
-                payload: agentdash_agent_service_api::AgentChangePayload::SnapshotInvalidated {
-                    reason: "source gap".to_owned(),
-                },
+                payload:
+                    agentdash_agent_runtime_contract::AgentChangePayload::SnapshotInvalidated {
+                        reason: "source gap".to_owned(),
+                    },
             },
         };
         let value = serde_json::to_value(notification).expect("serialize change");
@@ -474,17 +483,17 @@ mod tests {
                         } else {
                             "cursor-name-clear"
                         },
-                        agentdash_agent_service_api::AgentSourceCursor::new,
+                        agentdash_agent_runtime_contract::AgentSourceCursor::new,
                     ),
                     source_revision: None,
                     occurred_at_ms: 99,
-                    payload: agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+                    payload: agentdash_agent_runtime_contract::AgentChangePayload::ThreadNameChanged {
                         thread_name: thread_name.clone(),
-                        source_info: agentdash_agent_service_api::AgentSnapshotSource {
+                        source_info: agentdash_agent_runtime_contract::AgentSnapshotSource {
                             authority:
-                                agentdash_agent_service_api::AgentSnapshotAuthority::AgentAuthoritative,
+                                agentdash_agent_runtime_contract::AgentSnapshotAuthority::AgentAuthoritative,
                             source_revision: None,
-                            fidelity: agentdash_agent_service_api::SemanticFidelity::Exact,
+                            fidelity: agentdash_agent_runtime_contract::SemanticFidelity::Exact,
                             observed_at_ms: 99,
                         },
                     },
@@ -505,11 +514,11 @@ mod tests {
             change: AgentChange {
                 cursor: id(
                     "cursor-1",
-                    agentdash_agent_service_api::AgentSourceCursor::new,
+                    agentdash_agent_runtime_contract::AgentSourceCursor::new,
                 ),
                 source_revision: None,
                 occurred_at_ms: u64::MAX,
-                payload: agentdash_agent_service_api::AgentChangePayload::SourceObservation {
+                payload: agentdash_agent_runtime_contract::AgentChangePayload::SourceObservation {
                     state: None,
                     presentation: Vec::new(),
                 },

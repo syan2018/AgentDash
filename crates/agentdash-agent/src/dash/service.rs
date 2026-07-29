@@ -1,22 +1,25 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use super::{
     AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentTurnId, CommandId, CommandOutcome,
-    CompactionId, CompactionMode, ContextRevision, DashAgentChange, DashAgentCommit,
+    CommandStatus, CompactionId, CompactionMode, ContextRevision, DashAgentChange, DashAgentCommit,
     DashAgentStore, DashCancellation, DashCommand, DashCommandKind, DashCoreContext, DashCoreError,
-    DashCoreEvent, DashCoreTurn, DashExecutionCallbacks, DashExecutionEvent,
-    DashExecutionInspection, DashFinishReason, DashMessage, DashMessageRole, DashProvider,
-    DashProviderRequest, DashProviderRoundMaterializer, DashProviderRoundSnapshots, DashSurface,
-    DashToolCall, DashToolCallbacks, DashToolDefinition, DashToolResult, EffectId, EffectOutcome,
-    EffectSettlement, ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload,
+    DashCoreEvent, DashCoreTurn, DashExecutionCallbacks, DashExecutionEvent, DashFinishReason,
+    DashMessage, DashMessageRole, DashProvider, DashProviderRequest, DashProviderRoundMaterializer,
+    DashProviderRoundSnapshots, DashSurface, DashToolCall, DashToolCallbacks, DashToolDefinition,
+    DashToolResult, EffectId, ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload,
     InitialContextInstallation, InteractionId, ItemKind, SessionStatus, StoreError,
 };
 
@@ -79,7 +82,6 @@ pub struct DashEffectInspection {
     pub effect_id: EffectId,
     pub state: DashReceiptState,
     pub retryable: bool,
-    pub execution: DashExecutionInspection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +95,13 @@ struct DashEffectRecord {
 struct DashActiveExecutionState {
     turn_id: AgentTurnId,
     request: DashCommandRequest,
+    lease: Option<DashWorkerLease>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DashWorkerLease {
+    owner_id: String,
+    expires_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -130,6 +139,22 @@ pub struct DashAgentRead {
     pub history: AgentHistory,
     pub history_digest: String,
     pub surface: Option<DashSurface>,
+    pub context_recipe: DashContextRecipe,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DashContextRecipeMessage {
+    pub source_entry_id: HistoryEntryId,
+    pub message: DashMessage,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DashContextRecipe {
+    pub snapshot_revision: u64,
+    pub context_revision: Option<ContextRevision>,
+    pub frames: Vec<agentdash_agent_protocol::ContextFrame>,
+    pub messages: Vec<DashContextRecipeMessage>,
+    pub digest: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -150,7 +175,6 @@ pub struct DashCompactionRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashCompactionResult {
-    pub revision: ContextRevision,
     pub summary: String,
     pub retained_from: Option<HistoryEntryId>,
 }
@@ -350,7 +374,12 @@ pub struct DashAgentService {
     cancellation: Arc<tokio::sync::Mutex<Option<(AgentTurnId, DashCancellation)>>>,
     steering: Arc<tokio::sync::Mutex<DashSteeringState>>,
     effect_updates: Arc<tokio::sync::Notify>,
+    worker_owner_id: Arc<str>,
 }
+
+const DASH_WORKER_LEASE_MS: u64 = 15_000;
+const DASH_WORKER_HEARTBEAT_MS: u64 = 5_000;
+static DASH_WORKER_OWNER_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
 struct PendingProviderRound {
@@ -362,6 +391,21 @@ struct PendingProviderRound {
 struct DashSteeringState {
     active_turn: Option<AgentTurnId>,
     after_sequence: u64,
+}
+
+enum DashPromotedExecution {
+    Submit {
+        request: DashCommandRequest,
+        content: String,
+        turn_id: AgentTurnId,
+        effect_prefix: String,
+    },
+    Compaction {
+        request: DashCommandRequest,
+        compaction_id: CompactionId,
+        mode: CompactionMode,
+        effect_prefix: String,
+    },
 }
 
 struct DurableDashExecutionCallbacks {
@@ -394,7 +438,6 @@ impl DurableDashExecutionCallbacks {
                 store.commit(DashAgentCommit {
                     expected_head: store.history().head().cloned(),
                     command_settlement: None,
-                    effect_settlements: Vec::new(),
                     history,
                     enqueue_commands: Vec::new(),
                 })?;
@@ -629,7 +672,6 @@ impl DashAgentService {
             store.commit(DashAgentCommit {
                 expected_head: None,
                 command_settlement: None,
-                effect_settlements: vec![],
                 history: vec![HistoryContribution {
                     entry_id: HistoryEntryId::new(format!(
                         "initial-context:{}",
@@ -668,6 +710,11 @@ impl DashAgentService {
             cancellation: Arc::new(tokio::sync::Mutex::new(None)),
             steering: Arc::new(tokio::sync::Mutex::new(DashSteeringState::default())),
             effect_updates: Arc::new(tokio::sync::Notify::new()),
+            worker_owner_id: Arc::from(format!(
+                "dash-worker:{}:{}",
+                std::process::id(),
+                DASH_WORKER_OWNER_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            )),
         }
     }
 
@@ -738,11 +785,13 @@ impl DashAgentService {
     pub async fn read(&self) -> Result<DashAgentRead, DashServiceError> {
         let state = self.repository.load().await?;
         let history_state = state.store.history().state()?;
+        let context_recipe = context_recipe_from_repository(&state)?;
         Ok(DashAgentRead {
             surface: history_state.surface.clone(),
             state: history_state,
             history: state.store.history().clone(),
             history_digest: state.store.history().digest(),
+            context_recipe,
         })
     }
 
@@ -754,13 +803,12 @@ impl DashAgentService {
         let state = self.repository.load().await?;
         let changes = state
             .store
-            .changes()
+            .changes()?
             .iter()
             .filter(|change| {
-                after.as_ref().is_none_or(|after| {
-                    (change.cursor.revision, change.cursor.ordinal)
-                        > (after.revision, after.ordinal)
-                })
+                after
+                    .as_ref()
+                    .is_none_or(|after| change.cursor.revision > after.revision)
             })
             .take(limit)
             .cloned()
@@ -775,6 +823,11 @@ impl DashAgentService {
         Ok(self.repository.load().await?.store.history().clone())
     }
 
+    pub async fn context_recipe(&self) -> Result<DashContextRecipe, DashServiceError> {
+        let repository = self.repository.load().await?;
+        context_recipe_from_repository(&repository)
+    }
+
     pub async fn export_store(&self) -> Result<DashAgentStore, DashServiceError> {
         Ok(self.repository.load().await?.store)
     }
@@ -783,6 +836,101 @@ impl DashAgentService {
         &self,
     ) -> Result<DashAgentRepositoryState, DashServiceError> {
         self.repository.load().await
+    }
+
+    pub async fn recover_pending_execution(&self) -> Result<(), DashServiceError> {
+        let repository = self.repository.load().await?;
+        let history = repository.store.history().state()?;
+        let Some(compaction_id) = history.active_compaction.clone() else {
+            if repository.active.is_none() {
+                self.promote_queued_execution().await?;
+            }
+            return Ok(());
+        };
+        let compaction = history
+            .compactions
+            .get(&compaction_id)
+            .cloned()
+            .ok_or_else(|| DashServiceError::InvalidState {
+                message: "active Dash compaction has no folded state".into(),
+            })?;
+        let active = repository
+            .active
+            .clone()
+            .ok_or_else(|| DashServiceError::InvalidState {
+                message: "active Dash compaction has no durable execution owner".into(),
+            })?;
+        let lease_current = active
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.expires_at_ms > crate::model::message::now_millis());
+        if lease_current {
+            return Ok(());
+        }
+        let automatic = compaction.mode == CompactionMode::AutomaticOverflow;
+        if compaction.side_effect_started_at_ms.is_none() && !automatic {
+            self.spawn_compaction_execution(
+                active.request.clone(),
+                compaction_id,
+                compaction.mode,
+                active.request.effect_id.0.clone(),
+            );
+            return Ok(());
+        }
+
+        let outer_effect_id = active.request.effect_id.clone();
+        let compaction_command_id = if automatic {
+            CommandId::new(compaction_id.0.clone())
+        } else {
+            active.request.command_id.clone()
+        };
+        let lost = compaction.side_effect_started_at_ms.is_some();
+        let (_, ()) = self
+            .update_repository(|repository| {
+                let current = repository.store.history().state()?;
+                if current.active_compaction.as_ref() != Some(&compaction_id) {
+                    return Ok(());
+                }
+                repository.store.fail_compaction(
+                    compaction_command_id,
+                    compaction_id.clone(),
+                    HistoryEntryId::new(format!(
+                        "{}:compaction-recovered-terminal",
+                        active.request.command_id.0
+                    )),
+                    if lost {
+                        "compaction provider outcome is unknown after worker restart".into()
+                    } else {
+                        "compaction worker stopped before the provider side effect".into()
+                    },
+                    lost,
+                )?;
+                if automatic {
+                    repository.store.commit(DashAgentCommit {
+                        expected_head: repository.store.history().head().cloned(),
+                        command_settlement: None,
+                        history: vec![],
+                        enqueue_commands: vec![],
+                    })?;
+                }
+                repository.active = None;
+                terminalize_repository_effect(
+                    repository,
+                    &outer_effect_id,
+                    if lost {
+                        DashTerminalOutcome::Lost
+                    } else {
+                        DashTerminalOutcome::Failed
+                    },
+                    false,
+                )?;
+                terminalize_dependent_effects(repository)?;
+                Ok(())
+            })
+            .await?;
+        self.clear_active(&active.turn_id).await;
+        self.effect_updates.notify_waiters();
+        self.promote_queued_execution().await
     }
 
     pub async fn apply_surface(&self, surface: DashSurface) -> Result<(), DashServiceError> {
@@ -829,7 +977,6 @@ impl DashAgentService {
             replacement.store.commit(DashAgentCommit {
                 expected_head: replacement.store.history().head().cloned(),
                 command_settlement: None,
-                effect_settlements: vec![],
                 history: vec![HistoryContribution {
                     entry_id: HistoryEntryId::new(format!(
                         "surface-applied:{next_sequence}:{}:{}",
@@ -865,7 +1012,6 @@ impl DashAgentService {
             replacement.store.commit(DashAgentCommit {
                 expected_head: replacement.store.history().head().cloned(),
                 command_settlement: None,
-                effect_settlements: vec![],
                 history: vec![HistoryContribution {
                     entry_id: HistoryEntryId::new(format!(
                         "surface-revoked:{next_sequence}:{expected_revision}"
@@ -908,7 +1054,7 @@ impl DashAgentService {
                 self.execute_interrupt(request, turn_id).await
             }
             DashPublicCommand::RequestCompaction { mode } => {
-                self.execute_compaction(request, mode).await
+                self.execute_compaction(request, mode, false).await
             }
             DashPublicCommand::ResolveInteraction {
                 interaction_id,
@@ -948,6 +1094,9 @@ impl DashAgentService {
             DashPublicCommand::SubmitInput { content } => {
                 self.execute_submit(request, content, true).await
             }
+            DashPublicCommand::RequestCompaction { mode } => {
+                self.execute_compaction(request, mode, true).await
+            }
             _ => self.execute(request).await,
         }
     }
@@ -986,9 +1135,6 @@ impl DashAgentService {
             effect_id: effect_id.clone(),
             state: record.receipt.state,
             retryable: record.retryable,
-            execution: state
-                .store
-                .inspect_execution(&record.request.command_id, effect_id),
         }))
     }
 
@@ -1013,6 +1159,74 @@ impl DashAgentService {
             },
             dependency: None,
         };
+        if let Some(compaction_command_id) =
+            self.repository
+                .load()
+                .await?
+                .active
+                .as_ref()
+                .and_then(|active| {
+                    matches!(
+                        active.request.command,
+                        DashPublicCommand::RequestCompaction { .. }
+                    )
+                    .then(|| active.request.command_id.clone())
+                })
+        {
+            let mut deferred_command = command;
+            deferred_command.dependency = Some(super::CommandDependency {
+                command_id: compaction_command_id,
+            });
+            let (_, accepted) = self
+                .update_repository(|repository| {
+                    if !repository.active.as_ref().is_some_and(|active| {
+                        matches!(
+                            active.request.command,
+                            DashPublicCommand::RequestCompaction { .. }
+                        )
+                    }) {
+                        return Err(DashServiceError::Conflict {
+                            message: "Dash Agent compaction is no longer active".into(),
+                        });
+                    }
+                    repository.store.commit(DashAgentCommit {
+                        expected_head: repository.store.history().head().cloned(),
+                        command_settlement: None,
+                        history: vec![],
+                        enqueue_commands: vec![deferred_command],
+                    })?;
+                    let receipt = DashCommandReceipt {
+                        command_id: request.command_id.clone(),
+                        effect_id: request.effect_id.clone(),
+                        state: DashReceiptState::Accepted,
+                        history_revision: repository.store.history().state()?.entry_count,
+                    };
+                    repository.effects.insert(
+                        request.effect_id.clone(),
+                        DashEffectRecord {
+                            request: request.clone(),
+                            receipt: receipt.clone(),
+                            retryable: false,
+                        },
+                    );
+                    Ok(receipt)
+                })
+                .await?;
+            if background {
+                return Ok(accepted);
+            }
+            self.wait_for_effect_terminal(&request.effect_id).await?;
+            return self
+                .repository
+                .load()
+                .await?
+                .effects
+                .get(&request.effect_id)
+                .map(|record| record.receipt.clone())
+                .ok_or_else(|| DashServiceError::Internal {
+                    message: "deferred Dash input lost its effect record".into(),
+                });
+        }
         let mut steering = self.steering.lock().await;
         let (_, accepted) = self
             .update_repository(|repository| {
@@ -1025,7 +1239,6 @@ impl DashAgentService {
                 repository.store.commit(DashAgentCommit {
                     expected_head,
                     command_settlement: None,
-                    effect_settlements: vec![],
                     history: vec![
                         HistoryContribution {
                             entry_id: HistoryEntryId::new(format!("{effect_prefix}:input")),
@@ -1069,6 +1282,7 @@ impl DashAgentService {
                 repository.active = Some(DashActiveExecutionState {
                     turn_id: turn_id.clone(),
                     request: request.clone(),
+                    lease: None,
                 });
                 Ok(receipt)
             })
@@ -1118,6 +1332,8 @@ impl DashAgentService {
                     }),
                 };
                 if let Some(failure) = failure {
+                    let _ = service.expire_compaction_lease().await;
+                    let _ = service.recover_pending_execution().await;
                     let already_terminal = service
                         .inspect(&background_request.effect_id)
                         .await
@@ -1137,6 +1353,7 @@ impl DashAgentService {
                             .await;
                     }
                     service.clear_active(&background_turn_id).await;
+                    let _ = service.promote_queued_execution().await;
                     service.effect_updates.notify_waiters();
                 }
             });
@@ -1205,10 +1422,6 @@ impl DashAgentService {
                                 command_id: request.command_id.clone(),
                                 outcome: CommandOutcome::Succeeded,
                             }),
-                            effect_settlements: vec![EffectSettlement {
-                                effect_id: request.effect_id.clone(),
-                                outcome: EffectOutcome::Applied,
-                            }],
                             history: result.history,
                             enqueue_commands: vec![],
                         })?;
@@ -1235,7 +1448,6 @@ impl DashAgentService {
                     store.commit(DashAgentCommit {
                         expected_head: store.history().head().cloned(),
                         command_settlement: None,
-                        effect_settlements: vec![],
                         history: vec![HistoryContribution {
                             entry_id: HistoryEntryId::new(format!(
                                 "{effect_prefix}:interaction-requested"
@@ -1300,6 +1512,7 @@ impl DashAgentService {
                 "Dash conversation naming failed after a terminal turn"
             );
         }
+        self.promote_queued_execution().await?;
         self.effect_updates.notify_waiters();
         Ok(receipt)
     }
@@ -1334,7 +1547,6 @@ impl DashAgentService {
             store.commit(DashAgentCommit {
                 expected_head: store.history().head().cloned(),
                 command_settlement: None,
-                effect_settlements: vec![],
                 history: vec![HistoryContribution {
                     entry_id,
                     payload: HistoryPayload::ThreadNameChanged { thread_name },
@@ -1356,8 +1568,6 @@ impl DashAgentService {
         let prefix = request.effect_id.0.clone();
         let compaction_command_id = CommandId::new(format!("{}:B", request.command_id.0));
         let continuation_command_id = CommandId::new(format!("{}:C", request.command_id.0));
-        let compaction_effect_id = EffectId::new(format!("{}:B", request.effect_id.0));
-        let continuation_effect_id = EffectId::new(format!("{}:C", request.effect_id.0));
         let compaction_id = CompactionId::new(format!("{}:B", request.command_id.0));
         let continuation_turn_id = AgentTurnId::new(format!("turn:{}:C", request.command_id.0));
         let compaction_command = DashCommand {
@@ -1386,7 +1596,6 @@ impl DashAgentService {
                         command_id: request.command_id.clone(),
                         outcome: CommandOutcome::Succeeded,
                     }),
-                    effect_settlements: vec![],
                     history: vec![HistoryContribution {
                         entry_id: HistoryEntryId::new(format!("{prefix}:A-overflow")),
                         payload: HistoryPayload::TurnFailed {
@@ -1409,7 +1618,6 @@ impl DashAgentService {
                 store.commit(DashAgentCommit {
                     expected_head: store.history().head().cloned(),
                     command_settlement: None,
-                    effect_settlements: vec![],
                     history: vec![HistoryContribution {
                         entry_id: HistoryEntryId::new(format!("{prefix}:B-started")),
                         payload: HistoryPayload::CompactionStarted {
@@ -1425,6 +1633,25 @@ impl DashAgentService {
                 Ok(())
             })
             .await?;
+        let lease = DashWorkerLease {
+            owner_id: self.worker_owner_id.to_string(),
+            expires_at_ms: crate::model::message::now_millis().saturating_add(DASH_WORKER_LEASE_MS),
+        };
+        self.update_repository(|repository| {
+            repository.store.mark_compaction_side_effect_started(
+                compaction_id.clone(),
+                HistoryEntryId::new(format!("{prefix}:B-side-effect-started")),
+            )?;
+            repository
+                .active
+                .as_mut()
+                .ok_or_else(|| DashServiceError::Lost {
+                    message: "automatic compaction lost its owning execution".into(),
+                })?
+                .lease = Some(lease);
+            Ok(())
+        })
+        .await?;
         let compactor = self.execution_dependencies().await.compactor;
         let compacted = match self
             .materialize_compaction_request(
@@ -1433,7 +1660,20 @@ impl DashAgentService {
             )
             .await
         {
-            Ok(compaction_request) => compactor.compact(compaction_request).await,
+            Ok(compaction_request) => {
+                let compact = compactor.compact(compaction_request);
+                tokio::pin!(compact);
+                loop {
+                    tokio::select! {
+                        result = &mut compact => break result,
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(
+                            DASH_WORKER_HEARTBEAT_MS,
+                        )) => {
+                            self.renew_compaction_lease(&request.effect_id).await?;
+                        }
+                    }
+                }
+            }
             Err(error) => Err(error),
         };
         let compacted = match compacted {
@@ -1450,7 +1690,6 @@ impl DashAgentService {
                     .update_repository(|repository| {
                         repository.store.fail_compaction(
                             compaction_command_id.clone(),
-                            compaction_effect_id.clone(),
                             compaction_id.clone(),
                             HistoryEntryId::new(format!("{prefix}:B-failed")),
                             error.to_string(),
@@ -1459,14 +1698,6 @@ impl DashAgentService {
                         repository.store.commit(DashAgentCommit {
                             expected_head: repository.store.history().head().cloned(),
                             command_settlement: None,
-                            effect_settlements: vec![EffectSettlement {
-                                effect_id: request.effect_id.clone(),
-                                outcome: if lost {
-                                    EffectOutcome::Lost
-                                } else {
-                                    EffectOutcome::Failed
-                                },
-                            }],
                             history: vec![],
                             enqueue_commands: vec![],
                         })?;
@@ -1487,9 +1718,7 @@ impl DashAgentService {
         self.update_repository(|repository| {
             repository.store.complete_compaction(
                 compaction_command_id.clone(),
-                compaction_effect_id.clone(),
                 compaction_id.clone(),
-                compacted.revision,
                 compacted.summary,
                 compacted.retained_from,
                 HistoryEntryId::new(format!("{prefix}:B-applied")),
@@ -1505,7 +1734,6 @@ impl DashAgentService {
             repository.store.commit(DashAgentCommit {
                 expected_head: repository.store.history().head().cloned(),
                 command_settlement: None,
-                effect_settlements: vec![],
                 history: vec![HistoryContribution {
                     entry_id: HistoryEntryId::new(format!("{prefix}:C-started")),
                     payload: HistoryPayload::TurnStarted {
@@ -1518,6 +1746,7 @@ impl DashAgentService {
             repository.active = Some(DashActiveExecutionState {
                 turn_id: continuation_turn_id.clone(),
                 request: request.clone(),
+                lease: None,
             });
             Ok(())
         })
@@ -1575,16 +1804,6 @@ impl DashAgentService {
                             command_id: continuation_command_id,
                             outcome: CommandOutcome::Succeeded,
                         }),
-                        effect_settlements: vec![
-                            EffectSettlement {
-                                effect_id: continuation_effect_id,
-                                outcome: EffectOutcome::Applied,
-                            },
-                            EffectSettlement {
-                                effect_id: request.effect_id.clone(),
-                                outcome: EffectOutcome::Applied,
-                            },
-                        ],
                         history: continuation.history,
                         enqueue_commands: vec![],
                     })?;
@@ -1614,24 +1833,6 @@ impl DashAgentService {
                                 CommandOutcome::Failed
                             },
                         }),
-                        effect_settlements: vec![
-                            EffectSettlement {
-                                effect_id: continuation_effect_id,
-                                outcome: if lost {
-                                    EffectOutcome::Lost
-                                } else {
-                                    EffectOutcome::Failed
-                                },
-                            },
-                            EffectSettlement {
-                                effect_id: request.effect_id.clone(),
-                                outcome: if lost {
-                                    EffectOutcome::Lost
-                                } else {
-                                    EffectOutcome::Failed
-                                },
-                            },
-                        ],
                         history: vec![HistoryContribution {
                             entry_id: HistoryEntryId::new(format!("{prefix}:C-failed")),
                             payload: HistoryPayload::TurnFailed {
@@ -1709,7 +1910,6 @@ impl DashAgentService {
                 repository.store.commit(DashAgentCommit {
                     expected_head: repository.store.history().head().cloned(),
                     command_settlement: None,
-                    effect_settlements: vec![],
                     history: vec![HistoryContribution {
                         entry_id: HistoryEntryId::new(format!("{}:steer", request.effect_id.0)),
                         payload: HistoryPayload::InputAccepted {
@@ -1744,6 +1944,25 @@ impl DashAgentService {
         request: DashCommandRequest,
         turn_id: AgentTurnId,
     ) -> Result<DashCommandReceipt, DashServiceError> {
+        let active =
+            self.repository
+                .load()
+                .await?
+                .active
+                .ok_or_else(|| DashServiceError::InvalidState {
+                    message: "Dash Agent has no active turn".into(),
+                })?;
+        if active.turn_id != turn_id {
+            return Err(DashServiceError::InvalidState {
+                message: "Dash Agent turn is not active".into(),
+            });
+        }
+        if matches!(
+            active.request.command,
+            DashPublicCommand::RequestCompaction { .. }
+        ) {
+            return self.execute_compaction_interrupt(request, active).await;
+        }
         let cancellation = self.require_active_turn(&turn_id).await?;
         cancellation.cancel();
         let (_, receipt) = self
@@ -1801,10 +2020,6 @@ impl DashAgentService {
                         command_id: active_request.command_id.clone(),
                         outcome: CommandOutcome::Failed,
                     }),
-                    effect_settlements: vec![EffectSettlement {
-                        effect_id: active_request.effect_id.clone(),
-                        outcome: EffectOutcome::Failed,
-                    }],
                     history,
                     enqueue_commands: vec![],
                 })?;
@@ -1836,50 +2051,335 @@ impl DashAgentService {
         Ok(receipt)
     }
 
+    async fn execute_compaction_interrupt(
+        &self,
+        request: DashCommandRequest,
+        active: DashActiveExecutionState,
+    ) -> Result<DashCommandReceipt, DashServiceError> {
+        let compaction_id = CompactionId::new(active.request.command_id.0.clone());
+        let (_, receipt) = self
+            .update_repository(|repository| {
+                let current =
+                    repository
+                        .active
+                        .as_ref()
+                        .ok_or_else(|| DashServiceError::InvalidState {
+                            message: "Dash compaction completed before cancellation was committed"
+                                .into(),
+                        })?;
+                if current.request.effect_id != active.request.effect_id {
+                    return Err(DashServiceError::Conflict {
+                        message: "Dash compaction operation changed".into(),
+                    });
+                }
+                let history = repository.store.history().state()?;
+                let compaction = history.compactions.get(&compaction_id).ok_or_else(|| {
+                    DashServiceError::InvalidState {
+                        message: "active Dash compaction has no history state".into(),
+                    }
+                })?;
+                if compaction.side_effect_started_at_ms.is_some() {
+                    return Err(DashServiceError::InvalidState {
+                        message: "Dash compaction is no longer cancellable".into(),
+                    });
+                }
+                repository.store.cancel_compaction(
+                    active.request.command_id.clone(),
+                    compaction_id,
+                    HistoryEntryId::new(format!(
+                        "{}:compaction-cancelled",
+                        active.request.effect_id.0
+                    )),
+                )?;
+                terminalize_repository_effect(
+                    repository,
+                    &active.request.effect_id,
+                    DashTerminalOutcome::Interrupted,
+                    false,
+                )?;
+                terminalize_dependent_effects(repository)?;
+                let receipt = terminal_receipt(
+                    &request,
+                    DashTerminalOutcome::Succeeded,
+                    repository.store.history().state()?.entry_count,
+                );
+                repository.effects.insert(
+                    request.effect_id.clone(),
+                    DashEffectRecord {
+                        request: request.clone(),
+                        receipt: receipt.clone(),
+                        retryable: false,
+                    },
+                );
+                repository.active = None;
+                Ok(receipt)
+            })
+            .await?;
+        self.clear_active(&active.turn_id).await;
+        self.effect_updates.notify_waiters();
+        self.promote_queued_execution().await?;
+        Ok(receipt)
+    }
+
     async fn execute_compaction(
         &self,
         request: DashCommandRequest,
         mode: CompactionMode,
+        background: bool,
     ) -> Result<DashCommandReceipt, DashServiceError> {
         let compaction_id = CompactionId::new(request.command_id.0.clone());
         let effect_prefix = request.effect_id.0.clone();
-        let (_, ()) = self
+        let worker_lease = DashWorkerLease {
+            owner_id: self.worker_owner_id.to_string(),
+            expires_at_ms: crate::model::message::now_millis().saturating_add(DASH_WORKER_LEASE_MS),
+        };
+        let (_, (accepted, promoted)) = self
             .update_repository(|repository| {
-                repository.store.begin_compaction(
-                    DashCommand {
-                        command_id: request.command_id.clone(),
-                        kind: DashCommandKind::RequestCompaction {
+                let command = DashCommand {
+                    command_id: request.command_id.clone(),
+                    kind: DashCommandKind::RequestCompaction {
+                        compaction_id: compaction_id.clone(),
+                        mode,
+                    },
+                    dependency: None,
+                };
+                repository.store.commit(DashAgentCommit {
+                    expected_head: repository.store.history().head().cloned(),
+                    command_settlement: None,
+                    history: vec![HistoryContribution {
+                        entry_id: HistoryEntryId::new(format!("{effect_prefix}:compaction-queued")),
+                        payload: HistoryPayload::CompactionQueued {
                             compaction_id: compaction_id.clone(),
                             mode,
+                            queued_at_ms: crate::model::message::now_millis(),
                         },
-                        dependency: None,
-                    },
-                    HistoryEntryId::new(format!("{effect_prefix}:compaction-started")),
-                )?;
-                let history = repository.store.history().clone();
+                    }],
+                    enqueue_commands: vec![command],
+                })?;
+                let promoted = if repository.active.is_none() {
+                    let claimed = repository.store.claim_next_command()?;
+                    if claimed.as_ref().map(|value| &value.command_id) != Some(&request.command_id)
+                    {
+                        return Err(DashServiceError::Conflict {
+                            message: "Dash Agent compaction command could not be claimed".into(),
+                        });
+                    }
+                    repository.store.commit(DashAgentCommit {
+                        expected_head: repository.store.history().head().cloned(),
+                        command_settlement: None,
+                        history: vec![HistoryContribution {
+                            entry_id: HistoryEntryId::new(format!(
+                                "{effect_prefix}:compaction-started"
+                            )),
+                            payload: HistoryPayload::CompactionStarted {
+                                compaction_id: compaction_id.clone(),
+                                mode,
+                                source_head: repository.store.history().head().cloned(),
+                                source_digest: repository.store.history().digest(),
+                                started_at_ms: crate::model::message::now_millis(),
+                            },
+                        }],
+                        enqueue_commands: vec![],
+                    })?;
+                    repository.active = Some(DashActiveExecutionState {
+                        turn_id: AgentTurnId::new(request.command_id.0.clone()),
+                        request: request.clone(),
+                        lease: Some(worker_lease),
+                    });
+                    true
+                } else {
+                    false
+                };
                 let receipt = DashCommandReceipt {
                     command_id: request.command_id.clone(),
                     effect_id: request.effect_id.clone(),
                     state: DashReceiptState::Accepted,
-                    history_revision: history.state()?.entry_count,
+                    history_revision: repository.store.history().state()?.entry_count,
                 };
                 repository.effects.insert(
                     request.effect_id.clone(),
                     DashEffectRecord {
                         request: request.clone(),
-                        receipt,
+                        receipt: receipt.clone(),
                         retryable: false,
                     },
                 );
-                Ok(())
+                Ok((receipt, promoted))
             })
             .await?;
+        if !promoted {
+            if background {
+                return Ok(accepted);
+            }
+            self.wait_for_effect_terminal(&request.effect_id).await?;
+            return self
+                .repository
+                .load()
+                .await?
+                .effects
+                .get(&request.effect_id)
+                .map(|record| record.receipt.clone())
+                .ok_or_else(|| DashServiceError::Internal {
+                    message: "queued Dash compaction lost its effect record".into(),
+                });
+        }
+        if background {
+            self.spawn_compaction_execution(request, compaction_id, mode, effect_prefix);
+            return Ok(accepted);
+        }
+        self.advance_compaction_execution(request, compaction_id, mode, effect_prefix)
+            .await
+    }
+
+    fn spawn_compaction_execution(
+        &self,
+        request: DashCommandRequest,
+        compaction_id: CompactionId,
+        mode: CompactionMode,
+        effect_prefix: String,
+    ) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            let execution_service = service.clone();
+            let execution = tokio::spawn(async move {
+                execution_service
+                    .advance_compaction_execution(request, compaction_id, mode, effect_prefix)
+                    .await
+            })
+            .await;
+            if !matches!(execution, Ok(Ok(_))) {
+                let _ = service.expire_compaction_lease().await;
+                let _ = service.recover_pending_execution().await;
+            }
+        });
+    }
+
+    async fn renew_compaction_lease(&self, effect_id: &EffectId) -> Result<(), DashServiceError> {
+        let owner_id = self.worker_owner_id.to_string();
+        let expires_at_ms =
+            crate::model::message::now_millis().saturating_add(DASH_WORKER_LEASE_MS);
+        self.update_repository(|repository| {
+            let active = repository
+                .active
+                .as_mut()
+                .ok_or_else(|| DashServiceError::Lost {
+                    message: "Dash compaction lease lost its active execution".into(),
+                })?;
+            if active.request.effect_id != *effect_id
+                || active
+                    .lease
+                    .as_ref()
+                    .is_none_or(|lease| lease.owner_id != owner_id)
+            {
+                return Err(DashServiceError::Lost {
+                    message: "Dash compaction lease ownership changed".into(),
+                });
+            }
+            active.lease = Some(DashWorkerLease {
+                owner_id,
+                expires_at_ms,
+            });
+            Ok(())
+        })
+        .await
+        .map(|_| ())
+    }
+
+    async fn expire_compaction_lease(&self) -> Result<(), DashServiceError> {
+        let owner_id = self.worker_owner_id.to_string();
+        self.update_repository(|repository| {
+            if let Some(active) = repository.active.as_mut()
+                && active
+                    .lease
+                    .as_ref()
+                    .is_some_and(|lease| lease.owner_id == owner_id)
+            {
+                active.lease = Some(DashWorkerLease {
+                    owner_id,
+                    expires_at_ms: 0,
+                });
+            }
+            Ok(())
+        })
+        .await
+        .map(|_| ())
+    }
+
+    async fn advance_compaction_execution(
+        &self,
+        request: DashCommandRequest,
+        compaction_id: CompactionId,
+        mode: CompactionMode,
+        effect_prefix: String,
+    ) -> Result<DashCommandReceipt, DashServiceError> {
+        let lease = DashWorkerLease {
+            owner_id: self.worker_owner_id.to_string(),
+            expires_at_ms: crate::model::message::now_millis().saturating_add(DASH_WORKER_LEASE_MS),
+        };
+        let (_, started) = self
+            .update_repository(|repository| {
+                let is_current = repository.active.as_ref().is_some_and(|active| {
+                    active.request.effect_id == request.effect_id
+                        && active.turn_id.0 == compaction_id.0
+                });
+                if !is_current {
+                    return Ok(false);
+                }
+                let state = repository.store.history().state()?;
+                let compaction = state.compactions.get(&compaction_id).ok_or_else(|| {
+                    DashServiceError::InvalidState {
+                        message: format!(
+                            "active Dash compaction {} has no history state",
+                            compaction_id.0
+                        ),
+                    }
+                })?;
+                if compaction.side_effect_started_at_ms.is_some() {
+                    return Ok(false);
+                }
+                repository.store.mark_compaction_side_effect_started(
+                    compaction_id.clone(),
+                    HistoryEntryId::new(format!("{effect_prefix}:compaction-side-effect-started")),
+                )?;
+                repository
+                    .active
+                    .as_mut()
+                    .expect("current compaction execution exists")
+                    .lease = Some(lease);
+                Ok(true)
+            })
+            .await?;
+        if !started {
+            return self
+                .repository
+                .load()
+                .await?
+                .effects
+                .get(&request.effect_id)
+                .map(|record| record.receipt.clone())
+                .ok_or_else(|| DashServiceError::Internal {
+                    message: "Dash compaction worker lost its effect record".into(),
+                });
+        }
         let compactor = self.execution_dependencies().await.compactor;
         let result = match self
             .materialize_compaction_request(compaction_id.clone(), mode)
             .await
         {
-            Ok(compaction_request) => compactor.compact(compaction_request).await,
+            Ok(compaction_request) => {
+                let compact = compactor.compact(compaction_request);
+                tokio::pin!(compact);
+                loop {
+                    tokio::select! {
+                        result = &mut compact => break result,
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(
+                            DASH_WORKER_HEARTBEAT_MS,
+                        )) => {
+                            self.renew_compaction_lease(&request.effect_id).await?;
+                        }
+                    }
+                }
+            }
             Err(error) => Err(error),
         };
         let (_, receipt) = self
@@ -1888,9 +2388,7 @@ impl DashAgentService {
                     Ok(result) => {
                         repository.store.complete_compaction(
                             request.command_id.clone(),
-                            request.effect_id.clone(),
                             compaction_id,
-                            result.revision,
                             result.summary,
                             result.retained_from,
                             HistoryEntryId::new(format!("{effect_prefix}:compaction-applied")),
@@ -1903,7 +2401,6 @@ impl DashAgentService {
                         let lost = matches!(error, DashServiceError::Lost { .. });
                         repository.store.fail_compaction(
                             request.command_id.clone(),
-                            request.effect_id.clone(),
                             compaction_id,
                             HistoryEntryId::new(format!("{effect_prefix}:compaction-failed")),
                             error.to_string(),
@@ -1919,9 +2416,21 @@ impl DashAgentService {
                         )
                     }
                 };
-                terminalize_repository_effect(repository, &request.effect_id, terminal, retryable)
+                repository.active = None;
+                let receipt = terminalize_repository_effect(
+                    repository,
+                    &request.effect_id,
+                    terminal,
+                    retryable,
+                )?;
+                terminalize_dependent_effects(repository)?;
+                Ok(receipt)
             })
             .await?;
+        self.clear_active(&AgentTurnId::new(request.command_id.0.clone()))
+            .await;
+        self.effect_updates.notify_waiters();
+        self.promote_queued_execution().await?;
         Ok(receipt)
     }
 
@@ -1963,10 +2472,6 @@ impl DashAgentService {
                         command_id: active.request.command_id.clone(),
                         outcome: CommandOutcome::Succeeded,
                     }),
-                    effect_settlements: vec![EffectSettlement {
-                        effect_id: active.request.effect_id.clone(),
-                        outcome: EffectOutcome::Applied,
-                    }],
                     history: vec![
                         HistoryContribution {
                             entry_id: HistoryEntryId::new(format!(
@@ -2042,7 +2547,6 @@ impl DashAgentService {
                 repository.store.commit(DashAgentCommit {
                     expected_head: repository.store.history().head().cloned(),
                     command_settlement: None,
-                    effect_settlements: vec![],
                     history: vec![HistoryContribution {
                         entry_id: HistoryEntryId::new(format!("{}:closed", request.effect_id.0)),
                         payload: HistoryPayload::Closed,
@@ -2127,35 +2631,11 @@ impl DashAgentService {
         &self,
     ) -> Result<(String, Vec<DashToolDefinition>), DashServiceError> {
         let repository = self.repository.load().await?;
-        let state = repository.store.history().state()?;
-        let mut applied_compactions = BTreeMap::new();
-        let mut latest_frame = None;
-        for entry in repository.store.history().entries() {
-            match &entry.payload {
-                HistoryPayload::CompactionApplied {
-                    compaction_id,
-                    context_frame,
-                    ..
-                } => {
-                    applied_compactions.insert(compaction_id.clone(), context_frame.clone());
-                }
-                HistoryPayload::CompactionCompleted { compaction_id, .. } => {
-                    latest_frame = applied_compactions.get(compaction_id).cloned();
-                }
-                _ => {}
-            }
-        }
-        let system_prompt = render_accepted_context(
-            state.surface.as_ref(),
-            state.initial_context.as_ref(),
-            latest_frame.as_ref(),
-            &accepted_surface_append_frames(repository.store.history().entries()),
-        );
-        let tools = state
-            .surface
-            .map(|surface| surface.tools)
-            .unwrap_or_default();
-        Ok((system_prompt, tools))
+        let materialized = materialize_session_context(&repository, None, false)?;
+        Ok((
+            materialized.context.system_prompt,
+            materialized.context.tools,
+        ))
     }
 
     async fn finish_failed_turn(
@@ -2180,14 +2660,6 @@ impl DashAgentService {
                             CommandOutcome::Failed
                         },
                     }),
-                    effect_settlements: vec![EffectSettlement {
-                        effect_id: request.effect_id.clone(),
-                        outcome: if lost {
-                            EffectOutcome::Lost
-                        } else {
-                            EffectOutcome::Failed
-                        },
-                    }],
                     history: vec![HistoryContribution {
                         entry_id: HistoryEntryId::new(format!(
                             "{}:turn-terminal",
@@ -2242,6 +2714,218 @@ impl DashAgentService {
                 message: "active Dash execution requires worker recovery after restart".into(),
             })?;
         Ok(cancellation.clone())
+    }
+
+    async fn promote_queued_execution(&self) -> Result<(), DashServiceError> {
+        let worker_lease = DashWorkerLease {
+            owner_id: self.worker_owner_id.to_string(),
+            expires_at_ms: crate::model::message::now_millis().saturating_add(DASH_WORKER_LEASE_MS),
+        };
+        let (_, promoted) = self
+            .update_repository(|repository| {
+                if repository.active.is_some() {
+                    return Ok(None);
+                }
+                let Some(command) = repository.store.claim_next_command()? else {
+                    return Ok(None);
+                };
+                let record = repository
+                    .effects
+                    .values()
+                    .find(|record| record.request.command_id == command.command_id)
+                    .cloned()
+                    .ok_or_else(|| DashServiceError::InvalidState {
+                        message: format!(
+                            "queued Dash command {} has no service effect",
+                            command.command_id.0
+                        ),
+                    })?;
+                let request = record.request;
+                let effect_prefix = request.effect_id.0.clone();
+                let promoted = match command.kind {
+                    DashCommandKind::SubmitInput { content, .. } => {
+                        let turn_id = AgentTurnId::new(format!("turn:{}", request.command_id.0));
+                        repository.store.commit(DashAgentCommit {
+                            expected_head: repository.store.history().head().cloned(),
+                            command_settlement: None,
+                            history: vec![
+                                HistoryContribution {
+                                    entry_id: HistoryEntryId::new(format!("{effect_prefix}:input")),
+                                    payload: HistoryPayload::InputAccepted {
+                                        input_id: request.command_id.0.clone(),
+                                        content: content.clone(),
+                                    },
+                                },
+                                HistoryContribution {
+                                    entry_id: HistoryEntryId::new(format!(
+                                        "{effect_prefix}:turn-started"
+                                    )),
+                                    payload: HistoryPayload::TurnStarted {
+                                        turn_id: turn_id.clone(),
+                                        started_at_ms: crate::model::message::now_millis(),
+                                    },
+                                },
+                            ],
+                            enqueue_commands: vec![],
+                        })?;
+                        repository.active = Some(DashActiveExecutionState {
+                            turn_id: turn_id.clone(),
+                            request: request.clone(),
+                            lease: None,
+                        });
+                        DashPromotedExecution::Submit {
+                            request,
+                            content,
+                            turn_id,
+                            effect_prefix,
+                        }
+                    }
+                    DashCommandKind::RequestCompaction {
+                        compaction_id,
+                        mode,
+                    } => {
+                        repository.store.commit(DashAgentCommit {
+                            expected_head: repository.store.history().head().cloned(),
+                            command_settlement: None,
+                            history: vec![HistoryContribution {
+                                entry_id: HistoryEntryId::new(format!(
+                                    "{effect_prefix}:compaction-started"
+                                )),
+                                payload: HistoryPayload::CompactionStarted {
+                                    compaction_id: compaction_id.clone(),
+                                    mode,
+                                    source_head: repository.store.history().head().cloned(),
+                                    source_digest: repository.store.history().digest(),
+                                    started_at_ms: crate::model::message::now_millis(),
+                                },
+                            }],
+                            enqueue_commands: vec![],
+                        })?;
+                        repository.active = Some(DashActiveExecutionState {
+                            turn_id: AgentTurnId::new(request.command_id.0.clone()),
+                            request: request.clone(),
+                            lease: Some(worker_lease),
+                        });
+                        DashPromotedExecution::Compaction {
+                            request,
+                            compaction_id,
+                            mode,
+                            effect_prefix,
+                        }
+                    }
+                    DashCommandKind::ContinueAfterCompaction { .. } | DashCommandKind::Close => {
+                        return Err(DashServiceError::InvalidState {
+                            message: format!(
+                                "queued Dash command {} requires its owning workflow",
+                                command.command_id.0
+                            ),
+                        });
+                    }
+                };
+                let revision = repository.store.history().state()?.entry_count;
+                repository
+                    .effects
+                    .get_mut(&record.receipt.effect_id)
+                    .expect("promoted effect record exists")
+                    .receipt
+                    .history_revision = revision;
+                Ok(Some(promoted))
+            })
+            .await?;
+        match promoted {
+            Some(DashPromotedExecution::Submit {
+                request,
+                content,
+                turn_id,
+                effect_prefix,
+            }) => {
+                let revision = self
+                    .repository
+                    .load()
+                    .await?
+                    .store
+                    .history()
+                    .state()?
+                    .entry_count;
+                let mut steering = self.steering.lock().await;
+                steering.active_turn = Some(turn_id.clone());
+                steering.after_sequence = revision;
+                drop(steering);
+                let cancellation = DashCancellation::new();
+                *self.cancellation.lock().await = Some((turn_id.clone(), cancellation.clone()));
+                self.spawn_submit_execution(request, content, turn_id, effect_prefix, cancellation);
+            }
+            Some(DashPromotedExecution::Compaction {
+                request,
+                compaction_id,
+                mode,
+                effect_prefix,
+            }) => {
+                self.spawn_compaction_execution(request, compaction_id, mode, effect_prefix);
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
+    fn spawn_submit_execution(
+        &self,
+        request: DashCommandRequest,
+        content: String,
+        turn_id: AgentTurnId,
+        effect_prefix: String,
+        cancellation: DashCancellation,
+    ) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            let accepted = match service.repository.load().await {
+                Ok(repository) => repository
+                    .effects
+                    .get(&request.effect_id)
+                    .map(|record| record.receipt.clone()),
+                Err(_) => None,
+            };
+            let Some(accepted) = accepted else {
+                return;
+            };
+            let execution = service
+                .advance_submit_execution(
+                    request.clone(),
+                    content,
+                    turn_id.clone(),
+                    effect_prefix,
+                    cancellation,
+                    accepted,
+                )
+                .await;
+            if let Err(error) = execution {
+                let already_terminal = service
+                    .inspect(&request.effect_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some_and(|inspection| {
+                        matches!(inspection.state, DashReceiptState::Terminal(_))
+                    });
+                if !already_terminal {
+                    let _ = service
+                        .finish_failed_turn(
+                            &request,
+                            &turn_id,
+                            DashTerminalOutcome::Failed,
+                            Some(super::DashExecutionFailure {
+                                code: "background_execution_failed".to_owned(),
+                                message: error.to_string(),
+                                retryable: error.retryable(),
+                            }),
+                        )
+                        .await;
+                    let _ = service.promote_queued_execution().await;
+                }
+                service.clear_active(&turn_id).await;
+                service.effect_updates.notify_waiters();
+            }
+        });
     }
 
     async fn clear_active(&self, turn_id: &AgentTurnId) {
@@ -2434,12 +3118,12 @@ impl DashProviderRoundMaterializer for DashAgentService {
     }
 }
 
-fn render_accepted_context(
+fn materialize_accepted_context_frames(
     surface: Option<&DashSurface>,
     initial_context: Option<&InitialContextInstallation>,
     compaction_frame: Option<&agentdash_agent_protocol::ContextFrame>,
     surface_append_frames: &[agentdash_agent_protocol::ContextFrame],
-) -> String {
+) -> Vec<agentdash_agent_protocol::ContextFrame> {
     let mut frames = Vec::new();
     if let Some(surface) = surface {
         frames.extend(
@@ -2489,12 +3173,7 @@ fn render_accepted_context(
                 right.0.id.as_str(),
             ))
     });
-    frames
-        .into_iter()
-        .map(|(frame, _)| frame.rendered_text)
-        .filter(|text| !text.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    frames.into_iter().map(|(frame, _)| frame).collect()
 }
 
 fn accepted_surface_append_frames(
@@ -2527,6 +3206,40 @@ fn accepted_surface_append_frames(
 struct MaterializedSessionContext {
     context: DashCoreContext,
     message_entry_ids: Vec<HistoryEntryId>,
+    frames: Vec<agentdash_agent_protocol::ContextFrame>,
+    context_revision: Option<ContextRevision>,
+}
+
+fn context_recipe_from_repository(
+    repository: &DashAgentRepositoryState,
+) -> Result<DashContextRecipe, DashServiceError> {
+    let materialized = materialize_session_context(repository, None, false)?;
+    let snapshot_revision = repository.store.history().state()?.entry_count;
+    let messages = materialized
+        .context
+        .history
+        .into_iter()
+        .zip(materialized.message_entry_ids)
+        .map(|(message, source_entry_id)| DashContextRecipeMessage {
+            source_entry_id,
+            message,
+        })
+        .collect::<Vec<_>>();
+    let encoded = serde_json::to_vec(&(
+        &materialized.frames,
+        &messages,
+        &materialized.context_revision,
+    ))
+    .map_err(|error| DashServiceError::Internal {
+        message: format!("encode Dash context recipe: {error}"),
+    })?;
+    Ok(DashContextRecipe {
+        snapshot_revision,
+        context_revision: materialized.context_revision,
+        frames: materialized.frames,
+        messages,
+        digest: format!("sha256:{:x}", Sha256::digest(encoded)),
+    })
 }
 
 fn materialize_session_context(
@@ -2544,34 +3257,40 @@ fn materialize_session_context(
         match &entry.payload {
             HistoryPayload::CompactionApplied {
                 compaction_id,
-                context_frame,
+                context_revision,
+                summary_frame,
                 retained_from,
-                ..
             } => {
                 applied_compactions.insert(
                     compaction_id.clone(),
-                    (context_frame.clone(), retained_from.clone()),
+                    (
+                        context_revision.clone(),
+                        summary_frame.as_ref().clone(),
+                        retained_from.clone(),
+                    ),
                 );
             }
             HistoryPayload::CompactionCompleted { compaction_id, .. } => {
-                if let Some((context_frame, retained_from)) =
+                if let Some((revision, context_frame, retained_from)) =
                     applied_compactions.get(compaction_id).cloned()
                 {
-                    latest_compaction = Some((index, context_frame, retained_from));
+                    latest_compaction = Some((index, revision, context_frame, retained_from));
                 }
             }
             _ => {}
         }
     }
-    let (compaction_frame, history_start) = latest_compaction
-        .map(|(completed_index, context_frame, retained_from)| {
-            let start = retained_from
-                .as_ref()
-                .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
-                .unwrap_or(completed_index.saturating_add(1));
-            (Some(context_frame), start)
-        })
-        .unwrap_or((None, 0));
+    let (context_revision, compaction_frame, history_start) = latest_compaction
+        .map(
+            |(completed_index, revision, context_frame, retained_from)| {
+                let start = retained_from
+                    .as_ref()
+                    .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
+                    .unwrap_or(completed_index.saturating_add(1));
+                (Some(revision), Some(context_frame), start)
+            },
+        )
+        .unwrap_or((None, None, 0));
     let mut history = Vec::new();
     let mut message_entry_ids = Vec::new();
     let mut pending_tool_calls = Vec::new();
@@ -2639,7 +3358,7 @@ fn materialize_session_context(
                     &mut message_entry_ids,
                     &mut pending_tool_calls,
                 );
-                if let Some((call_id, call_entry_id)) = tool_call_ids.get(item_id) {
+                if let Some((call_id, _)) = tool_call_ids.get(item_id) {
                     history.push(DashMessage {
                         role: DashMessageRole::Tool,
                         content: content
@@ -2651,7 +3370,7 @@ fn materialize_session_context(
                         tool_calls: Vec::new(),
                         is_error: *is_error,
                     });
-                    message_entry_ids.push(call_entry_id.clone());
+                    message_entry_ids.push(entry.entry_id.clone());
                 }
             }
             _ => {}
@@ -2666,12 +3385,18 @@ fn materialize_session_context(
         history.pop();
         message_entry_ids.pop();
     }
-    let system_prompt = render_accepted_context(
+    let frames = materialize_accepted_context_frames(
         surface.as_ref(),
         initial_context.as_ref(),
         compaction_frame.as_ref(),
         &accepted_surface_append_frames(entries),
     );
+    let system_prompt = frames
+        .iter()
+        .map(|frame| frame.rendered_text.as_str())
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
     Ok(MaterializedSessionContext {
         context: DashCoreContext {
             system_prompt,
@@ -2679,6 +3404,8 @@ fn materialize_session_context(
             tools: surface.map(|surface| surface.tools).unwrap_or_default(),
         },
         message_entry_ids,
+        frames,
+        context_revision,
     })
 }
 
@@ -2725,6 +3452,36 @@ fn terminalize_repository_effect(
     record.receipt.history_revision = revision;
     record.retryable = retryable;
     Ok(record.receipt.clone())
+}
+
+fn terminalize_dependent_effects(
+    repository: &mut DashAgentRepositoryState,
+) -> Result<(), DashServiceError> {
+    let terminal = repository
+        .effects
+        .iter()
+        .filter_map(|(effect_id, record)| {
+            if matches!(record.receipt.state, DashReceiptState::Terminal(_)) {
+                return None;
+            }
+            match repository.store.command_status(&record.request.command_id) {
+                Some(CommandStatus::Failed) => {
+                    Some((effect_id.clone(), DashTerminalOutcome::Failed))
+                }
+                Some(CommandStatus::Lost | CommandStatus::Blocked) => {
+                    Some((effect_id.clone(), DashTerminalOutcome::Lost))
+                }
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
+    if terminal.is_empty() {
+        return Ok(());
+    }
+    for (effect_id, outcome) in terminal {
+        terminalize_repository_effect(repository, &effect_id, outcome, false)?;
+    }
+    Ok(())
 }
 
 fn terminal_receipt(

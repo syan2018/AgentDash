@@ -14,15 +14,15 @@ use uuid::Uuid;
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::rpc::ApiError;
-use agentdash_application::extension_runtime::extension_runtime_projection_from_installations;
-use agentdash_application::workspace_module::{
-    WorkspaceModulePresentationError, build_workspace_module_presentation, build_workspace_modules,
-};
 use agentdash_application_operation_gateway::UserWorkshopOperationHost;
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
 };
-use agentdash_domain::interaction::{InteractionDefinitionStatus, InteractionOwner};
+use agentdash_platform_spi::WorkspaceModuleDimension;
+use agentdash_workspace_module::product::{
+    WorkspaceModuleActor, WorkspaceModulePresentationError, WorkspaceModulePresentationRequest,
+    WorkspaceModuleProviderContext, build_workspace_module_presentation,
+};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Deserialize)]
@@ -44,7 +44,7 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
 
 /// GET `/api/projects/:project_id/workspace-modules`
 ///
-/// 合并列出 enabled extension + visible canvas 贡献的 WorkspaceModule。
+/// 通过统一 provider registry 列出当前用户可见的 Workspace Module。
 pub async fn get_project_workspace_modules(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -66,8 +66,7 @@ pub async fn get_project_workspace_modules(
 
 /// POST `/api/projects/:project_id/workspace-modules/present`
 ///
-/// 用户主动打开 workspace module UI，只返回 canonical presentation。运行时能力变更由
-/// Agent turn 内的 `workspace_module_present` 工具路径负责。
+/// 用户主动打开 Workspace Module UI，只返回 provider 准备后的 canonical presentation。
 pub async fn present_workspace_module(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -91,20 +90,40 @@ pub async fn present_workspace_module(
             "module_id 与 view_key 不能为空".to_string(),
         ));
     }
-    let modules = load_project_workspace_modules(state.as_ref(), &current_user, project_id).await?;
+    let (modules, provider_context) =
+        load_project_workspace_module_surface(state.as_ref(), &current_user, project_id).await?;
     let module = modules
         .iter()
         .find(|module| module.summary.module_id == module_id)
         .ok_or_else(|| ApiError::NotFound(format!("workspace module not found: {module_id}")))?;
-    let presentation = build_workspace_module_presentation(module, view_key, request.payload, None)
-        .map_err(|error| match error {
-            WorkspaceModulePresentationError::ViewNotFound { .. } => {
-                ApiError::NotFound(error.to_string())
-            }
-            WorkspaceModulePresentationError::MissingPresentationUri { .. } => {
-                ApiError::BadRequest(error.to_string())
-            }
-        })?;
+    let preparation = state
+        .services
+        .workspace_module_providers
+        .prepare_presentation(WorkspaceModulePresentationRequest {
+            context: &provider_context,
+            module,
+            view_key,
+            payload: request.payload.clone(),
+        })
+        .await
+        .map_err(product_tool_outcome_to_api)?;
+    let mut presentation = build_workspace_module_presentation(
+        module,
+        view_key,
+        request.payload,
+        preparation.diagnostics,
+    )
+    .map_err(|error| match error {
+        WorkspaceModulePresentationError::ViewNotFound { .. } => {
+            ApiError::NotFound(error.to_string())
+        }
+        WorkspaceModulePresentationError::MissingPresentationUri { .. } => {
+            ApiError::BadRequest(error.to_string())
+        }
+    })?;
+    if let Some(uri) = preparation.presentation_uri {
+        presentation.presentation_uri = uri;
+    }
 
     Ok(Json(presentation))
 }
@@ -114,37 +133,22 @@ pub(crate) async fn load_project_workspace_modules(
     current_user: &agentdash_platform_spi::AuthIdentity,
     project_id: Uuid,
 ) -> Result<Vec<WorkspaceModuleDescriptor>, ApiError> {
-    let installations = state
-        .repos
-        .project_extension_installation_repo
-        .list_enabled_by_project(project_id)
+    load_project_workspace_module_surface(state, current_user, project_id)
         .await
-        .map_err(ApiError::from)?;
-    let projection = extension_runtime_projection_from_installations(installations)?;
-    let definitions = state
-        .repos
-        .interaction_definition_repo
-        .list_canvas_by_project(project_id)
-        .await?;
-    let mut revisions = Vec::new();
-    for definition in definitions {
-        let owner_visible = match &definition.owner {
-            InteractionOwner::Project(owner) => *owner == project_id,
-            InteractionOwner::User(owner) => owner == &current_user.user_id,
-        };
-        if definition.status != InteractionDefinitionStatus::Active || !owner_visible {
-            continue;
-        }
-        let revision = state
-            .repos
-            .interaction_definition_repo
-            .get_revision(definition.current_revision_id)
-            .await?
-            .ok_or_else(|| {
-                ApiError::Internal("InteractionDefinition current revision 缺失".to_string())
-            })?;
-        revisions.push(revision);
-    }
+        .map(|(modules, _)| modules)
+}
+
+async fn load_project_workspace_module_surface(
+    state: &AppState,
+    current_user: &agentdash_platform_spi::AuthIdentity,
+    project_id: Uuid,
+) -> Result<
+    (
+        Vec<WorkspaceModuleDescriptor>,
+        WorkspaceModuleProviderContext,
+    ),
+    ApiError,
+> {
     let host = UserWorkshopOperationHost::project(
         state.services.operation_gateway.clone(),
         current_user.clone(),
@@ -161,9 +165,38 @@ pub(crate) async fn load_project_workspace_modules(
         .into_iter()
         .cloned()
         .collect::<Vec<_>>();
-    Ok(build_workspace_modules(
-        &projection,
-        &revisions,
-        &operations,
-    ))
+    let context = WorkspaceModuleProviderContext {
+        project_id,
+        actor: WorkspaceModuleActor::User {
+            user_id: current_user.user_id.clone(),
+        },
+        invocation_id: Uuid::new_v4().to_string(),
+        visibility: WorkspaceModuleDimension::all(),
+        operations,
+    };
+    let modules = state
+        .services
+        .workspace_module_providers
+        .modules(&context)
+        .await
+        .map_err(product_tool_outcome_to_api)?;
+    Ok((modules, context))
+}
+
+fn product_tool_outcome_to_api(
+    outcome: agentdash_application_ports::product_runtime_tool::ProductRuntimeToolOutcome,
+) -> ApiError {
+    match outcome {
+        agentdash_application_ports::product_runtime_tool::ProductRuntimeToolOutcome::Rejected {
+            message,
+            ..
+        } => ApiError::BadRequest(message),
+        agentdash_application_ports::product_runtime_tool::ProductRuntimeToolOutcome::Failed {
+            message,
+            ..
+        } => ApiError::Internal(message),
+        agentdash_application_ports::product_runtime_tool::ProductRuntimeToolOutcome::Completed {
+            ..
+        } => ApiError::Internal("Workspace Module provider 返回了无效 outcome".into()),
+    }
 }

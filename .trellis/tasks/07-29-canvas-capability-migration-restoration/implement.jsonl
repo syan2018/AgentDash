@@ -1,0 +1,16 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "约束 application/domain/infrastructure 边界与依赖方向。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "恢复 Workspace Module 深模块与 Canvas 文件职责时遵循当前目录约定。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "跨层实现的错误、测试与质量要求。"}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "canvas-system embedded Skill、catalog 与 lifecycle 注入合同。"}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Canvas/Workspace Module/VFS/Operation capability 单源投影。"}
+{"file": ".trellis/spec/backend/capability/capability-dimension-pipeline.md", "reason": "AgentRun capability surface 与 attachment 权限投影。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "Canvas create/attach 写入 AgentFrame 后的 Product runtime context 与 surface 边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "immutable AgentFrame revision、applied surface CAS 与收敛持久化要求。"}
+{"file": ".trellis/spec/backend/interaction/architecture.md", "reason": "Interaction definition、instance、attachment、state 与 presentation 事实边界。"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "Canvas SourceBundle mount/provider 与 mutation 语义。"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "用户态、AgentRun 与 attachment 权限收束。"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Canvas host SDK、iframe runtime 与前端 feature 边界。"}
+{"file": ".trellis/tasks/07-29-canvas-capability-migration-restoration/research/legacy-capability-baseline.md", "reason": "旧 Canvas 完整能力和禁止遗漏的行为基线。"}
+{"file": ".trellis/tasks/07-29-canvas-capability-migration-restoration/research/current-architecture-seams.md", "reason": "Interaction、Operation、VFS、mailbox 的现有接缝和迁移结论。"}
+{"file": ".trellis/tasks/07-29-canvas-capability-migration-restoration/research/transplant-ledger.md", "reason": "逐文件回迁、合并、仅参考与禁止恢复的实施台账。"}
+{"file": ".trellis/tasks/07-29-canvas-capability-migration-restoration/research/legacy-tool-behavior-matrix.md", "reason": "逐工具固定 Agent-facing 合同、底层映射与 AgentFrame 副作用。"}

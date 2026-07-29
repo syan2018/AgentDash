@@ -146,7 +146,7 @@ impl InteractionAgentProjection {
                     .pointer(path)
                     .cloned()
                     .map(|value| (path.clone(), value))
-                    .ok_or_else(|| InteractionError::InvalidField {
+                    .ok_or(InteractionError::InvalidField {
                         field: "agent_projection.allowed_state_paths",
                         reason: "JSON Pointer 在 current state 中不存在",
                     })
@@ -267,6 +267,11 @@ pub struct InteractionDefinitionRevision {
     pub kind: InteractionDefinitionKind,
     pub definition_format_version: u16,
     pub interaction_contract_version: u16,
+    /// Stable authoring/VFS identity for this Canvas definition.
+    ///
+    /// The identity survives immutable source revisions and is distinct from
+    /// the definition/revision UUIDs used by persistence and runtime pinning.
+    pub authoring_mount_id: String,
     pub title: String,
     pub description: String,
     pub source_bundle: SourceBundle,
@@ -307,6 +312,7 @@ impl InteractionDefinitionRevision {
             kind: InteractionDefinitionKind::Canvas,
             definition_format_version: DEFINITION_FORMAT_V1,
             interaction_contract_version: INTERACTION_CONTRACT_V1,
+            authoring_mount_id: canvas_authoring_mount_id(definition_id),
             title: title.into(),
             description: description.into(),
             source_bundle,
@@ -345,6 +351,7 @@ impl InteractionDefinitionRevision {
         }
         self.owner.validate()?;
         validate_project_owner(self.project_id, &self.owner)?;
+        normalize_canvas_authoring_mount_id(&self.authoring_mount_id)?;
         require_non_empty("definition_revision.title", &self.title)?;
         require_non_empty("definition_revision.created_by", &self.created_by)?;
         self.source_bundle.verify_digest()?;
@@ -536,6 +543,27 @@ impl InteractionDefinitionRevision {
             actor_policy: definition.actor_policy,
         })
     }
+}
+
+pub fn canvas_authoring_mount_id(definition_id: Uuid) -> String {
+    format!("cvs-{definition_id}")
+}
+
+pub fn normalize_canvas_authoring_mount_id(raw: &str) -> InteractionResult<String> {
+    let value = raw.trim();
+    if !value.starts_with("cvs-")
+        || value.len() <= "cvs-".len()
+        || value["cvs-".len()..].starts_with("cvs-")
+        || value
+            .chars()
+            .any(|ch| ch.is_whitespace() || matches!(ch, '/' | '\\' | ':'))
+    {
+        return Err(InteractionError::InvalidField {
+            field: "definition_revision.authoring_mount_id",
+            reason: "必须是带 `cvs-` 前缀且不含空白或路径分隔符的稳定标识",
+        });
+    }
+    Ok(value.to_owned())
 }
 
 impl InteractionDefinition {

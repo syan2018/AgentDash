@@ -1,0 +1,15 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查模块边界、依赖方向和事实源归属。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "执行 Rust/frontend/contract/migration 质量门槛。"}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "检查 canvas-system 资产、catalog、lifecycle 与实际能力一致。"}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "检查 Workspace Module、Operation、VFS 没有重复 catalog 或旁路执行。"}
+{"file": ".trellis/spec/backend/capability/capability-dimension-pipeline.md", "reason": "检查用户、AgentRun 与 attachment capability authority。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "检查 create/attach 后 AgentFrame 与 Product runtime surface 生效链。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "检查 Frame revision、applied surface CAS、幂等与重放。"}
+{"file": ".trellis/spec/backend/interaction/architecture.md", "reason": "检查 Interaction source/state/presentation/attachment 事实归属。"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "检查 SourceBundle VFS mutation 与 CAS 行为。"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "检查用户、Agent 与 attachment 权限没有冒充或旁路。"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "检查 Canvas runtime、MessageChannel、生成合同与 UI 边界。"}
+{"file": ".trellis/tasks/07-29-canvas-capability-migration-restoration/research/legacy-capability-baseline.md", "reason": "逐项执行 Canvas capability parity review。"}
+{"file": ".trellis/tasks/07-29-canvas-capability-migration-restoration/research/current-architecture-seams.md", "reason": "检查实现确实复用当前 Interaction/Operation seam。"}
+{"file": ".trellis/tasks/07-29-canvas-capability-migration-restoration/research/transplant-ledger.md", "reason": "检查 reference 文件职责与测试场景没有漏迁。"}
+{"file": ".trellis/tasks/07-29-canvas-capability-migration-restoration/research/legacy-tool-behavior-matrix.md", "reason": "逐工具检查名称、参数、结果、错误、权限和 AgentFrame 副作用与旧版一致。"}

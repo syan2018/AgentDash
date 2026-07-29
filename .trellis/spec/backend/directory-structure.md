@@ -17,6 +17,7 @@ crates/
 ├── agentdash-application-workflow/ # Application Layer — Workflow catalog/compiler/orchestration runtime
 ├── agentdash-application-hooks/ # Application Layer — Hook policy provider 与 script surface
 ├── agentdash-application-shared-library/ # Application Layer — Shared Library seed/install/publish use cases
+├── agentdash-workspace-module/ # Workspace Module provider registry、工具与系统内嵌 providers
 ├── agentdash-domain/            # Domain Layer — 实体、值对象、Repository 接口
 ├── agentdash-infrastructure/    # Infrastructure Layer — PostgreSQL/SQLite 持久化
 ├── agentdash-executor/          # Infrastructure Layer — 连接器、LLM Bridge
@@ -60,8 +61,8 @@ agentdash-agent-runtime-contract ← agentdash-agent-runtime-test-support
 | 分层 | Crate | 职责 | 允许依赖 |
 |------|-------|------|----------|
 | **Interface** | `agentdash-api` | HTTP 路由、DTO、中间件、错误映射 | application, domain |
-| **Application** | `agentdash-application` | 用例编排、actor projection 与 composition adapters：Workspace Module、session / context / task / story / repository set wiring | domain, contracts, spi, split application crates |
-| **Application Split Crates** | `agentdash-application-workflow`, `agentdash-application-hooks`, `agentdash-application-shared-library` | 大型 application use case 边界：workflow 编排、hook policy、Shared Library seed/install/publish | domain, spi, application-ports；只在用例所有权明确时依赖 sibling application crate |
+| **Application** | `agentdash-application` | 用例编排、actor projection 与 composition adapters：session / context / task / story / repository set wiring | domain, contracts, spi, split application crates |
+| **Application Split Crates** | `agentdash-application-workflow`, `agentdash-application-hooks`, `agentdash-application-shared-library`, `agentdash-workspace-module` | 大型业务边界：workflow 编排、hook policy、Shared Library seed/install/publish、Workspace Module provider/tool routing | domain, spi, application-ports；只在用例所有权明确时依赖 sibling application crate |
 | **Application Ports** | `agentdash-application-ports` | application 边界 port、transport trait、轻量 DTO/error | domain, relay, agent-protocol |
 | **Domain** | `agentdash-domain` | 实体、值对象、Repository 接口、领域事件 | 无外部业务库 |
 | **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor` | 持久化实现、连接器、WebSocket 中继 | domain |
@@ -91,14 +92,20 @@ agentdash-agent-runtime-contract ← agentdash-agent-runtime-test-support
 
 大型 application facade 拆 owner 时，owner 文件放在 facade 同级的业务子目录，并由 `mod.rs` 做 crate-private re-export。`agentdash-application-lifecycle/src/lifecycle/dispatch/` 使用这种布局，原因是 public facade 需要保持用例入口清晰，而 run/orchestration、runtime materialization、subject association、relation/gate 和 reducer bridge 的副作用策略需要各自拥有可 review 的文件边界。
 
-`agentdash-domain::canvas` 承载 Canvas 实体、值对象、repository trait、runtime observation / interaction snapshot contract 与 embedded Canvas skill bundle。这样 infrastructure 只需实现 domain trait。
+`agentdash-domain::interaction` 承载 Canvas authoring definition、immutable SourceBundle、
+Interaction instance/attachment/state/command contract 与 embedded `canvas-system` Skill bundle。
+Canvas 是 Interaction 的 authoring/presentation 产品形态，因此不再建立独立 Canvas aggregate。
 
-Workspace Module 是 `agentdash-application::workspace_module` 中的 actor projection：它根据 domain
-状态、Extension runtime projection 与 canonical Operation catalog 组装 module descriptor 和可信
-presentation。其身份与状态合同归 domain/contracts，执行 authority 归 OperationGateway，因此该
-projection 不形成独立 crate 边界。
+Workspace Module 由独立 `agentdash-workspace-module` 深模块维护：product core 只定义通用
+provider registry、actor/visibility context、descriptor/Operation projection、presentation 路由与
+`list/describe/operate/invoke/present` 工具。系统内嵌 provider 与后续用户提供 provider 使用同一
+接口；module kind 与 ID 由 provider 持有，core 将其视为 opaque identity。
 
-Workspace Module 与运行中 Agent 的协作端口使用AgentRun语义命名。运行坐标通过`AgentRunRuntimeTarget/Binding`解析；projection 不接触Driver source identity。HTTP authorization、route mapping、Postgres adapter与composition仍属于API/application/infrastructure边界。
+Canvas 是该 crate 注册的系统内嵌 provider。Canvas definition/runtime descriptor、
+create/attach/copy、authoring mount、ResourceSlot、renderer observation 与 Interaction
+presentation adapter 都留在 `canvas/` 子模块。这样 Workspace Module core 无需依赖 Canvas
+repository、mount、Interaction instance 或 AgentFrame 语义，同时 Canvas 仍通过统一路由进入
+OperationGateway。
 
 ---
 

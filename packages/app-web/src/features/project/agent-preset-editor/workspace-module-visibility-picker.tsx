@@ -5,12 +5,9 @@ import type { WorkspaceModuleKind } from "../../../generated/workspace-module-co
 import type { CapabilityChip } from "./capability-picker";
 import { CapabilityPicker } from "./capability-picker";
 
-const KIND_LABEL: Record<WorkspaceModuleKind, string> = {
-  extension: "extension",
-  canvas: "canvas",
-  interaction: "interaction",
-  builtin: "builtin",
-};
+function kindLabel(kind: WorkspaceModuleKind): string {
+  return kind;
+}
 
 /**
  * ProjectAgent 可见 Workspace Module 白名单选择器。
@@ -62,7 +59,7 @@ export function WorkspaceModuleVisibilityPicker({
       selectedKeys={selectedRefs}
       itemKey={(m) => m.module_id}
       itemToCardProps={(m) => {
-        const chips: CapabilityChip[] = [{ label: KIND_LABEL[m.kind] }];
+        const chips: CapabilityChip[] = [{ label: kindLabel(m.kind) }];
         if (m.status.kind === "unavailable") {
           chips.push({ label: "unavailable", variant: "warning" });
         }

@@ -1,12 +1,8 @@
 //! Workspace Module 单一 projection 契约。
 //!
-//! 把 enabled extension、visible canvas、built-in module 聚合为同一种 module
-//! descriptor。`list` 返回摘要（无完整 schema），`describe` 返回含 input/output
-//! schema 的完整 descriptor。该契约同时服务 Agent 工具与项目设置页 UI（单一
-//! canonical，不做两套 DTO）。
-//!
-//! 数据流向：application `workspace_module` 聚合层把内部 `ExtensionRuntimeProjection`
-//! 子投影 + `Canvas` 转换为这里的 DTO（内部投影类型不直接 derive serde/TS）。
+//! 所有系统内嵌与用户提供的 provider 都投影为同一种 module descriptor。`list`
+//! 返回摘要（无完整 schema），`describe` 返回含 input/output schema 的完整
+//! descriptor。该契约同时服务 Agent 工具与项目设置页 UI。
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,14 +11,23 @@ use ts_rs::TS;
 
 pub use agentdash_agent_protocol::WorkspaceModulePresentation;
 
-/// Module 的来源类别。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceModuleKind {
-    Extension,
-    Canvas,
-    Interaction,
-    Builtin,
+/// Provider-owned module type identifier.
+///
+/// Core treats this value as opaque so system and user-provided providers can introduce types
+/// without extending a central enum.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(transparent)]
+#[ts(type = "string")]
+pub struct WorkspaceModuleKind(pub String);
+
+impl WorkspaceModuleKind {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Module 的就绪状态。

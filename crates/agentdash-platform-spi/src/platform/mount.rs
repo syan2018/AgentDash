@@ -581,6 +581,14 @@ pub trait MountProvider: Send + Sync {
         MountEditCapabilities::default()
     }
 
+    /// Whether `apply_patch` must be dispatched as one provider-owned atomic mutation.
+    ///
+    /// Providers backed by immutable revisions use this path so a multi-file patch cannot be
+    /// decomposed into independently committed writes.
+    fn prefers_native_apply_patch(&self) -> bool {
+        false
+    }
+
     async fn delete_text(
         &self,
         mount: &Mount,

@@ -15,9 +15,12 @@ export type WorkspaceModuleDescriptor = { summary: WorkspaceModuleSummary, ui_en
 runtime_backing?: string | null, agent_state_projection?: WorkspaceModuleAgentStateProjection, };
 
 /**
- * Module 的来源类别。
+ * Provider-owned module type identifier.
+ *
+ * Core treats this value as opaque so system and user-provided providers can introduce types
+ * without extending a central enum.
  */
-export type WorkspaceModuleKind = "extension" | "canvas" | "interaction" | "builtin";
+export type WorkspaceModuleKind = string;
 
 /**
  * 单个 operation（extension action / protocol method / host canvas / builtin 同构呈现）。

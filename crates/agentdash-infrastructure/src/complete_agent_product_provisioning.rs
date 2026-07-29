@@ -1232,6 +1232,7 @@ fn static_tool_enabled(capability_state: &CapabilityState, name: &str) -> bool {
         "task_read" | "task_write" => ToolCluster::Task,
         "workspace_module_list"
         | "workspace_module_describe"
+        | "workspace_module_operate"
         | "workspace_module_invoke"
         | "workspace_module_present"
         | "operation_script" => ToolCluster::WorkspaceModule,

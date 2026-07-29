@@ -1,21 +1,37 @@
 /* eslint-disable react-refresh/only-export-components */
+import { useCallback } from "react";
 import { CanvasRuntimePanel } from "../../canvas-panel";
-import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 import { useWorkspaceData } from "../workspace-data-context";
-import { parseCanvasSurfaceUri } from "../model/canvasModuleOpen";
+import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 import type { TabContentRenderProps, TabTypeDescriptor } from "../tab-type-registry";
 import { CanvasIcon } from "./icons";
+import { parseCanvasSurfaceUri } from "../model/canvasModuleOpen";
+
+const SCHEME = "canvas://";
+
+function isConcreteCanvasUri(uri: string): boolean {
+  return parseCanvasSurfaceUri(uri) !== null;
+}
 
 function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
-  const { projectId } = useWorkspaceData();
+  const { agentRunRuntimeTarget, projectId, runtimeSurface } = useWorkspaceData();
   const parsed = parseCanvasSurfaceUri(uri);
+  const canvasId = parsed?.kind === "definition" ? parsed.definitionId : null;
+  const interactionInstanceId = parsed?.kind === "interaction" ? parsed.instanceId : null;
+
+  const handleBrowseFiles = useCallback((mountId: string) => {
+    const uri = `${mountId}://`;
+    useWorkspaceTabStore.getState().openOrActivate("vfs", uri);
+  }, []);
+
   if (!parsed) {
     return (
       <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-3 px-6">
         <CanvasIcon className="h-8 w-8 text-muted-foreground/40" />
         <div className="text-center">
-          <p className="text-sm font-medium text-muted-foreground">
-            请选择具体 Canvas definition 或 Interaction instance
+          <p className="text-sm font-medium text-muted-foreground">当前会话还没有关联的 Canvas</p>
+          <p className="mt-1 text-xs text-muted-foreground/70">
+            Canvas 展示会通过 workspace_module_present 打开具体视图
           </p>
         </div>
       </div>
@@ -24,13 +40,14 @@ function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
 
   return (
     <CanvasRuntimePanel
+      canvasId={canvasId}
+      interactionInstanceId={interactionInstanceId}
       projectId={projectId}
-      definitionId={parsed.kind === "definition" ? parsed.id : null}
-      instanceId={parsed.kind === "interaction" ? parsed.id : null}
+      resourceSurfaceRef={runtimeSurface?.surface_ref}
+      agentRunTarget={agentRunRuntimeTarget}
       refreshRevision={refreshRevision}
-      onOpenInteraction={(instanceId) => {
-        useWorkspaceTabStore.getState().openOrActivate("canvas", `interaction://${instanceId}`);
-      }}
+      onClose={() => {}}
+      onBrowseFiles={handleBrowseFiles}
     />
   );
 }
@@ -48,21 +65,19 @@ export const canvasTabType: TabTypeDescriptor = {
   resolveTitle: (uri) => {
     const parsed = parseCanvasSurfaceUri(uri);
     if (!parsed) return "Canvas";
-    const shortId = parsed.id.length > 8 ? `${parsed.id.slice(0, 8)}…` : parsed.id;
-    return parsed.kind === "interaction" ? `Interaction: ${shortId}` : `Canvas: ${shortId}`;
+    const id = parsed.kind === "definition" ? parsed.definitionId : parsed.instanceId;
+    const shortId = id.length > 8 ? `${id.slice(0, 8)}…` : id;
+    return `Canvas: ${shortId}`;
   },
 
   parseUri: (uri) => {
-    const parsed = parseCanvasSurfaceUri(uri);
-    return parsed ? { kind: parsed.kind, id: parsed.id } : null;
+    return parseCanvasSurfaceUri(uri);
   },
-  canCreateUri: (uri) => parseCanvasSurfaceUri(uri) !== null,
+  canCreateUri: isConcreteCanvasUri,
 
   buildUri: (params) => {
-    const id = params?.id;
-    return id
-      ? `${params.kind === "interaction" ? "interaction" : "canvas"}://${id}`
-      : "canvas://";
+    const canvasMountId = params?.canvasMountId;
+    return canvasMountId ? `${SCHEME}${canvasMountId}` : "canvas://";
   },
   menuOrder: 10,
 };

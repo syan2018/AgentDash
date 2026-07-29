@@ -114,6 +114,29 @@ fn normalize_single_mount_patch_path(
     normalize_mount_relative_path(&raw, false).map_err(MountError::OperationFailed)
 }
 
+fn normalize_native_patch_paths(mount_id: &str, patch: &str) -> Result<String, MountError> {
+    const PATH_MARKERS: [&str; 4] = [
+        "*** Add File: ",
+        "*** Delete File: ",
+        "*** Update File: ",
+        "*** Move to: ",
+    ];
+    let mut normalized = Vec::new();
+    for line in patch.lines() {
+        let Some(marker) = PATH_MARKERS
+            .iter()
+            .find(|marker| line.starts_with(**marker))
+        else {
+            normalized.push(line.to_owned());
+            continue;
+        };
+        let raw_path = &line[marker.len()..];
+        let path = normalize_single_mount_patch_path(mount_id, std::path::Path::new(raw_path))?;
+        normalized.push(format!("{marker}{path}"));
+    }
+    Ok(normalized.join("\n"))
+}
+
 impl VfsService {
     pub fn new(mount_provider_registry: Arc<MountProviderRegistry>) -> Self {
         Self {
@@ -1004,6 +1027,12 @@ impl VfsService {
             runtime_vfs: Some(Arc::new(vfs.clone())),
             runtime_text_resolver: Some(Arc::new(self.clone())),
         };
+        if provider.prefers_native_apply_patch() {
+            let request = ApplyPatchRequest {
+                patch: normalize_native_patch_paths(mount_id, patch)?,
+            };
+            return provider.apply_patch(mount, &request, &ctx).await;
+        }
         let target = ProviderPatchTarget {
             provider: provider.as_ref(),
             mount,
@@ -1829,10 +1858,22 @@ impl ApplyPatchTarget for InlineOverlayPatchTarget<'_> {
 mod tests {
     use super::*;
     use agentdash_platform_spi::platform::auth::AuthIdentity;
-    use agentdash_platform_spi::{RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsPathPattern};
+    use agentdash_platform_spi::{
+        RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsPathPattern,
+    };
     use std::collections::BTreeSet;
     use std::path::PathBuf;
     use tokio::sync::Mutex;
+
+    #[test]
+    fn native_patch_normalizes_explicit_mount_paths_without_touching_patch_body() {
+        let patch = "*** Begin Patch\n*** Update File: canvas://src/main.tsx\n*** Move to: canvas://src/app.tsx\n@@\n-const uri = 'canvas://asset/logo.png';\n+const uri = 'canvas://asset/new-logo.png';\n*** End Patch";
+
+        assert_eq!(
+            normalize_native_patch_paths("canvas", patch).expect("normalize patch"),
+            "*** Begin Patch\n*** Update File: src/main.tsx\n*** Move to: src/app.tsx\n@@\n-const uri = 'canvas://asset/logo.png';\n+const uri = 'canvas://asset/new-logo.png';\n*** End Patch"
+        );
+    }
 
     fn policy_test_vfs(capabilities: Vec<MountCapability>) -> Vfs {
         Vfs {

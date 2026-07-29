@@ -1,3 +1,4 @@
+use agentdash_agent_runtime_contract::AgentInputContent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -78,6 +79,7 @@ pub struct InteractionDefinitionLineageDto {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct CanvasDefinitionDto {
     pub definition_id: String,
+    pub canvas_mount_id: String,
     pub project_id: String,
     pub owner: InteractionOwnerDto,
     pub status: InteractionDefinitionStatusDto,
@@ -105,6 +107,42 @@ pub struct CanvasDefinitionDto {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CanvasRuntimeFeaturesDto {
+    pub operations: bool,
+    pub assets: bool,
+    pub interaction: bool,
+    pub agent_submit: bool,
+    pub diagnostics: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CanvasRuntimeSnapshotDto {
+    pub definition_id: String,
+    pub definition_revision_id: String,
+    pub canvas_mount_id: String,
+    pub source_bundle: InteractionSourceBundleDto,
+    pub operations: Vec<OperationWorkshopDescriptorDto>,
+    pub features: CanvasRuntimeFeaturesDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CanvasAgentSubmitRequestDto {
+    pub run_id: String,
+    pub agent_id: String,
+    pub client_command_id: String,
+    pub input: Vec<AgentInputContent>,
+    pub include_interaction_state: bool,
+    pub include_render_observation: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CanvasAgentSubmitResponseDto {
+    pub handoff_id: String,
+    pub status: String,
+    pub duplicate: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 pub struct ListCanvasDefinitionsQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -114,15 +152,22 @@ pub struct ListCanvasDefinitionsQuery {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct CreateCanvasDefinitionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub canvas_mount_id: Option<String>,
     pub title: String,
     #[serde(default)]
     pub description: String,
-    pub source_bundle: InteractionSourceBundleDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_bundle: Option<InteractionSourceBundleDto>,
     #[serde(default)]
     pub initial_state: Value,
     #[serde(default)]
     pub state_schema: Value,
-    pub agent_projection: InteractionAgentProjectionDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_projection: Option<InteractionAgentProjectionDto>,
     #[serde(default)]
     pub command_definitions: Vec<InteractionCommandDefinitionDto>,
     #[serde(default)]
@@ -358,6 +403,21 @@ pub struct InteractionRuntimeBindingDto {
     pub binding_id: String,
     pub slot_key: String,
     pub target: InteractionRuntimeBindingTargetDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct UpsertInteractionRuntimeBindingRequestDto {
+    pub target: InteractionRuntimeBindingTargetDto,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+pub struct InteractionInstanceViewQueryDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

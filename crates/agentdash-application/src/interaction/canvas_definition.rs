@@ -5,7 +5,8 @@ use agentdash_domain::interaction::{
     InteractionAgentProjection, InteractionCommandDefinition, InteractionDefinition,
     InteractionDefinitionAccess, InteractionDefinitionRepository, InteractionDefinitionRevision,
     InteractionDefinitionStatus, InteractionError, InteractionOwner, ResourceSlotDefinition,
-    SourceBundle, SourceBundleChangeset,
+    SourceBundle, SourceBundleChangeset, SourceFile, SourceSandboxConfig,
+    canvas_authoring_mount_id, normalize_canvas_authoring_mount_id,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -48,6 +49,7 @@ pub struct CanvasDefinitionView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateCanvasDefinitionInput {
     pub project_id: Uuid,
+    pub authoring_mount_id: Option<String>,
     pub title: String,
     pub description: String,
     pub source_bundle: SourceBundle,
@@ -84,6 +86,7 @@ pub struct PublishCanvasDefinitionInput {
 pub struct CopyCanvasDefinitionInput {
     pub source_definition_id: Uuid,
     pub source_revision_id: Uuid,
+    pub authoring_mount_id: Option<String>,
     pub title: Option<String>,
     pub description: Option<String>,
 }
@@ -126,6 +129,16 @@ impl CanvasDefinitionService {
             input.state_schema,
             user_id,
         )?;
+        revision.authoring_mount_id = match input.authoring_mount_id {
+            Some(value) => normalize_canvas_authoring_mount_id(&value)?,
+            None => canvas_authoring_mount_id(definition_id),
+        };
+        self.require_authoring_mount_available(
+            input.project_id,
+            &revision.authoring_mount_id,
+            None,
+        )
+        .await?;
         revision.command_definitions = input.command_definitions;
         revision.component_bindings = input.component_bindings;
         revision.resource_slots = input.resource_slots;
@@ -302,6 +315,7 @@ impl CanvasDefinitionService {
                 lineage,
                 input.title,
                 input.description,
+                Some(current.authoring_mount_id.clone()),
                 user_id,
                 now,
             )?;
@@ -326,6 +340,7 @@ impl CanvasDefinitionService {
                 lineage,
                 input.title,
                 input.description,
+                None,
                 user_id,
                 now,
             )?;
@@ -363,9 +378,16 @@ impl CanvasDefinitionService {
             },
             input.title,
             input.description,
+            input.authoring_mount_id,
             user_id,
             now,
         )?;
+        self.require_authoring_mount_available(
+            source.project_id,
+            &revision.authoring_mount_id,
+            None,
+        )
+        .await?;
         let (definition, revision) = revision.into_initial_definition()?;
         self.definitions.create(&definition, &revision).await?;
         self.view(definition, revision, user_id).await
@@ -521,6 +543,31 @@ impl CanvasDefinitionService {
         }
         Ok(None)
     }
+
+    async fn require_authoring_mount_available(
+        &self,
+        project_id: Uuid,
+        authoring_mount_id: &str,
+        excluding_definition_id: Option<Uuid>,
+    ) -> InteractionApplicationResult<()> {
+        for definition in self.definitions.list_canvas_by_project(project_id).await? {
+            if Some(definition.id) == excluding_definition_id
+                || definition.status != InteractionDefinitionStatus::Active
+            {
+                continue;
+            }
+            let revision = self
+                .required_revision(definition.current_revision_id)
+                .await?;
+            if revision.authoring_mount_id == authoring_mount_id {
+                return Err(InteractionApplicationError::InvalidCommand {
+                    field: "authoring_mount_id",
+                    reason: "当前 Project 已存在同名 Canvas authoring mount".into(),
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -532,6 +579,7 @@ fn copy_revision(
     lineage: DefinitionLineage,
     title: Option<String>,
     description: Option<String>,
+    authoring_mount_id: Option<String>,
     created_by: &str,
     now: DateTime<Utc>,
 ) -> InteractionApplicationResult<InteractionDefinitionRevision> {
@@ -540,6 +588,10 @@ fn copy_revision(
     revision.revision_id = Uuid::new_v4();
     revision.revision_number = revision_number;
     revision.owner = owner;
+    revision.authoring_mount_id = authoring_mount_id
+        .map(|value| normalize_canvas_authoring_mount_id(&value))
+        .transpose()?
+        .unwrap_or_else(|| canvas_authoring_mount_id(definition_id));
     revision.title = title.unwrap_or(revision.title);
     revision.description = description.unwrap_or(revision.description);
     revision.lineage = Some(lineage);
@@ -590,3 +642,37 @@ fn require_non_empty(field: &'static str, value: &str) -> InteractionApplication
 #[cfg(test)]
 #[path = "canvas_definition_tests.rs"]
 mod tests;
+pub fn default_canvas_source_bundle() -> InteractionApplicationResult<SourceBundle> {
+    Ok(SourceBundle::new(
+        "src/main.tsx",
+        vec![SourceFile::new(
+            "src/main.tsx",
+            r#"const root = document.getElementById("root");
+
+if (!root) {
+  throw new Error("Canvas root element not found");
+}
+
+root.innerHTML = `
+  <section style="font-family: sans-serif; padding: 16px;">
+    <h1 style="margin: 0 0 8px;">Live Canvas Ready</h1>
+    <p style="margin: 0; color: #475569;">
+      Start editing <code>src/main.tsx</code> to render your canvas.
+    </p>
+  </section>
+`;
+"#,
+            Some("text/typescript".to_owned()),
+        )?],
+        SourceSandboxConfig {
+            libraries: vec!["react".to_owned(), "react-dom/client".to_owned()],
+            import_map: std::collections::BTreeMap::from([
+                ("react".to_owned(), "https://esm.sh/react@18?dev".to_owned()),
+                (
+                    "react-dom/client".to_owned(),
+                    "https://esm.sh/react-dom@18/client?dev".to_owned(),
+                ),
+            ]),
+        },
+    )?)
+}

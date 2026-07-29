@@ -49,3 +49,4 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 - Dash Surface 在撤销后可以用相同 revision/digest 再次绑定，因此 Surface 历史条目 ID 需要包含本次发生位置；revision/digest 只标识 Surface 内容，不能单独充当历史事件身份。
 - Complete Agent 的 durable live record 可能先于紧随其后的权威快照读取可见；前端以 presentation ID 保留 durable overlay，直到快照确认同一记录，才能避免 terminal/title 等边界被短暂旧快照覆盖。
 - `file_change_patch_updated` 等 item 过程事件只携带增量状态；Session reducer 需要按 item ID 合并回已存在的工具卡，才能让 apply_patch 在终态到达前持续展示最新 diff。
+- AgentFrame runtime-surface port 的声明可能在生产 updater 删除后继续存在；判断 Product 能力是否真的能更新 Frame，需要同时核对 port 实现、bootstrap 接线以及 AppliedResourceSurface/rebind 收敛链，不能以 trait 仍可引用作为能力已生效的证据。

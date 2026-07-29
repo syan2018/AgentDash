@@ -1219,6 +1219,7 @@ mod tests {
         for tool in [
             "workspace_module_list",
             "workspace_module_describe",
+            "workspace_module_operate",
             "workspace_module_invoke",
             "workspace_module_present",
             "operation_script",
@@ -1401,6 +1402,7 @@ mod tests {
     ) -> RuntimeToolAuthorizationRequest {
         let (permission, effect) = match tool {
             "task_write"
+            | "workspace_module_operate"
             | "workspace_module_invoke"
             | "workspace_module_present"
             | "operation_script" => (
@@ -1441,6 +1443,7 @@ mod tests {
                         "task_read" | "task_write" => "task",
                         "workspace_module_list"
                         | "workspace_module_describe"
+                        | "workspace_module_operate"
                         | "workspace_module_invoke"
                         | "workspace_module_present"
                         | "operation_script" => "workspace_module",

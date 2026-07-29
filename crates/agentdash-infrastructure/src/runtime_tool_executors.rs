@@ -283,6 +283,12 @@ fn product_tool_definition(
             RuntimeToolPermission::ProductRead,
             RuntimeToolEffect::ReadOnly,
         ),
+        ProductRuntimeToolKind::WorkspaceModuleOperate => (
+            "workspace_module_operate",
+            "Run a provider-owned Workspace Module lifecycle operation through Product authority.",
+            RuntimeToolPermission::ProductWrite,
+            RuntimeToolEffect::ProductMutation,
+        ),
         ProductRuntimeToolKind::WorkspaceModuleInvoke => (
             "workspace_module_invoke",
             "Invoke an exact Workspace Module OperationRef through the canonical OperationGateway.",
@@ -813,6 +819,7 @@ mod tests {
             ProductRuntimeToolKind::CompanionRespond,
             ProductRuntimeToolKind::WorkspaceModuleList,
             ProductRuntimeToolKind::WorkspaceModuleDescribe,
+            ProductRuntimeToolKind::WorkspaceModuleOperate,
             ProductRuntimeToolKind::WorkspaceModuleInvoke,
             ProductRuntimeToolKind::WorkspaceModulePresent,
             ProductRuntimeToolKind::OperationScript,
@@ -838,6 +845,7 @@ mod tests {
                 "companion_respond",
                 "workspace_module_list",
                 "workspace_module_describe",
+                "workspace_module_operate",
                 "workspace_module_invoke",
                 "workspace_module_present",
                 "operation_script",

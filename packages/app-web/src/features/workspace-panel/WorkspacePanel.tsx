@@ -164,13 +164,10 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       try {
         await openUserCanvasModule({
           option,
-          openOrActivate: (typeId, uri, refreshContent) => {
-            const tabId = useWorkspaceTabStore
+          openOrActivate: (typeId: string, uri: string) => {
+            useWorkspaceTabStore
               .getState()
               .openOrActivateInWorkspace(workspaceKey, typeId, uri, tabLayoutOptions);
-            if (tabId && refreshContent) {
-              useWorkspaceTabStore.getState().refreshTab(tabId);
-            }
           },
         });
         return true;

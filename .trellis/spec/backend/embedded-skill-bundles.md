@@ -157,13 +157,17 @@ frame 要暴露哪些 Skill”分成三个稳定事实。Canvas、Workspace Modu
 Routine 只声明选择策略；它们共享同一套 Project 资产与 lifecycle mount，因此 runtime
 skill baseline、workspace resource surface 和前端 capability 展示观察到同一组文件。
 
-Canvas runnable asset 继续只保存 `Canvas.files` 的业务源码与数据；`canvas-system`
-承载 authoring、runtime bridge、VFS asset、interaction snapshot、render diagnostics
-和 submit-to-Agent 协议。`workspace-module-system` 承载 module
-list/describe/invoke/present 操作协议。`routine-memory` 与 `memory-manager` 承载
-Routine/Memory 协议，而 Routine state 继续由 `routine_vfs` 投影。各领域指南经统一
-lifecycle skill surface 可见，原因是它们属于 session 操作协议，而非某个业务实体的
-文件树。
+Canvas authoring asset 由 `InteractionDefinitionRevision(kind=canvas)` 与 immutable
+`SourceBundle` 承载；`canvas-system` 说明 authoring revision、definition/runtime identity、
+canonical Interaction state/command、Extension component binding、presentation quality 与交付流程。
+`workspace-module-system` 承载 module list/describe/operate/invoke/present 通用操作协议。
+`canvas-system` 的 references 进一步覆盖 authoring VFS、MessageChannel host SDK、exact
+Operations、VFS 图片、canonical Interaction state、renderer diagnostics 与 submit-to-Agent。
+两者分离的原因是
+Workspace Module 是通用 actor projection，而 Canvas Skill 负责 Canvas 产品工作流与视觉交付。
+`routine-memory` 与 `memory-manager` 承载 Routine/Memory 协议，而 Routine state 继续由
+`routine_vfs` 投影。各领域指南经统一 lifecycle skill surface 可见，原因是它们属于 session
+操作协议，而非某个业务实体的文件树。
 
 ## Validation Contract
 

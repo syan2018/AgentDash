@@ -36,10 +36,21 @@ pub trait CompleteAgentService {
 ```
 
 ```rust
-pub fn project_authoritative_agent_view(
-    runtime_thread_id: RuntimeThreadId,
-    snapshot: AgentSnapshot,
-) -> Result<AgentRuntimeView, AgentSnapshotProjectionError>;
+pub struct AgentObservation {
+    pub revision: AgentSnapshotRevision,
+    pub context: AgentContextCoordinate,
+    pub lifecycle: AgentLifecycleStatus,
+    pub execution: AgentExecutionSnapshot,
+    pub command_availability: BTreeMap<AgentControlKind, AgentControlAvailability>,
+    pub interactions: Vec<AgentInteractionSnapshot>,
+    pub conversation: Vec<CanonicalConversationRecord>,
+    // source evidence / thread name omitted
+}
+
+pub struct AgentRuntimeView {
+    pub thread_id: RuntimeThreadId,
+    pub observation: AgentObservation,
+}
 ```
 
 ```rust
@@ -76,6 +87,10 @@ interface AgentRuntimeConnection {
 Runtime 可以保留平台中立的 `AgentRuntimeView`、operation receipt 与 command DTO，原因是
 它们是 API/adapter contract；它们不因此成为数据库事实。
 
+`AgentObservation` 是 snapshot、live reconcile、context coordinate 与 Product Runtime wrapper
+共享的唯一观测值。`AgentSnapshot`只增加source/surface/initial-context证据，
+`AgentRuntimeView`只增加Product thread identity；wrapper不复制或重命名内部事实。
+
 ## 3. Contracts
 
 - command 输入由 Product target、association、client command identity 和 payload 构成。
@@ -87,8 +102,9 @@ Runtime 可以保留平台中立的 `AgentRuntimeView`、operation receipt 与 c
 - post-dispatch response unknown 使用同一 effect identity 调用 `inspect`。`Applied/Accepted`
   返回原 receipt；`NotApplied` 才能执行；`Unknown` 保持 typed pending/unavailable，不能自动
   换 identity 重派。
-- `read` 每次从 Product association 定位 concrete Agent source，调用 Agent authoritative
-  read，再在内存中 normalize 为 Product/UI 所需 snapshot。
+- Product 每次先解析binding，再构造`AgentRuntimeObservation`。该深模块独占source read、
+  source identity校验、context revision fence、live reconcile和Runtime wrapper投影；
+  Product gateway与API只表达target授权和调用结果。
 - Complete Agent `AgentSnapshot.execution.active_turn_id` 是当前执行事实；adapter 必须从自己的
   source state 显式填充。Runtime normalize 从该字段投影 `execution` 与
   `command_availability`，从同一次 read 的 `conversation` 投影 presentation，并保留 concrete
@@ -162,6 +178,8 @@ Runtime 可以保留平台中立的 `AgentRuntimeView`、operation receipt 与 c
   覆盖无 assistant item 的 failed terminal 及其错误文本。
 - 负向源码搜索断言 Runtime repository、journal/outbox persistence、change worker 与
   projection revision gate 不在 production composition。
+- coherent Runtime fixture必须从共享builder生成同一revision下的observation/context坐标，
+  跨crate测试只覆盖自身差异字段，避免完整snapshot literal成为第二套contract描述。
 
 ## 7. Wrong vs Correct
 

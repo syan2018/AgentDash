@@ -115,24 +115,53 @@ export function useAgentRuntimeContextProjection(input: {
   const [refreshGeneration, setRefreshGeneration] = useState(0);
   const requestGeneration = useRef(0);
   const fence = useRef(new AgentRuntimeContextProjectionFence());
+  const runId = input.target?.runId;
+  const agentId = input.target?.agentId;
+  const snapshotRevision = input.required?.snapshot_revision;
+  const contextRevision = input.required?.context_revision;
+  const recipeDigest = input.required?.recipe_digest;
+  const authority = input.required?.authority;
+  const fidelity = input.required?.fidelity;
 
   useEffect(() => {
-    const { target, required } = input;
-    if (!target || !required) {
-      requestGeneration.current += 1;
+    if (
+      runId === undefined
+      || agentId === undefined
+      || snapshotRevision === undefined
+      || contextRevision === undefined
+      || recipeDigest === undefined
+      || authority === undefined
+      || fidelity === undefined
+    ) {
+      const generation = ++requestGeneration.current;
       fence.current.clear();
-      setState({ status: "idle" });
+      queueMicrotask(() => {
+        if (requestGeneration.current === generation) {
+          setState({ status: "idle" });
+        }
+      });
       return;
     }
+    const target: AgentRunRuntimeTarget = { runId, agentId };
+    const required: RuntimeContextCoordinate = {
+      snapshot_revision: snapshotRevision,
+      context_revision: contextRevision,
+      recipe_digest: recipeDigest,
+      authority,
+      fidelity,
+    };
     const key = targetKey(target);
     fence.current.activate(key);
     const generation = ++requestGeneration.current;
     const controller = new AbortController();
-    setState((current) => {
-      const previous = committedProjection(current, key);
-      return previous
-        ? { status: "refreshing", targetKey: key, projection: previous }
-        : { status: "loading", targetKey: key };
+    queueMicrotask(() => {
+      if (requestGeneration.current !== generation) return;
+      setState((current) => {
+        const previous = committedProjection(current, key);
+        return previous
+          ? { status: "refreshing", targetKey: key, projection: previous }
+          : { status: "loading", targetKey: key };
+      });
     });
 
     void fetchAgentRunRuntimeContextProjection(target, required, controller.signal)
@@ -156,13 +185,13 @@ export function useAgentRuntimeContextProjection(input: {
 
     return () => controller.abort();
   }, [
-    input.target?.runId,
-    input.target?.agentId,
-    input.required?.snapshot_revision,
-    input.required?.context_revision,
-    input.required?.recipe_digest,
-    input.required?.authority,
-    input.required?.fidelity,
+    runId,
+    agentId,
+    snapshotRevision,
+    contextRevision,
+    recipeDigest,
+    authority,
+    fidelity,
     refreshGeneration,
   ]);
 

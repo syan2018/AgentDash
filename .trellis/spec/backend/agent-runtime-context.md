@@ -122,11 +122,11 @@ HistoryPayload::CompactionApplied {
 ```rust
 pub struct AgentContextSnapshot {
     pub source: AgentSourceCoordinate,
-    pub snapshot_revision: AgentSnapshotRevision,
-    pub context_revision: Option<String>,
-    pub recipe_digest: AgentPayloadDigest,
-    pub authority: AgentContextAuthority,
-    pub fidelity: AgentContextFidelity,
+    pub recipe: AgentContextRecipe,
+}
+
+pub struct AgentContextRecipe {
+    pub coordinate: AgentContextCoordinate,
     pub contributions: Vec<AgentContextContribution>,
 }
 ```
@@ -143,6 +143,8 @@ pub struct AgentContextSnapshot {
 - failed/lost/cancelled只写terminal evidence，current context revision与recipe保持上一个成功值。
 - `context_revision`由Started保存的source digest、canonical summary和retained boundary确定性生成；
   history fold校验该值。
+- Runtime context projection直接返回完整`AgentContextRecipe`。浏览器因此同时看到coordinate、
+  typed ContextFrame、retained Message与Opaque evidence，不把compaction summary当成recipe本身。
 
 ### 9.4 Validation & Error Matrix
 

@@ -111,9 +111,10 @@ AgentRunCommandReceipt {
   route，最终由
   concrete Agent command/inspection证明；不存在独立 session command 或 vendor DTO 路径。
 - Interaction response使用generated `InteractionResponse` union；approval、user input、MCP elicitation与dynamic tool result共用一个`/respond` route。UI只有在刷新后的Runtime snapshot声明`interaction_respond=available`时才启用对应控件。
-- Runtime context popup读取Complete Agent `AgentContextSnapshot`，并以
-  `AgentRuntimeView.context`作为required coordinate；target切换以`run_id + agent_id`为request
-  generation，旧target或旧context revision迟到响应不能覆盖当前popup。
+- Runtime context popup只读取`AgentRuntimeContextProjection`，并以
+  `AgentRuntimeView.observation.context`作为required coordinate；source query与snapshot校验由
+  Runtime observation封装。target切换以`run_id + agent_id`为request generation，旧target或旧
+  context revision迟到响应不能覆盖当前popup。
 - RuntimeWire/Relay 只承载 Complete Agent transport；其 connection epoch、route 与 generation
   不进入浏览器合同或 Product persistence。
 - LifecycleGate 等 Product owner 的 waiting facts单独展示；Agent input handoff不形成 mailbox
@@ -250,7 +251,7 @@ bound_surface_revision/applied_surface_revision`证据的command availability。
 | active Compaction、`cancellable=true` | deferred Submit与Interrupt按owner证据开放 |
 | `phase=applied` | active Turn保持到terminal；context revision已应用但Turn尚未结束 |
 | terminal success/failure/lost/cancelled | `active_turn=None`并发布typed `last_compaction_outcome` |
-| failed/lost/cancelled没有成功`ItemCompleted` | terminal `ItemUpdated`携带最终item status；UI不得保持进行中 |
+| failed/lost/cancelled | canonical `ItemCompleted.terminal`携带最终outcome；UI不得保持进行中 |
 | Product请求与owner availability不符 | side effect前拒绝，不根据`execution.status`改写命令 |
 | snapshot command map缺项 | Runtime projection拒绝该snapshot |
 
@@ -644,21 +645,26 @@ AgentRuntimeView / AgentRuntimeUpdate {
 ```text
 GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
     ?required_revision={AgentSnapshotRevision}
-  -> AgentContextSnapshot {
-       source,
-       snapshot_revision,
-       context_revision,
-       recipe_digest,
-       authority,
-       fidelity,
-       contributions: Frame | Message | Opaque,
+  -> AgentRuntimeContextProjection {
+       thread_id,
+       recipe: {
+         coordinate: {
+           snapshot_revision,
+           context_revision,
+           recipe_digest,
+           authority,
+           fidelity,
+         },
+         contributions: Frame | Message | Opaque,
+       },
      }
 ```
 
 ### 10.3 Contracts
 
-- API完成AgentRun Use授权和committed binding解析后，直接调用绑定的Complete Agent
-  `context()`；Product与Runtime不从canonical timeline重建模型输入成员。
+- API完成AgentRun Use授权后调用Product projection gateway；gateway解析committed binding并把
+  source交给`AgentRuntimeObservation.read_context()`。只有Runtime observation构造
+  `AgentContextQuery`并校验source、required revision、same-revision coordinate与fidelity。
 - Native Dash返回`AgentOwned/Exact`。`Frame`按provider system input顺序排列，随后是保留的
   `Message`；tool call与tool result保持独立source entry identity和明确call pairing。
 - Codex仅返回可证明的`AgentObserved/Observed`，provider-private部分使用`Opaque`解释证据边界。
@@ -669,10 +675,10 @@ GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
   coordinate，不能在Product或浏览器中按timeline推导digest/revision。
 - `required_revision`是最低版本门禁：context snapshot revision大于等于它时可以返回，低于它时
   返回conflict；更快到达的新recipe不是冲突。
-- 前端以`run_id + agent_id`作为target key，以Runtime context coordinate变化触发查询，并用
-  AbortController、request generation与committed revision fence提交响应。响应低于required或
-  committed revision时不得提交；响应恰好等于required revision时，recipe digest与context
-  revision必须和Runtime coordinate一致。
+- `RuntimeProjectionController`以`run_id + agent_id`作为target key，以Runtime context coordinate
+  变化触发查询，并统一拥有AbortController、request generation、required/committed revision
+  fence与已提交recipe。Session popup只消费controller state；响应低于required或committed revision
+  时不得提交，响应恰好等于required revision时recipe digest与context revision必须一致。
 - `ContextFrame`同时展示`rendered_text`与完整typed结构；provider token usage继续来自provider
   usage事实，不由字符估算覆盖。
 
@@ -709,7 +715,7 @@ GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
 - API route验证授权、binding解析和typed Agent error映射。
 - Complete Agent测试断言同次read的context coordinate与snapshot revision一致，并覆盖
   lower-bound接受、ahead-required conflict。
-- Runtime mapper/view/update与generated validator测试断言context coordinate无损传递。
+- Runtime mapper/view/update与generated codec测试断言context coordinate无损传递。
 - 前端验证完整frame/retained message/Observed-Opaque渲染、target切换取消、required/
   committed revision单调门禁和同revision digest fence。
 
@@ -719,9 +725,8 @@ GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
 // Wrong：presentation只能证明审计顺序，不能证明当前provider recipe。
 let current = truncate_after_latest_compaction(snapshot.conversation);
 
-// Correct：模型输入owner按source revision返回完整typed recipe。
-let current = complete_agent.context(AgentContextQuery {
-    source,
-    required_revision: Some(runtime_view.context.snapshot_revision),
+// Correct：Runtime observation按Product requirement返回完整typed recipe。
+let current = runtime_observation.read_context(AgentRuntimeContextRequirement {
+    at_least: runtime_view.observation.context,
 }).await?;
 ```

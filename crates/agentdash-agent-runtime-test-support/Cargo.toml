@@ -1,6 +1,6 @@
 [package]
 name = "agentdash-agent-runtime-test-support"
-description = "Shared presentation parity checks for AgentDash Product surfaces"
+description = "Shared coherent Runtime fixtures and presentation parity checks"
 version.workspace = true
 edition.workspace = true
 
@@ -8,6 +8,8 @@ edition.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+agentdash-agent-protocol = { workspace = true }
+agentdash-agent-runtime-contract = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

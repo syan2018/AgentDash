@@ -403,6 +403,8 @@ fn product_command_identity(target: &AgentRunTarget, client_command_id: &str) ->
 
 #[cfg(test)]
 mod tests {
+    use agentdash_agent_runtime_test_support::coherent_runtime::CoherentAgentObservationBuilder;
+
     use super::*;
 
     fn snapshot_with_active_turn(
@@ -420,43 +422,9 @@ mod tests {
             queued_compaction: None,
             last_compaction_outcome: None,
         };
-        let revision = agentdash_agent_runtime_contract::AgentSnapshotRevision(1);
-        AgentSnapshot {
-            source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new("source-1")
-                .unwrap(),
-            observation: agentdash_agent_runtime_contract::AgentObservation {
-                revision,
-                context: agentdash_agent_runtime_contract::AgentContextCoordinate {
-                    snapshot_revision: revision,
-                    context_revision: Some("context-1".to_owned()),
-                    recipe_digest: agentdash_agent_runtime_contract::AgentPayloadDigest::new(
-                        "sha256:context-1",
-                    )
-                    .unwrap(),
-                    authority: agentdash_agent_runtime_contract::AgentContextAuthority::AgentOwned,
-                    fidelity: agentdash_agent_runtime_contract::AgentContextFidelity::Exact,
-                },
-                lifecycle: agentdash_agent_runtime_contract::AgentLifecycleStatus::Active,
-                command_availability: execution.command_availability(
-                    agentdash_agent_runtime_contract::AgentLifecycleStatus::Active,
-                    revision,
-                    false,
-                ),
-                execution,
-                interactions: Vec::new(),
-                thread_name: None,
-                source_info: agentdash_agent_runtime_contract::AgentSnapshotSource {
-                    authority:
-                        agentdash_agent_runtime_contract::AgentSnapshotAuthority::AgentAuthoritative,
-                    source_revision: None,
-                    fidelity: agentdash_agent_runtime_contract::SemanticFidelity::Exact,
-                    observed_at_ms: 1,
-                },
-                conversation: Vec::new(),
-            },
-            applied_surface: None,
-            initial_context: None,
-        }
+        CoherentAgentObservationBuilder::new(1)
+            .execution(execution)
+            .snapshot("source-1")
     }
 
     #[test]

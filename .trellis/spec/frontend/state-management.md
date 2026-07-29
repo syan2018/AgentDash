@@ -9,6 +9,10 @@
 - `AgentRuntimeConnection`保存authoritative `AgentRuntimeView` baseline、当前update lane、
   presentation overlay与连接状态。Feed、Composer与Interaction UI从同一个connection读取selectors，
   因而history收缩与Workspace刷新不会形成第二条控制状态链。
+- `RuntimeProjectionController`按`run_id + agent_id`拥有context projection请求、取消、
+  generation、required/committed coordinate fence和last committed recipe。Inspector只消费
+  controller state；Runtime observation推进context coordinate时controller刷新，迟到响应不能结束
+  新坐标的loading或覆盖已提交recipe。
 - 初次连接、重连和lane gap恢复都把权威view中的presentation identity登记为hydration baseline；
   只有当前lane直接交付、且不属于恢复baseline的presentation才进入typed副作用dispatcher。副作用按
   `presentation_id`去重，数组位置不承担跨快照identity。
@@ -26,6 +30,9 @@
 - reconnect和lane gap先重新读取authoritative view，再归约当前连接的新lane；duplicate update不重复reduce，
   connection/source变化删除旧lane partial贡献。failed/cancelled/lost item按identity终结原entry，
   authoritative terminal覆盖过程delta，terminal后的stale delta不再修改展示。
+- Session reducer是item lifecycle的唯一前端owner：它把`item_started/item_updated/item_completed`
+  归约为同一identity的body与`running | succeeded | failed | lost | cancelled`。Card registry和
+  renderer只消费该view model，因而新增异步item family不需要各自解释terminal事件或body status。
 - canonical `TurnCompleted` 是 live overlay 的收敛边界：connection立即读取authoritative view，
   用 committed history替换该回合的ephemeral partial；请求在途期间继续到达的canonical live records
   按 `presentation_id` 叠加到新baseline，避免标题等terminal后事实被较早的snapshot响应覆盖；若期间

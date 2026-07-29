@@ -51,6 +51,11 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 - Local每个stream拥有独立锁与outbound pump；全局streams registry锁不能跨driver await。Response、notification与delayed event可以在command返回后持续写入WebSocket。
 - Remote Integration由企业/first-party调用者传入真实`AgentServiceDefinition`与factory key；transport crate只提供remote placement factory，不注册`builtin.runtime_wire.remote`伪service。
 - Runtime command/receipt/event保持canonical typed形状，包括bind start/resume/fork、typed inspect、surface/hook/tool receipts；禁止RuntimeEnvelope -> `serde_json::Value` -> 再反序列化。
+- Runtime Contract与Runtime Wire共享schema递归encoding generator。Rust schema为domain shape，
+  encoding kind声明JSON/TypeScript carrier；生成器递归处理object、array、optional、map、union与
+  ref，并输出encoding plan、typed codec及包含root/input/outputs/digest的manifest。
+- schema与manifest的object key采用canonical顺序，union/event array保留声明顺序。由此文本diff只
+  反映语义变化，`contracts:check`可以稳定证明生成物与Rust authority一致。
 
 ## 4. Validation & Error Matrix
 
@@ -71,6 +76,8 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 | stale generation event/frame | fence，不推进canonical projection |
 | terminal event sink失败 | 不推进terminal fence；Lost成功则收敛binding，Lost失败则duplicate terminal可重试 |
 | replacement复用retired generation/incarnation | reject；只有新advertised provenance可建立fresh connection epoch |
+| nested Runtime u64出现在新object/union/map路径 | 由encoding metadata自动归一化，无字段路径补丁 |
+| schema生成后再次check | 生成物与manifest保持clean，否则blocking gate失败 |
 
 ## 5. Good / Base / Bad Cases
 
@@ -89,7 +96,8 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 - Ordered inbound测试阻塞event sink并断言dispatch response仍pending，释放event后response完成；HostPort callback roundtrip必须同时证明可重入无死锁。
 - Local handler loopback覆盖open -> describe/dispatch -> response -> delayed event -> ack，duplicate ack-only与invalid generation。
 - 验证endpoint拒绝Agent Runtime request，handler无resolver时无fallback。
-- Contract/Wire generation与round-trip测试证明typed envelope没有Value中转。
+- Contract/Wire generation与round-trip测试证明typed envelope没有Value中转，并覆盖nested
+  object/array/optional/map/union的number、unsafe integer、malformed string与missing field。
 - Enterprise E2E覆盖真实disconnect、新replacement offer/rebind、transcript HostPort、三轮provider/tool continuation与old generation零replay。
 - WP08 production test必须覆盖Cloud多帧placement resolver、真实Host resolver注入、WebSocket event channel、disconnect/reconnect与legacy RelayPrompt删除。
 - Relay/Remote/Local/API scoped tests、strict clippy、contracts、fmt与diff check必须通过。

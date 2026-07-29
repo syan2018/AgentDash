@@ -1,11 +1,13 @@
 # Agent Runtime 状态面与控制面收束实施计划
 
-## 前置状态
+## 实施状态
 
-- 任务当前为 `planning`，未运行 `task.py start`。
-- 实施基线必须包含 `0187fb58d` 的现有正确行为，或其等价合并提交。
-- 本任务不创建子任务；各 slice 顺序推进，每个 slice 自己完成 hard cut 和验证。
-- 用户审阅并明确批准后才进入实施。
+- A0已提交`9828df7f4`：固定跨层行为基线与边界证明。
+- A1已提交`470d26a67`：统一Agent observation、Runtime context state plane与前端controller。
+- A2已提交`0ecab434e`：统一canonical item terminal lifecycle。
+- A3已提交`371300f7a`：统一schema递归encoding generator与generation manifest。
+- A4已完成：共享coherent builder、blocking architecture gate、长期规范与父架构账本收尾。
+- 本任务不创建子任务；各slice顺序完成hard cut、局部验证与独立提交。
 
 ## Slice A0 — Characterization And Boundary Proof
 
@@ -171,6 +173,17 @@ required contract扩展只修改 canonical builder或真实行为测试，不再
 
 每个 slice 使用项目提交格式，提交备注列出行为合同、删除的旧知识和验证结果。A1/A2不得为了拆提交
 留下可运行的双轨。
+
+## 完成证据
+
+- `agent-runtime:guard`固定source DTO owner、canonical item terminal、retired path absence与
+  schema-recursive codec边界，并与`contracts:check`共同进入PR quick/full gate。
+- Agent Runtime相关Rust crates共通过300余项lib/integration/generator测试；
+  `cargo check --workspace --all-targets`通过。
+- `contracts:check`通过；前端typecheck与105个文件、521项测试通过。
+- 本任务涉及的context controller定向ESLint通过。全量ESLint仍有32个其它模块的既有
+  React Hooks错误，不属于本边界收束的修改面。
+- `git diff --check`与old-path absence检查通过。
 
 ## Stop Conditions
 

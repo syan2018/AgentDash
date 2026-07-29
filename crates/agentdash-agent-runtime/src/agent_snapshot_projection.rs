@@ -110,70 +110,16 @@ fn invalid<T>(reason: impl Into<String>) -> Result<T, AgentSnapshotProjectionErr
 #[cfg(test)]
 mod tests {
     use agentdash_agent_runtime_contract::{
-        AgentActiveTurnKind, AgentActiveTurnPhase, AgentActiveTurnSnapshot, AgentContextAuthority,
-        AgentContextCoordinate, AgentContextFidelity, AgentControlAvailability,
-        AgentControlAvailabilityEvidence, AgentControlKind, AgentControlUnavailabilityReason,
-        AgentExecutionSnapshot, AgentLifecycleStatus, AgentObservation, AgentPayloadDigest,
-        AgentSnapshotRevision, AgentSnapshotSource, AgentSourceCoordinate,
+        AgentActiveTurnKind, AgentActiveTurnPhase, AgentActiveTurnSnapshot, AgentSnapshotRevision,
     };
+    use agentdash_agent_runtime_test_support::coherent_runtime::CoherentAgentObservationBuilder;
 
     use super::*;
 
     fn snapshot() -> AgentSnapshot {
-        let revision = AgentSnapshotRevision(7);
-        AgentSnapshot {
-            source: AgentSourceCoordinate::new("source-1").expect("source"),
-            observation: AgentObservation {
-                revision,
-                context: AgentContextCoordinate {
-                    snapshot_revision: revision,
-                    context_revision: Some("context-7".to_owned()),
-                    recipe_digest: AgentPayloadDigest::new("sha256:context-7").unwrap(),
-                    authority: AgentContextAuthority::AgentOwned,
-                    fidelity: AgentContextFidelity::Exact,
-                },
-                lifecycle: AgentLifecycleStatus::Active,
-                execution: AgentExecutionSnapshot {
-                    active_turn: None,
-                    queued_compaction: None,
-                    last_compaction_outcome: None,
-                },
-                command_availability: [
-                    AgentControlKind::SubmitInput,
-                    AgentControlKind::Steer,
-                    AgentControlKind::Interrupt,
-                    AgentControlKind::RequestCompaction,
-                    AgentControlKind::ResolveInteraction,
-                    AgentControlKind::Close,
-                    AgentControlKind::Fork,
-                ]
-                .into_iter()
-                .map(|command| {
-                    (
-                        command,
-                        AgentControlAvailability::Unavailable {
-                            reason: AgentControlUnavailabilityReason::ActiveTurnRequired,
-                            evidence: AgentControlAvailabilityEvidence {
-                                expected_snapshot_revision: revision,
-                                expected_turn_id: None,
-                            },
-                        },
-                    )
-                })
-                .collect(),
-                interactions: Vec::new(),
-                thread_name: None,
-                source_info: AgentSnapshotSource {
-                    authority: AgentSnapshotAuthority::AgentAuthoritative,
-                    source_revision: None,
-                    fidelity: SemanticFidelity::Exact,
-                    observed_at_ms: 42,
-                },
-                conversation: Vec::new(),
-            },
-            applied_surface: None,
-            initial_context: None,
-        }
+        CoherentAgentObservationBuilder::new(7)
+            .observed_at_ms(42)
+            .snapshot("source-1")
     }
 
     #[test]

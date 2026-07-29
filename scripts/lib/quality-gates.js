@@ -17,6 +17,10 @@ export const QUALITY_GATE_STEPS = Object.freeze({
     label: "Test support boundary guard",
     run: "pnpm run test-support:guard",
   }),
+  agent_runtime_guard: Object.freeze({
+    label: "Agent Runtime architecture boundary guard",
+    run: "pnpm run agent-runtime:guard",
+  }),
   contracts_check: Object.freeze({
     label: "Generated contract drift check",
     run: "pnpm run contracts:check",
@@ -114,10 +118,12 @@ export const QUALITY_GATES = Object.freeze({
     ]),
   }),
   pr_quick: Object.freeze({
-    description: "Fast pull-request signal for migration safety, test support boundaries, TypeScript surfaces, and Rust check.",
+    description: "Fast pull-request signal for migration safety, architecture boundaries, generated contracts, TypeScript surfaces, and Rust check.",
     entries: Object.freeze([
       { gate: "migration_history" },
       { step: "test_support_guard" },
+      { step: "agent_runtime_guard" },
+      { step: "contracts_check" },
       { step: "shared_check" },
       { step: "frontend_check" },
       { step: "backend_check" },
@@ -153,6 +159,7 @@ export const QUALITY_GATES = Object.freeze({
     entries: Object.freeze([
       { gate: "migration_history" },
       { step: "test_support_guard" },
+      { step: "agent_runtime_guard" },
       { step: "contracts_check" },
       { step: "backend_check" },
       { step: "backend_clippy" },

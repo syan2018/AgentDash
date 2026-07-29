@@ -383,53 +383,27 @@ mod tests {
         codex_app_server_protocol as codex,
     };
     use agentdash_agent_runtime_contract::{
-        AgentContextAuthority, AgentContextCoordinate, AgentContextFidelity,
-        AgentControlAvailabilityEvidence, AgentExecutionSnapshot, AgentLifecycleStatus,
-        AgentObservation, AgentPayloadDigest, AgentSnapshotAuthority, AgentSnapshotRevision,
-        AgentSnapshotSource, SemanticFidelity,
+        AgentControlAvailabilityEvidence, AgentSnapshotRevision,
     };
+    use agentdash_agent_runtime_test_support::coherent_runtime::CoherentAgentObservationBuilder;
 
     use super::*;
 
     fn snapshot(conversation: Vec<CanonicalConversationRecord>) -> AgentRuntimeView {
         let revision = AgentSnapshotRevision(7);
-        AgentRuntimeView {
-            thread_id: RuntimeThreadId::new("runtime-parent").expect("thread"),
-            observation: AgentObservation {
-                revision,
-                context: AgentContextCoordinate {
-                    snapshot_revision: revision,
-                    context_revision: Some("context-7".to_owned()),
-                    recipe_digest: AgentPayloadDigest::new("sha256:context-7").unwrap(),
-                    authority: AgentContextAuthority::AgentOwned,
-                    fidelity: AgentContextFidelity::Exact,
-                },
-                lifecycle: AgentLifecycleStatus::Active,
-                execution: AgentExecutionSnapshot {
-                    active_turn: None,
-                    queued_compaction: None,
-                    last_compaction_outcome: None,
-                },
-                command_availability: BTreeMap::from([(
-                    AgentControlKind::Fork,
-                    AgentControlAvailability::Available {
-                        evidence: AgentControlAvailabilityEvidence {
-                            expected_snapshot_revision: revision,
-                            expected_turn_id: None,
-                        },
+        CoherentAgentObservationBuilder::new(7)
+            .command_availability(BTreeMap::from([(
+                AgentControlKind::Fork,
+                AgentControlAvailability::Available {
+                    evidence: AgentControlAvailabilityEvidence {
+                        expected_snapshot_revision: revision,
+                        expected_turn_id: None,
                     },
-                )]),
-                interactions: Vec::new(),
-                thread_name: None,
-                source_info: AgentSnapshotSource {
-                    authority: AgentSnapshotAuthority::AgentAuthoritative,
-                    source_revision: None,
-                    fidelity: SemanticFidelity::Exact,
-                    observed_at_ms: 10,
                 },
-                conversation,
-            },
-        }
+            )]))
+            .conversation(conversation)
+            .observed_at_ms(10)
+            .runtime_view("runtime-parent")
     }
 
     fn turn(

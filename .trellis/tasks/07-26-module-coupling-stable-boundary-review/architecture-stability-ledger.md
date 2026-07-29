@@ -100,6 +100,7 @@ flowchart LR
 | BND-09 Foundation/application direction | Platform SPI泄漏Agent实现；Infrastructure混合persistence/composition；RepositorySet扩散 | dependency-light contract、纯persistence adapter、subsystem handles | 待 child proof | routes/use cases不再依赖concrete/repository bag | dependency/public-owner/source gate | `baseline` |
 | BND-10 Frontend occurrence/store owner | snapshot数组位置冒充live sequence；raw event和iframe直接写foreign store | feed-owned delta；typed dispatcher；workspace-scoped presentation port | 待 child proof | App/renderer/feature不再重新解释owner事件或target | frontend owner + vertical E2E gate | `baseline` |
 | BND-11 Generated/IPC/path | JSON bigint不诚实、live decoder浅、Tauri手写、MCP placement shape不同、view猜OS path | owned wire + generated decoder/client + lossless envelope + typed path | 待 child proof | service/view不再重建DTO、枚举或path grammar | contract DAG/codec/packaged matrix | `baseline` |
+| BND-12 Agent Runtime observation/lifecycle/encoding | source context DTO穿透Product/UI；item终态由consumer推理；nested scalar靠字段路径补丁 | canonical AgentObservation + Runtime-owned context fence + typed item terminal + schema-recursive codec | [07-29 Agent Runtime收束](../07-29-agent-runtime-cross-layer-state-convergence/implement.md)：A0-A4行为测试、old-path absence与`agent-runtime:guard` | Product/API/UI不再构造source query、复制observation或从item body猜终态；transport不再手写字段路径 | `agent-runtime:guard` + `contracts:check`进入PR quick/full gate | `proven` |
 
 ## Module → Work Package → Invariant Coverage
 
@@ -180,6 +181,7 @@ Simulation的判据是预期修改面和失败门禁，不是diff行数更少。
 - [前端与跨层审计](research/frontend-crosslayer-coupling.md)
 - [依赖图与演化审计](research/repo-dependency-churn.md)
 - [架构门禁可实施性](research/architecture-enforcement-feasibility.md)
+- [Agent Runtime纵向边界证明](../07-29-agent-runtime-cross-layer-state-convergence/implement.md)
 
 ## 当前未证明项
 

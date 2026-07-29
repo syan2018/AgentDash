@@ -121,6 +121,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
+ "agentdash-agent-runtime-test-support",
  "async-trait",
  "serde",
  "serde_json",
@@ -163,6 +164,8 @@ dependencies = [
 name = "agentdash-agent-runtime-test-support"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
+ "agentdash-agent-runtime-contract",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -311,6 +314,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
+ "agentdash-agent-runtime-test-support",
  "agentdash-application-ports",
  "agentdash-application-skill",
  "agentdash-application-vfs",

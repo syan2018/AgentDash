@@ -48,7 +48,6 @@ pub enum WorkflowOperationScriptCallerError {
 pub struct WorkflowOperationScriptCaller {
     engine: Arc<dyn OperationScriptEngine>,
     gateway: Arc<OperationGateway>,
-    operation_executor: Arc<GatewayOperationScriptExecutor>,
 }
 
 #[derive(Clone, Default)]
@@ -68,11 +67,7 @@ impl SharedWorkflowOperationScriptCaller {
 
 impl WorkflowOperationScriptCaller {
     pub fn new(engine: Arc<dyn OperationScriptEngine>, gateway: Arc<OperationGateway>) -> Self {
-        Self {
-            engine,
-            gateway: gateway.clone(),
-            operation_executor: Arc::new(GatewayOperationScriptExecutor::new(gateway)),
-        }
+        Self { engine, gateway }
     }
 
     pub async fn execute(
@@ -81,13 +76,17 @@ impl WorkflowOperationScriptCaller {
         context: WorkflowOperationScriptCallContext,
         cancel: CancellationToken,
     ) -> Result<OperationScriptOutcome, WorkflowOperationScriptCallerError> {
+        let operation_executor = Arc::new(GatewayOperationScriptExecutor::new(
+            self.gateway.clone(),
+            OperationPrincipal::server_resolved(context.principal.clone()),
+        ));
         let (program, context) = self
             .resolve_request(program, context, cancel.clone())
             .await?;
         self.engine
             .execute(
                 OperationScriptExecuteRequest { program, context },
-                self.operation_executor.clone(),
+                operation_executor,
                 cancel,
             )
             .await

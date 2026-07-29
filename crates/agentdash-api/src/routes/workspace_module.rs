@@ -14,14 +14,15 @@ use uuid::Uuid;
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::rpc::ApiError;
+use agentdash_application::execution_authority::{ExecutionAuthority, ExecutionAuthorityRequest};
 use agentdash_application_operation_gateway::UserWorkshopOperationHost;
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
 };
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_platform_spi::WorkspaceModuleDimension;
 use agentdash_workspace_module::product::{
-    WorkspaceModuleActor, WorkspaceModulePresentationError, WorkspaceModulePresentationRequest,
-    WorkspaceModuleProviderContext, build_workspace_module_presentation,
+    WorkspaceModuleActor, WorkspaceModuleProviderContext, resolve_workspace_module_surface,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -39,6 +40,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/projects/{project_id}/workspace-modules/present",
             post(present_workspace_module),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/workspace-modules/present",
+            post(present_agent_run_workspace_module),
         )
 }
 
@@ -83,6 +88,57 @@ pub async fn present_workspace_module(
     )
     .await?;
 
+    let (modules, provider_context) =
+        load_project_workspace_module_surface(state.as_ref(), &current_user, project_id).await?;
+    present_on_surface(state.as_ref(), request, &modules, &provider_context)
+        .await
+        .map(Json)
+}
+
+pub async fn present_agent_run_workspace_module(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(request): Json<WorkspaceModulePresentRequest>,
+) -> Result<Json<WorkspaceModulePresentation>, ApiError> {
+    let target = super::lifecycle_agents::authorize_agent_run_target(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(target.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("AgentRun Agent 不存在".into()))?;
+    let authority = state
+        .services
+        .execution_authorities
+        .resolve(ExecutionAuthorityRequest::for_target(target.clone()))
+        .await
+        .map_err(|error| ApiError::Conflict(format!("{}: {error}", error.code())))?;
+    let (modules, provider_context) = load_agent_run_workspace_module_surface(
+        state.as_ref(),
+        &authority,
+        target,
+        agent.created_by_user_id,
+    )
+    .await?;
+    present_on_surface(state.as_ref(), request, &modules, &provider_context)
+        .await
+        .map(Json)
+}
+
+async fn present_on_surface(
+    state: &AppState,
+    request: WorkspaceModulePresentRequest,
+    modules: &[WorkspaceModuleDescriptor],
+    provider_context: &WorkspaceModuleProviderContext,
+) -> Result<WorkspaceModulePresentation, ApiError> {
     let module_id = request.module_id.trim();
     let view_key = request.view_key.trim();
     if module_id.is_empty() || view_key.is_empty() {
@@ -90,42 +146,16 @@ pub async fn present_workspace_module(
             "module_id 与 view_key 不能为空".to_string(),
         ));
     }
-    let (modules, provider_context) =
-        load_project_workspace_module_surface(state.as_ref(), &current_user, project_id).await?;
     let module = modules
         .iter()
         .find(|module| module.summary.module_id == module_id)
         .ok_or_else(|| ApiError::NotFound(format!("workspace module not found: {module_id}")))?;
-    let preparation = state
+    state
         .services
         .workspace_module_providers
-        .prepare_presentation(WorkspaceModulePresentationRequest {
-            context: &provider_context,
-            module,
-            view_key,
-            payload: request.payload.clone(),
-        })
+        .present(provider_context, module, view_key, request.payload)
         .await
-        .map_err(product_tool_outcome_to_api)?;
-    let mut presentation = build_workspace_module_presentation(
-        module,
-        view_key,
-        request.payload,
-        preparation.diagnostics,
-    )
-    .map_err(|error| match error {
-        WorkspaceModulePresentationError::ViewNotFound { .. } => {
-            ApiError::NotFound(error.to_string())
-        }
-        WorkspaceModulePresentationError::MissingPresentationUri { .. } => {
-            ApiError::BadRequest(error.to_string())
-        }
-    })?;
-    if let Some(uri) = preparation.presentation_uri {
-        presentation.presentation_uri = uri;
-    }
-
-    Ok(Json(presentation))
+        .map_err(product_tool_outcome_to_api)
 }
 
 pub(crate) async fn load_project_workspace_modules(
@@ -172,6 +202,7 @@ async fn load_project_workspace_module_surface(
         },
         invocation_id: Uuid::new_v4().to_string(),
         visibility: WorkspaceModuleDimension::all(),
+        vfs_mounts: Vec::new(),
         operations,
     };
     let modules = state
@@ -181,6 +212,31 @@ async fn load_project_workspace_module_surface(
         .await
         .map_err(product_tool_outcome_to_api)?;
     Ok((modules, context))
+}
+
+pub(crate) async fn load_agent_run_workspace_module_surface(
+    state: &AppState,
+    authority: &ExecutionAuthority,
+    target: AgentRunTarget,
+    owner_user_id: String,
+) -> Result<
+    (
+        Vec<WorkspaceModuleDescriptor>,
+        WorkspaceModuleProviderContext,
+    ),
+    ApiError,
+> {
+    let surface = resolve_workspace_module_surface(
+        authority,
+        target,
+        owner_user_id,
+        Uuid::new_v4().to_string(),
+        &state.services.workspace_module_providers,
+        state.services.operation_gateway.as_ref(),
+    )
+    .await
+    .map_err(product_tool_outcome_to_api)?;
+    Ok((surface.modules, surface.provider_context))
 }
 
 fn product_tool_outcome_to_api(

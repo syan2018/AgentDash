@@ -171,10 +171,8 @@ export function CanvasRuntimePreview({
         });
       }
       case "actions.invoke": {
-        if (!current.interaction_instance_id) {
-          throw new Error("当前 preview 未绑定 Interaction instance");
-        }
         const result = await executeCanvasAction({
+          definitionId: current.canvas_id,
           instanceId: current.interaction_instance_id,
           actionKey: requireString(payload.action_key, "action key"),
           payload: (payload.payload ?? {}) as JsonValue,

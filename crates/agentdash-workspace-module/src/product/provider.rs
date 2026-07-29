@@ -1,9 +1,12 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use agentdash_application_agentrun::agent_run::AppliedVfsMount;
 use agentdash_application_operation_gateway::OperationDescriptor;
 use agentdash_application_ports::product_runtime_tool::ProductRuntimeToolOutcome;
-use agentdash_contracts::workspace_module::WorkspaceModuleDescriptor;
+use agentdash_contracts::workspace_module::{
+    WorkspaceModuleDescriptor, WorkspaceModulePresentation,
+};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_platform_spi::WorkspaceModuleDimension;
 use async_trait::async_trait;
@@ -19,6 +22,7 @@ pub struct WorkspaceModuleProviderContext {
     pub actor: WorkspaceModuleActor,
     pub invocation_id: String,
     pub visibility: WorkspaceModuleDimension,
+    pub vfs_mounts: Vec<AppliedVfsMount>,
     pub operations: Vec<OperationDescriptor>,
 }
 
@@ -62,10 +66,15 @@ pub struct WorkspaceModulePresentationRequest<'a> {
     pub payload: Option<Value>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct WorkspaceModulePresentationPreparation {
-    pub presentation_uri: Option<String>,
-    pub diagnostics: Option<Value>,
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum WorkspaceModulePresentationPreparation {
+    #[default]
+    Requested,
+    Redirected {
+        module_id: String,
+        view_key: String,
+        diagnostics: Option<Value>,
+    },
 }
 
 #[async_trait]
@@ -218,6 +227,56 @@ impl WorkspaceModuleProviderRegistry {
         };
         provider.prepare_presentation(request).await
     }
+
+    pub async fn present(
+        &self,
+        context: &WorkspaceModuleProviderContext,
+        module: &WorkspaceModuleDescriptor,
+        view_key: &str,
+        payload: Option<Value>,
+    ) -> Result<WorkspaceModulePresentation, ProductRuntimeToolOutcome> {
+        let preparation = self
+            .prepare_presentation(WorkspaceModulePresentationRequest {
+                context,
+                module,
+                view_key,
+                payload: payload.clone(),
+            })
+            .await?;
+        let (target_module, target_view_key, diagnostics) = match preparation {
+            WorkspaceModulePresentationPreparation::Requested => {
+                (module.clone(), view_key.to_owned(), None)
+            }
+            WorkspaceModulePresentationPreparation::Redirected {
+                module_id,
+                view_key,
+                diagnostics,
+            } => {
+                let target = self
+                    .modules(context)
+                    .await?
+                    .into_iter()
+                    .find(|candidate| candidate.summary.module_id == module_id)
+                    .ok_or_else(|| ProductRuntimeToolOutcome::Failed {
+                        code: "workspace_module_presentation_target_missing".to_owned(),
+                        message: format!(
+                            "prepared Workspace Module presentation target is missing: {module_id}"
+                        ),
+                    })?;
+                (target, view_key, diagnostics)
+            }
+        };
+        super::build_workspace_module_presentation(
+            &target_module,
+            &target_view_key,
+            payload,
+            diagnostics,
+        )
+        .map_err(|error| ProductRuntimeToolOutcome::Rejected {
+            code: "workspace_module_presentation_invalid".to_owned(),
+            message: error.to_string(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -259,6 +318,7 @@ mod tests {
             },
             invocation_id: "invocation-1".to_owned(),
             visibility: WorkspaceModuleDimension::all(),
+            vfs_mounts: Vec::new(),
             operations: Vec::new(),
         }
     }

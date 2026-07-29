@@ -1,11 +1,14 @@
 import type {
   WorkspaceModuleDescriptor,
 } from "../../../generated/workspace-module-contracts";
-import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 import {
   isConcreteCanvasPresentationUri,
   workspaceModulePresentationTabTarget,
 } from "../../workspace-module/model/presentation";
+import {
+  presentAgentRunWorkspaceModule,
+  presentWorkspaceModule,
+} from "../../../services/workspaceModule";
 
 export interface CanvasModuleOpenOption {
   module_id: string;
@@ -16,6 +19,9 @@ export interface CanvasModuleOpenOption {
 
 export interface OpenUserCanvasModuleParams {
   option: CanvasModuleOpenOption;
+  projectId: string;
+  agentRunTarget?: { runId: string; agentId: string } | null;
+  afterPresent?: () => Promise<void>;
   openOrActivate: (typeId: string, uri: string) => void;
 }
 
@@ -25,10 +31,12 @@ export type CanvasSurfaceUri =
 
 export function parseCanvasSurfaceUri(uri: string): CanvasSurfaceUri | null {
   const trimmed = uri.trim();
-  if (isConcreteCanvasPresentationUri(trimmed)) {
+  if (trimmed.startsWith("canvas://")) {
+    const definitionId = trimmed.slice("canvas://".length).trim();
+    if (!definitionId) return null;
     return {
       kind: "definition",
-      definitionId: trimmed.slice("canvas://".length).trim(),
+      definitionId,
     };
   }
   if (trimmed.startsWith("interaction://")) {
@@ -38,35 +46,8 @@ export function parseCanvasSurfaceUri(uri: string): CanvasSurfaceUri | null {
   return null;
 }
 
-export function canvasMountIdFromPresentationUri(uri: string): string | null {
-  const parsed = parseCanvasSurfaceUri(uri);
-  return parsed?.kind === "definition" ? parsed.definitionId : null;
-}
-
-export function activeCanvasMountIdsFromRuntimeSurface(
-  runtimeSurface: ResolvedVfsSurface | null,
-): Set<string> {
-  const ids = new Set<string>();
-  for (const mount of runtimeSurface?.mounts ?? []) {
-    if (mount.purpose !== "canvas") continue;
-    const rawId = mount.id.trim();
-    if (!rawId) continue;
-    ids.add(rawId);
-  }
-  return ids;
-}
-
-export function isActiveCanvasPresentationUri(
-  uri: string,
-  activeCanvasMountIds: ReadonlySet<string>,
-): boolean {
-  const mountId = canvasMountIdFromPresentationUri(uri);
-  return mountId !== null && activeCanvasMountIds.has(mountId);
-}
-
 export function selectCanvasModuleOpenOptions(
   modules: WorkspaceModuleDescriptor[],
-  activeCanvasMountIds?: ReadonlySet<string> | null,
 ): CanvasModuleOpenOption[] {
   const options: CanvasModuleOpenOption[] = [];
   for (const module of modules) {
@@ -76,11 +57,6 @@ export function selectCanvasModuleOpenOptions(
       if (entry.renderer_kind !== "canvas") continue;
       const presentationUri = entry.presentation_uri?.trim() ?? "";
       if (!isConcreteCanvasPresentationUri(presentationUri)) continue;
-      const mountId = canvasMountIdFromPresentationUri(presentationUri);
-      if (activeCanvasMountIds === null) continue;
-      if (activeCanvasMountIds && (!mountId || !activeCanvasMountIds.has(mountId))) {
-        continue;
-      }
       const title = entry.title.trim() || module.summary.title.trim() || module.summary.module_id;
       options.push({
         module_id: module.summary.module_id,
@@ -95,17 +71,28 @@ export function selectCanvasModuleOpenOptions(
 
 export async function openUserCanvasModule({
   option,
+  projectId,
+  agentRunTarget,
+  afterPresent,
   openOrActivate,
 }: OpenUserCanvasModuleParams): Promise<void> {
-  const target = workspaceModulePresentationTabTarget({
-    module_id: option.module_id,
-    view_key: option.view_key,
-    renderer_kind: "canvas",
-    presentation_uri: option.presentation_uri,
-    title: option.title,
-  });
+  const presentation = agentRunTarget
+    ? await presentAgentRunWorkspaceModule(
+      agentRunTarget.runId,
+      agentRunTarget.agentId,
+      {
+        module_id: option.module_id,
+        view_key: option.view_key,
+      },
+    )
+    : await presentWorkspaceModule(projectId, {
+      module_id: option.module_id,
+      view_key: option.view_key,
+    });
+  const target = workspaceModulePresentationTabTarget(presentation);
   if (target?.typeId !== "canvas" || !target.uri) {
     throw new Error("当前 Canvas 没有可打开的 presentation。");
   }
+  await afterPresent?.();
   openOrActivate(target.typeId, target.uri);
 }

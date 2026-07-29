@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use agentdash_domain::interaction::{
     ComponentBinding, DefinitionLineage, DefinitionLineageKind, DefinitionRevisionCommit,
-    InteractionActionBinding, InteractionAgentProjection, InteractionCommandDefinition,
-    InteractionDefinition, InteractionDefinitionAccess, InteractionDefinitionRepository,
-    InteractionDefinitionRevision, InteractionDefinitionStatus, InteractionError, InteractionOwner,
-    ResourceSlotDefinition, SourceBundle, SourceBundleChangeset, SourceFile, SourceSandboxConfig,
+    InteractionAgentProjection, InteractionCommandDefinition, InteractionDefinition,
+    InteractionDefinitionAccess, InteractionDefinitionRepository, InteractionDefinitionRevision,
+    InteractionDefinitionStatus, InteractionError, InteractionOwner, ResourceSlotDefinition,
+    SourceBundle, SourceBundleChangeset, SourceFile, SourceSandboxConfig,
     canvas_authoring_mount_id, normalize_canvas_authoring_mount_id,
 };
 use async_trait::async_trait;
@@ -58,7 +58,6 @@ pub struct CreateCanvasDefinitionInput {
     pub agent_projection: InteractionAgentProjection,
     pub command_definitions: Vec<InteractionCommandDefinition>,
     pub component_bindings: Vec<ComponentBinding>,
-    pub action_bindings: Vec<InteractionActionBinding>,
     pub resource_slots: Vec<ResourceSlotDefinition>,
 }
 
@@ -71,7 +70,6 @@ pub struct CommitCanvasDefinitionInput {
     pub changeset: SourceBundleChangeset,
     pub command_definitions: Option<Vec<InteractionCommandDefinition>>,
     pub component_bindings: Option<Vec<ComponentBinding>>,
-    pub action_bindings: Option<Vec<InteractionActionBinding>>,
     pub resource_slots: Option<Vec<ResourceSlotDefinition>>,
     pub agent_projection: Option<InteractionAgentProjection>,
 }
@@ -133,7 +131,7 @@ impl CanvasDefinitionService {
         )?;
         revision.authoring_mount_id = match input.authoring_mount_id {
             Some(value) => normalize_canvas_authoring_mount_id(&value)?,
-            None => canvas_authoring_mount_id(definition_id),
+            None => canvas_authoring_mount_id(&revision.title, definition_id),
         };
         self.require_authoring_mount_available(
             input.project_id,
@@ -143,7 +141,6 @@ impl CanvasDefinitionService {
         .await?;
         revision.command_definitions = input.command_definitions;
         revision.component_bindings = input.component_bindings;
-        revision.action_bindings = input.action_bindings;
         revision.resource_slots = input.resource_slots;
         revision.agent_projection = input.agent_projection;
         revision.validate()?;
@@ -240,9 +237,6 @@ impl CanvasDefinitionService {
         revision.component_bindings = input
             .component_bindings
             .unwrap_or_else(|| current.component_bindings.clone());
-        revision.action_bindings = input
-            .action_bindings
-            .unwrap_or_else(|| current.action_bindings.clone());
         revision.resource_slots = input
             .resource_slots
             .unwrap_or_else(|| current.resource_slots.clone());
@@ -254,7 +248,6 @@ impl CanvasDefinitionService {
             && revision.description == current.description
             && revision.command_definitions == current.command_definitions
             && revision.component_bindings == current.component_bindings
-            && revision.action_bindings == current.action_bindings
             && revision.resource_slots == current.resource_slots
             && revision.agent_projection == current.agent_projection
         {
@@ -595,11 +588,11 @@ fn copy_revision(
     revision.revision_id = Uuid::new_v4();
     revision.revision_number = revision_number;
     revision.owner = owner;
+    revision.title = title.unwrap_or(revision.title);
     revision.authoring_mount_id = authoring_mount_id
         .map(|value| normalize_canvas_authoring_mount_id(&value))
         .transpose()?
-        .unwrap_or_else(|| canvas_authoring_mount_id(definition_id));
-    revision.title = title.unwrap_or(revision.title);
+        .unwrap_or_else(|| canvas_authoring_mount_id(&revision.title, definition_id));
     revision.description = description.unwrap_or(revision.description);
     revision.lineage = Some(lineage);
     revision.created_by = created_by.to_owned();

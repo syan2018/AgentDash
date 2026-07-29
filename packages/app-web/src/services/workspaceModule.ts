@@ -28,3 +28,15 @@ export async function presentWorkspaceModule(
     request,
   );
 }
+
+export async function presentAgentRunWorkspaceModule(
+  runId: string,
+  agentId: string,
+  request: WorkspaceModulePresentRequest,
+): Promise<WorkspaceModulePresentation> {
+  return api.post<WorkspaceModulePresentation>(
+    `/agent-runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}`
+      + "/workspace-modules/present",
+    request,
+  );
+}

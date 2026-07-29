@@ -50,7 +50,6 @@ function definition(): CanvasDefinitionDto {
     agent_projection: { version: 1, allowed_state_paths: [] },
     command_definitions: [],
     component_bindings: [],
-    action_bindings: [],
     resource_slots: [],
     access: {
       can_view: true,
@@ -183,6 +182,7 @@ describe("canvas service", () => {
     mocks.post.mockResolvedValueOnce({ outcome: { kind: "operation_script" } });
 
     await executeCanvasAction({
+      definitionId: "canvas-1",
       instanceId: "instance 1",
       actionKey: "skills.refresh",
       payload: { force: true },
@@ -199,6 +199,26 @@ describe("canvas service", () => {
         expected_state_revision: 3,
         run_id: "run-1",
         agent_id: "agent-1",
+      },
+    );
+  });
+
+  it("definition preview 通过 definition action 入口执行无状态 action", async () => {
+    mocks.post.mockResolvedValueOnce({ outcome: { kind: "operation_script" } });
+
+    await executeCanvasAction({
+      definitionId: "canvas 1",
+      actionKey: "skills.refresh",
+      payload: {},
+      expectedStateRevision: 0,
+    });
+
+    expect(mocks.post).toHaveBeenCalledWith(
+      "/interaction-definitions/canvas%201/actions",
+      {
+        command_id: expect.any(String),
+        action_key: "skills.refresh",
+        payload: {},
       },
     );
   });

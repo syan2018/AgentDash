@@ -762,7 +762,7 @@ fn product_projection_limit(limit: Option<usize>) -> Result<usize, ApiError> {
     Ok(limit)
 }
 
-async fn authorize_agent_run_target(
+pub(crate) async fn authorize_agent_run_target(
     state: &AppState,
     current_user: &agentdash_integration_api::AuthIdentity,
     run_id: &str,

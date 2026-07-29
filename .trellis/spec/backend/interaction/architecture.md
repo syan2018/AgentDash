@@ -33,7 +33,6 @@ InteractionDefinitionRevision {
   interaction_contract_version: 1,
   source_bundle,
   command_bindings,
-  action_bindings,
   component_bindings,
   resource_slots,
   lineage,
@@ -43,7 +42,7 @@ InteractionDefinitionRevision {
 SourceBundle {
   format_version: 1,
   entry_file,
-  files,
+  files, // includes canvas.json and actions/*.rhai
   sandbox_config,
   import_map,
   digest
@@ -117,9 +116,10 @@ V1 通用 mutation handler 为 `state_patch_v1`：
 - `command_id` 在 instance scope 内幂等；相同 id + 不同 digest 返回 conflict；
 - command receipt、ordered event、next state revision 与可选 effect intent 在同一事务提交。
 
-Definition-level action binding 负责 Canvas source 的普通按钮和其它 host action：iframe 只提交
-`action_key + payload`，immutable revision 固定 platform command、Operation 或 OperationScript target
-及 exact Operation allowlist。它不依赖 Extension artifact。
+SourceBundle 中的 `canvas.json.actions` 负责 Canvas source 的普通按钮和其它 host action：iframe
+只提交 `action_key + payload`，immutable SourceBundle 固定 platform command、Operation 或
+OperationScript target 及 exact Operation allowlist。manifest、脚本和 UI source 共享一个 digest，
+不再由 revision contract 维护第二份 action 事实。它不依赖 Extension artifact。
 
 Component event binding 只属于已安装 Extension UI component，instance 创建时解析并 pin exact artifact；
 其事件可以复用相同 action 执行边界。平台不执行 Extension/Canvas reducer code，也不维护 generic
@@ -279,7 +279,6 @@ struct PersistedDefinitionRevisionContract {
     agent_projection: InteractionAgentProjection,
     command_definitions: Vec<InteractionCommandDefinition>,
     component_bindings: Vec<ComponentBinding>,
-    action_bindings: Vec<InteractionActionBinding>,
     resource_slots: Vec<ResourceSlotDefinition>,
     created_by: String,
 }
@@ -306,11 +305,12 @@ struct PersistedDefinitionRevisionContract {
 | SourceBundle digest 无对应内容或校验失败 | `not_found` / persistence conflict |
 | owner scalar 与 Project/domain invariant 不一致 | domain `validate()` 拒绝 |
 | contract 新增数组字段 | migration 物化完整数组并增加 shape check |
+| contract 出现 `action_bindings` | migration / shape check 拒绝；action 只来自 SourceBundle manifest |
 
 ### 5. Good / Base / Bad Cases
 
-- Good：新增 `action_bindings` 时，顺序 migration 为每条 revision 写入数组，并在同一 migration 删除被替代
-  的 document shape。
+- Good：Canvas action manifest、脚本与 UI source 在一次 SourceBundle changeset 中提交，revision digest
+  唯一固定整套可执行资产。
 - Base：新 revision 写 scalar identity + typed contract，读取时与 SourceBundle/lineage 重组。
 - Bad：在 repository 私有结构中再复制一份完整 domain revision identity，或依赖 `serde(default)` 把未迁移的
   durable schema 漂移静默吞掉。
@@ -319,7 +319,8 @@ struct PersistedDefinitionRevisionContract {
 
 - contract serialization 断言不包含 scalar identity/digest/timestamp。
 - migration 断言新增字段被物化、JSON type check 生效、被替代列删除。
-- repository create/get roundtrip 覆盖空与非空 action/component/command/resource bindings。
+- repository create/get roundtrip 覆盖空与非空 component/command/resource bindings，并断言 contract
+  不包含 `action_bindings`。
 - API error mapping 断言 persistence/serialization 返回固定 500，并由 diagnostics 记录 operation/stage。
 - `pnpm run migration:guard`、真实 PostgreSQL migration runner 与受影响 Rust tests。
 

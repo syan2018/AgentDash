@@ -98,8 +98,12 @@ pub(super) async fn check_mount_available(
     vfs: &Vfs,
     mount_id: &str,
 ) -> Result<(), ApiError> {
-    if let Some(mount) = vfs.mounts.iter().find(|mount| mount.id == mount_id)
-        && let Some(provider) = state.services.mount_provider_registry.get(&mount.provider)
+    let mount = vfs
+        .mounts
+        .iter()
+        .find(|mount| mount.id == mount_id)
+        .ok_or_else(|| ApiError::NotFound(format!("VFS surface 不包含 mount `{mount_id}`")))?;
+    if let Some(provider) = state.services.mount_provider_registry.get(&mount.provider)
         && mount.provider != PROVIDER_INLINE_FS
         && !provider.is_available(mount).await
     {

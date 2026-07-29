@@ -15,6 +15,7 @@ pub use provider::{
 };
 pub use system_providers::{ExtensionWorkspaceModuleProvider, PlatformWorkspaceModuleProvider};
 pub use tool_service::{
-    ApplicationWorkspaceModuleRuntimeToolService, WorkspaceModuleRuntimeToolDeps,
+    ApplicationWorkspaceModuleRuntimeToolService, ResolvedWorkspaceModuleSurface,
+    WorkspaceModuleRuntimeToolDeps, resolve_workspace_module_surface,
     workspace_module_runtime_tool_schema,
 };

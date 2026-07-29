@@ -148,6 +148,7 @@ impl CanvasOperationStrategy for CreateCanvasStrategy {
         } else {
             let mount_id = requested_or_default_mount_id(
                 input.canvas_mount_id,
+                title,
                 definition_id,
                 context.visible_definitions,
             )?;
@@ -291,8 +292,10 @@ impl CanvasOperationStrategy for CopyCanvasStrategy {
                     )
                 })?
         } else {
+            let title = input.title.unwrap_or_else(|| source.title.clone());
             let mount_id = requested_or_default_mount_id(
                 input.canvas_mount_id,
+                &title,
                 definition_id,
                 context.visible_definitions,
             )?;
@@ -302,7 +305,7 @@ impl CanvasOperationStrategy for CopyCanvasStrategy {
             revision.revision_number = 1;
             revision.owner = InteractionOwner::User(context.user_id.to_owned());
             revision.authoring_mount_id = mount_id;
-            revision.title = input.title.unwrap_or(revision.title);
+            revision.title = title;
             revision.description = input.description.unwrap_or(revision.description);
             revision.lineage = Some(DefinitionLineage {
                 kind: DefinitionLineageKind::CopiedFrom,
@@ -396,6 +399,7 @@ fn stable_canvas_definition_id(
 
 fn requested_or_default_mount_id(
     requested: Option<String>,
+    title: &str,
     definition_id: uuid::Uuid,
     definitions: &[InteractionDefinitionRevision],
 ) -> Result<String, ProductRuntimeToolOutcome> {
@@ -408,7 +412,7 @@ fn requested_or_default_mount_id(
                 error.to_string(),
             )
         })?
-        .unwrap_or_else(|| canvas_authoring_mount_id(definition_id));
+        .unwrap_or_else(|| canvas_authoring_mount_id(title, definition_id));
     if definitions
         .iter()
         .any(|revision| revision.authoring_mount_id == mount_id)
@@ -468,6 +472,20 @@ root.innerHTML = `
             .map_err(|error| {
                 failed(
                     "workspace_module_default_canvas_source_invalid",
+                    error.to_string(),
+                )
+            })?,
+            SourceFile::new(
+                "canvas.json",
+                r#"{
+  "format_version": 1,
+  "actions": []
+}"#,
+                Some("application/json".to_owned()),
+            )
+            .map_err(|error| {
+                failed(
+                    "workspace_module_default_canvas_manifest_invalid",
                     error.to_string(),
                 )
             })?,

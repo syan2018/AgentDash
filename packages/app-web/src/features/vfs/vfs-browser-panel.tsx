@@ -152,8 +152,14 @@ export function VfsBrowserPanel({
   // 默认选中第一个可浏览 mount，避免离线 relay_fs 在预览页自动触发 503。
   useEffect(() => {
     if (selectedMountId && mounts.some((m) => m.id === selectedMountId)) return;
+    if (initialMountId) {
+      setSelectedMountId(initialMountId);
+      setOperationError(
+        `当前 runtime surface 不包含显式请求的 Mount：${initialMountId}`,
+      );
+      return;
+    }
     const defaultId = selectDefaultVfsMount(mounts, {
-      initialMountId,
       defaultMountId: surface?.default_mount_id,
     })?.id ?? null;
     setSelectedMountId(defaultId);
@@ -536,7 +542,9 @@ export function VfsBrowserPanel({
               />
             )}
             {selectedMountId && !selectedMountBrowsable && (
-              <OfflineMountNotice mount={selectedMount} />
+              selectedMount
+                ? <OfflineMountNotice mount={selectedMount} />
+                : <MissingMountNotice mountId={selectedMountId} />
             )}
           </div>
         </Panel>
@@ -576,7 +584,9 @@ export function VfsBrowserPanel({
               <p className="text-center text-sm text-muted-foreground">
                 {selectedMountBrowsable
                   ? "在左侧文件树中选择一个文件以查看内容"
-                  : "当前 Mount 的 Backend 离线，连接后即可浏览文件。"}
+                  : selectedMount
+                    ? "当前 Mount 的 Backend 离线，连接后即可浏览文件。"
+                    : "显式请求的 Mount 不属于当前 runtime surface。"}
               </p>
             </div>
           )}
@@ -635,6 +645,17 @@ function OfflineMountNotice({ mount }: { mount: VfsBrowserPanelMountOption | nul
       <p className="font-medium text-foreground">Backend 离线</p>
       <p className="mt-1">
         {mount?.displayName ?? "当前 Mount"} 暂时不可浏览。预览页不会主动请求离线 backend 的文件列表。
+      </p>
+    </div>
+  );
+}
+
+function MissingMountNotice({ mountId }: { mountId: string }) {
+  return (
+    <div className="px-3 py-4 text-xs leading-5 text-muted-foreground">
+      <p className="font-medium text-foreground">Mount 不可用</p>
+      <p className="mt-1 break-all">
+        {mountId} 不属于当前 runtime surface；已阻止回退到其它 Mount。
       </p>
     </div>
   );

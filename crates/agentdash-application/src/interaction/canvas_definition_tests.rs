@@ -168,7 +168,6 @@ fn create_input(project_id: Uuid) -> CreateCanvasDefinitionInput {
         agent_projection: Default::default(),
         command_definitions: vec![],
         component_bindings: vec![],
-        action_bindings: vec![],
         resource_slots: vec![],
     }
 }
@@ -203,7 +202,6 @@ async fn changeset_uses_current_revision_cas_and_rejects_noop() {
                 },
                 command_definitions: None,
                 component_bindings: None,
-                action_bindings: None,
                 resource_slots: None,
                 agent_projection: None,
             },
@@ -223,7 +221,6 @@ async fn changeset_uses_current_revision_cas_and_rejects_noop() {
                 changeset: SourceBundleChangeset::default(),
                 command_definitions: None,
                 component_bindings: None,
-                action_bindings: None,
                 resource_slots: None,
                 agent_projection: None,
             },

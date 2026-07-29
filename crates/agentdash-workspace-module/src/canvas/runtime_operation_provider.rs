@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub const CANVAS_RUNTIME_OPERATION_NAMESPACE: &str = "canvas_runtime";
-const PRESENTATION_KEY_RENDERER_OBSERVATION: &str = "canvas.renderer-observation";
+const PRESENTATION_KEY_RENDERER_OBSERVATION: &str = "canvas:renderer-observation";
 
 pub struct CanvasRuntimeOperationProvider {
     definitions: Arc<dyn InteractionDefinitionRepository>,
@@ -123,7 +123,9 @@ impl CanvasRuntimeOperationProvider {
                     .await
                     .map_err(provider_failed)?
                     .into_iter()
-                    .any(|attachment| &attachment.subject == subject);
+                    .any(|attachment| {
+                        attachment.detached_at.is_none() && &attachment.subject == subject
+                    });
                 if !attached {
                     continue;
                 }
@@ -295,7 +297,9 @@ impl DynamicOperationProvider for CanvasRuntimeOperationProvider {
                         .await
                         .map_err(provider_failed)?
                         .into_iter()
-                        .find(|attachment| attachment.subject == subject)
+                        .find(|attachment| {
+                            attachment.detached_at.is_none() && attachment.subject == subject
+                        })
                         .map(|attachment| attachment.id)
                 } else {
                     None

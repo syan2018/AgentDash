@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use crate::product::tool_service::{
     ApplicationWorkspaceModuleRuntimeToolService, completed, rejected,
 };
-use crate::product::{WorkspaceModulePresentationRequest, build_workspace_module_presentation};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,34 +50,20 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
                 format!("workspace module is not visible: {}", arguments.module_id),
             );
         };
-        let preparation = match self
+        let presentation = match self
             .deps
             .providers
-            .prepare_presentation(WorkspaceModulePresentationRequest {
-                context: &surface.provider_context,
+            .present(
+                &surface.provider_context,
                 module,
-                view_key: arguments.view_key.trim(),
-                payload: arguments.payload.clone(),
-            })
+                arguments.view_key.trim(),
+                arguments.payload.clone(),
+            )
             .await
         {
-            Ok(preparation) => preparation,
+            Ok(presentation) => presentation,
             Err(outcome) => return outcome,
         };
-        let mut presentation = match build_workspace_module_presentation(
-            module,
-            arguments.view_key.trim(),
-            arguments.payload,
-            preparation.diagnostics,
-        ) {
-            Ok(presentation) => presentation,
-            Err(error) => {
-                return rejected("workspace_module_presentation_invalid", error.to_string());
-            }
-        };
-        if let Some(presentation_uri) = preparation.presentation_uri {
-            presentation.presentation_uri = presentation_uri;
-        }
         completed(json!({
             "content": [{
                 "type": "text",

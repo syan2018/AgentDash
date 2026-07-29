@@ -27,11 +27,11 @@ use agentdash_application_operation_gateway::{
 use agentdash_application_ports::operation_script::OperationScriptLimits;
 use agentdash_contracts::interaction::{
     ArchiveInteractionDefinitionResponse, CanvasAgentSubmitRequestDto,
-    CanvasAgentSubmitResponseDto, CanvasDefinitionDto, CanvasDefinitionListScopeDto,
-    CanvasRuntimeFeaturesDto, CanvasRuntimeSnapshotDto, CloseInteractionInstanceRequestDto,
-    CommitCanvasDefinitionRequest, CreateCanvasDefinitionRequest,
-    CreateInteractionInstanceRequestDto, DistributeCanvasDefinitionRequest,
-    InteractionActionBindingDto, InteractionActionRequestDto, InteractionActionResponseDto,
+    CanvasAgentSubmitResponseDto, CanvasDefinitionActionRequestDto, CanvasDefinitionDto,
+    CanvasDefinitionListScopeDto, CanvasRuntimeFeaturesDto, CanvasRuntimeSnapshotDto,
+    CloseInteractionInstanceRequestDto, CommitCanvasDefinitionRequest,
+    CreateCanvasDefinitionRequest, CreateInteractionInstanceRequestDto,
+    DistributeCanvasDefinitionRequest, InteractionActionRequestDto, InteractionActionResponseDto,
     InteractionActionTargetDto, InteractionAgentProjectionDto, InteractionCommandActorPolicyDto,
     InteractionCommandDefinitionDto, InteractionCommandRequestDto, InteractionCommandResponseDto,
     InteractionComponentBindingDto, InteractionComponentEventBindingDto,
@@ -55,13 +55,13 @@ use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::interaction::{
     AttachmentSubject, CommandActorPolicy, ComponentBinding, ComponentEventBinding,
-    DefinitionLineageKind, InteractionActionBinding, InteractionActionTarget, InteractionActor,
-    InteractionAgentProjection, InteractionCommandCommit, InteractionCommandDefinition,
-    InteractionCommandOrigin, InteractionDefinition, InteractionDefinitionStatus,
-    InteractionOperationEffectDefinition, InteractionOwner, InteractionRuntimeBinding,
-    OperationEffectSafety, OperationScriptSource, PlatformCommandHandler, ResourceSlotDefinition,
-    ResourceSlotKind, RuntimeBindingAuthorizationRef, RuntimeBindingTarget, SourceBundle,
-    SourceBundleChangeset, SourceFile, SourceFileChange, SourceSandboxConfig, StatePatchV1Contract,
+    DefinitionLineageKind, InteractionActionTarget, InteractionActor, InteractionAgentProjection,
+    InteractionCommandCommit, InteractionCommandDefinition, InteractionCommandOrigin,
+    InteractionDefinition, InteractionDefinitionStatus, InteractionOperationEffectDefinition,
+    InteractionOwner, InteractionRuntimeBinding, OperationEffectSafety, OperationScriptSource,
+    PlatformCommandHandler, ResourceSlotDefinition, ResourceSlotKind,
+    RuntimeBindingAuthorizationRef, RuntimeBindingTarget, SourceBundle, SourceBundleChangeset,
+    SourceFile, SourceFileChange, SourceSandboxConfig, StatePatchV1Contract,
 };
 use agentdash_domain::operation::{OperationOriginRef, OperationReplayPolicy, OperationScopeRef};
 use agentdash_domain::project::{ProjectAuthorizationContext, ProjectAuthorizationService};
@@ -120,6 +120,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/interaction-definitions/{definition_id}/instances",
             axum::routing::post(create_interaction_instance),
+        )
+        .route(
+            "/interaction-definitions/{definition_id}/actions",
+            axum::routing::post(execute_canvas_definition_action),
         )
         .route(
             "/projects/{project_id}/interaction-instances",
@@ -243,11 +247,6 @@ async fn create_canvas_definition(
                     .into_iter()
                     .map(component_binding_from_dto)
                     .collect::<Result<Vec<_>, _>>()?,
-                action_bindings: request
-                    .action_bindings
-                    .into_iter()
-                    .map(action_binding_from_dto)
-                    .collect::<Result<Vec<_>, _>>()?,
                 resource_slots: request
                     .resource_slots
                     .into_iter()
@@ -343,15 +342,6 @@ async fn commit_canvas_definition(
                         bindings
                             .into_iter()
                             .map(component_binding_from_dto)
-                            .collect::<Result<Vec<_>, _>>()
-                    })
-                    .transpose()?,
-                action_bindings: request
-                    .action_bindings
-                    .map(|bindings| {
-                        bindings
-                            .into_iter()
-                            .map(action_binding_from_dto)
                             .collect::<Result<Vec<_>, _>>()
                     })
                     .transpose()?,
@@ -707,7 +697,7 @@ async fn submit_interaction_agent_input(
     Path(path): Path<InteractionInstancePath>,
     Json(request): Json<CanvasAgentSubmitRequestDto>,
 ) -> Result<Json<CanvasAgentSubmitResponseDto>, ApiError> {
-    const RENDERER_OBSERVATION_KEY: &str = "canvas.renderer-observation";
+    const RENDERER_OBSERVATION_KEY: &str = "canvas:renderer-observation";
 
     let instance_id = parse_uuid(&path.instance_id, "instance_id")?;
     let view = instance_service(&state, &current_user)
@@ -737,11 +727,12 @@ async fn submit_interaction_agent_input(
         .await?
         .into_iter()
         .any(|attachment| {
-            attachment.subject
-                == AttachmentSubject::AgentRun {
-                    run_id: target.run_id,
-                    agent_id: target.agent_id,
-                }
+            attachment.detached_at.is_none()
+                && attachment.subject
+                    == AttachmentSubject::AgentRun {
+                        run_id: target.run_id,
+                        agent_id: target.agent_id,
+                    }
         });
     if !attached {
         return Err(ApiError::Forbidden(
@@ -887,7 +878,7 @@ async fn execute_interaction_component_event(
     let response = execute_definition_action(
         &state,
         &current_user,
-        view.instance.id,
+        Some(view.instance.id),
         &revision,
         command_id,
         event.target,
@@ -921,7 +912,8 @@ async fn execute_interaction_action(
         .await?
         .ok_or_else(|| ApiError::NotFound("Interaction definition revision 不存在".into()))?;
     let action = revision
-        .action_bindings
+        .canvas_manifest()?
+        .actions
         .iter()
         .find(|binding| binding.action_key == request.action_key)
         .cloned()
@@ -935,7 +927,7 @@ async fn execute_interaction_action(
         execute_definition_action(
             &state,
             &current_user,
-            view.instance.id,
+            Some(view.instance.id),
             &revision,
             command_id,
             action.target,
@@ -948,11 +940,50 @@ async fn execute_interaction_action(
     ))
 }
 
+async fn execute_canvas_definition_action(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<InteractionDefinitionPath>,
+    Json(request): Json<CanvasDefinitionActionRequestDto>,
+) -> Result<Json<InteractionActionResponseDto>, ApiError> {
+    let definition_id = parse_uuid(&path.definition_id, "definition_id")?;
+    let command_id = parse_uuid(&request.command_id, "command_id")?;
+    let view = definition_service(&state, &current_user)
+        .get(definition_id, &current_user.user_id)
+        .await?;
+    let action = view
+        .revision
+        .canvas_manifest()?
+        .actions
+        .iter()
+        .find(|binding| binding.action_key == request.action_key)
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound("Canvas action binding 不存在".into()))?;
+    validate_json_schema_subset(&action.payload_schema, &request.payload).map_err(|reason| {
+        ApiError::BadRequest(format!("Canvas action payload 不符合 schema: {reason}"))
+    })?;
+    Ok(Json(
+        execute_definition_action(
+            &state,
+            &current_user,
+            None,
+            &view.revision,
+            command_id,
+            action.target,
+            request.payload,
+            0,
+            None,
+            None,
+        )
+        .await?,
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn execute_definition_action(
     state: &Arc<AppState>,
     current_user: &agentdash_integration_api::AuthIdentity,
-    instance_id: Uuid,
+    instance_id: Option<Uuid>,
     revision: &agentdash_domain::interaction::InteractionDefinitionRevision,
     command_id: Uuid,
     target: InteractionActionTarget,
@@ -961,18 +992,14 @@ async fn execute_definition_action(
     run_id: Option<&str>,
     agent_id: Option<&str>,
 ) -> Result<InteractionActionResponseDto, ApiError> {
-    let operation_host = resolve_interaction_action_operation_host(
-        state,
-        current_user,
-        instance_id,
-        revision.project_id,
-        run_id,
-        agent_id,
-    )
-    .await?;
-
     Ok(match target {
         InteractionActionTarget::PlatformCommand { command_key } => {
+            let instance_id = instance_id.ok_or_else(|| {
+                ApiError::BadRequest(
+                    "PlatformCommand 会修改 Interaction 状态，必须通过 Interaction instance 执行"
+                        .into(),
+                )
+            })?;
             let commit = command_service(&state, &current_user, revision.project_id)
                 .execute(
                     InteractionCommandInput {
@@ -1007,6 +1034,15 @@ async fn execute_definition_action(
             }
         }
         InteractionActionTarget::Operation { operation_ref } => {
+            let operation_host = resolve_definition_action_operation_host(
+                state,
+                current_user,
+                instance_id,
+                revision,
+                run_id,
+                agent_id,
+            )
+            .await?;
             let result = operation_host
                 .invoke(
                     HostOperationInvocation {
@@ -1036,6 +1072,15 @@ async fn execute_definition_action(
             source,
             requested_operations,
         } => {
+            let operation_host = resolve_definition_action_operation_host(
+                state,
+                current_user,
+                instance_id,
+                revision,
+                run_id,
+                agent_id,
+            )
+            .await?;
             let source = match source {
                 OperationScriptSource::Inline { source } => source,
                 OperationScriptSource::SourceFile { path } => revision
@@ -1076,6 +1121,36 @@ async fn execute_definition_action(
             }
         }
     })
+}
+
+async fn resolve_definition_action_operation_host(
+    state: &Arc<AppState>,
+    current_user: &agentdash_integration_api::AuthIdentity,
+    instance_id: Option<Uuid>,
+    revision: &agentdash_domain::interaction::InteractionDefinitionRevision,
+    run_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<BoundOperationHost, ApiError> {
+    match instance_id {
+        Some(instance_id) => {
+            resolve_interaction_action_operation_host(
+                state,
+                current_user,
+                instance_id,
+                revision.project_id,
+                run_id,
+                agent_id,
+            )
+            .await
+        }
+        None => UserWorkshopOperationHost::canvas(
+            state.services.operation_gateway.clone(),
+            current_user.clone(),
+            revision.project_id,
+            revision.definition_id,
+        )
+        .map_err(|error| ApiError::BadRequest(error.to_string())),
+    }
 }
 
 async fn resolve_interaction_action_operation_host(
@@ -1135,6 +1210,7 @@ async fn resolve_interaction_action_operation_host(
                 state.services.operation_gateway.clone(),
                 target.run_id,
                 target.agent_id,
+                project_id,
                 instance_id,
             )
             .map_err(|error| ApiError::BadRequest(error.to_string()))
@@ -1728,16 +1804,6 @@ fn component_binding_from_dto(
     })
 }
 
-fn action_binding_from_dto(
-    dto: InteractionActionBindingDto,
-) -> Result<InteractionActionBinding, ApiError> {
-    Ok(InteractionActionBinding {
-        action_key: dto.action_key,
-        payload_schema: dto.payload_schema,
-        target: action_target_from_dto(dto.target)?,
-    })
-}
-
 fn action_target_from_dto(
     target: InteractionActionTargetDto,
 ) -> Result<InteractionActionTarget, ApiError> {
@@ -1894,15 +1960,6 @@ fn view_to_dto(view: CanvasDefinitionView) -> CanvasDefinitionDto {
                         target: action_target_to_dto(event.target),
                     })
                     .collect(),
-            })
-            .collect(),
-        action_bindings: revision
-            .action_bindings
-            .into_iter()
-            .map(|binding| InteractionActionBindingDto {
-                action_key: binding.action_key,
-                payload_schema: binding.payload_schema,
-                target: action_target_to_dto(binding.target),
             })
             .collect(),
         resource_slots: revision

@@ -18,11 +18,24 @@ function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
   const parsed = parseCanvasSurfaceUri(uri);
   const canvasId = parsed?.kind === "definition" ? parsed.definitionId : null;
   const interactionInstanceId = parsed?.kind === "interaction" ? parsed.instanceId : null;
+  const workspaceKey = agentRunRuntimeTarget
+    ? `agentrun:${agentRunRuntimeTarget.runId}:${agentRunRuntimeTarget.agentId}`
+    : null;
 
   const handleBrowseFiles = useCallback((mountId: string) => {
     const uri = `${mountId}://`;
-    useWorkspaceTabStore.getState().openOrActivate("vfs", uri);
-  }, []);
+    useWorkspaceTabStore
+      .getState()
+      .openOrActivateInWorkspace(workspaceKey, "vfs", uri);
+  }, [workspaceKey]);
+  const canBrowseFiles = useCallback(
+    (mountId: string) => Boolean(
+      runtimeSurface?.mounts.some(
+        (mount) => mount.id === mountId && mount.provider === "canvas_fs",
+      ),
+    ),
+    [runtimeSurface?.mounts],
+  );
 
   if (!parsed) {
     return (
@@ -48,6 +61,7 @@ function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
       refreshRevision={refreshRevision}
       onClose={() => {}}
       onBrowseFiles={handleBrowseFiles}
+      canBrowseFiles={canBrowseFiles}
     />
   );
 }

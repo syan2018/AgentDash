@@ -98,8 +98,6 @@ pub struct CanvasDefinitionDto {
     #[serde(default)]
     pub component_bindings: Vec<InteractionComponentBindingDto>,
     #[serde(default)]
-    pub action_bindings: Vec<InteractionActionBindingDto>,
-    #[serde(default)]
     pub resource_slots: Vec<InteractionResourceSlotDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -175,8 +173,6 @@ pub struct CreateCanvasDefinitionRequest {
     #[serde(default)]
     pub component_bindings: Vec<InteractionComponentBindingDto>,
     #[serde(default)]
-    pub action_bindings: Vec<InteractionActionBindingDto>,
-    #[serde(default)]
     pub resource_slots: Vec<InteractionResourceSlotDto>,
 }
 
@@ -215,9 +211,6 @@ pub struct CommitCanvasDefinitionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub component_bindings: Option<Vec<InteractionComponentBindingDto>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub action_bindings: Option<Vec<InteractionActionBindingDto>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resource_slots: Option<Vec<InteractionResourceSlotDto>>,
@@ -268,13 +261,6 @@ pub struct InteractionCommandDefinitionDto {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct InteractionComponentEventBindingDto {
     pub event_type: String,
-    pub payload_schema: Value,
-    pub target: InteractionActionTargetDto,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct InteractionActionBindingDto {
-    pub action_key: String,
     pub payload_schema: Value,
     pub target: InteractionActionTargetDto,
 }
@@ -501,6 +487,13 @@ pub struct InteractionActionRequestDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CanvasDefinitionActionRequestDto {
+    pub command_id: String,
+    pub action_key: String,
+    pub payload: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

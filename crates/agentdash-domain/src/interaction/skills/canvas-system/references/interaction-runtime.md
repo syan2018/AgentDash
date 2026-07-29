@@ -38,15 +38,17 @@ OperationScript 只用于有界即时组合。durable retry、recovery、human g
 Workflow。
 
 Canvas source 中的按钮通过 `window.agentdash.actions.invoke(actionKey, payload)` 触发
-当前 immutable definition 的 action binding。普通 Canvas action 不依赖 Extension UI component
+当前 immutable SourceBundle 的 `canvas.json.actions`。普通 Canvas action 不依赖 Extension UI component
 artifact；`component_bindings` 只负责已安装 Extension component 的 artifact pinning 和事件契约。
+Definition preview 可以按当前用户 authority 执行无状态 Operation / OperationScript action；
+PlatformCommand 修改 canonical state，因此必须通过已创建的 Interaction instance。
 需要读取 attached AgentRun 的 `main` VFS 时，host
 先验证当前用户、active attachment 与 AgentRun owner，再以该 Agent 的 current Operation surface
 执行 binding 中固定的 OperationScript；iframe 不能提交任意脚本或扩大 `requested_operations`。
 
 ### 实时读取 attached Agent 的 skills
 
-definition 在 `action_bindings` 中固定 `skills.refresh`，target 使用 SourceBundle 内的
+definition 的 `canvas.json.actions` 固定 `skills.refresh`，target 使用 SourceBundle 内的
 `actions/load-skills.rhai`，并只授予：
 
 - `platform:vfs:fs_glob:v1`
@@ -56,17 +58,12 @@ definition 在 `action_bindings` 中固定 `skills.refresh`，target 使用 Sour
 
 ```rhai
 fn frontmatter_field(text, key) {
-    let prefix = key + ":";
+    let marker = key + ": ";
     for line in text.split("\n") {
-        if line.starts_with(prefix) {
-            let conventional = prefix + " ";
-            if line.starts_with(conventional) {
-                let value = line;
-                value.replace(conventional, "");
-                return value;
-            }
-            let value = line;
-            value.replace(prefix, "");
+        if line.contains(marker) {
+            let parts = line.split(marker);
+            let value = parts[1];
+            value.replace("\"", "");
             return value;
         }
     }

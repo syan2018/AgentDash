@@ -166,14 +166,10 @@ export function buildPreviewDocument(
   generation = 1,
 ): BuiltPreviewDocument {
   const fileMap = new Map(snapshot.files.map((file) => [normalizePath(file.path), file]));
-  const objectUrls = new Set<string>();
-  const moduleUrlCache = new Map<string, string>();
-
-  const importMap = {
-    imports: {
-      ...DEFAULT_IMPORTS,
-      ...snapshot.import_map.imports,
-    },
+  const moduleSources: Record<string, string> = {};
+  const externalImports = {
+    ...DEFAULT_IMPORTS,
+    ...snapshot.import_map.imports,
   };
 
   const cssContent = snapshot.files
@@ -181,43 +177,28 @@ export function buildPreviewDocument(
     .map((file) => file.content)
     .join("\n\n");
 
-  const dispose = () => {
-    for (const url of objectUrls) {
-      URL.revokeObjectURL(url);
-    }
-  };
-
-  const createObjectUrl = (content: string, mimeType: string) => {
-    const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
-    objectUrls.add(url);
-    return url;
-  };
-
-  const getModuleUrl = (requestPath: string): string => {
+  const getModuleRef = (requestPath: string): string => {
     const normalizedPath = resolveExistingModulePath(fileMap, requestPath);
-    const cached = moduleUrlCache.get(normalizedPath);
-    if (cached) {
-      return cached;
-    }
-
-    const file = fileMap.get(normalizedPath);
-    if (!file) {
-      throw new Error(`Canvas 预览缺少文件: ${normalizedPath}`);
-    }
-
-    const moduleCode = buildModuleCode(file, normalizedPath, fileMap, getModuleUrl);
-    const url = createObjectUrl(moduleCode, "text/javascript");
-    moduleUrlCache.set(normalizedPath, url);
-    return url;
+    return canvasModuleRef(normalizedPath);
   };
 
-  const entryUrl = getModuleUrl(snapshot.entry);
-  const escapedImportMap = JSON.stringify(importMap, null, 2);
+  for (const [normalizedPath, file] of fileMap) {
+    moduleSources[canvasModuleRef(normalizedPath)] = buildModuleCode(
+      file,
+      normalizedPath,
+      fileMap,
+      getModuleRef,
+    );
+  }
+
+  const entryRef = getModuleRef(snapshot.entry);
   const safeCss = sanitizeCssForStyleTag(cssContent);
   const bootScript = buildCanvasHostBootScript({
     frameId,
     generation,
-    entryUrl,
+    entryRef,
+    externalImports,
+    moduleSources,
   });
 
   return {
@@ -228,7 +209,6 @@ export function buildPreviewDocument(
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' blob: https://esm.sh; style-src 'unsafe-inline'; img-src blob: data:; connect-src https://esm.sh; font-src data:;" />
     <title>Canvas Preview</title>
-    <script type="importmap">${escapedImportMap}</script>
     <style>
       :root {
         color-scheme: light;
@@ -255,25 +235,48 @@ ${safeCss}
   </head>
   <body>
     <div id="root"></div>
-    <script type="module">
+    <script>
 ${bootScript}
     </script>
   </body>
 </html>`,
-    dispose,
+    dispose: () => {},
   };
 }
 
 function buildCanvasHostBootScript(input: {
   frameId: string;
   generation: number;
-  entryUrl: string;
+  entryRef: string;
+  externalImports: Record<string, string>;
+  moduleSources: Record<string, string>;
 }): string {
   return `
     const CONTRACT = "agentdash.canvas-host.v1";
     const frameId = ${JSON.stringify(input.frameId)};
     const generation = ${JSON.stringify(input.generation)};
-    const entryUrl = ${JSON.stringify(input.entryUrl)};
+    const entryRef = ${JSON.stringify(input.entryRef)};
+    const externalImports = ${serializeForInlineScript(input.externalImports)};
+    const moduleSources = ${serializeForInlineScript(input.moduleSources)};
+    const moduleUrls = new Map(
+      Object.entries(moduleSources).map(([moduleRef, source]) => [
+        moduleRef,
+        URL.createObjectURL(new Blob([source], { type: "text/javascript" })),
+      ]),
+    );
+    const importMapElement = document.createElement("script");
+    importMapElement.type = "importmap";
+    importMapElement.textContent = JSON.stringify({
+      imports: {
+        ...externalImports,
+        ...Object.fromEntries(moduleUrls),
+      },
+    });
+    document.head.appendChild(importMapElement);
+    const entryUrl = moduleUrls.get(entryRef);
+    if (!entryUrl) {
+      throw new Error("Canvas 入口模块不存在: " + entryRef);
+    }
     const pending = new Map();
     const MAX_OUTSTANDING_REQUESTS = 32;
     const MAX_REQUEST_BYTES = 262144;
@@ -489,6 +492,10 @@ function buildCanvasHostBootScript(input: {
       rejectPending("Canvas runtime 已卸载");
       hostPort?.close();
       hostPort = null;
+      for (const url of moduleUrls.values()) {
+        URL.revokeObjectURL(url);
+      }
+      moduleUrls.clear();
     }, { once: true });
   `;
 }
@@ -638,6 +645,10 @@ function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\/+/, "");
 }
 
+function canvasModuleRef(path: string): string {
+  return `canvas-module:${normalizePath(path)}`;
+}
+
 function isValidMountId(value: string): boolean {
   return (
     value.length > 0
@@ -711,6 +722,13 @@ function isCssFile(path: string): boolean {
 
 function sanitizeCssForStyleTag(css: string): string {
   return css.replace(/<\/(style)/gi, "<\\/$1");
+}
+
+function serializeForInlineScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }
 
 function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {

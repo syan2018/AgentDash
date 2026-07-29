@@ -6,6 +6,7 @@ Canvas 是 `InteractionDefinitionRevision(kind=canvas)`，包含：
 
 - immutable `SourceBundle`；
 - entry file 与规范化 source files；
+- `canvas.json` manifest（声明固定 action identity 与执行 target）；
 - sandbox libraries 与 import-map declarations；
 - initial state 与 JSON state schema；
 - 可选的 Agent state projection、commands、component bindings 与 resource slots。
@@ -39,6 +40,8 @@ Module 与 VFS 工具。
 ## Source 编写原则
 
 - 保证 entry file 有效且存在于 bundle。
+- 将按钮可调用的 action 写在 `canvas.json.actions`；脚本源码放在
+  `actions/*.rhai`，与 UI source 一起进入同一个 immutable digest。
 - 使用较小的 source tree 与明确的本地 import。
 - 把有状态业务事实保存在 Interaction state，而不是仅存在于 DOM 变量中。
 - 用 resource slot 声明外部数据，不嵌入 credential 或 host path。

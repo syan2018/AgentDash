@@ -5,15 +5,15 @@ use uuid::Uuid;
 
 use agentdash_domain::interaction::{
     AttachmentSubject, ComponentBinding, DefinitionLineage, DefinitionLineageKind,
-    DefinitionRevisionCommit, InteractionActionBinding, InteractionAgentProjection,
-    InteractionAttachment, InteractionAttachmentRole, InteractionCommandCommit,
-    InteractionCommandDefinition, InteractionCommandTransaction, InteractionCommandTransactionPort,
-    InteractionDefinition, InteractionDefinitionKind, InteractionDefinitionRepository,
-    InteractionDefinitionRevision, InteractionError, InteractionEvent, InteractionEventRepository,
-    InteractionInstance, InteractionInstanceRepository, InteractionOwner,
-    InteractionPresentationRepository, InteractionPresentationState, InteractionRendererLease,
-    InteractionRuntimeBinding, OperationEffectIntent, OperationEffectIntentRepository,
-    ResourceSlotDefinition, SourceBundle, SourceFile, SourceSandboxConfig,
+    DefinitionRevisionCommit, InteractionAgentProjection, InteractionAttachment,
+    InteractionAttachmentRole, InteractionCommandCommit, InteractionCommandDefinition,
+    InteractionCommandTransaction, InteractionCommandTransactionPort, InteractionDefinition,
+    InteractionDefinitionKind, InteractionDefinitionRepository, InteractionDefinitionRevision,
+    InteractionError, InteractionEvent, InteractionEventRepository, InteractionInstance,
+    InteractionInstanceRepository, InteractionOwner, InteractionPresentationRepository,
+    InteractionPresentationState, InteractionRendererLease, InteractionRuntimeBinding,
+    OperationEffectIntent, OperationEffectIntentRepository, ResourceSlotDefinition, SourceBundle,
+    SourceFile, SourceSandboxConfig,
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -29,7 +29,6 @@ struct PersistedDefinitionRevisionContract {
     agent_projection: InteractionAgentProjection,
     command_definitions: Vec<InteractionCommandDefinition>,
     component_bindings: Vec<ComponentBinding>,
-    action_bindings: Vec<InteractionActionBinding>,
     resource_slots: Vec<ResourceSlotDefinition>,
     created_by: String,
 }
@@ -48,7 +47,6 @@ impl From<&InteractionDefinitionRevision> for PersistedDefinitionRevisionContrac
             agent_projection: revision.agent_projection.clone(),
             command_definitions: revision.command_definitions.clone(),
             component_bindings: revision.component_bindings.clone(),
-            action_bindings: revision.action_bindings.clone(),
             resource_slots: revision.resource_slots.clone(),
             created_by: revision.created_by.clone(),
         }
@@ -826,7 +824,6 @@ async fn fetch_revision(
         agent_projection: contract.agent_projection,
         command_definitions: contract.command_definitions,
         component_bindings: contract.component_bindings,
-        action_bindings: contract.action_bindings,
         resource_slots: contract.resource_slots,
         lineage,
         created_by: contract.created_by,
@@ -1260,6 +1257,37 @@ mod tests {
                 "revision contract migration missing {required}"
             );
         }
+        let canvas_manifest_contract =
+            include_str!("../../../migrations/0003_compact_canvas_authoring_mount_ids.sql");
+        for required in [
+            "Canvas authoring mount identity collision",
+            "Canvas action_bindings must be materialized into SourceBundle canvas.json",
+            "SET contract = contract - 'action_bindings'",
+            "AND NOT contract ? 'action_bindings'",
+        ] {
+            assert!(
+                canvas_manifest_contract.contains(required),
+                "Canvas manifest migration missing {required}"
+            );
+        }
+        let canvas_mount_convergence =
+            include_str!("../../../migrations/0004_converge_canvas_mount_identity.sql");
+        for required in [
+            "WHERE revision_number = 1",
+            "'{surface,vfs_surface,mounts}'",
+            "AgentFrame Canvas VFS projection is not converged",
+        ] {
+            assert!(
+                canvas_mount_convergence.contains(required),
+                "Canvas mount convergence migration missing {required}"
+            );
+        }
+        let scoped_canvas_presentation_keys =
+            include_str!("../../../migrations/0005_scope_canvas_presentation_keys.sql");
+        assert!(
+            scoped_canvas_presentation_keys.contains("canvas:renderer-observation"),
+            "Canvas presentation state migration must use a valid scoped key"
+        );
         let repository = include_str!("interaction_repository.rs");
         for required in [
             "interaction_source_bundles",
@@ -1299,7 +1327,7 @@ mod tests {
         let contract = serde_json::to_value(PersistedDefinitionRevisionContract::from(&revision))
             .expect("contract");
 
-        assert_eq!(contract["action_bindings"], serde_json::json!([]));
+        assert!(contract.get("action_bindings").is_none());
         for duplicated_identity in [
             "definition_id",
             "revision_id",

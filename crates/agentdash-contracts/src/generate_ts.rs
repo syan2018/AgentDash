@@ -108,11 +108,11 @@ use agentdash_contracts::external_marketplace::{
 };
 use agentdash_contracts::interaction::{
     ArchiveInteractionDefinitionResponse, CanvasAgentSubmitRequestDto,
-    CanvasAgentSubmitResponseDto, CanvasDefinitionDto, CanvasDefinitionListScopeDto,
-    CanvasRuntimeFeaturesDto, CanvasRuntimeSnapshotDto, CloseInteractionInstanceRequestDto,
-    CommitCanvasDefinitionRequest, CreateCanvasDefinitionRequest,
-    CreateInteractionInstanceRequestDto, DistributeCanvasDefinitionRequest,
-    InteractionActionBindingDto, InteractionActionRequestDto, InteractionActionResponseDto,
+    CanvasAgentSubmitResponseDto, CanvasDefinitionActionRequestDto, CanvasDefinitionDto,
+    CanvasDefinitionListScopeDto, CanvasRuntimeFeaturesDto, CanvasRuntimeSnapshotDto,
+    CloseInteractionInstanceRequestDto, CommitCanvasDefinitionRequest,
+    CreateCanvasDefinitionRequest, CreateInteractionInstanceRequestDto,
+    DistributeCanvasDefinitionRequest, InteractionActionRequestDto, InteractionActionResponseDto,
     InteractionActionTargetDto, InteractionAgentProjectionDto, InteractionCommandActorPolicyDto,
     InteractionCommandDefinitionDto, InteractionCommandRequestDto, InteractionCommandResponseDto,
     InteractionComponentBindingDto, InteractionComponentEventBindingDto,
@@ -940,7 +940,6 @@ fn main() {
             export_all::<InteractionStatePatchV1ContractDto>(dir);
             export_all::<InteractionCommandDefinitionDto>(dir);
             export_all::<InteractionComponentEventBindingDto>(dir);
-            export_all::<InteractionActionBindingDto>(dir);
             export_all::<InteractionActionTargetDto>(dir);
             export_all::<InteractionOperationScriptSourceDto>(dir);
             export_all::<InteractionComponentBindingDto>(dir);
@@ -963,6 +962,7 @@ fn main() {
             export_all::<InteractionComponentEventRequestDto>(dir);
             export_all::<InteractionComponentEventResponseDto>(dir);
             export_all::<InteractionActionRequestDto>(dir);
+            export_all::<CanvasDefinitionActionRequestDto>(dir);
             export_all::<InteractionActionResponseDto>(dir);
             export_all::<InteractionPresentationQueryDto>(dir);
             export_all::<ReplaceInteractionPresentationRequestDto>(dir);

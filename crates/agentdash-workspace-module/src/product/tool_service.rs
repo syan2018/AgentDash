@@ -11,6 +11,7 @@ use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolService,
 };
 use agentdash_contracts::workspace_module::WorkspaceModuleDescriptor;
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::operation::{OperationOriginRef, OperationRef, OperationScopeRef};
 use agentdash_domain::workflow::LifecycleAgentRepository;
 use async_trait::async_trait;
@@ -180,68 +181,15 @@ impl ApplicationWorkspaceModuleRuntimeToolService {
             ));
         }
 
-        let principal = OperationPrincipal::server_resolved(
-            agentdash_domain::operation::OperationPrincipalRef::AgentRunAgent {
-                run_id: target.run_id,
-                agent_id: target.agent_id,
-            },
-        );
-        let scope = OperationScopeRef::Project {
-            project_id: agent_run_surface.project_id(),
-        };
-        let mut provider_context = WorkspaceModuleProviderContext {
-            project_id: request.context.target.project_id,
-            actor: WorkspaceModuleActor::AgentRunAgent {
-                user_id: lifecycle_agent.created_by_user_id,
-                target,
-            },
-            invocation_id: request.context.invocation_id.clone(),
-            visibility: agent_run_surface
-                .capability_state()
-                .workspace_module
-                .clone(),
-            operations: Vec::new(),
-        };
-        let mut operation_authority = agent_run_surface.operation_authority_grant();
-        operation_authority.capabilities.extend(
-            self.deps
-                .providers
-                .operation_capabilities(&provider_context)
-                .await?,
-        );
-        let operation_surface = self
-            .deps
-            .operation_gateway
-            .surface_authorized(
-                &principal,
-                &scope,
-                &OperationOriginRef::AgentTool,
-                operation_authority,
-                CancellationToken::new(),
-            )
-            .await
-            .map_err(|error| {
-                failed(
-                    "workspace_module_operation_surface_failed",
-                    error.to_string(),
-                )
-            })?;
-        reject_required_provider_failures(&agent_run_surface, &operation_surface.diagnostics)?;
-        provider_context.operations = operation_surface
-            .catalog
-            .descriptors()
-            .into_iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        let modules = self.deps.providers.modules(&provider_context).await?;
-
-        Ok(ResolvedWorkspaceModuleSurface {
-            modules,
-            principal,
-            scope,
-            diagnostics: operation_surface.diagnostics,
-            provider_context,
-        })
+        resolve_workspace_module_surface(
+            &agent_run_surface,
+            target,
+            lifecycle_agent.created_by_user_id,
+            request.context.invocation_id.clone(),
+            &self.deps.providers,
+            self.deps.operation_gateway.as_ref(),
+        )
+        .await
     }
 }
 
@@ -270,12 +218,77 @@ impl ProductRuntimeToolService for ApplicationWorkspaceModuleRuntimeToolService 
     }
 }
 
-pub(crate) struct ResolvedWorkspaceModuleSurface {
-    pub(crate) modules: Vec<WorkspaceModuleDescriptor>,
-    pub(crate) principal: OperationPrincipal,
-    pub(crate) scope: OperationScopeRef,
-    pub(crate) diagnostics: Vec<OperationSurfaceDiagnostic>,
-    pub(crate) provider_context: WorkspaceModuleProviderContext,
+pub struct ResolvedWorkspaceModuleSurface {
+    pub modules: Vec<WorkspaceModuleDescriptor>,
+    pub principal: OperationPrincipal,
+    pub scope: OperationScopeRef,
+    pub diagnostics: Vec<OperationSurfaceDiagnostic>,
+    pub provider_context: WorkspaceModuleProviderContext,
+}
+
+pub async fn resolve_workspace_module_surface(
+    authority: &ExecutionAuthority,
+    target: AgentRunTarget,
+    owner_user_id: String,
+    invocation_id: String,
+    providers: &WorkspaceModuleProviderRegistry,
+    operation_gateway: &OperationGateway,
+) -> Result<ResolvedWorkspaceModuleSurface, ProductRuntimeToolOutcome> {
+    if authority.agent_run_target().as_ref() != Some(&target) {
+        return Err(rejected(
+            "workspace_module_authority_target_mismatch",
+            "Execution authority does not belong to the requested AgentRun target",
+        ));
+    }
+    let principal = OperationPrincipal::server_resolved(authority.principal().clone());
+    let scope = OperationScopeRef::Project {
+        project_id: authority.project_id(),
+    };
+    let mut provider_context = WorkspaceModuleProviderContext {
+        project_id: authority.project_id(),
+        actor: WorkspaceModuleActor::AgentRunAgent {
+            user_id: owner_user_id,
+            target,
+        },
+        invocation_id,
+        visibility: authority.capability_state().workspace_module.clone(),
+        vfs_mounts: authority.resources().vfs_mounts().to_vec(),
+        operations: Vec::new(),
+    };
+    let mut operation_authority = authority.operation_authority_grant();
+    operation_authority
+        .capabilities
+        .extend(providers.operation_capabilities(&provider_context).await?);
+    let operation_surface = operation_gateway
+        .surface_authorized(
+            &principal,
+            &scope,
+            &OperationOriginRef::AgentTool,
+            operation_authority,
+            CancellationToken::new(),
+        )
+        .await
+        .map_err(|error| {
+            failed(
+                "workspace_module_operation_surface_failed",
+                error.to_string(),
+            )
+        })?;
+    reject_required_provider_failures(authority, &operation_surface.diagnostics)?;
+    provider_context.operations = operation_surface
+        .catalog
+        .descriptors()
+        .into_iter()
+        .cloned()
+        .collect();
+    let modules = providers.modules(&provider_context).await?;
+    Ok(ResolvedWorkspaceModuleSurface {
+        modules,
+        principal,
+        scope,
+        diagnostics: operation_surface.diagnostics,
+        provider_context,
+    })
 }
 
 pub(crate) fn completed(output: Value) -> ProductRuntimeToolOutcome {

@@ -67,7 +67,6 @@ export async function createCanvas(
     },
     command_definitions: [],
     component_bindings: [],
-    action_bindings: [],
     resource_slots: [],
   };
   return canvasFromDefinition(
@@ -294,7 +293,7 @@ export async function persistCanvasRendererObservation(input: {
   generation: number;
   observation: JsonValue;
 }): Promise<InteractionPresentationStateDto> {
-  const presentationKey = "canvas.renderer-observation";
+  const presentationKey = "canvas:renderer-observation";
   const query = `?presentation_key=${encodeURIComponent(presentationKey)}`;
   const current = await api.get<InteractionPresentationStateDto | null>(
     `/interaction-instances/${encodeURIComponent(input.instanceId)}/presentation${query}`,
@@ -338,7 +337,8 @@ export async function invokeCanvasOperation(input: {
 }
 
 export async function executeCanvasAction(input: {
-  instanceId: string;
+  definitionId: string;
+  instanceId?: string | null;
   actionKey: string;
   payload?: JsonValue;
   expectedStateRevision: number;
@@ -347,15 +347,22 @@ export async function executeCanvasAction(input: {
     agentId: string;
   } | null;
 }): Promise<InteractionActionResponseDto> {
+  const path = input.instanceId
+    ? `/interaction-instances/${encodeURIComponent(input.instanceId)}/actions`
+    : `/interaction-definitions/${encodeURIComponent(input.definitionId)}/actions`;
   return api.post<InteractionActionResponseDto>(
-    `/interaction-instances/${encodeURIComponent(input.instanceId)}/actions`,
+    path,
     {
       command_id: crypto.randomUUID(),
       action_key: input.actionKey,
       payload: input.payload ?? {},
-      expected_state_revision: input.expectedStateRevision,
-      run_id: input.agentRunTarget?.runId,
-      agent_id: input.agentRunTarget?.agentId,
+      ...(input.instanceId
+        ? {
+          expected_state_revision: input.expectedStateRevision,
+          run_id: input.agentRunTarget?.runId,
+          agent_id: input.agentRunTarget?.agentId,
+        }
+        : {}),
     },
   );
 }

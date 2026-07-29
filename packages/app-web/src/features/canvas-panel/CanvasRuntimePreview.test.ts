@@ -154,9 +154,6 @@ describe("CanvasRuntimePreview VFS image assets", () => {
   });
 
   it("injects the versioned MessageChannel Canvas SDK", () => {
-    const createObjectUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:canvas-module");
-    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-
     const built = buildPreviewDocument(snapshot(), "frame-1");
 
     expect(built.srcDoc).toContain("assets: Object.freeze");
@@ -171,26 +168,14 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     expect(built.srcDoc).toContain('notify("diagnostics.report"');
     expect(built.srcDoc).toContain("hostPort.postMessage");
     expect(built.srcDoc).not.toContain("window.parent.postMessage");
+    expect(built.srcDoc).toContain("URL.createObjectURL(new Blob([source]");
+    expect(built.srcDoc).toContain('importMapElement.type = "importmap"');
+    expect(built.srcDoc).toContain("canvas-module:src/main.tsx");
 
     built.dispose();
-    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:canvas-module");
-
-    createObjectUrl.mockRestore();
-    revokeObjectUrl.mockRestore();
   });
 
-  it("resolves binding-generated files imported by snapshot path", async () => {
-    const blobs: Blob[] = [];
-    const createObjectUrl = vi
-      .spyOn(URL, "createObjectURL")
-      .mockImplementation((object: Blob | MediaSource) => {
-        if (object instanceof Blob) {
-          blobs.push(object);
-        }
-        return `blob:module-${blobs.length}`;
-      });
-    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-
+  it("resolves binding-generated files imported by snapshot path", () => {
     const built = buildPreviewDocument(
       {
         ...snapshot(),
@@ -219,14 +204,13 @@ describe("CanvasRuntimePreview VFS image assets", () => {
       "frame-1",
     );
 
-    const moduleTexts = await Promise.all(blobs.map((blob) => blob.text()));
-
-    expect(moduleTexts[0]).toBe("export default {\"events\":[]};");
-    expect(moduleTexts[1]).toContain("blob:module-1");
+    expect(built.srcDoc).toContain("canvas-module:bindings/lifecycle_events.json");
+    expect(built.srcDoc).toContain("export default {\\\"events\\\":[]};");
+    expect(built.srcDoc).toMatch(
+      /from[^;]+canvas-module:bindings\/lifecycle_events\.json/,
+    );
 
     built.dispose();
-    createObjectUrl.mockRestore();
-    revokeObjectUrl.mockRestore();
   });
 
   it("resolves image blobs through the runtime asset cache", async () => {

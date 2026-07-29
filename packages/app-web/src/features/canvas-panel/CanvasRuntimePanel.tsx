@@ -27,6 +27,7 @@ export interface CanvasRuntimePanelProps {
   onClose: () => void;
   /** 打开该 Canvas 对应 mount 的资源浏览 Tab */
   onBrowseFiles?: (mountId: string) => void;
+  canBrowseFiles?: (mountId: string) => boolean;
 }
 
 type CanvasDetailMode = "bindings" | "files";
@@ -41,6 +42,7 @@ export function CanvasRuntimePanel({
   refreshRevision = 0,
   onClose,
   onBrowseFiles,
+  canBrowseFiles,
 }: CanvasRuntimePanelProps) {
   const [canvas, setCanvas] = useState<Canvas | null>(null);
   const [snapshot, setSnapshot] = useState<CanvasRuntimeSnapshot | null>(null);
@@ -299,7 +301,10 @@ export function CanvasRuntimePanel({
         <div className="shrink-0 border-t border-border">
           <div className="flex items-center justify-between bg-secondary/20 px-3 py-1.5">
             <div className="flex items-center gap-1">
-              {onBrowseFiles && vfsMountId && (
+              {onBrowseFiles
+                && vfsMountId
+                && (canBrowseFiles?.(vfsMountId) ?? true)
+                && (
                 <button
                   type="button"
                   onClick={() => onBrowseFiles(vfsMountId)}
@@ -307,7 +312,7 @@ export function CanvasRuntimePanel({
                 >
                   浏览文件
                 </button>
-              )}
+                )}
               <button
                 type="button"
                 onClick={() => toggleDetailMode("bindings")}

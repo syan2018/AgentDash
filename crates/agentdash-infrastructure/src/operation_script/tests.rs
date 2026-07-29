@@ -36,7 +36,9 @@ impl OperationScriptOperationExecutor for SkillInventoryExecutor {
                 serde_json::json!({
                     "content": [{
                         "type": "text",
-                        "text": format!("---\nname: {path}\ndescription: fixture\n---")
+                        "text": format!(
+                            "file: {path}\n   1 | ---\n   2 | name: {path}\n   3 | description: \"fixture\"\n   4 | ---"
+                        )
                     }],
                     "is_error": false
                 })
@@ -179,17 +181,12 @@ async fn canvas_skill_inventory_script_globs_then_reads_in_parallel() {
     let mut program = program(
         r#"
             fn frontmatter_field(text, key) {
-                let prefix = key + ":";
+                let marker = key + ": ";
                 for line in text.split("\n") {
-                    if line.starts_with(prefix) {
-                        let conventional = prefix + " ";
-                        if line.starts_with(conventional) {
-                            let value = line;
-                            value.replace(conventional, "");
-                            return value;
-                        }
-                        let value = line;
-                        value.replace(prefix, "");
+                    if line.contains(marker) {
+                        let parts = line.split(marker);
+                        let value = parts[1];
+                        value.replace("\"", "");
                         return value;
                     }
                 }

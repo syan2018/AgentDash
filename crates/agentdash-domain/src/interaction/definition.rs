@@ -225,6 +225,26 @@ pub struct InteractionActionBinding {
     pub target: InteractionActionTarget,
 }
 
+pub const CANVAS_MANIFEST_PATH: &str = "canvas.json";
+pub const CANVAS_MANIFEST_FORMAT_V1: u16 = 1;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanvasManifest {
+    pub format_version: u16,
+    #[serde(default)]
+    pub actions: Vec<InteractionActionBinding>,
+}
+
+impl Default for CanvasManifest {
+    fn default() -> Self {
+        Self {
+            format_version: CANVAS_MANIFEST_FORMAT_V1,
+            actions: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceSlotKind {
@@ -294,8 +314,6 @@ pub struct InteractionDefinitionRevision {
     #[serde(default)]
     pub component_bindings: Vec<ComponentBinding>,
     #[serde(default)]
-    pub action_bindings: Vec<InteractionActionBinding>,
-    #[serde(default)]
     pub resource_slots: Vec<ResourceSlotDefinition>,
     pub lineage: Option<DefinitionLineage>,
     pub created_by: String,
@@ -316,6 +334,7 @@ impl InteractionDefinitionRevision {
         state_schema: Value,
         created_by: impl Into<String>,
     ) -> InteractionResult<Self> {
+        let title = title.into();
         let revision = Self {
             definition_id,
             revision_id: Uuid::new_v4(),
@@ -325,8 +344,8 @@ impl InteractionDefinitionRevision {
             kind: InteractionDefinitionKind::Canvas,
             definition_format_version: DEFINITION_FORMAT_V1,
             interaction_contract_version: INTERACTION_CONTRACT_V1,
-            authoring_mount_id: canvas_authoring_mount_id(definition_id),
-            title: title.into(),
+            authoring_mount_id: canvas_authoring_mount_id(&title, definition_id),
+            title,
             description: description.into(),
             source_bundle,
             initial_state,
@@ -334,7 +353,6 @@ impl InteractionDefinitionRevision {
             agent_projection: InteractionAgentProjection::default(),
             command_definitions: Vec::new(),
             component_bindings: Vec::new(),
-            action_bindings: Vec::new(),
             resource_slots: Vec::new(),
             lineage: None,
             created_by: created_by.into(),
@@ -382,9 +400,11 @@ impl InteractionDefinitionRevision {
                 .iter()
                 .map(|binding| binding.binding_key.as_str()),
         )?;
+        let canvas_manifest = self.canvas_manifest()?;
         validate_unique_keys(
-            "action_bindings.action_key",
-            self.action_bindings
+            "canvas_manifest.actions.action_key",
+            canvas_manifest
+                .actions
                 .iter()
                 .map(|binding| binding.action_key.as_str()),
         )?;
@@ -398,6 +418,7 @@ impl InteractionDefinitionRevision {
     }
 
     fn validate_nested_contracts(&self) -> InteractionResult<()> {
+        let canvas_manifest = self.canvas_manifest()?;
         let command_keys = self
             .command_definitions
             .iter()
@@ -504,9 +525,13 @@ impl InteractionDefinitionRevision {
                 }
             }
         }
-        for action in &self.action_bindings {
-            require_non_empty("action_bindings.action_key", &action.action_key)?;
-            self.validate_action_target(&action.target, &command_keys, "action_bindings.target")?;
+        for action in &canvas_manifest.actions {
+            require_non_empty("canvas_manifest.actions.action_key", &action.action_key)?;
+            self.validate_action_target(
+                &action.target,
+                &command_keys,
+                "canvas_manifest.actions.target",
+            )?;
         }
         if let Some(lineage) = &self.lineage {
             if lineage.source_definition_id.is_nil()
@@ -524,6 +549,30 @@ impl InteractionDefinitionRevision {
             )?;
         }
         Ok(())
+    }
+
+    pub fn canvas_manifest(&self) -> InteractionResult<CanvasManifest> {
+        let Some(file) = self
+            .source_bundle
+            .files
+            .iter()
+            .find(|file| file.path == CANVAS_MANIFEST_PATH)
+        else {
+            return Ok(CanvasManifest::default());
+        };
+        let manifest = serde_json::from_str::<CanvasManifest>(&file.content).map_err(|error| {
+            InteractionError::Serialization {
+                context: "source_bundle.canvas_manifest",
+                message: error.to_string(),
+            }
+        })?;
+        if manifest.format_version != CANVAS_MANIFEST_FORMAT_V1 {
+            return Err(InteractionError::InvalidField {
+                field: "canvas_manifest.format_version",
+                reason: "只支持 Canvas manifest V1",
+            });
+        }
+        Ok(manifest)
     }
 
     fn validate_action_target(
@@ -638,8 +687,30 @@ impl InteractionDefinitionRevision {
     }
 }
 
-pub fn canvas_authoring_mount_id(definition_id: Uuid) -> String {
-    format!("cvs-{definition_id}")
+pub fn canvas_authoring_mount_id(title: &str, definition_id: Uuid) -> String {
+    let mut slug = String::with_capacity(24);
+    let mut pending_separator = false;
+    for character in title.chars() {
+        if character.is_ascii_alphanumeric() {
+            if pending_separator && !slug.is_empty() && slug.len() < 24 {
+                slug.push('-');
+            }
+            pending_separator = false;
+            if slug.len() < 24 {
+                slug.push(character.to_ascii_lowercase());
+            }
+        } else {
+            pending_separator = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        slug.push_str("canvas");
+    }
+    let compact_definition_id = definition_id.simple().to_string();
+    format!("cvs-{slug}-{}", &compact_definition_id[..8])
 }
 
 pub fn normalize_canvas_authoring_mount_id(raw: &str) -> InteractionResult<String> {
@@ -770,7 +841,7 @@ mod tests {
 
     #[test]
     fn definition_rejects_duplicate_command_keys() {
-        let mut revision = InteractionDefinitionRevision::new_canvas_v1(
+        let revision = InteractionDefinitionRevision::new_canvas_v1(
             Uuid::new_v4(),
             1,
             Uuid::new_v4(),
@@ -961,6 +1032,24 @@ mod tests {
     #[test]
     fn canvas_action_does_not_require_extension_component_artifact() {
         let project_id = Uuid::new_v4();
+        let manifest = CanvasManifest {
+            format_version: CANVAS_MANIFEST_FORMAT_V1,
+            actions: vec![InteractionActionBinding {
+                action_key: "skills.refresh".into(),
+                payload_schema: serde_json::json!({"type": "object"}),
+                target: InteractionActionTarget::OperationScript {
+                    language: "rhai_v1".into(),
+                    host_api_version: 1,
+                    source: OperationScriptSource::SourceFile {
+                        path: "actions/load-skills.rhai".into(),
+                    },
+                    requested_operations: vec![
+                        OperationRef::new("platform", "vfs", "fs_glob", 1).expect("glob"),
+                        OperationRef::new("platform", "vfs", "fs_read", 1).expect("read"),
+                    ],
+                },
+            }],
+        };
         let mut revision = InteractionDefinitionRevision::new_canvas_v1(
             Uuid::new_v4(),
             1,
@@ -974,6 +1063,12 @@ mod tests {
                     SourceFile::new("src/main.tsx", "export {};", None).expect("source"),
                     SourceFile::new("actions/load-skills.rhai", "return input;", None)
                         .expect("script"),
+                    SourceFile::new(
+                        CANVAS_MANIFEST_PATH,
+                        serde_json::to_string_pretty(&manifest).expect("manifest"),
+                        Some("application/json".into()),
+                    )
+                    .expect("manifest source"),
                 ],
                 SourceSandboxConfig::default(),
             )
@@ -983,23 +1078,12 @@ mod tests {
             "user-1",
         )
         .expect("revision");
-        revision.action_bindings.push(InteractionActionBinding {
-            action_key: "skills.refresh".into(),
-            payload_schema: serde_json::json!({"type": "object"}),
-            target: InteractionActionTarget::OperationScript {
-                language: "rhai_v1".into(),
-                host_api_version: 1,
-                source: OperationScriptSource::SourceFile {
-                    path: "actions/load-skills.rhai".into(),
-                },
-                requested_operations: vec![
-                    OperationRef::new("platform", "vfs", "fs_glob", 1).expect("glob"),
-                    OperationRef::new("platform", "vfs", "fs_read", 1).expect("read"),
-                ],
-            },
-        });
 
         assert!(revision.component_bindings.is_empty());
         assert!(revision.validate().is_ok());
+        assert_eq!(
+            revision.canvas_manifest().expect("manifest").actions,
+            manifest.actions
+        );
     }
 }

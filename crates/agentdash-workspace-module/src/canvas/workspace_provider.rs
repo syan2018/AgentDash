@@ -47,6 +47,18 @@ impl CanvasWorkspaceModuleProvider {
         }
     }
 
+    fn authoring_mount_is_applied(
+        context: &WorkspaceModuleProviderContext,
+        revision: &InteractionDefinitionRevision,
+    ) -> bool {
+        !matches!(&context.actor, WorkspaceModuleActor::AgentRunAgent { .. })
+            || context.vfs_mounts.iter().any(|mount| {
+                mount.mount_id == revision.authoring_mount_id
+                    && mount.provider == "canvas_fs"
+                    && mount.backend_id == revision.definition_id.to_string()
+            })
+    }
+
     async fn visible_definitions(
         &self,
         context: &WorkspaceModuleProviderContext,
@@ -80,6 +92,9 @@ impl CanvasWorkspaceModuleProvider {
                         "InteractionDefinition current revision is missing",
                     )
                 })?;
+            if !Self::authoring_mount_is_applied(context, &revision) {
+                continue;
+            }
             revisions.push(revision);
         }
         Ok(revisions)
@@ -139,6 +154,9 @@ impl CanvasWorkspaceModuleProvider {
                     "workspace_module_interaction_identity_mismatch",
                     "Interaction instance does not belong to the authorized Product surface",
                 ));
+            }
+            if !Self::authoring_mount_is_applied(context, &revision) {
+                continue;
             }
             if !context
                 .visibility
@@ -445,8 +463,9 @@ impl WorkspaceModuleProvider for CanvasWorkspaceModuleProvider {
                 )
             })?;
         let target = self.attach_presentation(request.context, &revision).await?;
-        Ok(WorkspaceModulePresentationPreparation {
-            presentation_uri: Some(format!("interaction://{}", target.instance_id)),
+        Ok(WorkspaceModulePresentationPreparation::Redirected {
+            module_id: format!("interaction:{}", target.instance_id),
+            view_key: "runtime".to_owned(),
             diagnostics: Some(json!({
                 "definition_uri": format!("canvas://{definition_id}"),
                 "instance_id": target.instance_id

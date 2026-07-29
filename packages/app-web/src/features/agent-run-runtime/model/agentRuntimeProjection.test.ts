@@ -31,6 +31,98 @@ function record(
 }
 
 describe("Agent Runtime projection", () => {
+  it("连续 update 保留当前 lane 已归约的流式增量", () => {
+    const firstDelta = record("assistant-delta-1", {
+      type: "agent_message_delta",
+      payload: {
+        threadId: "source-1",
+        turnId: "turn-1",
+        itemId: "assistant-1",
+        delta: "第一段",
+      },
+    });
+    const secondDelta = record("assistant-delta-2", {
+      type: "agent_message_delta",
+      payload: {
+        threadId: "source-1",
+        turnId: "turn-1",
+        itemId: "assistant-1",
+        delta: "第二段",
+      },
+    });
+    const firstView = applyAgentRuntimeUpdate(
+      agentRuntimeTestFixtures.snapshots.completed,
+      {
+        lane_sequence: 1n,
+        observation: {
+          ...agentRuntimeTestFixtures.snapshots.started.observation,
+          conversation: [],
+        },
+        presentations: [firstDelta],
+      },
+    );
+
+    const secondView = applyAgentRuntimeUpdate(firstView, {
+      lane_sequence: 2n,
+      observation: {
+        ...agentRuntimeTestFixtures.snapshots.started.observation,
+        revision: agentRuntimeTestFixtures.snapshots.started.observation.revision + 1n,
+        conversation: [],
+      },
+      presentations: [secondDelta],
+    });
+
+    expect(secondView.observation.conversation).toEqual([
+      firstDelta,
+      secondDelta,
+    ]);
+  });
+
+  it("连续 update 不丢失 file edit patch 过程记录", () => {
+    const patch = (presentationId: string, diff: string) =>
+      record(presentationId, {
+        type: "file_change_patch_updated",
+        payload: {
+          threadId: "source-1",
+          turnId: "turn-1",
+          itemId: "file-edit-1",
+          changes: [{
+            path: "src/main.ts",
+            kind: { type: "update", move_path: null },
+            diff,
+          }],
+        },
+      });
+    const firstPatch = patch("file-edit-patch-1", "-old\n+first");
+    const secondPatch = patch("file-edit-patch-2", "-old\n+second");
+    const firstView = applyAgentRuntimeUpdate(
+      agentRuntimeTestFixtures.snapshots.completed,
+      {
+        lane_sequence: 1n,
+        observation: {
+          ...agentRuntimeTestFixtures.snapshots.started.observation,
+          conversation: [],
+        },
+        presentations: [firstPatch],
+      },
+    );
+
+    const secondView = applyAgentRuntimeUpdate(firstView, {
+      lane_sequence: 2n,
+      observation: {
+        ...agentRuntimeTestFixtures.snapshots.started.observation,
+        revision: agentRuntimeTestFixtures.snapshots.started.observation.revision + 1n,
+        conversation: [],
+      },
+      presentations: [secondPatch],
+    });
+
+    expect(secondView.observation.conversation).toEqual([
+      firstPatch,
+      secondPatch,
+    ]);
+  });
+
   it("从 Runtime update 原样接收控制状态并合并 presentation", () => {
     const nameRecord = record("thread-name", {
       type: "thread_name_updated",

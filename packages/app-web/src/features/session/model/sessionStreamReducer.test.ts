@@ -59,7 +59,7 @@ describe("session stream tool progress", () => {
       },
       false,
     );
-    const patchUpdated = event(
+    const firstPatchUpdated = event(
       1,
       {
         type: "file_change_patch_updated",
@@ -71,7 +71,26 @@ describe("session stream tool progress", () => {
             {
               path: "src/main.ts",
               kind: { type: "update", move_path: null },
-              diff: "@@ -1 +1 @@\n-old\n+new",
+              diff: "@@ -1 +1 @@\n-old\n+first",
+            },
+          ],
+        },
+      },
+      true,
+    );
+    const secondPatchUpdated = event(
+      2,
+      {
+        type: "file_change_patch_updated",
+        payload: {
+          threadId: "session-1",
+          turnId: "turn-1",
+          itemId: "patch-1",
+          changes: [
+            {
+              path: "src/main.ts",
+              kind: { type: "update", move_path: null },
+              diff: "@@ -1 +1 @@\n-old\n+second",
             },
           ],
         },
@@ -81,7 +100,7 @@ describe("session stream tool progress", () => {
 
     const state = reduceStreamState(
       createInitialStreamState([]),
-      [started, patchUpdated],
+      [started, firstPatchUpdated, secondPatchUpdated],
     );
 
     expect(state.entries).toHaveLength(1);
@@ -96,7 +115,7 @@ describe("session stream tool progress", () => {
       changes: [
         expect.objectContaining({
           path: "src/main.ts",
-          diff: expect.stringContaining("+new"),
+          diff: expect.stringContaining("+second"),
         }),
       ],
     });

@@ -8,8 +8,11 @@ export function applyAgentRuntimeUpdate(
   view: AgentRuntimeView,
   update: AgentRuntimeUpdate,
 ): AgentRuntimeView {
-  const conversation = [...update.observation.conversation];
-  for (const record of update.presentations) {
+  const conversation = [...view.observation.conversation];
+  for (const record of [
+    ...update.observation.conversation,
+    ...update.presentations,
+  ]) {
     const existingIndex = conversation.findIndex(
       (candidate) => candidate.presentation_id === record.presentation_id,
     );

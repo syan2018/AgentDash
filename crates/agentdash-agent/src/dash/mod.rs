@@ -1,9 +1,10 @@
 mod core_execution;
 mod history;
 mod lifecycle;
-mod migration;
 mod service;
 mod store;
+
+pub const DASH_REPOSITORY_SCHEMA_VERSION: i16 = 2;
 
 pub use core_execution::{
     DashBeforeToolDecision, DashCancellation, DashCompactionTurn, DashCompactionTurnOutput,
@@ -26,9 +27,6 @@ pub use history::{
 pub use lifecycle::{
     CommandDependency, CommandId, CommandOutcome, CommandStatus, DashCommand, DashCommandKind,
     DashExecutionConsistency, DashLifecycle, EffectId, LifecycleError,
-};
-pub use migration::{
-    DASH_REPOSITORY_SCHEMA_VERSION, DashRepositoryMigrationError, migrate_dash_repository,
 };
 pub use service::{
     DashAgentChanges, DashAgentRead, DashAgentRepository, DashAgentRepositoryState,

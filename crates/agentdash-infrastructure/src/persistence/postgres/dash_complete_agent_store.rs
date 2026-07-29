@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agentdash_agent::dash::{
     AgentSessionId, DASH_REPOSITORY_SCHEMA_VERSION, DashAgentRepository, DashAgentRepositoryState,
-    DashAgentRepositoryStore, DashServiceError, migrate_dash_repository,
+    DashAgentRepositoryStore, DashServiceError,
 };
 use agentdash_agent_runtime_contract::{
     AgentEffectIdentity, AgentServiceError, AgentServiceErrorCode, AgentSourceCoordinate,
@@ -527,55 +527,6 @@ async fn replace_source_document(
         });
     }
     Ok(())
-}
-
-pub(crate) async fn migrate_dash_repository_documents(
-    pool: &PgPool,
-) -> Result<(), DashServiceError> {
-    let mut tx = pool.begin().await.map_err(dash_database_error)?;
-    let rows = sqlx::query(
-        "SELECT source_coordinate, repository \
-         FROM dash_complete_source \
-         WHERE repository_schema_version < $1 \
-         ORDER BY source_coordinate \
-         FOR UPDATE",
-    )
-    .bind(DASH_REPOSITORY_SCHEMA_VERSION)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(dash_database_error)?;
-
-    for row in rows {
-        let source: String = row
-            .try_get("source_coordinate")
-            .map_err(dash_database_error)?;
-        let repository =
-            migrate_dash_repository(row.try_get("repository").map_err(dash_database_error)?)
-                .map_err(|error| DashServiceError::Internal {
-                    message: format!("migrate Dash repository {source}: {error}"),
-                })?;
-        validate_repository_identity(&source, &repository)?;
-        validate_repository_document(&repository)?;
-        let result = sqlx::query(
-            "UPDATE dash_complete_source \
-             SET repository=$2, observation=$3, repository_schema_version=$4 \
-             WHERE source_coordinate=$1 AND repository_schema_version < $4",
-        )
-        .bind(&source)
-        .bind(dash_json(&repository, "Dash repository")?)
-        .bind(source_observation_json(&source, &repository)?)
-        .bind(DASH_REPOSITORY_SCHEMA_VERSION)
-        .execute(&mut *tx)
-        .await
-        .map_err(dash_database_error)?;
-        if result.rows_affected() != 1 {
-            return Err(DashServiceError::Conflict {
-                message: format!("Dash repository {source} schema version changed"),
-            });
-        }
-    }
-
-    tx.commit().await.map_err(dash_database_error)
 }
 
 fn empty_source_metadata() -> DashCompleteSourceMetadata {

@@ -180,11 +180,6 @@ pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
         .run(pool)
         .await
         .map_err(|err| DomainError::InvalidConfig(format!("数据库迁移失败: {err}")))?;
-    crate::persistence::postgres::migrate_dash_repository_documents(pool)
-        .await
-        .map_err(|err| {
-            DomainError::InvalidConfig(format!("Dash repository data migration 失败: {err}"))
-        })?;
     Ok(())
 }
 

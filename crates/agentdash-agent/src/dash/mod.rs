@@ -1,6 +1,7 @@
 mod core_execution;
 mod history;
 mod lifecycle;
+mod migration;
 mod service;
 mod store;
 
@@ -15,17 +16,19 @@ pub use core_execution::{
 };
 pub use history::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryReplayer, AgentHistoryState,
-    AgentItemId, AgentSessionId, AgentTurnId, BranchId, CompactionCheckpoint, CompactionId,
-    CompactionMode, CompactionState, CompactionToolPairMembership, CompactionUsageEvidence,
-    ContextDeliveryFidelity, ContextRevision, DashSurface, DashSurfaceInstruction, ForkCutoff,
-    ForkLineage, HistoryContribution, HistoryEntryId, HistoryError, HistoryPayload,
+    AgentItemId, AgentSessionId, AgentTurnId, BranchId, CompactionId, CompactionMode,
+    CompactionState, ContextDeliveryFidelity, ContextRevision, DashSurface, DashSurfaceInstruction,
+    ForkCutoff, ForkLineage, HistoryContribution, HistoryEntryId, HistoryError, HistoryPayload,
     InitialContextContribution, InitialContextInstallation, InitialContextMode, InteractionId,
     InteractionState, ItemDetails, ItemKind, ItemState, SessionStatus, ToolActivityResult,
-    TurnState, accepted_compaction_summary_frame, fold_history,
+    TurnState, accepted_compaction_summary_frame, compaction_context_revision, fold_history,
 };
 pub use lifecycle::{
     CommandDependency, CommandId, CommandOutcome, CommandStatus, DashCommand, DashCommandKind,
-    DashExecutionConsistency, DashLifecycle, EffectId, EffectOutcome, LifecycleError,
+    DashExecutionConsistency, DashLifecycle, EffectId, LifecycleError,
+};
+pub use migration::{
+    DASH_REPOSITORY_SCHEMA_VERSION, DashRepositoryMigrationError, migrate_dash_repository,
 };
 pub use service::{
     DashAgentChanges, DashAgentRead, DashAgentRepository, DashAgentRepositoryState,
@@ -37,6 +40,6 @@ pub use service::{
     NoopDashConversationNamer, NoopDashHistoryCallbacks,
 };
 pub use store::{
-    CommandSettlement, DashAgentChange, DashAgentChangePayload, DashAgentCommit, DashAgentStore,
-    DashChangeCursor, DashExecutionInspection, EffectSettlement, StoreError,
+    CommandSettlement, DashAgentChange, DashAgentCommit, DashAgentStore, DashChangeCursor,
+    StoreError,
 };

@@ -201,8 +201,9 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   `ProviderUsageConfirmed`写入同一native history。folded state保存最新round并累计source totals，
   canonical snapshot/changes/live从该entry统一投影`TokenUsageUpdated`，使重连恢复与实时展示使用
   同一provider事实。
-- `read` 从 Dash document 投影 authoritative history/context/lifecycle。`changes` 只发布 Dash
-  自己真正保存的 change evidence；平台不能替 Dash 发明 durable cursor。
+- `read` 从 Dash document 投影 authoritative history/context/lifecycle。`changes`以history
+  revision为cursor即时投影同一组entries，不持久化第二份change mirror；平台不能替Dash发明
+  durable cursor。
 - `context`从同一Dash document调用provider共用的recipe materializer，返回
   `AgentOwned/Exact` frames、retained messages、context revision与recipe digest。该查询不读取
   canonical presentation，因为presentation是审计输出，不是provider membership authority。

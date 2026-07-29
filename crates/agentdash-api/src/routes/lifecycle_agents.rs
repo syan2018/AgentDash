@@ -656,9 +656,6 @@ async fn execute_agent_runtime_command(
         product_projection_contract::AgentRunProductRuntimeCommand::RequestCompaction => {
             AgentRunProductCommand::RequestCompaction
         }
-        product_projection_contract::AgentRunProductRuntimeCommand::Rebind => {
-            AgentRunProductCommand::Rebind
-        }
         product_projection_contract::AgentRunProductRuntimeCommand::ResolveInteraction {
             interaction_id,
             response,

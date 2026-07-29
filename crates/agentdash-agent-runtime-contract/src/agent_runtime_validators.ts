@@ -3,7 +3,6 @@
 import type {
   AgentRuntimeCommandAvailability as AgentRuntimeCommandAvailabilityWire,
   AgentRuntimeContractSchema as AgentRuntimeContractSchemaWire,
-  AgentRuntimeOperation as AgentRuntimeOperationWire,
   AgentRuntimeOperationReceipt as AgentRuntimeOperationReceiptWire,
   AgentRuntimeProjectionSchema as AgentRuntimeProjectionSchemaWire,
   AgentRuntimeUpdate as AgentRuntimeUpdateWire,
@@ -22,7 +21,6 @@ export type AgentRuntimeCommandAvailability =
   DecodeRuntimeU64<AgentRuntimeCommandAvailabilityWire>;
 export type AgentRuntimeOperationReceipt =
   DecodeRuntimeU64<AgentRuntimeOperationReceiptWire>;
-export type AgentRuntimeOperation = DecodeRuntimeU64<AgentRuntimeOperationWire>;
 export type AgentRuntimeView = DecodeRuntimeU64<AgentRuntimeViewWire>;
 export type AgentRuntimeUpdate = DecodeRuntimeU64<AgentRuntimeUpdateWire>;
 export type AgentRuntimeProjectionSchema = DecodeRuntimeU64<AgentRuntimeProjectionSchemaWire>;
@@ -188,21 +186,6 @@ function encodeOperationEvidence(value: unknown): unknown {
     default:
       return evidence;
   }
-}
-
-function decodeOperation(value: unknown, path: string): AgentRuntimeOperation {
-  const operation = record(value, path);
-  return {
-    ...(operation as unknown as AgentRuntimeOperationWire),
-    evidence: decodeOperationEvidence(operation.evidence, `${path}.evidence`),
-  } as AgentRuntimeOperation;
-}
-
-function encodeOperation(operation: AgentRuntimeOperation): AgentRuntimeOperationWire {
-  return {
-    ...operation,
-    evidence: encodeOperationEvidence(operation.evidence),
-  } as AgentRuntimeOperationWire;
 }
 
 export function decodeAgentRuntimeOperationReceipt(
@@ -405,9 +388,6 @@ export function decodeAgentRuntimeView(value: unknown): AgentRuntimeView {
       ),
     },
     thread_name_source: threadNameSource,
-    operations: array(view.operations, "$.operations").map((operation, index) =>
-      decodeOperation(operation, `$.operations[${index}]`)
-    ),
     source_binding:
       view.source_binding === null
         ? null
@@ -438,7 +418,6 @@ export function encodeAgentRuntimeView(
             ...view.thread_name_source,
             observed_at_ms: encodeRuntimeU64(view.thread_name_source.observed_at_ms),
           },
-    operations: view.operations.map(encodeOperation),
     source_binding:
       view.source_binding === null
         ? null

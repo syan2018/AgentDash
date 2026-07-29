@@ -8,13 +8,13 @@ use std::{
 };
 
 use agentdash_agent::dash::{
-    AgentSessionId, AgentTurnId as DashTurnId, ContextRevision, DashAgentRepository,
-    DashAgentRepositoryState, DashAgentRepositoryStore, DashCompactionRequest,
-    DashCompactionResult, DashCompactor, DashConversationNamer, DashConversationNamingRequest,
-    DashCoreError, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
-    DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
-    DashProviderRequest, DashServiceError, DashToolCall, DashToolCallbacks, DashToolResult,
-    HistoryPayload, NoopDashConversationNamer, NoopDashHistoryCallbacks,
+    AgentSessionId, AgentTurnId as DashTurnId, DashAgentRepository, DashAgentRepositoryState,
+    DashAgentRepositoryStore, DashCompactionRequest, DashCompactionResult, DashCompactor,
+    DashConversationNamer, DashConversationNamingRequest, DashCoreError, DashExecutionCallbacks,
+    DashExecutionDependencies, DashExecutionEvent, DashFinishReason, DashProvider,
+    DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashServiceError,
+    DashToolCall, DashToolCallbacks, DashToolResult, HistoryPayload, NoopDashConversationNamer,
+    NoopDashHistoryCallbacks,
 };
 use agentdash_agent_protocol::{
     BackboneEvent, ContextFrameKind, ContextFrameSection, PlatformEvent, PresentationDurability,
@@ -610,7 +610,6 @@ impl DashCompactor for FixtureCompactor {
         request: DashCompactionRequest,
     ) -> Result<DashCompactionResult, DashServiceError> {
         Ok(DashCompactionResult {
-            revision: ContextRevision::new("fixture-context-r1"),
             summary: "fixture compacted summary".into(),
             retained_from: request.message_entry_ids.last().cloned(),
         })
@@ -646,7 +645,6 @@ impl DashCompactor for BlockingCompactor {
         self.started.notify_one();
         self.release.notified().await;
         Ok(DashCompactionResult {
-            revision: ContextRevision::new("blocking-context-r1"),
             summary: "blocking compacted summary".into(),
             retained_from: request.message_entry_ids.last().cloned(),
         })
@@ -1188,9 +1186,9 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
         })
         .await
         .unwrap();
-    assert_eq!(changes.changes.len(), 10);
-    assert_eq!(changes.changes[0].cursor.as_str(), "1:0");
-    assert_eq!(changes.changes[1].cursor.as_str(), "2:0");
+    assert_eq!(changes.changes.len(), 8);
+    assert_eq!(changes.changes[0].cursor.as_str(), "1");
+    assert_eq!(changes.changes[1].cursor.as_str(), "2");
     let parent_snapshot = service
         .read(AgentReadQuery {
             source: parent.clone(),
@@ -3259,7 +3257,7 @@ async fn execute_reservation_survives_lost_response_and_reconciles_dash_once_aft
 }
 
 #[tokio::test]
-async fn active_compaction_snapshot_keeps_operation_phase_and_owner_command_policy() {
+async fn active_compaction_snapshot_keeps_phase_and_owner_command_policy() {
     let started = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
     let service = Arc::new(service_with(
@@ -3303,10 +3301,6 @@ async fn active_compaction_snapshot_keeps_operation_phase_and_owner_command_poli
     assert_eq!(turn.turn_id.as_str(), "compact-active");
     assert_eq!(turn.kind, AgentActiveTurnKind::ContextCompaction);
     assert_eq!(turn.phase, AgentActiveTurnPhase::Running);
-    assert_eq!(
-        turn.operation_id.as_ref().map(AgentEffectIdentity::as_str),
-        Some("effect-compact-active")
-    );
     assert!(!turn.cancellable);
     assert!(matches!(
         active
@@ -3315,8 +3309,6 @@ async fn active_compaction_snapshot_keeps_operation_phase_and_owner_command_poli
         Some(AgentControlAvailability::Available { evidence })
             if evidence.expected_turn_id.as_ref().map(|id| id.as_str())
                 == Some("compact-active")
-                && evidence.blocking_operation_id.as_ref().map(AgentEffectIdentity::as_str)
-                    == Some("effect-compact-active")
     ));
     for (command, reason) in [
         (
@@ -3348,8 +3340,6 @@ async fn active_compaction_snapshot_keeps_operation_phase_and_owner_command_poli
             }) if *actual == reason
                 && evidence.expected_turn_id.as_ref().map(|id| id.as_str())
                     == Some("compact-active")
-                && evidence.blocking_operation_id.as_ref().map(AgentEffectIdentity::as_str)
-                    == Some("effect-compact-active")
         ));
     }
 
@@ -3378,13 +3368,6 @@ async fn active_compaction_snapshot_keeps_operation_phase_and_owner_command_poli
         .last_compaction_outcome
         .expect("terminal compaction outcome");
     assert_eq!(outcome.status, AgentCompactionOutcomeStatus::Succeeded);
-    assert_eq!(
-        outcome
-            .operation_id
-            .as_ref()
-            .map(AgentEffectIdentity::as_str),
-        Some("effect-compact-active")
-    );
 }
 
 #[tokio::test]
@@ -3456,7 +3439,7 @@ async fn compaction_is_cancellable_only_before_the_provider_side_effect_claim() 
 }
 
 #[tokio::test]
-async fn manual_compaction_queues_behind_active_turn_then_promotes_with_the_same_operation() {
+async fn manual_compaction_queues_behind_active_turn_then_promotes_once() {
     let store = Arc::new(RecordingCompleteStore::default());
     let provider_started = Arc::new(Notify::new());
     let provider_release = Arc::new(Notify::new());
@@ -3509,23 +3492,15 @@ async fn manual_compaction_queues_behind_active_turn_then_promotes_with_the_same
         queued.execution.active_turn.as_ref().map(|turn| turn.kind),
         Some(AgentActiveTurnKind::Conversation)
     );
-    assert_eq!(
-        queued
-            .execution
-            .queued_compaction
-            .as_ref()
-            .map(|queued| queued.operation_id.as_str()),
-        Some("queued-compact-effect")
-    );
+    assert!(queued.execution.queued_compaction.is_some());
     assert!(matches!(
         queued
             .command_availability
             .get(&AgentControlKind::RequestCompaction),
         Some(AgentControlAvailability::Unavailable {
             reason: AgentControlUnavailabilityReason::CompactionInProgress,
-            evidence,
-        }) if evidence.blocking_operation_id.as_ref().map(AgentEffectIdentity::as_str)
-            == Some("queued-compact-effect")
+            ..
+        })
     ));
 
     provider_release.notify_one();
@@ -3753,8 +3728,14 @@ async fn manual_compaction_is_exposed_once_in_canonical_history_and_changes() {
         .find(|completed| completed.item.id() == "compact-1")
         .expect("completed compaction item");
     assert!(matches!(
-        completed.item.as_codex(),
-        Some(codex::ThreadItem::ContextCompaction { id }) if id == "compact-1"
+        &completed.item,
+        agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+            agentdash_agent_protocol::AgentDashNativeThreadItem::ContextCompaction {
+                id,
+                status: agentdash_agent_protocol::AgentDashCompactionStatus::Succeeded,
+                ..
+            }
+        ) if id == "compact-1"
     ));
 
     let changes = service
@@ -3782,8 +3763,6 @@ async fn manual_compaction_is_exposed_once_in_canonical_history_and_changes() {
         execution.active_turn.as_ref().is_some_and(|turn| {
             turn.kind == AgentActiveTurnKind::ContextCompaction
                 && turn.phase == AgentActiveTurnPhase::Running
-                && turn.operation_id.as_ref().map(AgentEffectIdentity::as_str)
-                    == Some("effect-compact-1")
         })
     }));
     assert!(execution_states.iter().any(|execution| {
@@ -3797,14 +3776,7 @@ async fn manual_compaction_is_exposed_once_in_canonical_history_and_changes() {
             && execution
                 .last_compaction_outcome
                 .as_ref()
-                .is_some_and(|outcome| {
-                    outcome.status == AgentCompactionOutcomeStatus::Succeeded
-                        && outcome
-                            .operation_id
-                            .as_ref()
-                            .map(AgentEffectIdentity::as_str)
-                            == Some("effect-compact-1")
-                })
+                .is_some_and(|outcome| outcome.status == AgentCompactionOutcomeStatus::Succeeded)
     }));
     let lifecycle = changes
         .changes
@@ -3821,9 +3793,13 @@ async fn manual_compaction_is_exposed_once_in_canonical_history_and_changes() {
             BackboneEvent::ItemStarted(started)
                 if started.turn_id == "compact-1"
                     && matches!(
-                        started.item.as_codex(),
-                        Some(codex::ThreadItem::ContextCompaction { id })
-                            if id == "compact-1"
+                        &started.item,
+                        agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                            agentdash_agent_protocol::AgentDashNativeThreadItem::ContextCompaction {
+                                id,
+                                ..
+                            }
+                        ) if id == "compact-1"
                     ) =>
             {
                 Some("item_started")

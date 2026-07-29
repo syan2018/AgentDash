@@ -180,6 +180,11 @@ pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
         .run(pool)
         .await
         .map_err(|err| DomainError::InvalidConfig(format!("数据库迁移失败: {err}")))?;
+    crate::persistence::postgres::migrate_dash_repository_documents(pool)
+        .await
+        .map_err(|err| {
+            DomainError::InvalidConfig(format!("Dash repository data migration 失败: {err}"))
+        })?;
     Ok(())
 }
 
@@ -187,6 +192,8 @@ pub async fn assert_postgres_schema_ready(pool: &PgPool) -> Result<(), DomainErr
     assert_postgres_tables_ready(pool, REQUIRED_POSTGRES_TABLES).await?;
     assert_postgres_columns_ready(pool, "lifecycle_gates", &["delivery", "updated_at"]).await?;
     assert_postgres_columns_ready(pool, "lifecycle_agents", &["frames", "runtime_binding"]).await?;
+    assert_postgres_columns_ready(pool, "dash_complete_source", &["repository_schema_version"])
+        .await?;
     assert_postgres_tables_absent(pool, RETIRED_POSTGRES_TABLES).await
 }
 

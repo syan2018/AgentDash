@@ -50,7 +50,6 @@ describe("Agent Runtime projection", () => {
             turn_id: "turn-1",
             kind: "conversation",
             phase: "running",
-            operation_id: null,
             started_at_ms: 1000n,
             cancellable: true,
           },

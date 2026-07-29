@@ -1,7 +1,4 @@
-import type {
-  AgentRuntimeOperationStatus,
-  AgentRuntimeUnavailabilityReason,
-} from "../../../generated/agent-runtime-contracts";
+import type { AgentRuntimeUnavailabilityReason } from "../../../generated/agent-runtime-contracts";
 import type {
   AgentRuntimeCommandAvailability,
   AgentRuntimeView,
@@ -9,19 +6,12 @@ import type {
 
 type FixtureStatus = "running" | "completed" | "failed" | "lost";
 
-function operationStatus(status: FixtureStatus): AgentRuntimeOperationStatus {
-  if (status === "completed") return "succeeded";
-  return status;
-}
-
 function availability(
   status: FixtureStatus,
   available: boolean,
   unavailableReason?: AgentRuntimeUnavailabilityReason,
 ): AgentRuntimeCommandAvailability {
   const evidence = {
-    blocking_operation_id:
-      status === "running" ? "operation-compaction" : null,
     expected_view_revision: null,
     expected_turn_id: status === "running" ? "turn-compaction" : null,
     bound_surface_revision: null,
@@ -62,7 +52,6 @@ function runtimeSnapshot(
             turn_id: "turn-compaction",
             kind: "context_compaction",
             phase: "running",
-            operation_id: "operation-compaction",
             started_at_ms: 1000n,
             cancellable: false,
           }
@@ -72,7 +61,6 @@ function runtimeSnapshot(
         ? null
         : {
             turn_id: "turn-compaction",
-            operation_id: "operation-compaction",
             status: status === "completed" ? "succeeded" : status,
             completed_at_ms: 1000n + revision,
             error: status === "failed" || status === "lost" ? status : null,
@@ -90,14 +78,6 @@ function runtimeSnapshot(
     interactions: [],
     thread_name: null,
     thread_name_source: null,
-    operations: [
-      {
-        id: "operation-compaction",
-        turn_id: "turn-compaction",
-        status: operationStatus(status),
-        evidence: null,
-      },
-    ],
     source_binding: null,
     authority: "source_authoritative",
     fidelity: "exact",

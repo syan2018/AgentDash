@@ -1705,12 +1705,6 @@
         "phase": {
           "$ref": "#/$defs/AgentActiveTurnPhase"
         },
-        "operation_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "started_at_ms": {
           "$ref": "#/$defs/AgentServiceU64"
         },
@@ -1743,19 +1737,11 @@
     "AgentQueuedCompactionSnapshot": {
       "type": "object",
       "properties": {
-        "command_id": {
-          "type": "string"
-        },
-        "operation_id": {
-          "type": "string"
-        },
         "queued_at_ms": {
           "$ref": "#/$defs/AgentServiceU64"
         }
       },
       "required": [
-        "command_id",
-        "operation_id",
         "queued_at_ms"
       ]
     },
@@ -1764,12 +1750,6 @@
       "properties": {
         "turn_id": {
           "type": "string"
-        },
-        "operation_id": {
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "status": {
           "$ref": "#/$defs/AgentCompactionOutcomeStatus"
@@ -1846,12 +1826,6 @@
           "$ref": "#/$defs/AgentSnapshotRevision"
         },
         "expected_turn_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "blocking_operation_id": {
           "type": [
             "string",
             "null"
@@ -3068,9 +3042,6 @@
             "id": {
               "type": "string"
             },
-            "operationId": {
-              "type": "string"
-            },
             "mode": {
               "$ref": "#/$defs/AgentDashCompactionMode"
             },
@@ -3110,7 +3081,6 @@
           "required": [
             "type",
             "id",
-            "operationId",
             "mode",
             "status",
             "startedAtMs"

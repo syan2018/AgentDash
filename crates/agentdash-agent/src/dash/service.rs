@@ -16,11 +16,10 @@ use super::{
     AgentHistory, AgentHistoryEntry, AgentHistoryState, AgentTurnId, CommandId, CommandOutcome,
     CommandStatus, CompactionId, CompactionMode, ContextRevision, DashAgentChange, DashAgentCommit,
     DashAgentStore, DashCancellation, DashCommand, DashCommandKind, DashCoreContext, DashCoreError,
-    DashCoreEvent, DashCoreTurn, DashExecutionCallbacks, DashExecutionEvent,
-    DashExecutionInspection, DashFinishReason, DashMessage, DashMessageRole, DashProvider,
-    DashProviderRequest, DashProviderRoundMaterializer, DashProviderRoundSnapshots, DashSurface,
-    DashToolCall, DashToolCallbacks, DashToolDefinition, DashToolResult, EffectId, EffectOutcome,
-    EffectSettlement, ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload,
+    DashCoreEvent, DashCoreTurn, DashExecutionCallbacks, DashExecutionEvent, DashFinishReason,
+    DashMessage, DashMessageRole, DashProvider, DashProviderRequest, DashProviderRoundMaterializer,
+    DashProviderRoundSnapshots, DashSurface, DashToolCall, DashToolCallbacks, DashToolDefinition,
+    DashToolResult, EffectId, ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload,
     InitialContextInstallation, InteractionId, ItemKind, SessionStatus, StoreError,
 };
 
@@ -83,7 +82,6 @@ pub struct DashEffectInspection {
     pub effect_id: EffectId,
     pub state: DashReceiptState,
     pub retryable: bool,
-    pub execution: DashExecutionInspection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,7 +175,6 @@ pub struct DashCompactionRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashCompactionResult {
-    pub revision: ContextRevision,
     pub summary: String,
     pub retained_from: Option<HistoryEntryId>,
 }
@@ -441,7 +438,6 @@ impl DurableDashExecutionCallbacks {
                 store.commit(DashAgentCommit {
                     expected_head: store.history().head().cloned(),
                     command_settlement: None,
-                    effect_settlements: Vec::new(),
                     history,
                     enqueue_commands: Vec::new(),
                 })?;
@@ -676,7 +672,6 @@ impl DashAgentService {
             store.commit(DashAgentCommit {
                 expected_head: None,
                 command_settlement: None,
-                effect_settlements: vec![],
                 history: vec![HistoryContribution {
                     entry_id: HistoryEntryId::new(format!(
                         "initial-context:{}",
@@ -808,13 +803,12 @@ impl DashAgentService {
         let state = self.repository.load().await?;
         let changes = state
             .store
-            .changes()
+            .changes()?
             .iter()
             .filter(|change| {
-                after.as_ref().is_none_or(|after| {
-                    (change.cursor.revision, change.cursor.ordinal)
-                        > (after.revision, after.ordinal)
-                })
+                after
+                    .as_ref()
+                    .is_none_or(|after| change.cursor.revision > after.revision)
             })
             .take(limit)
             .cloned()
@@ -885,7 +879,6 @@ impl DashAgentService {
         }
 
         let outer_effect_id = active.request.effect_id.clone();
-        let compaction_effect_id = compaction.operation_id.clone();
         let compaction_command_id = if automatic {
             CommandId::new(compaction_id.0.clone())
         } else {
@@ -900,11 +893,10 @@ impl DashAgentService {
                 }
                 repository.store.fail_compaction(
                     compaction_command_id,
-                    compaction_effect_id.clone(),
                     compaction_id.clone(),
                     HistoryEntryId::new(format!(
                         "{}:compaction-recovered-terminal",
-                        compaction_effect_id.0
+                        active.request.command_id.0
                     )),
                     if lost {
                         "compaction provider outcome is unknown after worker restart".into()
@@ -917,14 +909,6 @@ impl DashAgentService {
                     repository.store.commit(DashAgentCommit {
                         expected_head: repository.store.history().head().cloned(),
                         command_settlement: None,
-                        effect_settlements: vec![EffectSettlement {
-                            effect_id: outer_effect_id.clone(),
-                            outcome: if lost {
-                                EffectOutcome::Lost
-                            } else {
-                                EffectOutcome::Failed
-                            },
-                        }],
                         history: vec![],
                         enqueue_commands: vec![],
                     })?;
@@ -993,7 +977,6 @@ impl DashAgentService {
             replacement.store.commit(DashAgentCommit {
                 expected_head: replacement.store.history().head().cloned(),
                 command_settlement: None,
-                effect_settlements: vec![],
                 history: vec![HistoryContribution {
                     entry_id: HistoryEntryId::new(format!(
                         "surface-applied:{next_sequence}:{}:{}",
@@ -1029,7 +1012,6 @@ impl DashAgentService {
             replacement.store.commit(DashAgentCommit {
                 expected_head: replacement.store.history().head().cloned(),
                 command_settlement: None,
-                effect_settlements: vec![],
                 history: vec![HistoryContribution {
                     entry_id: HistoryEntryId::new(format!(
                         "surface-revoked:{next_sequence}:{expected_revision}"
@@ -1153,9 +1135,6 @@ impl DashAgentService {
             effect_id: effect_id.clone(),
             state: record.receipt.state,
             retryable: record.retryable,
-            execution: state
-                .store
-                .inspect_execution(&record.request.command_id, effect_id),
         }))
     }
 
@@ -1213,7 +1192,6 @@ impl DashAgentService {
                     repository.store.commit(DashAgentCommit {
                         expected_head: repository.store.history().head().cloned(),
                         command_settlement: None,
-                        effect_settlements: vec![],
                         history: vec![],
                         enqueue_commands: vec![deferred_command],
                     })?;
@@ -1261,7 +1239,6 @@ impl DashAgentService {
                 repository.store.commit(DashAgentCommit {
                     expected_head,
                     command_settlement: None,
-                    effect_settlements: vec![],
                     history: vec![
                         HistoryContribution {
                             entry_id: HistoryEntryId::new(format!("{effect_prefix}:input")),
@@ -1445,10 +1422,6 @@ impl DashAgentService {
                                 command_id: request.command_id.clone(),
                                 outcome: CommandOutcome::Succeeded,
                             }),
-                            effect_settlements: vec![EffectSettlement {
-                                effect_id: request.effect_id.clone(),
-                                outcome: EffectOutcome::Applied,
-                            }],
                             history: result.history,
                             enqueue_commands: vec![],
                         })?;
@@ -1475,7 +1448,6 @@ impl DashAgentService {
                     store.commit(DashAgentCommit {
                         expected_head: store.history().head().cloned(),
                         command_settlement: None,
-                        effect_settlements: vec![],
                         history: vec![HistoryContribution {
                             entry_id: HistoryEntryId::new(format!(
                                 "{effect_prefix}:interaction-requested"
@@ -1575,7 +1547,6 @@ impl DashAgentService {
             store.commit(DashAgentCommit {
                 expected_head: store.history().head().cloned(),
                 command_settlement: None,
-                effect_settlements: vec![],
                 history: vec![HistoryContribution {
                     entry_id,
                     payload: HistoryPayload::ThreadNameChanged { thread_name },
@@ -1597,8 +1568,6 @@ impl DashAgentService {
         let prefix = request.effect_id.0.clone();
         let compaction_command_id = CommandId::new(format!("{}:B", request.command_id.0));
         let continuation_command_id = CommandId::new(format!("{}:C", request.command_id.0));
-        let compaction_effect_id = EffectId::new(format!("{}:B", request.effect_id.0));
-        let continuation_effect_id = EffectId::new(format!("{}:C", request.effect_id.0));
         let compaction_id = CompactionId::new(format!("{}:B", request.command_id.0));
         let continuation_turn_id = AgentTurnId::new(format!("turn:{}:C", request.command_id.0));
         let compaction_command = DashCommand {
@@ -1627,7 +1596,6 @@ impl DashAgentService {
                         command_id: request.command_id.clone(),
                         outcome: CommandOutcome::Succeeded,
                     }),
-                    effect_settlements: vec![],
                     history: vec![HistoryContribution {
                         entry_id: HistoryEntryId::new(format!("{prefix}:A-overflow")),
                         payload: HistoryPayload::TurnFailed {
@@ -1650,12 +1618,10 @@ impl DashAgentService {
                 store.commit(DashAgentCommit {
                     expected_head: store.history().head().cloned(),
                     command_settlement: None,
-                    effect_settlements: vec![],
                     history: vec![HistoryContribution {
                         entry_id: HistoryEntryId::new(format!("{prefix}:B-started")),
                         payload: HistoryPayload::CompactionStarted {
                             compaction_id: compaction_id.clone(),
-                            operation_id: compaction_effect_id.clone(),
                             mode: CompactionMode::AutomaticOverflow,
                             source_head: store.history().head().cloned(),
                             source_digest: store.history().digest(),
@@ -1724,7 +1690,6 @@ impl DashAgentService {
                     .update_repository(|repository| {
                         repository.store.fail_compaction(
                             compaction_command_id.clone(),
-                            compaction_effect_id.clone(),
                             compaction_id.clone(),
                             HistoryEntryId::new(format!("{prefix}:B-failed")),
                             error.to_string(),
@@ -1733,14 +1698,6 @@ impl DashAgentService {
                         repository.store.commit(DashAgentCommit {
                             expected_head: repository.store.history().head().cloned(),
                             command_settlement: None,
-                            effect_settlements: vec![EffectSettlement {
-                                effect_id: request.effect_id.clone(),
-                                outcome: if lost {
-                                    EffectOutcome::Lost
-                                } else {
-                                    EffectOutcome::Failed
-                                },
-                            }],
                             history: vec![],
                             enqueue_commands: vec![],
                         })?;
@@ -1761,9 +1718,7 @@ impl DashAgentService {
         self.update_repository(|repository| {
             repository.store.complete_compaction(
                 compaction_command_id.clone(),
-                compaction_effect_id.clone(),
                 compaction_id.clone(),
-                compacted.revision,
                 compacted.summary,
                 compacted.retained_from,
                 HistoryEntryId::new(format!("{prefix}:B-applied")),
@@ -1779,7 +1734,6 @@ impl DashAgentService {
             repository.store.commit(DashAgentCommit {
                 expected_head: repository.store.history().head().cloned(),
                 command_settlement: None,
-                effect_settlements: vec![],
                 history: vec![HistoryContribution {
                     entry_id: HistoryEntryId::new(format!("{prefix}:C-started")),
                     payload: HistoryPayload::TurnStarted {
@@ -1850,16 +1804,6 @@ impl DashAgentService {
                             command_id: continuation_command_id,
                             outcome: CommandOutcome::Succeeded,
                         }),
-                        effect_settlements: vec![
-                            EffectSettlement {
-                                effect_id: continuation_effect_id,
-                                outcome: EffectOutcome::Applied,
-                            },
-                            EffectSettlement {
-                                effect_id: request.effect_id.clone(),
-                                outcome: EffectOutcome::Applied,
-                            },
-                        ],
                         history: continuation.history,
                         enqueue_commands: vec![],
                     })?;
@@ -1889,24 +1833,6 @@ impl DashAgentService {
                                 CommandOutcome::Failed
                             },
                         }),
-                        effect_settlements: vec![
-                            EffectSettlement {
-                                effect_id: continuation_effect_id,
-                                outcome: if lost {
-                                    EffectOutcome::Lost
-                                } else {
-                                    EffectOutcome::Failed
-                                },
-                            },
-                            EffectSettlement {
-                                effect_id: request.effect_id.clone(),
-                                outcome: if lost {
-                                    EffectOutcome::Lost
-                                } else {
-                                    EffectOutcome::Failed
-                                },
-                            },
-                        ],
                         history: vec![HistoryContribution {
                             entry_id: HistoryEntryId::new(format!("{prefix}:C-failed")),
                             payload: HistoryPayload::TurnFailed {
@@ -1984,7 +1910,6 @@ impl DashAgentService {
                 repository.store.commit(DashAgentCommit {
                     expected_head: repository.store.history().head().cloned(),
                     command_settlement: None,
-                    effect_settlements: vec![],
                     history: vec![HistoryContribution {
                         entry_id: HistoryEntryId::new(format!("{}:steer", request.effect_id.0)),
                         payload: HistoryPayload::InputAccepted {
@@ -2095,10 +2020,6 @@ impl DashAgentService {
                         command_id: active_request.command_id.clone(),
                         outcome: CommandOutcome::Failed,
                     }),
-                    effect_settlements: vec![EffectSettlement {
-                        effect_id: active_request.effect_id.clone(),
-                        outcome: EffectOutcome::Failed,
-                    }],
                     history,
                     enqueue_commands: vec![],
                 })?;
@@ -2164,7 +2085,6 @@ impl DashAgentService {
                 }
                 repository.store.cancel_compaction(
                     active.request.command_id.clone(),
-                    active.request.effect_id.clone(),
                     compaction_id,
                     HistoryEntryId::new(format!(
                         "{}:compaction-cancelled",
@@ -2226,12 +2146,10 @@ impl DashAgentService {
                 repository.store.commit(DashAgentCommit {
                     expected_head: repository.store.history().head().cloned(),
                     command_settlement: None,
-                    effect_settlements: vec![],
                     history: vec![HistoryContribution {
                         entry_id: HistoryEntryId::new(format!("{effect_prefix}:compaction-queued")),
                         payload: HistoryPayload::CompactionQueued {
                             compaction_id: compaction_id.clone(),
-                            operation_id: request.effect_id.clone(),
                             mode,
                             queued_at_ms: crate::model::message::now_millis(),
                         },
@@ -2249,14 +2167,12 @@ impl DashAgentService {
                     repository.store.commit(DashAgentCommit {
                         expected_head: repository.store.history().head().cloned(),
                         command_settlement: None,
-                        effect_settlements: vec![],
                         history: vec![HistoryContribution {
                             entry_id: HistoryEntryId::new(format!(
                                 "{effect_prefix}:compaction-started"
                             )),
                             payload: HistoryPayload::CompactionStarted {
                                 compaction_id: compaction_id.clone(),
-                                operation_id: request.effect_id.clone(),
                                 mode,
                                 source_head: repository.store.history().head().cloned(),
                                 source_digest: repository.store.history().digest(),
@@ -2472,9 +2388,7 @@ impl DashAgentService {
                     Ok(result) => {
                         repository.store.complete_compaction(
                             request.command_id.clone(),
-                            request.effect_id.clone(),
                             compaction_id,
-                            result.revision,
                             result.summary,
                             result.retained_from,
                             HistoryEntryId::new(format!("{effect_prefix}:compaction-applied")),
@@ -2487,7 +2401,6 @@ impl DashAgentService {
                         let lost = matches!(error, DashServiceError::Lost { .. });
                         repository.store.fail_compaction(
                             request.command_id.clone(),
-                            request.effect_id.clone(),
                             compaction_id,
                             HistoryEntryId::new(format!("{effect_prefix}:compaction-failed")),
                             error.to_string(),
@@ -2559,10 +2472,6 @@ impl DashAgentService {
                         command_id: active.request.command_id.clone(),
                         outcome: CommandOutcome::Succeeded,
                     }),
-                    effect_settlements: vec![EffectSettlement {
-                        effect_id: active.request.effect_id.clone(),
-                        outcome: EffectOutcome::Applied,
-                    }],
                     history: vec![
                         HistoryContribution {
                             entry_id: HistoryEntryId::new(format!(
@@ -2638,7 +2547,6 @@ impl DashAgentService {
                 repository.store.commit(DashAgentCommit {
                     expected_head: repository.store.history().head().cloned(),
                     command_settlement: None,
-                    effect_settlements: vec![],
                     history: vec![HistoryContribution {
                         entry_id: HistoryEntryId::new(format!("{}:closed", request.effect_id.0)),
                         payload: HistoryPayload::Closed,
@@ -2752,14 +2660,6 @@ impl DashAgentService {
                             CommandOutcome::Failed
                         },
                     }),
-                    effect_settlements: vec![EffectSettlement {
-                        effect_id: request.effect_id.clone(),
-                        outcome: if lost {
-                            EffectOutcome::Lost
-                        } else {
-                            EffectOutcome::Failed
-                        },
-                    }],
                     history: vec![HistoryContribution {
                         entry_id: HistoryEntryId::new(format!(
                             "{}:turn-terminal",
@@ -2848,7 +2748,6 @@ impl DashAgentService {
                         repository.store.commit(DashAgentCommit {
                             expected_head: repository.store.history().head().cloned(),
                             command_settlement: None,
-                            effect_settlements: vec![],
                             history: vec![
                                 HistoryContribution {
                                     entry_id: HistoryEntryId::new(format!("{effect_prefix}:input")),
@@ -2888,14 +2787,12 @@ impl DashAgentService {
                         repository.store.commit(DashAgentCommit {
                             expected_head: repository.store.history().head().cloned(),
                             command_settlement: None,
-                            effect_settlements: vec![],
                             history: vec![HistoryContribution {
                                 entry_id: HistoryEntryId::new(format!(
                                     "{effect_prefix}:compaction-started"
                                 )),
                                 payload: HistoryPayload::CompactionStarted {
                                     compaction_id: compaction_id.clone(),
-                                    operation_id: request.effect_id.clone(),
                                     mode,
                                     source_head: repository.store.history().head().cloned(),
                                     source_digest: repository.store.history().digest(),
@@ -3360,14 +3257,16 @@ fn materialize_session_context(
         match &entry.payload {
             HistoryPayload::CompactionApplied {
                 compaction_id,
-                checkpoint,
+                context_revision,
+                summary_frame,
+                retained_from,
             } => {
                 applied_compactions.insert(
                     compaction_id.clone(),
                     (
-                        checkpoint.context_revision.clone(),
-                        checkpoint.summary_frame.clone(),
-                        checkpoint.retained_from.clone(),
+                        context_revision.clone(),
+                        summary_frame.as_ref().clone(),
+                        retained_from.clone(),
                     ),
                 );
             }
@@ -3566,16 +3465,12 @@ fn terminalize_dependent_effects(
                 return None;
             }
             match repository.store.command_status(&record.request.command_id) {
-                Some(CommandStatus::Failed) => Some((
-                    effect_id.clone(),
-                    DashTerminalOutcome::Failed,
-                    EffectOutcome::Failed,
-                )),
-                Some(CommandStatus::Lost | CommandStatus::Blocked) => Some((
-                    effect_id.clone(),
-                    DashTerminalOutcome::Lost,
-                    EffectOutcome::Lost,
-                )),
+                Some(CommandStatus::Failed) => {
+                    Some((effect_id.clone(), DashTerminalOutcome::Failed))
+                }
+                Some(CommandStatus::Lost | CommandStatus::Blocked) => {
+                    Some((effect_id.clone(), DashTerminalOutcome::Lost))
+                }
                 _ => None,
             }
         })
@@ -3583,20 +3478,7 @@ fn terminalize_dependent_effects(
     if terminal.is_empty() {
         return Ok(());
     }
-    repository.store.commit(DashAgentCommit {
-        expected_head: repository.store.history().head().cloned(),
-        command_settlement: None,
-        effect_settlements: terminal
-            .iter()
-            .map(|(effect_id, _, outcome)| EffectSettlement {
-                effect_id: effect_id.clone(),
-                outcome: *outcome,
-            })
-            .collect(),
-        history: vec![],
-        enqueue_commands: vec![],
-    })?;
-    for (effect_id, outcome, _) in terminal {
+    for (effect_id, outcome) in terminal {
         terminalize_repository_effect(repository, &effect_id, outcome, false)?;
     }
     Ok(())

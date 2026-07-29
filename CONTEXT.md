@@ -49,5 +49,6 @@ Product owner-local 的平台业务 frame，用于描述选择、关联和 mater
 
 **Effect Receipt**:
 业务 owner 对一次稳定 effect identity 的接纳或终态证明。Product 保存自己的 workflow/lineage
-事实；Complete Agent 保存 command effect 与 terminal evidence。调用方通过相同 identity 的
-`inspect` 收敛不确定结果，不建立通用 operation repository。
+事实；Complete Agent 保存 public effect 与 terminal evidence。Runtime operation receipt是同一
+effect identity穿过调用边界时的opaque handle，不是第二个aggregate。调用方通过该identity的
+`inspect` 收敛不确定结果，不建立通用operation repository，也不从execution snapshot反查身份。

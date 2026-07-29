@@ -89,14 +89,6 @@ impl From<CommandOutcome> for CommandStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum EffectOutcome {
-    Applied,
-    Failed,
-    Lost,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum DashExecutionConsistency {
     Current,
     Lost,
@@ -113,7 +105,6 @@ pub struct DashLifecycle {
     commands: BTreeMap<CommandId, CommandRecord>,
     queue: VecDeque<CommandId>,
     active: Option<CommandId>,
-    effects: BTreeMap<EffectId, EffectOutcome>,
     pub consistency: DashExecutionConsistency,
 }
 
@@ -123,7 +114,6 @@ impl Default for DashLifecycle {
             commands: BTreeMap::new(),
             queue: VecDeque::new(),
             active: None,
-            effects: BTreeMap::new(),
             consistency: DashExecutionConsistency::Current,
         }
     }
@@ -132,10 +122,6 @@ impl Default for DashLifecycle {
 impl DashLifecycle {
     pub fn command_ids(&self) -> impl Iterator<Item = &CommandId> {
         self.commands.keys()
-    }
-
-    pub fn effect_ids(&self) -> impl Iterator<Item = &EffectId> {
-        self.effects.keys()
     }
 
     pub fn enqueue(&mut self, command: DashCommand) -> Result<(), LifecycleError> {
@@ -167,10 +153,6 @@ impl DashLifecycle {
 
     pub fn command(&self, command_id: &CommandId) -> Option<&DashCommand> {
         self.commands.get(command_id).map(|record| &record.command)
-    }
-
-    pub fn effect(&self, effect_id: &EffectId) -> Option<EffectOutcome> {
-        self.effects.get(effect_id).copied()
     }
 
     pub fn promote_next(&mut self) -> Result<Option<DashCommand>, LifecycleError> {
@@ -242,25 +224,6 @@ impl DashLifecycle {
         Ok(())
     }
 
-    pub fn settle_effect(
-        &mut self,
-        effect_id: EffectId,
-        outcome: EffectOutcome,
-    ) -> Result<(), LifecycleError> {
-        if let Some(existing) = self.effects.get(&effect_id) {
-            return if *existing == outcome {
-                Ok(())
-            } else {
-                Err(LifecycleError::ConflictingEffect(effect_id))
-            };
-        }
-        if outcome == EffectOutcome::Lost {
-            self.consistency = DashExecutionConsistency::Lost;
-        }
-        self.effects.insert(effect_id, outcome);
-        Ok(())
-    }
-
     fn terminalize_dependents(&mut self, command_id: &CommandId, outcome: CommandOutcome) {
         if outcome == CommandOutcome::Succeeded {
             return;
@@ -295,6 +258,4 @@ pub enum LifecycleError {
     ConflictingCommand(CommandId),
     #[error("command is not active: {0:?}")]
     CommandNotActive(CommandId),
-    #[error("effect identity was reused with a conflicting terminal: {0:?}")]
-    ConflictingEffect(EffectId),
 }

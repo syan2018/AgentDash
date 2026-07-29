@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "约束 Complete Agent owner、effect inspect 与 source JSONB persistence"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "约束 compaction checkpoint、recipe 与 revision fence"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "约束 Native command/effect、history 与 snapshot projection"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "约束 Agent snapshot 到 Runtime/UI 的 operation evidence"}
+{"file": ".trellis/tasks/07-29-converge-runtime-operation-identity/research/identity-model.md", "reason": "记录身份路径审计、第一性原理结论与 migration 约束"}

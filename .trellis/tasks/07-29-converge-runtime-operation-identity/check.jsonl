@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "检查 owner persistence、严格解码与 migration"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "检查 checkpoint、digest 与 exact recipe"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查跨层 operation/effect 投影与生成合同"}
+{"file": ".trellis/tasks/07-29-converge-runtime-operation-identity/research/identity-model.md", "reason": "按已确认身份不变量复核实现"}

@@ -59,7 +59,6 @@ function update(
         turn_id: "turn-live",
         kind: "conversation",
         phase: "running",
-        operation_id: null,
         started_at_ms: 1000n,
         cancellable: true,
       },

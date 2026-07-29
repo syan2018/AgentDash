@@ -5,16 +5,16 @@ use std::sync::{
 
 use agentdash_agent::dash::{
     ActivityStatus, AgentHistory, AgentItemId, AgentSessionId, AgentTurnId, BranchId, CommandId,
-    CompactionId, ContextDeliveryFidelity, ContextRevision, DashAgentRepository,
-    DashAgentRepositoryState, DashAgentService, DashCommandRequest, DashCompactionRequest,
-    DashCompactionResult, DashCompactor, DashConversationNamer, DashConversationNamingRequest,
-    DashCoreError, DashExecutionCallbacks, DashExecutionConsistency, DashExecutionDependencies,
-    DashExecutionEvent, DashFinishReason, DashProvider, DashProviderEvent, DashProviderEventStream,
-    DashProviderRequest, DashPublicCommand, DashReceiptState, DashServiceError, DashSurface,
-    DashSurfaceInstruction, DashTerminalOutcome, DashToolCall, DashToolCallbacks,
-    DashToolDefinition, DashToolResult, EffectId, HistoryContribution, HistoryEntryId,
-    HistoryPayload, InitialContextContribution, InitialContextInstallation, InitialContextMode,
-    ItemKind, NoopDashConversationNamer, NoopDashHistoryCallbacks,
+    CompactionId, ContextDeliveryFidelity, DashAgentRepository, DashAgentRepositoryState,
+    DashAgentService, DashCommandRequest, DashCompactionRequest, DashCompactionResult,
+    DashCompactor, DashConversationNamer, DashConversationNamingRequest, DashCoreError,
+    DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent, DashFinishReason,
+    DashProvider, DashProviderEvent, DashProviderEventStream, DashProviderRequest,
+    DashPublicCommand, DashReceiptState, DashServiceError, DashSurface, DashSurfaceInstruction,
+    DashTerminalOutcome, DashToolCall, DashToolCallbacks, DashToolDefinition, DashToolResult,
+    EffectId, HistoryContribution, HistoryEntryId, HistoryPayload, InitialContextContribution,
+    InitialContextInstallation, InitialContextMode, ItemKind, NoopDashConversationNamer,
+    NoopDashHistoryCallbacks,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -611,7 +611,6 @@ impl DashCompactor for NoCompaction {
         _: DashCompactionRequest,
     ) -> Result<DashCompactionResult, DashServiceError> {
         Ok(DashCompactionResult {
-            revision: ContextRevision::new("unused"),
             summary: "unused".into(),
             retained_from: None,
         })
@@ -631,7 +630,6 @@ impl DashCompactor for CapturingCompactor {
     ) -> Result<DashCompactionResult, DashServiceError> {
         self.requests.lock().await.push(request);
         Ok(DashCompactionResult {
-            revision: ContextRevision::new("captured"),
             summary: "captured summary".into(),
             retained_from: Some(HistoryEntryId::new("tool-call")),
         })
@@ -1273,25 +1271,15 @@ fn submit_request(suffix: &str) -> DashCommandRequest {
 
 #[tokio::test]
 async fn automatic_compaction_b_failure_matrix_terminalizes_dependent_c_and_clears_active() {
-    for (suffix, lost, terminal, c_status, b_effect, consistency, retryable) in [
+    for (suffix, lost, terminal, c_status, retryable) in [
         (
             "b-failed",
             false,
             DashTerminalOutcome::Failed,
             "failed",
-            "failed",
-            DashExecutionConsistency::Current,
             true,
         ),
-        (
-            "b-lost",
-            true,
-            DashTerminalOutcome::Lost,
-            "blocked",
-            "lost",
-            DashExecutionConsistency::Lost,
-            false,
-        ),
+        ("b-lost", true, DashTerminalOutcome::Lost, "blocked", false),
     ] {
         let service = automatic_service(
             Arc::new(OverflowProvider),
@@ -1309,7 +1297,6 @@ async fn automatic_compaction_b_failure_matrix_terminalizes_dependent_c_and_clea
             DashReceiptState::Terminal(terminal.clone())
         );
         assert_eq!(inspection.retryable, retryable);
-        assert_eq!(inspection.execution.consistency, consistency);
 
         let read = service.read().await.unwrap();
         assert!(read.state.active_turn.is_none());
@@ -1339,15 +1326,7 @@ async fn automatic_compaction_b_failure_matrix_terminalizes_dependent_c_and_clea
             1
         );
         assert_eq!(commands[&continuation_id]["status"], c_status);
-        let compaction_effect_id = format!("{}:B", request.effect_id.0);
-        assert_eq!(
-            repository["store"]["lifecycle"]["effects"][&compaction_effect_id],
-            b_effect
-        );
-        assert_eq!(
-            repository["store"]["lifecycle"]["effects"][&request.effect_id.0],
-            if lost { "lost" } else { "failed" }
-        );
+        assert!(repository["store"]["lifecycle"].get("effects").is_none());
     }
 }
 
@@ -1391,14 +1370,6 @@ async fn automatic_continuation_c_failure_matrix_terminalizes_effect_and_clears_
         let inspection = service.inspect(&request.effect_id).await.unwrap().unwrap();
         assert_eq!(inspection.state, DashReceiptState::Terminal(terminal));
         assert_eq!(inspection.retryable, retryable);
-        assert_eq!(
-            inspection.execution.consistency,
-            if c_status == ActivityStatus::Lost {
-                DashExecutionConsistency::Lost
-            } else {
-                DashExecutionConsistency::Current
-            }
-        );
 
         let read = service.read().await.unwrap();
         assert!(read.state.active_turn.is_none());
@@ -1414,14 +1385,6 @@ async fn automatic_continuation_c_failure_matrix_terminalizes_effect_and_clears_
             repository["store"]["lifecycle"]["commands"][&continuation_command_id]["status"],
             effect
         );
-        let continuation_effect_id = format!("{}:C", request.effect_id.0);
-        assert_eq!(
-            repository["store"]["lifecycle"]["effects"][&continuation_effect_id],
-            effect
-        );
-        assert_eq!(
-            repository["store"]["lifecycle"]["effects"][&request.effect_id.0],
-            effect
-        );
+        assert!(repository["store"]["lifecycle"].get("effects").is_none());
     }
 }

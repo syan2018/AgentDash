@@ -199,7 +199,6 @@ AgentActiveTurnSnapshot {
     turn_id,
     kind: conversation | context_compaction,
     phase: running | applied,
-    operation_id?,
     started_at_ms,
     cancellable,
 }
@@ -218,12 +217,12 @@ AgentChangePayload::ExecutionChanged {
 
 Runtime无损映射为`AgentRuntimeExecutionView.active_turn/queued_compaction`、
 `last_compaction_outcome`和带`expected_view_revision/expected_turn_id/
-blocking_operation_id`证据的command availability。
+bound_surface_revision/applied_surface_revision`证据的command availability。
 
 #### 3. Contracts
 
-- concrete Agent从同一durable history或provider observation构造typed active Turn；Native
-  Compaction的`operation_id`与执行effect identity一致，reload后保持稳定。
+- concrete Agent从同一durable history或provider observation构造typed active Turn；snapshot是
+  execution presentation，不重复承担public effect lookup。
 - manual compaction在普通Turn活动期间先发布`queued_compaction`命令事实；只有promotion提交
   `CompactionStarted`后才成为`active_turn`，避免把排队意图伪装成正在执行。
 - `AgentExecutionSnapshot::command_availability`是Submit、Steer、Interrupt、Compact、
@@ -236,11 +235,10 @@ blocking_operation_id`证据的command availability。
   `AgentCommand::Steer`；否则只在Submit可用时提交新Turn。
 - `SourceObservation.state=ExecutionChanged`与同次canonical presentation共同发布
   running/applied/terminal；Runtime update继续在同一lane携带execution、commands和presentation。
-- Native Compaction item携带`operation_id/mode/status/error/started_at_ms/completed_at_ms/
+- Native Compaction item携带`mode/status/error/started_at_ms/completed_at_ms/
   context_revision`。success用`ItemCompleted`，failed/lost/cancelled用terminal
   `ItemUpdated`后再结束Turn；前端按item status停止streaming并展示对应终态。
-- Codex只投影`thread/read`实际可观察的ContextCompaction item；未提供的operation/checkpoint
-  evidence保持空值，保留Observed语义。
+- Codex只投影`thread/read`实际可观察的ContextCompaction item，保留Observed语义。
 
 #### 4. Validation & Error Matrix
 
@@ -250,33 +248,33 @@ blocking_operation_id`证据的command availability。
 | active conversation Turn + queued compaction | 保持当前Steer；重复Compact/Fork/Close不可用 |
 | active Compaction、`cancellable=false` | deferred Submit可用；Steer/Interrupt/重复Compact/Fork/Close不可用 |
 | active Compaction、`cancellable=true` | deferred Submit与Interrupt按owner证据开放 |
-| `phase=applied` | active Turn保持到terminal；context checkpoint已应用但operation尚未结束 |
+| `phase=applied` | active Turn保持到terminal；context revision已应用但Turn尚未结束 |
 | terminal success/failure/lost/cancelled | `active_turn=None`并发布typed `last_compaction_outcome` |
 | failed/lost/cancelled没有成功`ItemCompleted` | terminal `ItemUpdated`携带最终item status；UI不得保持进行中 |
 | Product请求与owner availability不符 | side effect前拒绝，不根据`execution.status`改写命令 |
-| Codex未提供operation/checkpoint字段 | 保持`None`，不生成Native语义 |
 | snapshot command map缺项 | Runtime projection拒绝该snapshot |
 
 #### 5. Good / Base / Bad Cases
 
-- Good：Native reload在Compaction running阶段恢复同一turn/effect identity、开始时间和命令矩阵。
+- Good：Native reload在Compaction running阶段恢复同一turn identity、开始时间和命令矩阵；等待
+  effect的调用方继续使用提交时获得的receipt。
 - Base：普通Turn继续通过owner开放Steer；Compaction期间相同Submit入口按owner事实写入deferred
   command，不复制Turn类型判断。
 - Bad：只根据`execution.status=active`启用Steer/Interrupt，会把Compaction误当普通对话Turn。
 
 #### 6. Tests Required
 
-- Native blocking-compactor集成测试在provider返回前读取snapshot，断言kind、phase、operation、
-  cancellable与完整命令矩阵；terminal后断言同一operation outcome。
+- Native blocking-compactor集成测试在provider返回前读取snapshot，断言kind、phase、
+  cancellable与完整命令矩阵；terminal后断言typed outcome。
 - Native changes测试断言running → applied → terminal均以`ExecutionChanged`发布，并与canonical
   Compaction Turn presentation同lane出现。
-- Runtime mapper测试断言typed Turn、operation和owner unavailable reason无损映射。
+- Runtime mapper测试断言typed Turn和owner unavailable reason无损映射。
 - Product command facade测试断言普通Turn的Submit映射Steer，Compaction Turn的Submit映射
   deferred input。
 - frontend selector测试断言Compaction期间Submit保持可用，Cancel/Compact按phase与owner
   reason门禁；queued状态来自Runtime view。
 - canonical projection与frontend reducer/card测试覆盖succeeded/failed/lost/cancelled四类终态。
-- Codex fixture断言可观察ContextCompaction进入typed active Turn，operation保持空值。
+- Codex fixture断言可观察ContextCompaction进入typed active Turn。
 
 #### 7. Wrong vs Correct
 

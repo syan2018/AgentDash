@@ -415,7 +415,6 @@ mod tests {
             interactions: Vec::new(),
             thread_name: None,
             thread_name_source: None,
-            operations: Vec::new(),
             source_binding: None,
             authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
             fidelity: AgentRuntimeProjectionFidelity::Exact,
@@ -423,7 +422,6 @@ mod tests {
                 AgentRuntimeCommandKind::Fork,
                 AgentRuntimeCommandAvailability::Available {
                     evidence: AgentRuntimeAvailabilityEvidence {
-                        blocking_operation_id: None,
                         expected_view_revision: Some(revision),
                         expected_turn_id: None,
                         bound_surface_revision: None,

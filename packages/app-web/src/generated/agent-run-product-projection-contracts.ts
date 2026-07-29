@@ -5,7 +5,7 @@ import type { AgentRuntimeContentBlock, AgentRuntimeInteractionResponse, AgentRu
 
 export type AgentRunProductProjectionContractSchema = { runtime_command: AgentRunProductRuntimeCommandRequest, runtime_command_receipt: AgentRuntimeOperationReceipt, terminal_snapshot: AgentRunTerminalSnapshot, terminal_change_page: AgentRunTerminalChangePage, };
 
-export type AgentRunProductRuntimeCommand = { "kind": "resume" } | { "kind": "submit_input", content: Array<AgentRuntimeContentBlock>, } | { "kind": "interrupt" } | { "kind": "request_compaction" } | { "kind": "rebind" } | { "kind": "resolve_interaction", interaction_id: RuntimeInteractionId, response: AgentRuntimeInteractionResponse, } | { "kind": "close" };
+export type AgentRunProductRuntimeCommand = { "kind": "resume" } | { "kind": "submit_input", content: Array<AgentRuntimeContentBlock>, } | { "kind": "interrupt" } | { "kind": "request_compaction" } | { "kind": "resolve_interaction", interaction_id: RuntimeInteractionId, response: AgentRuntimeInteractionResponse, } | { "kind": "close" };
 
 export type AgentRunProductRuntimeCommandRequest = { client_command_id: string, command: AgentRunProductRuntimeCommand, };
 

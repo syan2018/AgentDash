@@ -116,7 +116,6 @@ pub struct AgentActiveTurnSnapshot {
     pub turn_id: AgentTurnId,
     pub kind: AgentActiveTurnKind,
     pub phase: AgentActiveTurnPhase,
-    pub operation_id: Option<crate::AgentEffectIdentity>,
     #[serde(with = "crate::wire_u64")]
     #[schemars(with = "crate::wire_u64::AgentServiceU64")]
     #[ts(type = "AgentServiceU64")]
@@ -137,7 +136,6 @@ pub enum AgentCompactionOutcomeStatus {
 #[serde(rename_all = "snake_case")]
 pub struct AgentCompactionOutcomeSnapshot {
     pub turn_id: AgentTurnId,
-    pub operation_id: Option<crate::AgentEffectIdentity>,
     pub status: AgentCompactionOutcomeStatus,
     #[serde(with = "crate::wire_u64")]
     #[schemars(with = "crate::wire_u64::AgentServiceU64")]
@@ -149,8 +147,6 @@ pub struct AgentCompactionOutcomeSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentQueuedCompactionSnapshot {
-    pub command_id: crate::AgentCommandId,
-    pub operation_id: crate::AgentEffectIdentity,
     #[serde(with = "crate::wire_u64")]
     #[schemars(with = "crate::wire_u64::AgentServiceU64")]
     #[ts(type = "AgentServiceU64")]
@@ -189,7 +185,6 @@ pub enum AgentControlUnavailabilityReason {
 pub struct AgentControlAvailabilityEvidence {
     pub expected_snapshot_revision: AgentSnapshotRevision,
     pub expected_turn_id: Option<AgentTurnId>,
-    pub blocking_operation_id: Option<crate::AgentEffectIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -226,15 +221,6 @@ impl AgentExecutionSnapshot {
         let evidence = AgentControlAvailabilityEvidence {
             expected_snapshot_revision: revision,
             expected_turn_id: self.active_turn.as_ref().map(|turn| turn.turn_id.clone()),
-            blocking_operation_id: self
-                .active_turn
-                .as_ref()
-                .and_then(|turn| turn.operation_id.clone())
-                .or_else(|| {
-                    self.queued_compaction
-                        .as_ref()
-                        .map(|compaction| compaction.operation_id.clone())
-                }),
         };
         let active = lifecycle == AgentLifecycleStatus::Active;
         let active_turn = self.active_turn.as_ref();

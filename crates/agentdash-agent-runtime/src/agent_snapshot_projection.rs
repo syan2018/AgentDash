@@ -10,8 +10,8 @@ use agentdash_agent_runtime_contract::{
     AgentRuntimeInteractionStatus, AgentRuntimeLifecycleStatus, AgentRuntimeProjectionAuthority,
     AgentRuntimeProjectionFidelity, AgentRuntimeQueuedCompaction, AgentRuntimeThreadNameSource,
     AgentRuntimeUnavailabilityReason, AgentRuntimeView, RuntimeInteractionId, RuntimeItemId,
-    RuntimeOperationId, RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId,
-    RuntimeTurnId, SurfaceRevision,
+    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeThreadId, RuntimeTurnId,
+    SurfaceRevision,
 };
 use agentdash_agent_service_api::{
     AgentContextAuthority, AgentContextFidelity, AgentControlAvailability, AgentControlKind,
@@ -155,20 +155,14 @@ pub fn project_authoritative_agent_view(
         .as_ref()
         .map(transcode::<_, AgentRuntimeCompactionOutcome>)
         .transpose()?;
-    let queued_compaction = snapshot
-        .execution
-        .queued_compaction
-        .as_ref()
-        .map(|queued| {
-            Ok(AgentRuntimeQueuedCompaction {
-                operation_id: RuntimeOperationId::new(queued.operation_id.as_str().to_owned())
-                    .map_err(|error| AgentSnapshotProjectionError::InvalidSnapshot {
-                        reason: error.to_string(),
-                    })?,
+    let queued_compaction =
+        snapshot
+            .execution
+            .queued_compaction
+            .as_ref()
+            .map(|queued| AgentRuntimeQueuedCompaction {
                 queued_at_ms: queued.queued_at_ms,
-            })
-        })
-        .transpose()?;
+            });
     let latest_turn_id = conversation
         .latest_turn()
         .map(|turn| RuntimeTurnId::new(turn.id.clone()))
@@ -201,7 +195,6 @@ pub fn project_authoritative_agent_view(
         interactions,
         thread_name,
         thread_name_source,
-        operations: Vec::new(),
         source_binding: None,
         authority: project_authority(snapshot.source_info.authority),
         fidelity: project_fidelity(snapshot.source_info.fidelity),
@@ -281,7 +274,6 @@ fn project_command_availability(
             _ => false,
         };
         let evidence = AgentRuntimeAvailabilityEvidence {
-            blocking_operation_id: None,
             expected_view_revision: None,
             expected_turn_id: None,
             bound_surface_revision: applied_surface_revision,
@@ -315,16 +307,6 @@ fn project_command_availability(
             }
         };
         let evidence = AgentRuntimeAvailabilityEvidence {
-            blocking_operation_id: evidence
-                .blocking_operation_id
-                .as_ref()
-                .map(|id| {
-                    agentdash_agent_runtime_contract::RuntimeOperationId::new(
-                        id.as_str().to_owned(),
-                    )
-                    .map_err(|error| presentation(error.to_string()))
-                })
-                .transpose()?,
             expected_view_revision: Some(RuntimeProjectionRevision(
                 evidence.expected_snapshot_revision.0,
             )),
@@ -517,7 +499,6 @@ mod tests {
                         evidence: AgentControlAvailabilityEvidence {
                             expected_snapshot_revision: AgentSnapshotRevision(7),
                             expected_turn_id: None,
-                            blocking_operation_id: None,
                         },
                     },
                 )
@@ -550,7 +531,6 @@ mod tests {
             projected.execution.status,
             AgentRuntimeExecutionStatus::Idle
         );
-        assert!(projected.operations.is_empty());
         assert!(projected.source_binding.is_none());
         assert_eq!(
             projected.authority,
@@ -574,7 +554,6 @@ mod tests {
             turn_id: agentdash_agent_service_api::AgentTurnId::new("turn-1").expect("turn"),
             kind: AgentActiveTurnKind::Conversation,
             phase: AgentActiveTurnPhase::Running,
-            operation_id: None,
             started_at_ms: 42,
             cancellable: true,
         });
@@ -594,15 +573,12 @@ mod tests {
     }
 
     #[test]
-    fn compaction_turn_and_owner_policy_are_projected_without_reinterpretation() {
+    fn compaction_turn_and_owner_policy_are_projected_without_identity_duplication() {
         let mut snapshot = snapshot();
-        let operation_id =
-            agentdash_agent_service_api::AgentEffectIdentity::new("effect-compact").unwrap();
         snapshot.execution.active_turn = Some(AgentActiveTurnSnapshot {
             turn_id: agentdash_agent_service_api::AgentTurnId::new("turn-compact").unwrap(),
             kind: AgentActiveTurnKind::ContextCompaction,
             phase: AgentActiveTurnPhase::Applied,
-            operation_id: Some(operation_id.clone()),
             started_at_ms: 42,
             cancellable: false,
         });
@@ -615,7 +591,6 @@ mod tests {
                     expected_turn_id: Some(
                         agentdash_agent_service_api::AgentTurnId::new("turn-compact").unwrap(),
                     ),
-                    blocking_operation_id: Some(operation_id),
                 },
             },
         );
@@ -631,10 +606,6 @@ mod tests {
         assert_eq!(
             active.phase,
             agentdash_agent_runtime_contract::AgentRuntimeActiveTurnPhase::Applied
-        );
-        assert_eq!(
-            active.operation_id.as_ref().map(|id| id.as_str()),
-            Some("effect-compact")
         );
         assert!(matches!(
             projected

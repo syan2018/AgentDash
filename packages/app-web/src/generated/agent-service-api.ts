@@ -33,7 +33,7 @@ export type AgentActiveTurnKind = "conversation" | "context_compaction";
 
 export type AgentActiveTurnPhase = "running" | "applied";
 
-export type AgentActiveTurnSnapshot = { turn_id: AgentTurnId, kind: AgentActiveTurnKind, phase: AgentActiveTurnPhase, operation_id: AgentEffectIdentity | null, started_at_ms: AgentServiceU64, cancellable: boolean, };
+export type AgentActiveTurnSnapshot = { turn_id: AgentTurnId, kind: AgentActiveTurnKind, phase: AgentActiveTurnPhase, started_at_ms: AgentServiceU64, cancellable: boolean, };
 
 export type AgentAppliedEffectOutcome = { "kind": "create", receipt: AppliedAgentCommandReceipt, } | { "kind": "resume", receipt: AppliedAgentCommandReceipt, } | { "kind": "fork", receipt: AppliedForkAgentReceipt, } | { "kind": "command", receipt: AppliedAgentCommandReceipt, } | { "kind": "surface_apply", receipt: AppliedAgentSurfaceReceipt, } | { "kind": "surface_revoke", receipt: AppliedAgentCommandReceipt, };
 
@@ -85,7 +85,7 @@ export type AgentCommandReceipt = { command_id: AgentCommandId, effect_id: Agent
 
 export type AgentCompactionMode = "agent_owned_native" | "exact_context_revision" | "observed_only";
 
-export type AgentCompactionOutcomeSnapshot = { turn_id: AgentTurnId, operation_id: AgentEffectIdentity | null, status: AgentCompactionOutcomeStatus, completed_at_ms: AgentServiceU64, error: string | null, };
+export type AgentCompactionOutcomeSnapshot = { turn_id: AgentTurnId, status: AgentCompactionOutcomeStatus, completed_at_ms: AgentServiceU64, error: string | null, };
 
 export type AgentCompactionOutcomeStatus = "succeeded" | "failed" | "lost" | "cancelled";
 
@@ -113,7 +113,7 @@ export type AgentContextSourceRevision = string;
 
 export type AgentControlAvailability = { "status": "available", evidence: AgentControlAvailabilityEvidence, } | { "status": "unavailable", reason: AgentControlUnavailabilityReason, evidence: AgentControlAvailabilityEvidence, };
 
-export type AgentControlAvailabilityEvidence = { expected_snapshot_revision: AgentSnapshotRevision, expected_turn_id: AgentTurnId | null, blocking_operation_id: AgentEffectIdentity | null, };
+export type AgentControlAvailabilityEvidence = { expected_snapshot_revision: AgentSnapshotRevision, expected_turn_id: AgentTurnId | null, };
 
 export type AgentControlKind = "submit_input" | "steer" | "interrupt" | "request_compaction" | "resolve_interaction" | "close" | "fork";
 
@@ -205,7 +205,7 @@ export type AgentPayloadDigest = string;
 
 export type AgentProfileDigest = string;
 
-export type AgentQueuedCompactionSnapshot = { command_id: AgentCommandId, operation_id: AgentEffectIdentity, queued_at_ms: AgentServiceU64, };
+export type AgentQueuedCompactionSnapshot = { queued_at_ms: AgentServiceU64, };
 
 export type AgentReadQuery = { source: AgentSourceCoordinate, at_revision: AgentSnapshotRevision | null, };
 

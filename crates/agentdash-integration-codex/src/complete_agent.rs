@@ -1821,7 +1821,6 @@ fn response_active_turn(
             // App Server exposes the live compaction item, but not a durable checkpoint phase
             // or operation identity.
             phase: AgentActiveTurnPhase::Running,
-            operation_id: None,
             started_at_ms: observed_at_ms,
             cancellable: true,
         });

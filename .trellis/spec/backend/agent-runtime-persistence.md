@@ -197,17 +197,18 @@ DashWorkerLease {
 }
 
 HistoryPayload =
-    CompactionQueued { compaction_id, operation_id, mode, queued_at_ms }
-  | CompactionStarted { ... }
+    CompactionQueued { compaction_id, mode, queued_at_ms }
+  | CompactionStarted { compaction_id, mode, source_head, source_digest, started_at_ms }
   | CompactionSideEffectStarted { compaction_id, started_at_ms }
-  | CompactionApplied { ... }
+  | CompactionApplied { compaction_id, context_revision, summary_frame, retained_from }
   | CompactionCompleted { ... }
   | CompactionFailed { lost, ... }
   | CompactionCancelled { ... };
 ```
 
-数据库通过正式migration为已有`dash_complete_source.repository.active`补齐`lease`字段；新状态由
-repository JSONB整体CAS写入，不建立平行worker表。
+数据库通过正式 migration 保存 `repository_schema_version`。启动阶段在任何业务 decode 前把已知
+旧 document 迁移成唯一最终形状、重算 history digest/context revision并重建 observation；生产
+repository只接受当前版本。新状态由repository JSONB整体CAS写入，不建立平行worker表。
 
 ### 3. Contracts
 
@@ -216,10 +217,11 @@ repository JSONB整体CAS写入，不建立平行worker表。
   claim后`cancellable=false`。
 - worker每5秒续租15秒lease。其它Service实例在lease有效时只观察；lease过期后，side effect前
   可安全收敛为failed，side effect后只能收敛为Lost。
-- successful terminal、failed、lost与cancelled均在source CAS中settle command/effect；dependent
+- successful terminal、failed、lost与cancelled均在source CAS中settle internal command与public
+  effect；dependent
   input只在compaction succeeded后promotion，其余状态同步终态化。
-- source digest/head fence固定provider request前缀；同一operation identity贯穿queued、Turn、
-  lease、terminal与inspect。
+- source digest/head fence固定provider request前缀。内部恢复使用compaction/command identity；
+  跨层等待与inspect只使用Complete Agent public effect receipt。
 
 ### 4. Validation & Error Matrix
 
@@ -229,12 +231,12 @@ repository JSONB整体CAS写入，不建立平行worker表。
 | claim前Interrupt先提交 | cancelled；worker CAS失败且不调用provider |
 | side effect后Interrupt | typed not cancellable |
 | lease过期且side effect未开始 | failed；dependent command不执行 |
-| lease过期且side effect已开始 | Lost；checkpoint不推进，dependent command blocked/lost |
+| lease过期且side effect已开始 | Lost；context revision不推进，dependent command blocked/lost |
 | terminal CAS重复 | 返回原receipt；不重复append或apply |
 
 ### 5. Good / Base / Bad Cases
 
-- Good：Service B在Service A lease有效时读取同一source，只返回相同running operation。
+- Good：Service B在Service A lease有效时读取同一source，只观察相同running command/history。
 - Base：manual compaction排在普通Turn后，Turn终态后promotion；期间提交的输入在成功终态后只执行
   一次。
 - Bad：看到`CompactionStarted`就由每个新Service实例重新调用provider；这会重复不可逆side
@@ -242,12 +244,13 @@ repository JSONB整体CAS写入，不建立平行worker表。
 
 ### 6. Tests Required
 
-- active Turn queue manual compaction，断言`TurnCompleted < CompactionStarted`且operation不变。
+- active Turn queue manual compaction，断言`TurnCompleted < CompactionStarted`且command只执行一次。
 - blocking compactor期间提交输入，断言terminal前没有`InputAccepted`，成功后恰好一次。
 - claim CAS barrier覆盖pre-side-effect cancel；provider开始后command matrix必须不可取消。
 - worker panic/reopen覆盖lease失效与Lost terminal；并发Service reopen在有效lease期间不得误判。
-- failed/lost/cancelled覆盖dependent command/effect不保留Accepted。
-- migration与repository serialization测试覆盖active lease字段。
+- failed/lost/cancelled覆盖dependent command不保留可执行状态，public effect收敛到对应终态。
+- migration与repository serialization测试覆盖旧flat/nested Applied、digest重算、版本门禁及
+  无法证明side-effect boundary的active compaction拒绝。
 
 ### 7. Wrong vs Correct
 
@@ -256,7 +259,7 @@ repository JSONB整体CAS写入，不建立平行worker表。
 compactor.compact(request).await?;
 
 // Correct：source先提交queue/Turn/lease事实，worker按claim fence执行并幂等terminal。
-let claim = source.claim_compaction(operation, lease).await?;
+let claim = source.claim_compaction(command_id, lease).await?;
 let outcome = worker.run_with_heartbeat(claim).await;
-source.commit_compaction_terminal(operation, outcome).await?;
+source.commit_compaction_terminal(command_id, outcome).await?;
 ```

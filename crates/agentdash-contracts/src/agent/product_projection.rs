@@ -20,7 +20,6 @@ pub enum AgentRunProductRuntimeCommand {
     },
     Interrupt,
     RequestCompaction,
-    Rebind,
     ResolveInteraction {
         interaction_id: RuntimeInteractionId,
         response: AgentRuntimeInteractionResponse,

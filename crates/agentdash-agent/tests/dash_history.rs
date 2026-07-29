@@ -1,10 +1,10 @@
 use agentdash_agent::dash::{
     AgentHistory, AgentSessionId, AgentTurnId, BranchId, CommandDependency, CommandId,
-    CommandOutcome, CommandStatus, CompactionCheckpoint, CompactionId, CompactionMode,
-    ContextDeliveryFidelity, ContextRevision, DashAgentCommit, DashAgentStore, DashCommand,
-    DashCommandKind, DashExecutionConsistency, EffectId, EffectOutcome, EffectSettlement,
+    CommandOutcome, CommandStatus, CompactionId, CompactionMode, ContextDeliveryFidelity,
+    DashAgentCommit, DashAgentStore, DashCommand, DashCommandKind, DashExecutionConsistency,
     ForkCutoff, HistoryContribution, HistoryEntryId, HistoryPayload, InitialContextContribution,
     InitialContextInstallation, InitialContextMode, accepted_compaction_summary_frame,
+    compaction_context_revision,
 };
 
 fn contribution(id: &str, payload: HistoryPayload) -> HistoryContribution {
@@ -150,7 +150,12 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
     let mut history = history_with_turn();
     let source_head = history.head().cloned();
     let source_digest = history.digest();
-    let revision = ContextRevision::new("context-r2");
+    let revision = compaction_context_revision(
+        &CompactionId::new("compact-b"),
+        &source_digest,
+        "compacted",
+        Some(&HistoryEntryId::new("entry-input")),
+    );
     let summary_frame = accepted_compaction_summary_frame(
         &CompactionId::new("compact-b"),
         &revision,
@@ -169,7 +174,6 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
                 "entry-compaction-start",
                 HistoryPayload::CompactionStarted {
                     compaction_id: CompactionId::new("compact-b"),
-                    operation_id: EffectId::new("effect-compact-b"),
                     mode: CompactionMode::AutomaticOverflow,
                     source_head: source_head.clone(),
                     source_digest: source_digest.clone(),
@@ -187,23 +191,9 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
                 "entry-compaction-applied",
                 HistoryPayload::CompactionApplied {
                     compaction_id: CompactionId::new("compact-b"),
-                    checkpoint: CompactionCheckpoint {
-                        operation_id: EffectId::new("effect-compact-b"),
-                        context_revision: revision,
-                        base_history_revision: 5,
-                        applied_history_revision: 8,
-                        source_head,
-                        source_digest,
-                        summary: "compacted".into(),
-                        summary_frame,
-                        compacted_entry_ids: Vec::new(),
-                        retained_from: Some(HistoryEntryId::new("entry-input")),
-                        retained_entry_ids: vec![HistoryEntryId::new("entry-input")],
-                        tool_pairs: Vec::new(),
-                        checkpoint_digest: "sha256:test".into(),
-                        usage: None,
-                        created_at_ms: 2_000,
-                    },
+                    context_revision: revision.clone(),
+                    summary_frame: Box::new(summary_frame),
+                    retained_from: Some(HistoryEntryId::new("entry-input")),
                 },
             ),
             contribution(
@@ -221,16 +211,10 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
         .compactions
         .get(&CompactionId::new("compact-b"))
         .unwrap();
+    assert_eq!(compaction.context_revision.as_ref(), Some(&revision));
     assert_eq!(
-        &compaction.checkpoint.as_ref().unwrap().context_revision,
-        &ContextRevision::new("context-r2")
-    );
-    assert_eq!(
-        compaction
-            .checkpoint
-            .as_ref()
-            .map(|value| value.summary.as_str()),
-        Some("compacted")
+        compaction.retained_from.as_ref(),
+        Some(&HistoryEntryId::new("entry-input"))
     );
     assert!(replayed.active_compaction.is_none());
     let compaction_turn = replayed
@@ -242,7 +226,7 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
 }
 
 #[test]
-fn dash_agent_commit_is_atomic_across_effect_history_change_and_continuation() {
+fn dash_agent_commit_is_atomic_across_history_and_continuation() {
     let history = history_with_turn();
     let mut store = DashAgentStore::new(history).unwrap();
     let compaction_command = DashCommand {
@@ -267,10 +251,6 @@ fn dash_agent_commit_is_atomic_across_effect_history_change_and_continuation() {
         .commit(DashAgentCommit {
             expected_head: store.history().head().cloned(),
             command_settlement: None,
-            effect_settlements: vec![EffectSettlement {
-                effect_id: EffectId::new("effect-a"),
-                outcome: EffectOutcome::Applied,
-            }],
             history: vec![],
             enqueue_commands: vec![compaction_command, continuation],
         })
@@ -279,16 +259,12 @@ fn dash_agent_commit_is_atomic_across_effect_history_change_and_continuation() {
     let promoted_b = store.lifecycle().clone().promote_next().unwrap().unwrap();
     assert_eq!(promoted_b.command_id, CommandId::new("command-b"));
 
-    // Invalid head rejects the whole commit before any effect or history mutation.
+    // Invalid head rejects the whole commit before any history or command mutation.
     let before = store.clone();
     let error = store
         .commit(DashAgentCommit {
             expected_head: Some(HistoryEntryId::new("stale-head")),
             command_settlement: None,
-            effect_settlements: vec![EffectSettlement {
-                effect_id: EffectId::new("effect-never"),
-                outcome: EffectOutcome::Applied,
-            }],
             history: vec![contribution(
                 "entry-never",
                 HistoryPayload::InputAccepted {
@@ -468,11 +444,7 @@ fn manual_compaction_defers_new_input_until_terminal_then_promotes_explicitly() 
         dependency: None,
     };
     store
-        .begin_compaction(
-            compaction,
-            EffectId::new("manual-effect"),
-            HistoryEntryId::new("manual-start"),
-        )
+        .begin_compaction(compaction, HistoryEntryId::new("manual-start"))
         .unwrap();
     let input = DashCommand {
         command_id: CommandId::new("input-after-manual"),
@@ -486,7 +458,6 @@ fn manual_compaction_defers_new_input_until_terminal_then_promotes_explicitly() 
         .commit(DashAgentCommit {
             expected_head: store.history().head().cloned(),
             command_settlement: None,
-            effect_settlements: vec![],
             history: vec![],
             enqueue_commands: vec![input],
         })
@@ -502,9 +473,7 @@ fn manual_compaction_defers_new_input_until_terminal_then_promotes_explicitly() 
     store
         .complete_compaction(
             CommandId::new("manual-b"),
-            EffectId::new("manual-effect"),
             CompactionId::new("manual-b"),
-            ContextRevision::new("manual-r2"),
             "summary".into(),
             None,
             HistoryEntryId::new("manual-applied"),
@@ -531,7 +500,6 @@ fn automatic_compaction_failure_settles_dependent_continuation_in_same_commit() 
                 },
                 dependency: None,
             },
-            EffectId::new("auto-b-effect"),
             HistoryEntryId::new("auto-start"),
         )
         .unwrap();
@@ -539,7 +507,6 @@ fn automatic_compaction_failure_settles_dependent_continuation_in_same_commit() 
         .commit(DashAgentCommit {
             expected_head: store.history().head().cloned(),
             command_settlement: None,
-            effect_settlements: vec![],
             history: vec![],
             enqueue_commands: vec![DashCommand {
                 command_id: CommandId::new("auto-c"),
@@ -556,7 +523,6 @@ fn automatic_compaction_failure_settles_dependent_continuation_in_same_commit() 
     store
         .fail_compaction(
             CommandId::new("auto-b"),
-            EffectId::new("auto-effect"),
             CompactionId::new("auto-b"),
             HistoryEntryId::new("auto-failed"),
             "clean failure".into(),
@@ -569,13 +535,9 @@ fn automatic_compaction_failure_settles_dependent_continuation_in_same_commit() 
         Some(CommandStatus::Failed)
     );
     assert_eq!(
-        store.effect_outcome(&EffectId::new("auto-effect")),
-        Some(EffectOutcome::Failed)
+        store.command_status(&CommandId::new("auto-b")),
+        Some(CommandStatus::Failed)
     );
-    let inspection =
-        store.inspect_execution(&CommandId::new("auto-b"), &EffectId::new("auto-effect"));
-    assert_eq!(inspection.command_status, Some(CommandStatus::Failed));
-    assert_eq!(inspection.effect_outcome, Some(EffectOutcome::Failed));
     assert!(store.history().state().unwrap().active_compaction.is_none());
 }
 
@@ -588,7 +550,6 @@ fn invalid_compaction_provenance_does_not_mutate_history() {
             "bad-compaction",
             HistoryPayload::CompactionStarted {
                 compaction_id: CompactionId::new("bad"),
-                operation_id: EffectId::new("bad-effect"),
                 mode: CompactionMode::Manual,
                 source_head: history.head().cloned(),
                 source_digest: "forged".into(),
@@ -598,57 +559,6 @@ fn invalid_compaction_provenance_does_not_mutate_history() {
         .unwrap_err();
     assert!(error.to_string().contains("digest"));
     assert_eq!(history, before);
-}
-
-#[test]
-fn dash_commit_rolls_back_earlier_staged_settlement_when_later_effect_conflicts() {
-    let mut store = DashAgentStore::new(history_with_turn()).unwrap();
-    let command = DashCommand {
-        command_id: CommandId::new("atomic-command"),
-        kind: DashCommandKind::SubmitInput {
-            input_id: "atomic".into(),
-            content: "atomic".into(),
-        },
-        dependency: None,
-    };
-    store
-        .commit(DashAgentCommit {
-            expected_head: store.history().head().cloned(),
-            command_settlement: None,
-            effect_settlements: vec![EffectSettlement {
-                effect_id: EffectId::new("atomic-effect"),
-                outcome: EffectOutcome::Applied,
-            }],
-            history: vec![],
-            enqueue_commands: vec![command],
-        })
-        .unwrap();
-    store.claim_next_command().unwrap();
-    let before = store.clone();
-
-    let error = store
-        .commit(DashAgentCommit {
-            expected_head: store.history().head().cloned(),
-            command_settlement: Some(agentdash_agent::dash::CommandSettlement {
-                command_id: CommandId::new("atomic-command"),
-                outcome: CommandOutcome::Succeeded,
-            }),
-            effect_settlements: vec![EffectSettlement {
-                effect_id: EffectId::new("atomic-effect"),
-                outcome: EffectOutcome::Failed,
-            }],
-            history: vec![contribution(
-                "atomic-never-appended",
-                HistoryPayload::InputAccepted {
-                    input_id: "never".into(),
-                    content: "never".into(),
-                },
-            )],
-            enqueue_commands: vec![],
-        })
-        .unwrap_err();
-    assert!(error.to_string().contains("conflicting terminal"));
-    assert_eq!(store, before);
 }
 
 #[test]
@@ -673,7 +583,7 @@ fn session_projection_contains_no_command_effect_or_platform_coordination_state(
 }
 
 #[test]
-fn ordered_changes_capture_incremental_history_and_active_turn_facts() {
+fn ordered_changes_are_derived_once_from_incremental_history() {
     let mut store = DashAgentStore::new(AgentHistory::empty(
         AgentSessionId::new("change-session"),
         BranchId::new("change-branch"),
@@ -684,7 +594,6 @@ fn ordered_changes_capture_incremental_history_and_active_turn_facts() {
         .commit(DashAgentCommit {
             expected_head: None,
             command_settlement: None,
-            effect_settlements: vec![],
             history: vec![
                 contribution(
                     "change-start",
@@ -705,44 +614,23 @@ fn ordered_changes_capture_incremental_history_and_active_turn_facts() {
         })
         .unwrap();
 
-    let changes = store.changes();
-    assert_eq!(changes.len(), 4);
+    let changes = store.changes().unwrap();
+    assert_eq!(changes.len(), 2);
     assert!(matches!(
-        &changes[0].payload,
-        agentdash_agent::dash::DashAgentChangePayload::HistoryEntry {
-            entry: agentdash_agent::dash::AgentHistoryEntry {
-                payload: HistoryPayload::TurnStarted {
-                    turn_id: started,
-                    ..
-                },
-                ..
-            }
+        &changes[0].entry.payload,
+        HistoryPayload::TurnStarted {
+            turn_id: started,
+            ..
         } if started == &turn_id
     ));
     assert!(matches!(
-        &changes[1].payload,
-        agentdash_agent::dash::DashAgentChangePayload::ActiveTurnChanged {
-            active_turn_id: Some(active),
-        } if active == &turn_id
-    ));
-    assert!(matches!(
-        &changes[2].payload,
-        agentdash_agent::dash::DashAgentChangePayload::HistoryEntry {
-            entry: agentdash_agent::dash::AgentHistoryEntry {
-                payload: HistoryPayload::TurnCompleted {
-                    turn_id: completed,
-                    ..
-                },
-                ..
-            }
+        &changes[1].entry.payload,
+        HistoryPayload::TurnCompleted {
+            turn_id: completed,
+            ..
         } if completed == &turn_id
     ));
-    assert!(matches!(
-        &changes[3].payload,
-        agentdash_agent::dash::DashAgentChangePayload::ActiveTurnChanged {
-            active_turn_id: None,
-        }
-    ));
-    assert_eq!(store.changes()[1].cursor.encode(), "1:1");
-    assert_ne!(changes[0].source_digest, changes[2].source_digest);
+    assert_eq!(changes[0].cursor.encode(), "1");
+    assert_eq!(changes[1].cursor.encode(), "2");
+    assert_ne!(changes[0].source_digest, changes[1].source_digest);
 }

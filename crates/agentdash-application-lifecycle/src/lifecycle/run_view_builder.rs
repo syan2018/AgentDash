@@ -784,7 +784,6 @@ mod tests {
         source_binding: AgentRuntimeSourceBindingEvidence,
     ) -> AgentRuntimeView {
         let evidence = AgentRuntimeAvailabilityEvidence {
-            blocking_operation_id: None,
             expected_view_revision: Some(RuntimeProjectionRevision(7)),
             expected_turn_id: None,
             bound_surface_revision: Some(SurfaceRevision(3)),
@@ -805,7 +804,6 @@ mod tests {
                 latest_turn_id: None,
             },
             interactions: Vec::new(),
-            operations: Vec::new(),
             source_binding: Some(source_binding),
             authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
             fidelity: AgentRuntimeProjectionFidelity::Exact,

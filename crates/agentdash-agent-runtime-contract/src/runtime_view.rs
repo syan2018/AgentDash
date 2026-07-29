@@ -9,9 +9,8 @@ use agentdash_agent_protocol::CanonicalConversationRecord;
 
 use crate::{
     RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
-    RuntimeContextSourceRevision, RuntimeInteractionId, RuntimeItemId, RuntimeOperationId,
-    RuntimePayloadDigest, RuntimeProjectionRevision, RuntimeSourceRef, RuntimeThreadId,
-    RuntimeTurnId, SurfaceRevision,
+    RuntimeContextSourceRevision, RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest,
+    RuntimeProjectionRevision, RuntimeSourceRef, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -314,15 +313,6 @@ pub enum AgentRuntimeOperationEvidence {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeOperation {
-    pub id: RuntimeOperationId,
-    pub turn_id: Option<RuntimeTurnId>,
-    pub status: AgentRuntimeOperationStatus,
-    pub evidence: Option<AgentRuntimeOperationEvidence>,
-}
-
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
@@ -377,7 +367,6 @@ pub enum AgentRuntimeUnavailabilityReason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeAvailabilityEvidence {
-    pub blocking_operation_id: Option<RuntimeOperationId>,
     pub expected_view_revision: Option<RuntimeProjectionRevision>,
     pub expected_turn_id: Option<RuntimeTurnId>,
     pub bound_surface_revision: Option<SurfaceRevision>,
@@ -431,7 +420,6 @@ pub struct AgentRuntimeActiveTurn {
     pub turn_id: RuntimeTurnId,
     pub kind: AgentRuntimeActiveTurnKind,
     pub phase: AgentRuntimeActiveTurnPhase,
-    pub operation_id: Option<RuntimeOperationId>,
     #[serde(with = "crate::wire_u64")]
     #[schemars(with = "crate::wire_u64::RuntimeU64")]
     #[ts(type = "RuntimeU64")]
@@ -452,7 +440,6 @@ pub enum AgentRuntimeCompactionOutcomeStatus {
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeCompactionOutcome {
     pub turn_id: RuntimeTurnId,
-    pub operation_id: Option<RuntimeOperationId>,
     pub status: AgentRuntimeCompactionOutcomeStatus,
     #[serde(with = "crate::wire_u64")]
     #[schemars(with = "crate::wire_u64::RuntimeU64")]
@@ -464,7 +451,6 @@ pub struct AgentRuntimeCompactionOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeQueuedCompaction {
-    pub operation_id: RuntimeOperationId,
     #[serde(with = "crate::wire_u64")]
     #[schemars(with = "crate::wire_u64::RuntimeU64")]
     #[ts(type = "RuntimeU64")]
@@ -506,7 +492,6 @@ pub struct AgentRuntimeView {
     pub interactions: Vec<AgentRuntimeInteraction>,
     pub thread_name: Option<String>,
     pub thread_name_source: Option<AgentRuntimeThreadNameSource>,
-    pub operations: Vec<AgentRuntimeOperation>,
     pub source_binding: Option<AgentRuntimeSourceBindingEvidence>,
     pub authority: AgentRuntimeProjectionAuthority,
     pub fidelity: AgentRuntimeProjectionFidelity,
@@ -564,7 +549,6 @@ mod tests {
 
     fn evidence() -> AgentRuntimeAvailabilityEvidence {
         AgentRuntimeAvailabilityEvidence {
-            blocking_operation_id: None,
             expected_view_revision: Some(RuntimeProjectionRevision(5)),
             expected_turn_id: None,
             bound_surface_revision: Some(SurfaceRevision(3)),
@@ -591,7 +575,6 @@ mod tests {
                 turn_id: active_turn_id.clone(),
                 kind: AgentRuntimeActiveTurnKind::Conversation,
                 phase: AgentRuntimeActiveTurnPhase::Running,
-                operation_id: None,
                 started_at_ms: 42,
                 cancellable: true,
             }),
@@ -618,7 +601,6 @@ mod tests {
                 conversation: Vec::new(),
                 thread_name: None,
                 thread_name_source: None,
-                operations: Vec::new(),
                 source_binding: None,
                 authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
                 fidelity: AgentRuntimeProjectionFidelity::Exact,
@@ -657,7 +639,6 @@ mod tests {
             "thread_name_source",
             "turn_id",
             "item_id",
-            "operations",
             "command_availability",
         ] {
             assert!(schema.contains(required), "missing {required}");
@@ -672,45 +653,38 @@ mod tests {
         let source_ref = id("source-ref-1", RuntimeSourceRef::new);
         let child_source_ref = id("source-ref-2", RuntimeSourceRef::new);
         let child_thread_id = id("runtime-thread-2", RuntimeThreadId::new);
-        let operation = AgentRuntimeOperation {
-            id: id("fork-operation", RuntimeOperationId::new),
-            turn_id: None,
-            status: AgentRuntimeOperationStatus::Succeeded,
-            evidence: Some(AgentRuntimeOperationEvidence::Fork {
-                parent_binding: AgentRuntimeSourceBindingEvidence {
-                    source_ref,
-                    committed_at_revision: RuntimeProjectionRevision(2),
-                    applied_surface_revision: SurfaceRevision(4),
-                    activated_at_revision: Some(RuntimeProjectionRevision(3)),
+        let evidence = AgentRuntimeOperationEvidence::Fork {
+            parent_binding: AgentRuntimeSourceBindingEvidence {
+                source_ref,
+                committed_at_revision: RuntimeProjectionRevision(2),
+                applied_surface_revision: SurfaceRevision(4),
+                activated_at_revision: Some(RuntimeProjectionRevision(3)),
+            },
+            progress: AgentRuntimeForkProgressEvidence::Provisioned {
+                child_thread_id,
+                child_binding: AgentRuntimeSourceBindingEvidence {
+                    source_ref: child_source_ref,
+                    committed_at_revision: RuntimeProjectionRevision(8),
+                    applied_surface_revision: SurfaceRevision(9),
+                    activated_at_revision: None,
                 },
-                progress: AgentRuntimeForkProgressEvidence::Provisioned {
-                    child_thread_id,
-                    child_binding: AgentRuntimeSourceBindingEvidence {
-                        source_ref: child_source_ref,
-                        committed_at_revision: RuntimeProjectionRevision(8),
-                        applied_surface_revision: SurfaceRevision(9),
-                        activated_at_revision: None,
-                    },
-                    cutoff: AgentRuntimeForkCutoff::CompletedTurn {
-                        turn_id: id("runtime-turn-4", RuntimeTurnId::new),
-                    },
-                    child_history_digest: id("sha256:history", RuntimePayloadDigest::new),
+                cutoff: AgentRuntimeForkCutoff::CompletedTurn {
+                    turn_id: id("runtime-turn-4", RuntimeTurnId::new),
                 },
-            }),
+                child_history_digest: id("sha256:history", RuntimePayloadDigest::new),
+            },
         };
 
-        let json = serde_json::to_value(&operation).expect("serialize operation evidence");
-        assert_eq!(json["evidence"]["kind"], "fork");
+        let json = serde_json::to_value(&evidence).expect("serialize operation evidence");
+        assert_eq!(json["kind"], "fork");
+        assert_eq!(json["progress"]["cutoff"]["kind"], "completed_turn");
         assert_eq!(
-            json["evidence"]["progress"]["cutoff"]["kind"],
-            "completed_turn"
-        );
-        assert_eq!(
-            serde_json::from_value::<AgentRuntimeOperation>(json).expect("deserialize evidence"),
-            operation
+            serde_json::from_value::<AgentRuntimeOperationEvidence>(json)
+                .expect("deserialize evidence"),
+            evidence
         );
 
-        let schema = serde_json::to_string(&schemars::schema_for!(AgentRuntimeProjectionSchema))
+        let schema = serde_json::to_string(&schemars::schema_for!(AgentRuntimeOperationEvidence))
             .expect("serialize schema");
         assert!(schema.contains("source_ref"));
         assert!(!schema.contains("AgentBindingGeneration"));

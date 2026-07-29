@@ -47,7 +47,6 @@ pub enum AgentDashNativeThreadItem {
     #[ts(rename_all = "camelCase")]
     ContextCompaction {
         id: String,
-        operation_id: String,
         mode: AgentDashCompactionMode,
         status: AgentDashCompactionStatus,
         error: Option<String>,
@@ -384,7 +383,6 @@ mod tests {
     fn typed_context_compaction_round_trip_preserves_terminal_evidence() {
         let item = AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ContextCompaction {
             id: "compact-1".to_owned(),
-            operation_id: "operation-1".to_owned(),
             mode: AgentDashCompactionMode::Manual,
             status: AgentDashCompactionStatus::Lost,
             error: Some("provider outcome unknown".to_owned()),

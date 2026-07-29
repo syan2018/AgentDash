@@ -108,10 +108,9 @@ describe("session stream tool progress", () => {
       const item = {
         type: "contextCompaction" as const,
         id: "compaction-1",
-        operationId: "operation-1",
         mode: "manual" as const,
         status,
-        error: status === "failed" ? "checkpoint write failed" : null,
+        error: status === "failed" ? "compaction apply failed" : null,
         startedAtMs: 1n,
         completedAtMs: 2n,
         contextRevision: status === "succeeded" ? "context-2" : null,

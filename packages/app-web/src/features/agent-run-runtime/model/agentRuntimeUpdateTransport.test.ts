@@ -12,7 +12,6 @@ describe("Agent Runtime update transport boundary", () => {
         turn_id: "turn-1",
         kind: "conversation",
         phase: "running",
-        operation_id: null,
         started_at_ms: "1000",
         cancellable: true,
       },

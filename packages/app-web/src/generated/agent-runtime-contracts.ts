@@ -12,7 +12,7 @@ export type AgentRuntimeContentBlock = { "kind": "text", text: string, } | { "ki
  */
 export type RuntimeU64 = string & { readonly __runtime_u64: "canonical_unsigned_decimal" };
 
-export type AgentRuntimeActiveTurn = { turn_id: RuntimeTurnId, kind: AgentRuntimeActiveTurnKind, phase: AgentRuntimeActiveTurnPhase, operation_id: RuntimeOperationId | null, started_at_ms: RuntimeU64, cancellable: boolean, };
+export type AgentRuntimeActiveTurn = { turn_id: RuntimeTurnId, kind: AgentRuntimeActiveTurnKind, phase: AgentRuntimeActiveTurnPhase, started_at_ms: RuntimeU64, cancellable: boolean, };
 
 export type AgentRuntimeActiveTurnKind = "conversation" | "context_compaction";
 
@@ -22,13 +22,13 @@ export type AgentRuntimeAppliedContextProvenance = { authority: AgentRuntimeCont
 
 export type AgentRuntimeAppliedInitialContextEvidence = { package_id: RuntimeContextPackageId, package_digest: RuntimePayloadDigest, contributions: Array<AgentRuntimeInitialContextContributionEvidence>, };
 
-export type AgentRuntimeAvailabilityEvidence = { blocking_operation_id: RuntimeOperationId | null, expected_view_revision: RuntimeProjectionRevision | null, expected_turn_id: RuntimeTurnId | null, bound_surface_revision: SurfaceRevision | null, applied_surface_revision: SurfaceRevision | null, };
+export type AgentRuntimeAvailabilityEvidence = { expected_view_revision: RuntimeProjectionRevision | null, expected_turn_id: RuntimeTurnId | null, bound_surface_revision: SurfaceRevision | null, applied_surface_revision: SurfaceRevision | null, };
 
 export type AgentRuntimeCommandAvailability = { "status": "available", evidence: AgentRuntimeAvailabilityEvidence, } | { "status": "unavailable", reason: AgentRuntimeUnavailabilityReason, evidence: AgentRuntimeAvailabilityEvidence, };
 
 export type AgentRuntimeCommandKind = "create" | "resume" | "rebind" | "activate" | "submit_input" | "steer" | "interrupt" | "request_compaction" | "resolve_interaction" | "close" | "fork";
 
-export type AgentRuntimeCompactionOutcome = { turn_id: RuntimeTurnId, operation_id: RuntimeOperationId | null, status: AgentRuntimeCompactionOutcomeStatus, completed_at_ms: RuntimeU64, error: string | null, };
+export type AgentRuntimeCompactionOutcome = { turn_id: RuntimeTurnId, status: AgentRuntimeCompactionOutcomeStatus, completed_at_ms: RuntimeU64, error: string | null, };
 
 export type AgentRuntimeCompactionOutcomeStatus = "succeeded" | "failed" | "lost" | "cancelled";
 
@@ -76,8 +76,6 @@ export type AgentRuntimeInteractionStatus = "pending" | "resolved" | "cancelled"
 
 export type AgentRuntimeLifecycleStatus = "provisioning" | "active" | "suspended" | "closed" | "lost";
 
-export type AgentRuntimeOperation = { id: RuntimeOperationId, turn_id: RuntimeTurnId | null, status: AgentRuntimeOperationStatus, evidence: AgentRuntimeOperationEvidence | null, };
-
 export type AgentRuntimeOperationEvidence = { "kind": "create", binding: AgentRuntimeSourceBindingEvidence, initial_context: AgentRuntimeAppliedInitialContextEvidence | null, } | { "kind": "resume", binding: AgentRuntimeSourceBindingEvidence, } | { "kind": "rebind", previous_binding: AgentRuntimeSourceBindingEvidence, binding: AgentRuntimeSourceBindingEvidence, } | { "kind": "fork", parent_binding: AgentRuntimeSourceBindingEvidence, progress: AgentRuntimeForkProgressEvidence, } | { "kind": "activate", binding: AgentRuntimeSourceBindingEvidence, };
 
 export type AgentRuntimeOperationReceipt = { operation_id: RuntimeOperationId, thread_id: RuntimeThreadId, status: AgentRuntimeOperationStatus, evidence: AgentRuntimeOperationEvidence | null, duplicate: boolean, };
@@ -90,7 +88,7 @@ export type AgentRuntimeProjectionFidelity = "unsupported" | "observed" | "appro
 
 export type AgentRuntimeProjectionSchema = { view: AgentRuntimeView, update: AgentRuntimeUpdate, };
 
-export type AgentRuntimeQueuedCompaction = { operation_id: RuntimeOperationId, queued_at_ms: RuntimeU64, };
+export type AgentRuntimeQueuedCompaction = { queued_at_ms: RuntimeU64, };
 
 export type AgentRuntimeSourceBindingEvidence = { source_ref: RuntimeSourceRef, committed_at_revision: RuntimeProjectionRevision, applied_surface_revision: SurfaceRevision, activated_at_revision: RuntimeProjectionRevision | null, };
 
@@ -100,7 +98,7 @@ export type AgentRuntimeUnavailabilityReason = "runtime_not_active" | "admission
 
 export type AgentRuntimeUpdate = { lane_sequence: RuntimeU64, view_revision: RuntimeProjectionRevision, execution: AgentRuntimeExecutionView, context: AgentRuntimeContextCoordinate, command_availability: { [key in AgentRuntimeCommandKind]?: AgentRuntimeCommandAvailability }, interactions: Array<AgentRuntimeInteraction>, presentations: Array<CanonicalConversationRecord>, };
 
-export type AgentRuntimeView = { thread_id: RuntimeThreadId, view_revision: RuntimeProjectionRevision, captured_at_ms: RuntimeU64, lifecycle: AgentRuntimeLifecycleStatus, execution: AgentRuntimeExecutionView, context: AgentRuntimeContextCoordinate, interactions: Array<AgentRuntimeInteraction>, thread_name: string | null, thread_name_source: AgentRuntimeThreadNameSource | null, operations: Array<AgentRuntimeOperation>, source_binding: AgentRuntimeSourceBindingEvidence | null, authority: AgentRuntimeProjectionAuthority, fidelity: AgentRuntimeProjectionFidelity, command_availability: { [key in AgentRuntimeCommandKind]?: AgentRuntimeCommandAvailability }, conversation: Array<CanonicalConversationRecord>, };
+export type AgentRuntimeView = { thread_id: RuntimeThreadId, view_revision: RuntimeProjectionRevision, captured_at_ms: RuntimeU64, lifecycle: AgentRuntimeLifecycleStatus, execution: AgentRuntimeExecutionView, context: AgentRuntimeContextCoordinate, interactions: Array<AgentRuntimeInteraction>, thread_name: string | null, thread_name_source: AgentRuntimeThreadNameSource | null, source_binding: AgentRuntimeSourceBindingEvidence | null, authority: AgentRuntimeProjectionAuthority, fidelity: AgentRuntimeProjectionFidelity, command_availability: { [key in AgentRuntimeCommandKind]?: AgentRuntimeCommandAvailability }, conversation: Array<CanonicalConversationRecord>, };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
 

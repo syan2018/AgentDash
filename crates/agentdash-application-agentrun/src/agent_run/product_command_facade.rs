@@ -27,7 +27,6 @@ pub enum AgentRunProductCommand {
     },
     Interrupt,
     RequestCompaction,
-    Rebind,
     ResolveInteraction {
         interaction_id: RuntimeInteractionId,
         response: AgentRuntimeInteractionResponse,
@@ -104,14 +103,6 @@ impl AgentRunProductCommandFacade {
             .map_err(AgentRunProductCommandError::Unavailable)?;
         let service = resolved.service;
         let generation = resolved.binding_generation;
-        if matches!(request.command, AgentRunProductCommand::Rebind) {
-            return Ok(operation_receipt(
-                stable_product_command_operation_id(&request.target, client_command_id)?,
-                binding.runtime_thread_id,
-                AgentRuntimeOperationStatus::Succeeded,
-                false,
-            ));
-        }
         let snapshot = service
             .read(AgentReadQuery {
                 source: binding.agent.source.clone(),
@@ -125,7 +116,6 @@ impl AgentRunProductCommandFacade {
         }
 
         let identity = product_command_identity(&request.target, client_command_id);
-        let operation_id = stable_product_command_operation_id(&request.target, client_command_id)?;
         let meta = AgentCommandMeta {
             command_id: AgentCommandId::new(format!("product-command:v2:{identity}"))
                 .map_err(|error| AgentRunProductCommandError::InvalidCommand(error.to_string()))?,
@@ -138,6 +128,8 @@ impl AgentRunProductCommandFacade {
             binding_generation: generation,
             expected_snapshot_revision: Some(snapshot.revision),
         };
+        let operation_id = runtime_operation_identity(&meta.effect_id)?;
+        let expected_effect_id = meta.effect_id.clone();
         let inspection = service.inspect(meta.effect_id.clone()).await?;
         if !inspection.validate() || inspection.effect_id != meta.effect_id {
             return Err(AgentRunProductCommandError::InvalidCommand(
@@ -164,6 +156,11 @@ impl AgentRunProductCommandFacade {
             }
             AgentEffectInspectionState::Applied { outcome } => {
                 let receipt = applied_product_command_receipt(&request.command, outcome)?;
+                if receipt.effect_id != expected_effect_id {
+                    return Err(AgentRunProductCommandError::InvalidCommand(
+                        "applied effect receipt has a different identity".to_owned(),
+                    ));
+                }
                 if receipt.source != binding.agent.source {
                     return Err(AgentRunProductCommandError::InvalidCommand(
                         "applied effect belongs to another source".to_owned(),
@@ -196,6 +193,11 @@ impl AgentRunProductCommandFacade {
                             .await?
                     }
                 };
+                if receipt.effect_id != expected_effect_id {
+                    return Err(AgentRunProductCommandError::InvalidCommand(
+                        "Agent receipt has a different effect identity".to_owned(),
+                    ));
+                }
                 if receipt.source != binding.agent.source {
                     return Err(AgentRunProductCommandError::InvalidCommand(
                         "Agent receipt belongs to another source".to_owned(),
@@ -326,11 +328,6 @@ fn map_command(
         AgentRunProductCommand::Resume => {
             return Err(AgentRunProductCommandError::InvalidCommand(
                 "Resume uses the Complete Agent lifecycle command".to_owned(),
-            ));
-        }
-        AgentRunProductCommand::Rebind => {
-            return Err(AgentRunProductCommandError::InvalidCommand(
-                "surface rebind uses the Host live surface workflow".to_owned(),
             ));
         }
     })
@@ -471,16 +468,11 @@ fn operation_receipt(
     }
 }
 
-pub fn stable_product_command_operation_id(
-    target: &AgentRunTarget,
-    client_command_id: &str,
+fn runtime_operation_identity(
+    effect_id: &AgentEffectIdentity,
 ) -> Result<RuntimeOperationId, AgentRunProductCommandError> {
-    let client_command_id = validate_client_command_id(client_command_id)?;
-    RuntimeOperationId::new(format!(
-        "product-command:v2:{}",
-        product_command_identity(target, client_command_id)
-    ))
-    .map_err(|_| AgentRunProductCommandError::InvalidClientCommandId)
+    RuntimeOperationId::new(effect_id.as_str().to_owned())
+        .map_err(|error| AgentRunProductCommandError::InvalidCommand(error.to_string()))
 }
 
 fn product_command_identity(target: &AgentRunTarget, client_command_id: &str) -> String {
@@ -501,7 +493,6 @@ fn product_command_identity(target: &AgentRunTarget, client_command_id: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
     fn snapshot_with_active_turn(
         kind: agentdash_agent_service_api::AgentActiveTurnKind,
@@ -512,7 +503,6 @@ mod tests {
                 turn_id: agentdash_agent_service_api::AgentTurnId::new("turn-1").unwrap(),
                 kind,
                 phase: agentdash_agent_service_api::AgentActiveTurnPhase::Running,
-                operation_id: None,
                 started_at_ms: 1,
                 cancellable,
             }),
@@ -552,20 +542,6 @@ mod tests {
             initial_context: None,
             conversation_history: Vec::new(),
         }
-    }
-
-    #[test]
-    fn operation_identity_depends_only_on_product_target_and_client_identity() {
-        let target = AgentRunTarget {
-            run_id: Uuid::new_v4(),
-            agent_id: Uuid::new_v4(),
-        };
-        let first = stable_product_command_operation_id(&target, "client-1").unwrap();
-        let replay = stable_product_command_operation_id(&target, "client-1").unwrap();
-        let other = stable_product_command_operation_id(&target, "client-2").unwrap();
-
-        assert_eq!(first, replay);
-        assert_ne!(first, other);
     }
 
     #[test]
@@ -659,5 +635,13 @@ mod tests {
             result,
             Err(AgentRunProductCommandError::InvalidCommand(_))
         ));
+    }
+
+    #[test]
+    fn runtime_receipt_identity_is_the_complete_agent_effect_identity() {
+        let effect_id = AgentEffectIdentity::new("product-effect:v2:stable-identity").unwrap();
+        let operation_id = runtime_operation_identity(&effect_id).unwrap();
+
+        assert_eq!(operation_id.as_str(), effect_id.as_str());
     }
 }

@@ -153,6 +153,7 @@ pub use agent_run_product_projection_repository::{
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;
 pub use backend_repository::PostgresBackendRepository;
+pub(crate) use dash_complete_agent_store::migrate_dash_repository_documents;
 pub use dash_complete_agent_store::{
     PostgresDashAgentRepositoryStore, PostgresDashCompleteAgentStore,
 };

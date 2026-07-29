@@ -6,14 +6,13 @@ use std::{
 use agentdash_agent::dash::{
     ActivityStatus, AgentHistory, AgentHistoryReplayer, AgentHistoryState,
     AgentItemId as DashItemId, AgentSessionId, AgentTurnId as DashTurnId, BranchId, CommandId,
-    CompactionMode, ContextDeliveryFidelity, DashAgentChange, DashAgentChangePayload,
-    DashAgentRepositoryState, DashAgentRepositoryStore, DashAgentService, DashChangeCursor,
-    DashCommandRequest, DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies,
-    DashExecutionEvent, DashHistoryCallbacks, DashHistoryCommit, DashMessageRole,
-    DashPublicCommand, DashReceiptState, DashServiceError, DashSurface, DashSurfaceInstruction,
-    DashTerminalOutcome, DashToolDefinition, ForkCutoff, HistoryPayload,
-    InitialContextContribution, InitialContextInstallation, InitialContextMode,
-    InteractionId as DashInteractionId, InteractionState,
+    CompactionMode, ContextDeliveryFidelity, DashAgentChange, DashAgentRepositoryState,
+    DashAgentRepositoryStore, DashAgentService, DashChangeCursor, DashCommandRequest,
+    DashCoreEvent, DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent,
+    DashHistoryCallbacks, DashHistoryCommit, DashMessageRole, DashPublicCommand, DashReceiptState,
+    DashServiceError, DashSurface, DashSurfaceInstruction, DashTerminalOutcome, DashToolDefinition,
+    ForkCutoff, HistoryPayload, InitialContextContribution, InitialContextInstallation,
+    InitialContextMode, InteractionId as DashInteractionId, InteractionState,
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
@@ -1031,7 +1030,7 @@ impl CompleteAgentService for DashAgentCompleteService {
             .as_ref()
             .map(parse_cursor)
             .transpose()?
-            .unwrap_or_else(|| DashChangeCursor::new(0, 0));
+            .unwrap_or_else(|| DashChangeCursor::new(0));
         let change_batch = service
             .changes(Some(after), query.limit as usize)
             .await
@@ -1049,18 +1048,13 @@ impl CompleteAgentService for DashAgentCompleteService {
             {
                 let change = selected_changes.next().expect("peeked change exists");
                 let state_payload = dash_change_payload(&change, state)?;
-                let presentation = match &change.payload {
-                    DashAgentChangePayload::HistoryEntry { entry } => {
-                        crate::canonical_projection::entry_records(
-                            query.source.as_str(),
-                            entry,
-                            previous_surface.as_ref(),
-                            state,
-                        )
-                        .map_err(internal)?
-                    }
-                    DashAgentChangePayload::ActiveTurnChanged { .. } => Vec::new(),
-                };
+                let presentation = crate::canonical_projection::entry_records(
+                    query.source.as_str(),
+                    &change.entry,
+                    previous_surface.as_ref(),
+                    state,
+                )
+                .map_err(internal)?;
                 changes.push(AgentChange {
                     cursor: AgentSourceCursor::new(change.cursor.encode()).map_err(internal)?,
                     source_revision: Some(
@@ -1754,39 +1748,25 @@ fn dash_execution_snapshot(
                     AgentActiveTurnKind::Conversation
                 },
                 phase: if active_compaction
-                    .is_some_and(|compaction| compaction.checkpoint.is_some())
+                    .is_some_and(|compaction| compaction.context_revision.is_some())
                 {
                     AgentActiveTurnPhase::Applied
                 } else {
                     AgentActiveTurnPhase::Running
                 },
-                operation_id: active_compaction
-                    .map(|compaction| {
-                        AgentEffectIdentity::new(compaction.operation_id.0.clone())
-                            .map_err(internal)
-                    })
-                    .transpose()?,
                 started_at_ms: turn.started_at_ms,
                 cancellable: active_compaction
                     .is_none_or(|compaction| compaction.side_effect_started_at_ms.is_none()),
             })
         })
         .transpose()?;
-    let queued_compaction = state
-        .queued_compaction
-        .as_ref()
-        .map(|queued| {
-            Ok(AgentQueuedCompactionSnapshot {
-                command_id: agentdash_agent_service_api::AgentCommandId::new(
-                    queued.compaction_id.0.clone(),
-                )
-                .map_err(internal)?,
-                operation_id: AgentEffectIdentity::new(queued.operation_id.0.clone())
-                    .map_err(internal)?,
+    let queued_compaction =
+        state
+            .queued_compaction
+            .as_ref()
+            .map(|queued| AgentQueuedCompactionSnapshot {
                 queued_at_ms: queued.queued_at_ms,
-            })
-        })
-        .transpose()?;
+            });
     let last_compaction_outcome = state
         .compactions
         .iter()
@@ -1809,10 +1789,6 @@ fn dash_execution_snapshot(
             Ok(AgentCompactionOutcomeSnapshot {
                 turn_id: agentdash_agent_service_api::AgentTurnId::new(compaction_id.0.clone())
                     .map_err(internal)?,
-                operation_id: Some(
-                    AgentEffectIdentity::new(compaction.operation_id.0.clone())
-                        .map_err(internal)?,
-                ),
                 status,
                 completed_at_ms,
                 error: compaction.error.clone(),
@@ -2086,32 +2062,16 @@ fn request_fingerprint(request: &impl serde::Serialize) -> Result<String, AgentS
 }
 
 fn parse_cursor(cursor: &AgentSourceCursor) -> Result<DashChangeCursor, AgentServiceError> {
-    let (revision, ordinal) = cursor
-        .as_str()
-        .split_once(':')
-        .ok_or_else(|| invalid_argument("Dash Agent change cursor is invalid"))?;
-    Ok(DashChangeCursor::new(
-        revision
-            .parse()
-            .map_err(|_| invalid_argument("Dash Agent change cursor revision is invalid"))?,
-        ordinal
-            .parse()
-            .map_err(|_| invalid_argument("Dash Agent change cursor ordinal is invalid"))?,
-    ))
+    Ok(DashChangeCursor::new(cursor.as_str().parse().map_err(
+        |_| invalid_argument("Dash Agent change cursor revision is invalid"),
+    )?))
 }
 
 fn dash_change_payload(
     change: &DashAgentChange,
     state: &agentdash_agent::dash::AgentHistoryState,
 ) -> Result<Option<AgentChangePayload>, AgentServiceError> {
-    match &change.payload {
-        DashAgentChangePayload::HistoryEntry { entry } => {
-            change_payload(state, &entry.payload, &change.source_digest)
-        }
-        DashAgentChangePayload::ActiveTurnChanged { .. } => {
-            Ok(Some(execution_change_payload(state)?))
-        }
-    }
+    change_payload(state, &change.entry.payload, &change.source_digest)
 }
 
 const DASH_COMPLETE_LIVE_EVENT_CAPACITY: usize = 1024;

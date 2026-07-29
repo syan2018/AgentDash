@@ -796,12 +796,6 @@
             }
           ]
         },
-        "operations": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/AgentRuntimeOperation"
-          }
-        },
         "source_binding": {
           "anyOf": [
             {
@@ -872,7 +866,6 @@
         "execution",
         "context",
         "interactions",
-        "operations",
         "authority",
         "fidelity",
         "command_availability",
@@ -955,12 +948,6 @@
         "phase": {
           "$ref": "#/$defs/AgentRuntimeActiveTurnPhase"
         },
-        "operation_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "started_at_ms": {
           "$ref": "#/$defs/RuntimeU64"
         },
@@ -993,15 +980,11 @@
     "AgentRuntimeQueuedCompaction": {
       "type": "object",
       "properties": {
-        "operation_id": {
-          "type": "string"
-        },
         "queued_at_ms": {
           "$ref": "#/$defs/RuntimeU64"
         }
       },
       "required": [
-        "operation_id",
         "queued_at_ms"
       ]
     },
@@ -1010,12 +993,6 @@
       "properties": {
         "turn_id": {
           "type": "string"
-        },
-        "operation_id": {
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "status": {
           "$ref": "#/$defs/AgentRuntimeCompactionOutcomeStatus"
@@ -1417,37 +1394,6 @@
         "observed_at_ms"
       ]
     },
-    "AgentRuntimeOperation": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "turn_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "status": {
-          "$ref": "#/$defs/AgentRuntimeOperationStatus"
-        },
-        "evidence": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AgentRuntimeOperationEvidence"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "id",
-        "status"
-      ]
-    },
     "AgentRuntimeCommandAvailability": {
       "oneOf": [
         {
@@ -1491,12 +1437,6 @@
     "AgentRuntimeAvailabilityEvidence": {
       "type": "object",
       "properties": {
-        "blocking_operation_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "expected_view_revision": {
           "anyOf": [
             {
@@ -2328,9 +2268,6 @@
             "id": {
               "type": "string"
             },
-            "operationId": {
-              "type": "string"
-            },
             "mode": {
               "$ref": "#/$defs/AgentDashCompactionMode"
             },
@@ -2370,7 +2307,6 @@
           "required": [
             "type",
             "id",
-            "operationId",
             "mode",
             "status",
             "startedAtMs"

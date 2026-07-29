@@ -10,7 +10,7 @@ import { renderToolCallCard } from "./toolCardRegistry";
 describe("context compaction card", () => {
   it.each([
     ["succeeded", "completed", "上下文已压缩"],
-    ["failed", "failed", "压缩 checkpoint 写入失败"],
+    ["failed", "failed", "压缩应用失败"],
     ["lost", "lost", "压缩终态恢复失败"],
     ["cancelled", "cancelled", "上下文压缩已取消"],
   ] as const)(
@@ -19,7 +19,7 @@ describe("context compaction card", () => {
       const item = compactionItem(
         status,
         status === "failed"
-          ? "压缩 checkpoint 写入失败"
+          ? "压缩应用失败"
           : status === "lost"
             ? "压缩终态恢复失败"
             : null,
@@ -40,7 +40,6 @@ function compactionItem(
   return {
     type: "contextCompaction",
     id: "compaction-1",
-    operationId: "operation-1",
     mode: "manual",
     status,
     error,

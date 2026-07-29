@@ -5,7 +5,7 @@ import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { SessionEventEnvelope } from "../model/types";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
-import type { AgentRuntimeView } from "../../../generated/agent-runtime-validators";
+import type { AgentRuntimeView } from "../../../generated/agent-runtime-codecs";
 import { extractPlatformEventType } from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 import type {

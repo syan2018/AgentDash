@@ -6,7 +6,7 @@ import type { ContextFrame } from "../../../generated/backbone-protocol";
 import type {
   AgentRuntimeContextProjection,
   AgentRuntimeView,
-} from "../../../generated/agent-runtime-validators";
+} from "../../../generated/agent-runtime-codecs";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import { useAgentRuntimeContextProjection } from "../../agent-run-runtime/model/useAgentRuntimeContextProjection";
 import type { TokenUsageInfo } from "../model/types";

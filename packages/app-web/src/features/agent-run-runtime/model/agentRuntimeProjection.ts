@@ -1,7 +1,7 @@
 import type {
   AgentRuntimeUpdate,
   AgentRuntimeView,
-} from "../../../generated/agent-runtime-validators";
+} from "../../../generated/agent-runtime-codecs";
 
 /** Applies one Runtime-owned control/presentation observation to the rebuildable view. */
 export function applyAgentRuntimeUpdate(

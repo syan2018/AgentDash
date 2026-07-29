@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type {
   AgentRuntimeContextProjection,
   AgentRuntimeView,
-} from "../../../generated/agent-runtime-validators";
+} from "../../../generated/agent-runtime-codecs";
 import { AgentRuntimeContextProjectionFence } from "./useAgentRuntimeContextProjection";
 
 type Coordinate = AgentRuntimeView["observation"]["context"];

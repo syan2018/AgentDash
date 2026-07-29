@@ -3,7 +3,7 @@ import { FetchNdjsonStream } from "../../../api/ndjsonStream";
 import {
   decodeAgentRuntimeUpdate,
   type AgentRuntimeUpdate,
-} from "../../../generated/agent-runtime-validators";
+} from "../../../generated/agent-runtime-codecs";
 import {
   agentRunScopedPath,
   type AgentRunRuntimeTarget,

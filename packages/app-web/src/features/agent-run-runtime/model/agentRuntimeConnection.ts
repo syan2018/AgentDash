@@ -2,7 +2,7 @@ import type {
   AgentRuntimeOperationReceipt,
   AgentRuntimeUpdate,
   AgentRuntimeView,
-} from "../../../generated/agent-runtime-validators";
+} from "../../../generated/agent-runtime-codecs";
 import {
   executeAgentRunRuntimeCommand,
   fetchAgentRuntimeView,

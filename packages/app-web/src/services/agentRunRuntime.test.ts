@@ -19,7 +19,7 @@ import {
   respondAgentRunInteraction,
 } from "./agentRunRuntime";
 import { agentRuntimeTestFixtures } from "../features/agent-run-runtime/model/agentRuntimeTestFixtures";
-import { encodeAgentRuntimeView } from "../generated/agent-runtime-validators";
+import { encodeAgentRuntimeView } from "../generated/agent-runtime-codecs";
 
 describe("AgentRun runtime service", () => {
   beforeEach(() => {

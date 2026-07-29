@@ -1,5 +1,8 @@
 use std::{collections::BTreeSet, env, fs, path::Path};
 
+use agentdash_agent_runtime_contract::encoding_codegen::{
+    CodecModuleConfig, CodecRoot, canonicalize_json, generate_codec_module, generation_manifest,
+};
 use agentdash_agent_runtime_contract::{
     AgentHostCallbackError, AgentRuntimeContractSchema, AgentRuntimeProjectionSchema,
     AgentRuntimeSourceBindingEvidence, AgentServiceApiSchema, AgentServiceInstanceId,
@@ -14,10 +17,9 @@ fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let ts_path = root.join("packages/app-web/src/generated/agent-runtime-contracts.ts");
     let protocol_ts_path = root.join("packages/app-web/src/generated/backbone-protocol.ts");
-    let validators_path = root.join("packages/app-web/src/generated/agent-runtime-validators.ts");
-    let service_codecs_path =
-        root.join("packages/app-web/src/generated/agent-runtime-service-codecs.ts");
+    let codecs_path = root.join("packages/app-web/src/generated/agent-runtime-codecs.ts");
     let schema_path = root.join("schemas/agent-runtime-contract.schema.json");
+    let manifest_path = root.join("schemas/agent-runtime-contract.manifest.json");
     let temp = tempfile::tempdir().expect("create generation directory");
     AgentRuntimeContractSchema::export_all_to(temp.path())
         .expect("export Agent Runtime contract types");
@@ -47,15 +49,51 @@ fn main() {
         declarations.join("\n\n")
     );
     ensure_no_bigint(&typescript);
+    let mut schema_value =
+        serde_json::to_value(schema_for!(AgentRuntimeContractSchema)).expect("serialize schema");
+    let projection_schema = serde_json::to_value(schema_for!(AgentRuntimeProjectionSchema))
+        .expect("serialize projection schema");
+    merge_schema_definitions(&mut schema_value, &projection_schema);
+    let codecs = generate_codec_module(
+        &schema_value,
+        CodecModuleConfig {
+            generated_by: "cargo run -p agentdash-agent-runtime-contract --bin generate_agent_runtime_contracts",
+            contract_import: "./agent-runtime-contracts",
+            scalar_type: "RuntimeU64",
+            decoded_type: "DecodeRuntimeU64",
+            error_type: "AgentRuntimeCodecError",
+            decode_scalar: "decodeRuntimeU64",
+            encode_scalar: "encodeRuntimeU64",
+            roots: codec_roots(),
+            type_guard: Some(("isAgentRuntimeView", "AgentRuntimeView")),
+        },
+    );
+    canonicalize_json(&mut schema_value);
     let json_schema = format!(
         "{}\n",
-        serde_json::to_string_pretty(&schema_for!(AgentRuntimeContractSchema))
-            .expect("serialize Agent Runtime JSON Schema")
+        serde_json::to_string_pretty(&schema_value).expect("serialize canonical Runtime schema")
+    );
+    let manifest = generation_manifest(
+        "AgentRuntimeContractSchema",
+        "schemars::schema_for!(AgentRuntimeContractSchema) + RuntimeU64 encoding kind",
+        &[
+            ("agent-runtime-contracts.ts", &typescript),
+            ("agent-runtime-codecs.ts", &codecs),
+            ("agent-runtime-contract.schema.json", &json_schema),
+        ],
     );
     check_or_write(&ts_path, &typescript, check);
-    check_or_write(&validators_path, MANAGED_RUNTIME_VALIDATORS, check);
-    check_or_write(&service_codecs_path, COMPLETE_AGENT_CODECS, check);
+    check_or_write(&codecs_path, &codecs, check);
     check_or_write(&schema_path, &json_schema, check);
+    check_or_write(&manifest_path, &manifest, check);
+    ensure_absent(
+        &root.join("packages/app-web/src/generated/agent-runtime-validators.ts"),
+        check,
+    );
+    ensure_absent(
+        &root.join("packages/app-web/src/generated/agent-runtime-service-codecs.ts"),
+        check,
+    );
 }
 
 fn ensure_no_bigint(source: &str) {
@@ -67,8 +105,117 @@ fn ensure_no_bigint(source: &str) {
     }
 }
 
-const MANAGED_RUNTIME_VALIDATORS: &str = include_str!("agent_runtime_validators.ts");
-const COMPLETE_AGENT_CODECS: &str = include_str!("complete_agent_codecs.ts");
+fn codec_roots() -> &'static [CodecRoot] {
+    &[
+        CodecRoot {
+            type_name: "AgentCommandEnvelope",
+            function_stem: "AgentCommandEnvelope",
+        },
+        CodecRoot {
+            type_name: "CreateAgentCommand",
+            function_stem: "CreateAgentCommand",
+        },
+        CodecRoot {
+            type_name: "ResumeAgentCommand",
+            function_stem: "ResumeAgentCommand",
+        },
+        CodecRoot {
+            type_name: "ForkAgentCommand",
+            function_stem: "ForkAgentCommand",
+        },
+        CodecRoot {
+            type_name: "AgentCommandReceipt",
+            function_stem: "AgentCommandReceipt",
+        },
+        CodecRoot {
+            type_name: "AgentSnapshot",
+            function_stem: "AgentSnapshot",
+        },
+        CodecRoot {
+            type_name: "AgentChange",
+            function_stem: "AgentChange",
+        },
+        CodecRoot {
+            type_name: "AgentChangePage",
+            function_stem: "AgentChangePage",
+        },
+        CodecRoot {
+            type_name: "AgentEffectInspection",
+            function_stem: "AgentEffectInspection",
+        },
+        CodecRoot {
+            type_name: "AgentSurfaceSnapshot",
+            function_stem: "AgentSurfaceSnapshot",
+        },
+        CodecRoot {
+            type_name: "ApplyBoundAgentSurface",
+            function_stem: "ApplyBoundAgentSurface",
+        },
+        CodecRoot {
+            type_name: "RevokeBoundAgentSurface",
+            function_stem: "RevokeBoundAgentSurface",
+        },
+        CodecRoot {
+            type_name: "AgentToolInvocation",
+            function_stem: "AgentToolInvocation",
+        },
+        CodecRoot {
+            type_name: "AgentHookInvocation",
+            function_stem: "AgentHookInvocation",
+        },
+        CodecRoot {
+            type_name: "AgentRuntimeOperationReceipt",
+            function_stem: "AgentRuntimeOperationReceipt",
+        },
+        CodecRoot {
+            type_name: "AgentRuntimeView",
+            function_stem: "AgentRuntimeView",
+        },
+        CodecRoot {
+            type_name: "AgentRuntimeUpdate",
+            function_stem: "AgentRuntimeUpdate",
+        },
+        CodecRoot {
+            type_name: "AgentRuntimeContextProjection",
+            function_stem: "AgentRuntimeContextProjection",
+        },
+        CodecRoot {
+            type_name: "AgentRuntimeProjectionSchema",
+            function_stem: "AgentRuntimeProjectionSchema",
+        },
+        CodecRoot {
+            type_name: "AgentRuntimeContractSchema",
+            function_stem: "AgentRuntimeContractSchema",
+        },
+    ]
+}
+
+fn merge_schema_definitions(target: &mut serde_json::Value, source: &serde_json::Value) {
+    let target_definitions = target
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("target schema must expose $defs");
+    if let Some(source_definitions) = source.get("$defs").and_then(serde_json::Value::as_object) {
+        for (name, definition) in source_definitions {
+            target_definitions
+                .entry(name.clone())
+                .or_insert_with(|| definition.clone());
+        }
+    }
+    let title = source
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .expect("source schema must expose title");
+    target_definitions
+        .entry(title.to_owned())
+        .or_insert_with(|| {
+            let mut root = source.clone();
+            root.as_object_mut()
+                .expect("source schema root must be object")
+                .remove("$defs");
+            root
+        });
+}
 
 fn required_runtime_type_names() -> BTreeSet<String> {
     [
@@ -196,6 +343,21 @@ fn check_or_write(path: &Path, expected: &str, check: bool) {
     fs::create_dir_all(path.parent().expect("generated parent")).expect("create generated parent");
     fs::write(path, expected).expect("write generated contract");
     eprintln!("wrote {}", path.display());
+}
+
+fn ensure_absent(path: &Path, check: bool) {
+    if !path.exists() {
+        return;
+    }
+    if check {
+        eprintln!(
+            "obsolete generated artifact still exists: {}",
+            path.display()
+        );
+        std::process::exit(1);
+    }
+    fs::remove_file(path).expect("remove obsolete generated artifact");
+    eprintln!("removed {}", path.display());
 }
 
 #[cfg(test)]

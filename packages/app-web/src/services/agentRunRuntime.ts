@@ -13,7 +13,7 @@ import {
   type AgentRuntimeContextProjection,
   type AgentRuntimeOperationReceipt,
   type AgentRuntimeView,
-} from "../generated/agent-runtime-validators";
+} from "../generated/agent-runtime-codecs";
 
 export interface AgentRunRuntimeTarget {
   runId: string;

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentRuntimeContextProjection,
   AgentRuntimeView,
-} from "../../../generated/agent-runtime-validators";
+} from "../../../generated/agent-runtime-codecs";
 import {
   fetchAgentRunRuntimeContextProjection,
   type AgentRunRuntimeTarget,

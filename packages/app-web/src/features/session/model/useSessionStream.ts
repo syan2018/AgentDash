@@ -4,7 +4,7 @@ import type { CanonicalConversationRecord } from "../../../generated/backbone-pr
 import type {
   AgentRuntimeOperationReceipt,
   AgentRuntimeView,
-} from "../../../generated/agent-runtime-validators";
+} from "../../../generated/agent-runtime-codecs";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { AgentRunProductRuntimeCommandRequest } from "../../../services/agentRunRuntime";
 import { useAgentRuntimeConnection } from "../../agent-run-runtime/model/useAgentRuntimeConnection";

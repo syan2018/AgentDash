@@ -1,7 +1,7 @@
 import type {
   AgentControlUnavailabilityReason,
 } from "../../../generated/agent-runtime-contracts";
-import type { AgentRuntimeView } from "../../../generated/agent-runtime-validators";
+import type { AgentRuntimeView } from "../../../generated/agent-runtime-codecs";
 
 type FixtureStatus = "running" | "completed" | "failed" | "lost";
 type AgentControlAvailability = NonNullable<

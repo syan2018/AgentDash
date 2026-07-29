@@ -3,14 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   decodeAgentChangePage,
   decodeAgentCommandEnvelope,
-  decodeAgentServiceU64,
+  decodeRuntimeU64,
   decodeAgentSnapshot,
   decodeAgentToolInvocation,
   encodeAgentChangePage,
   encodeAgentCommandEnvelope,
   encodeAgentSnapshot,
   encodeAgentToolInvocation,
-} from "../../../generated/agent-runtime-service-codecs";
+} from "../../../generated/agent-runtime-codecs";
 import {
   decodeRuntimeWireEnvelope,
   encodeRuntimeWireEnvelope,
@@ -59,7 +59,15 @@ describe("Complete Agent canonical u64 codecs", () => {
           authority: "agent_owned",
           fidelity: "exact",
         },
-        command_availability: {},
+        command_availability: {
+          submit_input: {
+            status: "available",
+            evidence: {
+              expected_snapshot_revision: MAX_U64,
+              expected_turn_id: null,
+            },
+          },
+        },
         interactions: [],
         thread_name: {
           thread_name: "thread",
@@ -103,6 +111,10 @@ describe("Complete Agent canonical u64 codecs", () => {
     });
 
     expect(snapshot.observation.revision).toBe(MAX_U64_BIGINT);
+    expect(
+      snapshot.observation.command_availability.submit_input?.evidence
+        .expected_snapshot_revision,
+    ).toBe(MAX_U64_BIGINT);
     expect(snapshot.observation.thread_name?.source_info.observed_at_ms).toBe(MAX_U64_BIGINT);
     expect(page.changes[0]?.occurred_at_ms).toBe(MAX_U64_BIGINT);
     expect(encodeAgentSnapshot(snapshot)).toMatchObject({
@@ -145,9 +157,62 @@ describe("Complete Agent canonical u64 codecs", () => {
   it.each([1, "01", "-1", "18446744073709551616"])(
     "rejects non-canonical service u64 %s",
     (value) => {
-      expect(() => decodeAgentServiceU64(value)).toThrow("expected");
+      expect(() => decodeRuntimeU64(value)).toThrow("expected");
     },
   );
+
+  it("rejects missing required scalar fields after selecting a union branch", () => {
+    expect(() =>
+      decodeAgentCommandEnvelope({
+        meta: {
+          command_id: "command-1",
+          effect_id: "effect-1",
+          idempotency_key: "idem-1",
+          expected_snapshot_revision: null,
+        },
+        source: "source-1",
+        command: { kind: "request_compaction" },
+      }),
+    ).toThrow("$.meta.binding_generation: expected required field");
+
+    expect(() =>
+      decodeAgentSnapshot({
+        source: "source-1",
+        observation: {
+          revision: "1",
+          lifecycle: "active",
+          execution: {
+            active_turn: null,
+            queued_compaction: null,
+            last_compaction_outcome: null,
+          },
+          context: {
+            snapshot_revision: "1",
+            context_revision: null,
+            recipe_digest: "sha256:context",
+            authority: "agent_owned",
+            fidelity: "exact",
+          },
+          command_availability: {
+            submit_input: { status: "available" },
+          },
+          interactions: [],
+          thread_name: null,
+          source_info: {
+            authority: "agent_authoritative",
+            source_revision: null,
+            fidelity: "exact",
+            observed_at_ms: "1",
+          },
+          conversation: [],
+        },
+        applied_surface: null,
+        initial_context: null,
+      }),
+    ).toThrow(
+      "$.observation.command_availability.submit_input.evidence: expected required field",
+    );
+  });
 });
 
 describe("Runtime Wire canonical frame coordinates", () => {

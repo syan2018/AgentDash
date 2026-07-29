@@ -4,7 +4,7 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 import { SessionProjectionView } from "./SessionProjectionView";
 
 import type { SessionMessageRefDto } from "../../../generated/agent-run-interaction-contracts";
-import type { AgentRuntimeView } from "../../../generated/agent-runtime-validators";
+import type { AgentRuntimeView } from "../../../generated/agent-runtime-codecs";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 import type {

@@ -6,6 +6,8 @@
 
 pub mod canonical_json;
 pub mod complete_agent;
+#[doc(hidden)]
+pub mod encoding_codegen;
 pub mod gateway;
 pub mod ids;
 pub mod runtime_view;

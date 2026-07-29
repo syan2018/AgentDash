@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ContextFrame } from "../../../generated/backbone-protocol";
-import type { AgentRuntimeContextProjection } from "../../../generated/agent-runtime-validators";
+import type { AgentRuntimeContextProjection } from "../../../generated/agent-runtime-codecs";
 import { validateAgentRuntimeContextProjectionCommit } from "../../agent-run-runtime/model/useAgentRuntimeContextProjection";
 import {
   SessionProjectionViewPanel,

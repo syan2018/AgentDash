@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentRuntimeOperationReceipt,
   AgentRuntimeView,
-} from "../../../generated/agent-runtime-validators";
+} from "../../../generated/agent-runtime-codecs";
 import type {
   AgentRunProductRuntimeCommandRequest,
   AgentRunRuntimeTarget,

@@ -241,3 +241,94 @@ mutable authoring state -> runtime/session snapshot -> packaged artifact
 Canonical:
 SourceBundle revision -> Interaction Instance / standard Extension package
 ```
+
+## Scenario: Definition Revision Persistence Contract
+
+### 1. Scope / Trigger
+
+当 `InteractionDefinitionRevision` 新增或修改 contract 字段，或 repository 调整 revision 的 PostgreSQL
+编码时，使用本合同。Repository port 保留，因为 immutable revision 是跨重启业务事实；数据库 adapter
+只负责把规范化的 revision identity、SourceBundle、lineage 与 contract 重组为 domain revision。
+
+### 2. Signatures
+
+```sql
+interaction_definition_revisions (
+  revision_id uuid,
+  definition_id uuid,
+  revision_number bigint,
+  project_id text,
+  owner_kind text,
+  owner_id text,
+  source_bundle_digest text,
+  contract jsonb,
+  created_at timestamptz
+)
+```
+
+```rust
+struct PersistedDefinitionRevisionContract {
+    kind: InteractionDefinitionKind,
+    definition_format_version: u16,
+    interaction_contract_version: u16,
+    authoring_mount_id: String,
+    title: String,
+    description: String,
+    initial_state: Value,
+    state_schema: Value,
+    agent_projection: InteractionAgentProjection,
+    command_definitions: Vec<InteractionCommandDefinition>,
+    component_bindings: Vec<ComponentBinding>,
+    action_bindings: Vec<InteractionActionBinding>,
+    resource_slots: Vec<ResourceSlotDefinition>,
+    created_by: String,
+}
+```
+
+### 3. Contracts
+
+- `revision_id`、definition/owner/revision identity、`source_bundle_digest` 与 `created_at` 只存 scalar column，
+  不复制进 `contract`。
+- `contract` 只保存 revision 的版本化 Interaction 行为与 authoring metadata。
+- SourceBundle files 和 lineage 继续使用各自规范化表；repository 读取后重组并调用
+  `InteractionDefinitionRevision::validate()`。
+- contract 字段变化必须新增顺序 migration，在 migration 中一次性形成完整目标 JSON shape；生产 reader
+  只读取目标 shape，不维护多版本 document fallback。
+- Interaction persistence/serialization 进入 HTTP 500 前必须通过 `diag_error!` 记录完整 source/debug；
+  HTTP trace span 以 info 级携带 method/URI，且不记录 headers。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| contract 缺少 required field 或字段类型错误 | `InteractionError::Serialization`，API 记录诊断并返回固定 500 |
+| scalar UUID / revision number 非法 | 带精确 `table.column` 的 serialization/invalid field |
+| SourceBundle digest 无对应内容或校验失败 | `not_found` / persistence conflict |
+| owner scalar 与 Project/domain invariant 不一致 | domain `validate()` 拒绝 |
+| contract 新增数组字段 | migration 物化完整数组并增加 shape check |
+
+### 5. Good / Base / Bad Cases
+
+- Good：新增 `action_bindings` 时，顺序 migration 为每条 revision 写入数组，并在同一 migration 删除被替代
+  的 document shape。
+- Base：新 revision 写 scalar identity + typed contract，读取时与 SourceBundle/lineage 重组。
+- Bad：在 repository 私有结构中再复制一份完整 domain revision identity，或依赖 `serde(default)` 把未迁移的
+  durable schema 漂移静默吞掉。
+
+### 6. Tests Required
+
+- contract serialization 断言不包含 scalar identity/digest/timestamp。
+- migration 断言新增字段被物化、JSON type check 生效、被替代列删除。
+- repository create/get roundtrip 覆盖空与非空 action/component/command/resource bindings。
+- API error mapping 断言 persistence/serialization 返回固定 500，并由 diagnostics 记录 operation/stage。
+- `pnpm run migration:guard`、真实 PostgreSQL migration runner 与受影响 Rust tests。
+
+### 7. Wrong vs Correct
+
+```text
+Boundary mismatch:
+scalar identity + full revision document(identity + digest + contract) + normalized source/lineage
+
+Canonical:
+scalar identity/digest + typed contract + normalized SourceBundle/lineage -> validated domain revision
+```

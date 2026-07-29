@@ -46,7 +46,8 @@ use agentdash_mcp::{services::McpServices, transport::McpRouterBuilder};
 use axum::{Router, middleware, routing::get};
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultMakeSpan, TraceLayer};
+use tracing::Level;
 
 use crate::app_state::AppState;
 use crate::relay;
@@ -136,7 +137,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(relay::ws_handler::ws_backend_handler).with_state(state),
         )
         .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http());
+        .layer(
+            TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::new().level(Level::INFO)),
+        );
 
     with_web_static_fallback(router)
 }

@@ -17,19 +17,13 @@ use agentdash_domain::interaction::{
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct PersistedDefinitionRevision {
-    definition_id: Uuid,
-    revision_id: Uuid,
-    revision_number: u64,
-    project_id: Uuid,
-    owner: InteractionOwner,
+struct PersistedDefinitionRevisionContract {
     kind: InteractionDefinitionKind,
     definition_format_version: u16,
     interaction_contract_version: u16,
     authoring_mount_id: String,
     title: String,
     description: String,
-    source_bundle_digest: String,
     initial_state: serde_json::Value,
     state_schema: serde_json::Value,
     agent_projection: InteractionAgentProjection,
@@ -38,24 +32,17 @@ struct PersistedDefinitionRevision {
     action_bindings: Vec<InteractionActionBinding>,
     resource_slots: Vec<ResourceSlotDefinition>,
     created_by: String,
-    created_at: DateTime<Utc>,
 }
 
-impl From<&InteractionDefinitionRevision> for PersistedDefinitionRevision {
+impl From<&InteractionDefinitionRevision> for PersistedDefinitionRevisionContract {
     fn from(revision: &InteractionDefinitionRevision) -> Self {
         Self {
-            definition_id: revision.definition_id,
-            revision_id: revision.revision_id,
-            revision_number: revision.revision_number,
-            project_id: revision.project_id,
-            owner: revision.owner.clone(),
             kind: revision.kind,
             definition_format_version: revision.definition_format_version,
             interaction_contract_version: revision.interaction_contract_version,
             authoring_mount_id: revision.authoring_mount_id.clone(),
             title: revision.title.clone(),
             description: revision.description.clone(),
-            source_bundle_digest: revision.source_bundle.digest.clone(),
             initial_state: revision.initial_state.clone(),
             state_schema: revision.state_schema.clone(),
             agent_projection: revision.agent_projection.clone(),
@@ -64,7 +51,6 @@ impl From<&InteractionDefinitionRevision> for PersistedDefinitionRevision {
             action_bindings: revision.action_bindings.clone(),
             resource_slots: revision.resource_slots.clone(),
             created_by: revision.created_by.clone(),
-            created_at: revision.created_at,
         }
     }
 }
@@ -717,8 +703,8 @@ async fn insert_revision(
 ) -> Result<(), InteractionError> {
     let (owner_kind, owner_id) = owner_parts(&revision.owner);
     insert_source_bundle(tx, &revision.source_bundle, revision.created_at).await?;
-    let document = PersistedDefinitionRevision::from(revision);
-    sqlx::query("INSERT INTO interaction_definition_revisions (revision_id,definition_id,revision_number,project_id,owner_kind,owner_id,source_bundle_digest,document,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(revision.revision_id).bind(revision.definition_id).bind(to_i64(revision.revision_number,"interaction_definition_revision.revision_number")?).bind(revision.project_id.to_string()).bind(owner_kind).bind(owner_id).bind(&revision.source_bundle.digest).bind(Json(to_value(&document,"interaction_definition_revision")?)).bind(revision.created_at).execute(&mut **tx).await.map_err(db_error("interaction_definition_revisions"))?;
+    let contract = PersistedDefinitionRevisionContract::from(revision);
+    sqlx::query("INSERT INTO interaction_definition_revisions (revision_id,definition_id,revision_number,project_id,owner_kind,owner_id,source_bundle_digest,contract,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(revision.revision_id).bind(revision.definition_id).bind(to_i64(revision.revision_number,"interaction_definition_revision.revision_number")?).bind(revision.project_id.to_string()).bind(owner_kind).bind(owner_id).bind(&revision.source_bundle.digest).bind(Json(to_value(&contract,"interaction_definition_revision.contract")?)).bind(revision.created_at).execute(&mut **tx).await.map_err(db_error("interaction_definition_revisions"))?;
     if let Some(lineage) = &revision.lineage {
         sqlx::query("INSERT INTO interaction_definition_lineage (definition_revision_id,lineage_kind,source_definition_id,source_revision_id,source_bundle_digest) VALUES ($1,$2,$3,$4,$5)")
             .bind(revision.revision_id).bind(lineage_kind(lineage.kind)).bind(lineage.source_definition_id).bind(lineage.source_revision_id).bind(&lineage.source_bundle_digest)
@@ -788,45 +774,65 @@ async fn fetch_revision(
     pool: &PgPool,
     revision_id: Uuid,
 ) -> Result<Option<InteractionDefinitionRevision>, InteractionError> {
-    let Some(row) = sqlx::query("SELECT document,source_bundle_digest FROM interaction_definition_revisions WHERE revision_id=$1")
+    let Some(row) = sqlx::query("SELECT revision_id,definition_id,revision_number,project_id,owner_kind,owner_id,source_bundle_digest,contract,created_at FROM interaction_definition_revisions WHERE revision_id=$1")
         .bind(revision_id).fetch_optional(pool).await.map_err(db_error("interaction_definition_revisions"))?
     else { return Ok(None); };
-    let persisted: PersistedDefinitionRevision =
-        decode_row(&row, "interaction_definition_revisions.document")?;
+    let contract: PersistedDefinitionRevisionContract = decode_json_column(
+        &row,
+        "contract",
+        "interaction_definition_revisions.contract",
+    )?;
+    let definition_id = row
+        .try_get("definition_id")
+        .map_err(db_error("interaction_definition_revisions.definition_id"))?;
+    let revision_number = from_i64(
+        row.try_get("revision_number")
+            .map_err(db_error("interaction_definition_revisions.revision_number"))?,
+        "interaction_definition_revisions.revision_number",
+    )?;
+    let project_id = parse_uuid(
+        row.try_get("project_id")
+            .map_err(db_error("interaction_definition_revisions.project_id"))?,
+        "interaction_definition_revisions.project_id",
+    )?;
+    let owner = parse_interaction_owner(
+        row.try_get("owner_kind")
+            .map_err(db_error("interaction_definition_revisions.owner_kind"))?,
+        row.try_get("owner_id")
+            .map_err(db_error("interaction_definition_revisions.owner_id"))?,
+    )?;
     let digest: String = row.try_get("source_bundle_digest").map_err(db_error(
         "interaction_definition_revisions.source_bundle_digest",
     ))?;
-    if persisted.source_bundle_digest != digest {
-        return Err(InteractionError::Serialization {
-            context: "interaction_definition_revisions.source_bundle_digest",
-            message: "document ref 与 scalar digest 不一致".into(),
-        });
-    }
     let source_bundle = fetch_source_bundle(pool, &digest).await?;
     let lineage = fetch_lineage(pool, revision_id).await?;
     let revision = InteractionDefinitionRevision {
-        definition_id: persisted.definition_id,
-        revision_id: persisted.revision_id,
-        revision_number: persisted.revision_number,
-        project_id: persisted.project_id,
-        owner: persisted.owner,
-        kind: persisted.kind,
-        definition_format_version: persisted.definition_format_version,
-        interaction_contract_version: persisted.interaction_contract_version,
-        authoring_mount_id: persisted.authoring_mount_id,
-        title: persisted.title,
-        description: persisted.description,
+        definition_id,
+        revision_id: row
+            .try_get("revision_id")
+            .map_err(db_error("interaction_definition_revisions.revision_id"))?,
+        revision_number,
+        project_id,
+        owner,
+        kind: contract.kind,
+        definition_format_version: contract.definition_format_version,
+        interaction_contract_version: contract.interaction_contract_version,
+        authoring_mount_id: contract.authoring_mount_id,
+        title: contract.title,
+        description: contract.description,
         source_bundle,
-        initial_state: persisted.initial_state,
-        state_schema: persisted.state_schema,
-        agent_projection: persisted.agent_projection,
-        command_definitions: persisted.command_definitions,
-        component_bindings: persisted.component_bindings,
-        action_bindings: persisted.action_bindings,
-        resource_slots: persisted.resource_slots,
+        initial_state: contract.initial_state,
+        state_schema: contract.state_schema,
+        agent_projection: contract.agent_projection,
+        command_definitions: contract.command_definitions,
+        component_bindings: contract.component_bindings,
+        action_bindings: contract.action_bindings,
+        resource_slots: contract.resource_slots,
         lineage,
-        created_by: persisted.created_by,
-        created_at: persisted.created_at,
+        created_by: contract.created_by,
+        created_at: row
+            .try_get("created_at")
+            .map_err(db_error("interaction_definition_revisions.created_at"))?,
     };
     revision.validate()?;
     Ok(Some(revision))
@@ -1036,8 +1042,14 @@ fn decode_row<T: serde::de::DeserializeOwned>(
     row: &sqlx::postgres::PgRow,
     context: &'static str,
 ) -> Result<T, InteractionError> {
-    let Json(value): Json<serde_json::Value> =
-        row.try_get("document").map_err(db_error(context))?;
+    decode_json_column(row, "document", context)
+}
+fn decode_json_column<T: serde::de::DeserializeOwned>(
+    row: &sqlx::postgres::PgRow,
+    column: &'static str,
+    context: &'static str,
+) -> Result<T, InteractionError> {
+    let Json(value): Json<serde_json::Value> = row.try_get(column).map_err(db_error(context))?;
     serde_json::from_value(value).map_err(|error| InteractionError::Serialization {
         context,
         message: error.to_string(),
@@ -1055,10 +1067,35 @@ fn to_value<T: serde::Serialize>(
 fn to_i64(value: u64, field: &'static str) -> Result<i64, InteractionError> {
     i64::try_from(value).map_err(|_| invalid_numeric(field))
 }
+fn from_i64(value: i64, field: &'static str) -> Result<u64, InteractionError> {
+    u64::try_from(value).map_err(|_| invalid_numeric(field))
+}
 fn invalid_numeric(field: &'static str) -> InteractionError {
     InteractionError::InvalidField {
         field,
         reason: "数值超出 PostgreSQL BIGINT/SMALLINT 范围",
+    }
+}
+fn parse_uuid(value: String, context: &'static str) -> Result<Uuid, InteractionError> {
+    Uuid::parse_str(&value).map_err(|error| InteractionError::Serialization {
+        context,
+        message: error.to_string(),
+    })
+}
+fn parse_interaction_owner(
+    owner_kind: String,
+    owner_id: String,
+) -> Result<InteractionOwner, InteractionError> {
+    match owner_kind.as_str() {
+        "user" => Ok(InteractionOwner::User(owner_id)),
+        "project" => Ok(InteractionOwner::Project(parse_uuid(
+            owner_id,
+            "interaction_definition_revisions.owner_id",
+        )?)),
+        _ => Err(InteractionError::Serialization {
+            context: "interaction_definition_revisions.owner_kind",
+            message: format!("unknown owner kind: {owner_kind}"),
+        }),
     }
 }
 fn owner_parts(owner: &InteractionOwner) -> (&'static str, String) {
@@ -1192,7 +1229,7 @@ mod tests {
 
     #[test]
     fn migration_and_repository_required_columns_stay_in_sync() {
-        let migration = include_str!("../../../migrations/0001_init.sql");
+        let baseline = include_str!("../../../migrations/0001_init.sql");
         for required in [
             "CREATE TABLE public.interaction_definitions",
             "project_id text NOT NULL",
@@ -1206,8 +1243,21 @@ mod tests {
             "renewed_at timestamptz NOT NULL",
         ] {
             assert!(
-                migration.contains(required),
+                baseline.contains(required),
                 "baseline migration missing {required}"
+            );
+        }
+        let revision_contract =
+            include_str!("../../../migrations/0002_interaction_definition_revision_contract.sql");
+        for required in [
+            "ADD COLUMN contract jsonb",
+            "'action_bindings', COALESCE(document -> 'action_bindings', '[]'::jsonb)",
+            "interaction_definition_revisions_contract_shape_check",
+            "DROP COLUMN document",
+        ] {
+            assert!(
+                revision_contract.contains(required),
+                "revision contract migration missing {required}"
             );
         }
         let repository = include_str!("interaction_repository.rs");
@@ -1222,6 +1272,46 @@ mod tests {
             assert!(
                 repository.contains(required),
                 "repository missing {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn revision_contract_does_not_duplicate_revision_identity() {
+        let revision = InteractionDefinitionRevision::new_canvas_v1(
+            Uuid::new_v4(),
+            1,
+            Uuid::new_v4(),
+            InteractionOwner::User("user-1".into()),
+            "Canvas",
+            "",
+            SourceBundle::new(
+                "main.tsx",
+                vec![SourceFile::new("main.tsx", "export {};", None).expect("source")],
+                SourceSandboxConfig::default(),
+            )
+            .expect("bundle"),
+            serde_json::json!({}),
+            serde_json::json!({"type": "object"}),
+            "user-1",
+        )
+        .expect("revision");
+        let contract = serde_json::to_value(PersistedDefinitionRevisionContract::from(&revision))
+            .expect("contract");
+
+        assert_eq!(contract["action_bindings"], serde_json::json!([]));
+        for duplicated_identity in [
+            "definition_id",
+            "revision_id",
+            "revision_number",
+            "project_id",
+            "owner",
+            "source_bundle_digest",
+            "created_at",
+        ] {
+            assert!(
+                contract.get(duplicated_identity).is_none(),
+                "contract duplicates scalar identity {duplicated_identity}"
             );
         }
     }

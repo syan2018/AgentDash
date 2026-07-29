@@ -100,9 +100,7 @@ pub fn build_capability_delta_markdown(
 
     if delta.is_empty()
         && state_delta.is_none_or(|state_delta| {
-            state_delta.excluded_tool_paths.is_empty()
-                && state_delta.included_tool_paths.is_empty()
-                && state_delta.mcp_servers.is_empty()
+            state_delta.excluded_tool_paths.is_empty() && state_delta.included_tool_paths.is_empty()
         })
     {
         sections.push("> 本次没有 capability key 或工具级状态变化；历史对话未被改写。".to_string());
@@ -142,19 +140,6 @@ fn build_tool_state_block(state_delta: &CapabilityStateDelta) -> Option<String> 
         &state_delta.included_tool_paths.removed,
         "移出白名单",
     );
-    append_path_lines(
-        &mut lines,
-        "Added MCP servers",
-        &state_delta.mcp_servers.added,
-        "已注入",
-    );
-    append_path_lines(
-        &mut lines,
-        "Removed MCP servers",
-        &state_delta.mcp_servers.removed,
-        "已移除",
-    );
-
     (lines.len() > 1).then(|| lines.join("\n"))
 }
 

@@ -303,7 +303,7 @@ fn product_tool_definition(
         ),
         ProductRuntimeToolKind::OperationScript => (
             "operation_script",
-            "Validate and execute a bounded ephemeral cross-module Rhai program over exact OperationRefs from the latest Workspace Module descriptors; use Workflow for durable execution.",
+            "Compose multiple exact Operations into one bounded ephemeral Rhai tool call to reduce Agent round trips and make independent queries run concurrently with ops.invoke_all; use refs from the latest Workspace Module descriptors and Workflow for durable execution.",
             RuntimeToolPermission::ProductWrite,
             RuntimeToolEffect::ProductMutation,
         ),

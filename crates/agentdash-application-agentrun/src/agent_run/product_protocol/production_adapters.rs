@@ -662,7 +662,7 @@ impl ProductAgentRunForkGraphAdapter {
         if frame.agent_id != child.agent_id
             || frame.id != selection.materialized_frame_id
             || frame.created_by_kind != "dispatch_launch_anchor"
-            || frame.execution_profile_json.as_ref()
+            || frame.surface.execution_profile.as_ref()
                 != Some(&selection.execution_profile.configuration)
         {
             return Err("materialized selected child frame evidence drifted".to_owned());

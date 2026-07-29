@@ -32,7 +32,7 @@ pub fn operation_script_runtime_tool_schema() -> Value {
             "source".to_owned(),
             json!({
                 "type": "string",
-                "description": "Bounded ephemeral Rhai source over the current actor Operation surface. Use ops.invoke(exact_ref, input) for dependent calls or ops.invoke_all([{operation, input}, ...]) for independent calls. Exact refs use namespace:provider_key:operation_key:vN from the latest workspace_module_describe result. Use Workflow for durable execution."
+                "description": "Compose multiple Operations into one bounded ephemeral tool call to reduce Agent round trips. Use ops.invoke(exact_ref, input) for dependent calls and ops.invoke_all([{operation, input}, ...]) to run independent queries concurrently. Exact refs use namespace:provider_key:operation_key:vN from the latest workspace_module_describe result. Use Workflow for durable execution."
             }),
         ),
         (

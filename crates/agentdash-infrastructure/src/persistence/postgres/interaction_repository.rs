@@ -5,15 +5,15 @@ use uuid::Uuid;
 
 use agentdash_domain::interaction::{
     AttachmentSubject, ComponentBinding, DefinitionLineage, DefinitionLineageKind,
-    DefinitionRevisionCommit, InteractionAgentProjection, InteractionAttachment,
-    InteractionAttachmentRole, InteractionCommandCommit, InteractionCommandDefinition,
-    InteractionCommandTransaction, InteractionCommandTransactionPort, InteractionDefinition,
-    InteractionDefinitionKind, InteractionDefinitionRepository, InteractionDefinitionRevision,
-    InteractionError, InteractionEvent, InteractionEventRepository, InteractionInstance,
-    InteractionInstanceRepository, InteractionOwner, InteractionPresentationRepository,
-    InteractionPresentationState, InteractionRendererLease, InteractionRuntimeBinding,
-    OperationEffectIntent, OperationEffectIntentRepository, ResourceSlotDefinition, SourceBundle,
-    SourceFile, SourceSandboxConfig,
+    DefinitionRevisionCommit, InteractionActionBinding, InteractionAgentProjection,
+    InteractionAttachment, InteractionAttachmentRole, InteractionCommandCommit,
+    InteractionCommandDefinition, InteractionCommandTransaction, InteractionCommandTransactionPort,
+    InteractionDefinition, InteractionDefinitionKind, InteractionDefinitionRepository,
+    InteractionDefinitionRevision, InteractionError, InteractionEvent, InteractionEventRepository,
+    InteractionInstance, InteractionInstanceRepository, InteractionOwner,
+    InteractionPresentationRepository, InteractionPresentationState, InteractionRendererLease,
+    InteractionRuntimeBinding, OperationEffectIntent, OperationEffectIntentRepository,
+    ResourceSlotDefinition, SourceBundle, SourceFile, SourceSandboxConfig,
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -35,6 +35,7 @@ struct PersistedDefinitionRevision {
     agent_projection: InteractionAgentProjection,
     command_definitions: Vec<InteractionCommandDefinition>,
     component_bindings: Vec<ComponentBinding>,
+    action_bindings: Vec<InteractionActionBinding>,
     resource_slots: Vec<ResourceSlotDefinition>,
     created_by: String,
     created_at: DateTime<Utc>,
@@ -60,6 +61,7 @@ impl From<&InteractionDefinitionRevision> for PersistedDefinitionRevision {
             agent_projection: revision.agent_projection.clone(),
             command_definitions: revision.command_definitions.clone(),
             component_bindings: revision.component_bindings.clone(),
+            action_bindings: revision.action_bindings.clone(),
             resource_slots: revision.resource_slots.clone(),
             created_by: revision.created_by.clone(),
             created_at: revision.created_at,
@@ -820,6 +822,7 @@ async fn fetch_revision(
         agent_projection: persisted.agent_projection,
         command_definitions: persisted.command_definitions,
         component_bindings: persisted.component_bindings,
+        action_bindings: persisted.action_bindings,
         resource_slots: persisted.resource_slots,
         lineage,
         created_by: persisted.created_by,

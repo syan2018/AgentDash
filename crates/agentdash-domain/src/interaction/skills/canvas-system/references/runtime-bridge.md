@@ -11,6 +11,12 @@ window.agentdash.operations.list()
 window.agentdash.operations.describe(operationRef)
 window.agentdash.operations.invoke(operationRef, input, { idempotencyKey? })
 
+window.agentdash.actions.invoke(
+  actionKey,
+  payload,
+  { expectedStateRevision? },
+)
+
 window.agentdash.assets.url(vfsUri)
 window.agentdash.assets.revoke(objectUrl)
 
@@ -27,6 +33,7 @@ window.agentdash.diagnostics.report(observation)
 | 需求 | 接口 | 参考 |
 | --- | --- | --- |
 | 调用平台、MCP、Extension 或 Interaction 能力 | `operations.*` | `runtime-actions.md` |
+| 触发 definition 固定的 OperationScript/Operation/platform command | `actions.invoke` | `interaction-runtime.md` |
 | 显示当前 resource surface 的图片 | `assets.*` | `vfs-assets.md` |
 | 读取或修改 canonical UI state | `interaction.*` | `interaction-state.md` |
 | 用户把反馈交给当前 Agent | `agent.submit` | `agent-submit.md` |

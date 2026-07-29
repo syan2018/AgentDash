@@ -10,8 +10,8 @@ use agentdash_platform_spi::{
     AuthIdentity, CapabilityState, DiscoveredGuideline, DiscoveredSkill, MemoryDiscoveryContext,
     MemoryDiscoveryDiagnostic, MemoryDiscoveryMount, MemoryDiscoveryOutput,
     MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
-    MemoryIndexStatus, RuntimeMcpServer, SkillContextExposure, SkillDiscoveryCluster,
-    SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryOutput, SkillDiscoveryProvider,
+    MemoryIndexStatus, SkillContextExposure, SkillDiscoveryCluster, SkillDiscoveryContext,
+    SkillDiscoveryDiagnostic, SkillDiscoveryOutput, SkillDiscoveryProvider,
     SkillDiscoveryUserContext, Vfs, skill_capability_key,
 };
 
@@ -530,12 +530,8 @@ fn memory_mount_diagnostics_to_discovery(
 
 pub fn normalize_capability_state_dimensions(
     state: &mut CapabilityState,
-    active_vfs: Option<Vfs>,
-    mcp_servers: Vec<RuntimeMcpServer>,
     session_capabilities: &SessionBaselineCapabilities,
 ) {
-    state.vfs.active = active_vfs;
-    state.tool.mcp_servers = mcp_servers;
     state.skill.skills = session_capabilities.skills.clone();
     state.skill.cluster_meta = session_capabilities
         .skill_clusters

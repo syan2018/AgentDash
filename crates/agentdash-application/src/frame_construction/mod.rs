@@ -373,7 +373,7 @@ pub(crate) fn frame_builder_from_existing(
 ) -> Result<AgentFrameBuilder, PlatformRuntimeError> {
     let mut builder = AgentFrameBuilder::new(frame.agent_id)
         .with_created_by("runtime_thread_launch", Some(created_by_id.to_string()));
-    if let Some(profile) = frame.execution_profile_json.clone() {
+    if let Some(profile) = frame.surface.execution_profile.clone() {
         builder = builder.with_execution_profile_raw(profile);
     }
     Ok(builder)
@@ -649,13 +649,12 @@ mod existing_surface_discovery_tests {
             source_story_id: None,
             links: Vec::new(),
         };
-        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
-        capability_state.vfs.active = Some(vfs.clone());
+        let capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
 
         let mut frame = AgentFrame::new_revision(Uuid::new_v4(), 3, "existing_surface");
-        frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
-        frame.vfs_surface_json = Some(serde_json::to_value(&vfs).unwrap());
-        frame.execution_profile_json =
+        frame.surface.capability_state = Some(serde_json::to_value(&capability_state).unwrap());
+        frame.surface.vfs_surface = Some(serde_json::to_value(&vfs).unwrap());
+        frame.surface.execution_profile =
             Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
         frame
     }
@@ -709,10 +708,7 @@ mod existing_surface_discovery_tests {
             "skill_asset_project_id": Uuid::new_v4().to_string(),
             "skill_asset_keys": ["review"],
         });
-        let mut capability_state = frame.typed_capability_state().expect("capability state");
-        capability_state.vfs.active = Some(vfs.clone());
-        frame.vfs_surface_json = Some(serde_json::to_value(vfs).unwrap());
-        frame.effective_capability_json = Some(serde_json::to_value(capability_state).unwrap());
+        frame.surface.vfs_surface = Some(serde_json::to_value(vfs).unwrap());
         let mut surface = frame.surface_document();
         surface.context_source_snapshot = Some(
             serde_json::to_value(crate::agent_run::frame::AgentContextSourceSnapshot {
@@ -724,8 +720,7 @@ mod existing_surface_discovery_tests {
             })
             .unwrap(),
         );
-        frame.surface = Some(surface);
-        frame.apply_surface_projection();
+        frame.surface = surface;
 
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(StaticFileProvider {
@@ -770,10 +765,7 @@ mod existing_surface_discovery_tests {
             "skill_asset_project_id": Uuid::new_v4().to_string(),
             "skill_asset_keys": ["workspace-module-system"],
         });
-        let mut capability_state = frame.typed_capability_state().expect("capability state");
-        capability_state.vfs.active = Some(vfs.clone());
-        frame.vfs_surface_json = Some(serde_json::to_value(vfs).unwrap());
-        frame.effective_capability_json = Some(serde_json::to_value(capability_state).unwrap());
+        frame.surface.vfs_surface = Some(serde_json::to_value(vfs).unwrap());
 
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(StaticFileProvider {
@@ -798,9 +790,9 @@ mod existing_surface_discovery_tests {
     #[test]
     fn existing_surface_without_vfs_rejects_launch_surface_close() {
         let mut frame = persisted_frame_with_agents_md();
-        frame.vfs_surface_json = None;
+        frame.surface.vfs_surface = None;
         let capability_without_vfs = CapabilityState::from_clusters([ToolCluster::Read]);
-        frame.effective_capability_json =
+        frame.surface.capability_state =
             Some(serde_json::to_value(&capability_without_vfs).unwrap());
         let command = LaunchCommand::http_prompt_input(LaunchPromptInput::from_text("hi"), None);
 

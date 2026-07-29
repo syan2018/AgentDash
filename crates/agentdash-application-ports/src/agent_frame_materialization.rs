@@ -1,8 +1,9 @@
 use std::sync::{Arc, OnceLock};
 
-use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_domain::agent_run_target::AgentRunTarget;
-use agentdash_domain::workflow::SubjectRef;
+use agentdash_domain::common::AgentConfig;
+use agentdash_domain::workflow::{MountDirective, SubjectRef};
+use agentdash_platform_spi::{CapabilityState, RuntimeMcpServer, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -50,58 +51,20 @@ impl FrameConstructionCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSurfaceUpdateRequest {
     pub target: AgentRunTarget,
-    pub runtime_thread_id: RuntimeThreadId,
-    pub change: RuntimeSurfaceChange,
-}
-
-impl RuntimeSurfaceUpdateRequest {
-    pub fn surface_kind(&self) -> RuntimeSurfaceKind {
-        self.change.surface_kind()
-    }
+    pub idempotency_key: String,
+    pub created_by_kind: String,
+    pub created_by_id: Option<String>,
+    pub changes: Vec<RuntimeSurfaceChange>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeSurfaceChange {
-    McpPresetChanged {
-        preset_key: String,
-    },
-    ProjectVfsMountChanged {
-        mount_id: String,
-    },
-    WorkspaceModuleVisibilityChanged {
-        module_ref: String,
-    },
-    SkillInventoryChanged {
-        provider_key: String,
-    },
-    AgentProcedureContractChanged {
-        run_id: Uuid,
-        agent_id: Uuid,
-        orchestration_id: Uuid,
-        node_path: String,
-        attempt: u32,
-    },
-}
-
-impl RuntimeSurfaceChange {
-    pub fn surface_kind(&self) -> RuntimeSurfaceKind {
-        match self {
-            Self::McpPresetChanged { .. } => RuntimeSurfaceKind::Mcp,
-            Self::ProjectVfsMountChanged { .. } => RuntimeSurfaceKind::Vfs,
-            Self::WorkspaceModuleVisibilityChanged { .. } => RuntimeSurfaceKind::WorkspaceModule,
-            Self::SkillInventoryChanged { .. } => RuntimeSurfaceKind::SkillInventory,
-            Self::AgentProcedureContractChanged { .. } => RuntimeSurfaceKind::AgentProcedure,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuntimeSurfaceKind {
-    Mcp,
-    Vfs,
-    WorkspaceModule,
-    SkillInventory,
-    AgentProcedure,
+    ReplaceCapabilityState { state: CapabilityState },
+    ReplaceVfsSurface { vfs: Vfs },
+    ReplaceMcpSurface { servers: Vec<RuntimeMcpServer> },
+    ReplaceExecutionProfile { profile: AgentConfig },
+    ApplyVfsDirectives { directives: Vec<MountDirective> },
+    AllowWorkspaceModule { module_ref: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +80,8 @@ pub struct AgentRunFrameSurfaceCommandOutcome {
     pub frame_id: Option<Uuid>,
     pub agent_id: Option<Uuid>,
     pub runtime_thread_id: Option<String>,
+    pub frame_revision: Option<u64>,
+    pub applied_generation: Option<u64>,
     pub wrote_frame_revision: bool,
     pub adopted_active_runtime: bool,
     pub diagnostics: Vec<String>,
@@ -129,6 +94,8 @@ impl AgentRunFrameSurfaceCommandOutcome {
             frame_id: None,
             agent_id: None,
             runtime_thread_id: None,
+            frame_revision: None,
+            applied_generation: None,
             wrote_frame_revision: false,
             adopted_active_runtime: false,
             diagnostics: Vec::new(),

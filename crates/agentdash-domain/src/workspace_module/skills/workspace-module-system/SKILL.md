@@ -1,6 +1,6 @@
 ---
 name: workspace-module-system
-description: 发现、检查、调用、组合、展示并诊断当前 actor 可见的 Workspace Module。用于选择 workspace_module_operate/list/describe/invoke/present 或 operation_script，处理 Canvas、Interaction、Extension、原生 VFS/Process/Task Operations，以及解释空或 degraded capability surface。
+description: 发现、检查、调用、组合、展示并诊断当前 actor 可见的 Workspace Module。用于选择 workspace_module_operate/list/describe/invoke/present；当一次任务需要组合复杂工具执行时，使用 operation_script 可以通过脚本组合调用、完成清洗，提高上下文利用效率。处理 Canvas、Interaction、Extension、MCP 与原生 VFS/Process/Task Operations，以及解释空或 degraded capability surface。
 ---
 
 # 使用 Workspace Module
@@ -16,7 +16,8 @@ placement、schema、执行和审计。
 - 用 `workspace_module_list` 发现当前 actor 可见的 modules，并读取 surface readiness。
 - 用 `workspace_module_describe` 取得一个 module 的当前 views、operation keys 与 exact OperationRefs。
 - 用 `workspace_module_invoke(module_id, operation_key, input)` 调用最新 descriptor 中的一项 Operation。
-- 用独立的 `operation_script` 对当前 actor surface 做有界、即时、跨 module 的多 Operation 组合。
+- 用独立的 `operation_script` 把当前 actor surface 上多项 Operations 组合为一次工具调用；
+  对互不依赖的查询使用 `ops.invoke_all` 并行执行，减少 Agent/工具往返。
 - 用 `workspace_module_present` 打开最新 descriptor 中声明的 UI view。
 - 需要 durable retry、recovery、human gate 或跨 session 状态时使用 Workflow，不使用 OperationScript。
 
@@ -38,6 +39,7 @@ placement、schema、执行和审计。
 - `interaction:{instance_id}`：当前 attachment 可见的 shared Interaction runtime。
 - `ext:{extension_key}`：已安装 Extension。
 - `builtin:vfs`、`builtin:process`、`builtin:task`：无 UI 的原生 platform Operations。
+- `mcp:{server_key}`：当前 actor authority 可用的 MCP server Operations。
 - 其它 provider 的 module ID 与 kind 视为 opaque。
 
 Canvas 的 source 编辑、runtime bridge、binding、diagnostics 与视觉交付细节使用

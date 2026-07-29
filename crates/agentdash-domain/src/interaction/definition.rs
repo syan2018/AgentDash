@@ -187,12 +187,12 @@ pub struct ComponentBinding {
 pub struct ComponentEventBinding {
     pub event_type: String,
     pub payload_schema: Value,
-    pub target: ComponentEventTarget,
+    pub target: InteractionActionTarget,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ComponentEventTarget {
+pub enum InteractionActionTarget {
     PlatformCommand {
         command_key: String,
     },
@@ -202,16 +202,27 @@ pub enum ComponentEventTarget {
     OperationScript {
         language: String,
         host_api_version: u16,
-        source: ComponentOperationScriptSource,
+        source: OperationScriptSource,
         requested_operations: Vec<OperationRef>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ComponentOperationScriptSource {
+pub enum OperationScriptSource {
     Inline { source: String },
     SourceFile { path: String },
+}
+
+/// Definition-level action callable by Canvas source without requiring an Extension UI component.
+///
+/// The browser submits only `action_key` and payload. The immutable definition revision owns the
+/// exact command/Operation/OperationScript target and its allowlist.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InteractionActionBinding {
+    pub action_key: String,
+    pub payload_schema: Value,
+    pub target: InteractionActionTarget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -283,6 +294,8 @@ pub struct InteractionDefinitionRevision {
     #[serde(default)]
     pub component_bindings: Vec<ComponentBinding>,
     #[serde(default)]
+    pub action_bindings: Vec<InteractionActionBinding>,
+    #[serde(default)]
     pub resource_slots: Vec<ResourceSlotDefinition>,
     pub lineage: Option<DefinitionLineage>,
     pub created_by: String,
@@ -321,6 +334,7 @@ impl InteractionDefinitionRevision {
             agent_projection: InteractionAgentProjection::default(),
             command_definitions: Vec::new(),
             component_bindings: Vec::new(),
+            action_bindings: Vec::new(),
             resource_slots: Vec::new(),
             lineage: None,
             created_by: created_by.into(),
@@ -367,6 +381,12 @@ impl InteractionDefinitionRevision {
             self.component_bindings
                 .iter()
                 .map(|binding| binding.binding_key.as_str()),
+        )?;
+        validate_unique_keys(
+            "action_bindings.action_key",
+            self.action_bindings
+                .iter()
+                .map(|binding| binding.action_key.as_str()),
         )?;
         validate_unique_keys(
             "resource_slots.slot_key",
@@ -418,7 +438,7 @@ impl InteractionDefinitionRevision {
             )?;
             for event in &component.event_bindings {
                 match &event.target {
-                    ComponentEventTarget::PlatformCommand { command_key }
+                    InteractionActionTarget::PlatformCommand { command_key }
                         if !command_keys.contains(command_key.as_str()) =>
                     {
                         return Err(InteractionError::InvalidField {
@@ -426,14 +446,14 @@ impl InteractionDefinitionRevision {
                             reason: "event 必须引用同 revision 内存在的 command",
                         });
                     }
-                    ComponentEventTarget::Operation { operation_ref } => {
+                    InteractionActionTarget::Operation { operation_ref } => {
                         operation_ref.validate().map_err(|error| {
                             InteractionError::InvalidOperationRef {
                                 reason: error.to_string(),
                             }
                         })?;
                     }
-                    ComponentEventTarget::OperationScript {
+                    InteractionActionTarget::OperationScript {
                         language,
                         host_api_version,
                         source,
@@ -456,7 +476,7 @@ impl InteractionDefinitionRevision {
                             })?;
                         }
                         match source {
-                            ComponentOperationScriptSource::Inline { source }
+                            OperationScriptSource::Inline { source }
                                 if source.trim().is_empty() =>
                             {
                                 return Err(InteractionError::InvalidField {
@@ -464,7 +484,7 @@ impl InteractionDefinitionRevision {
                                     reason: "inline Rhai source 不能为空",
                                 });
                             }
-                            ComponentOperationScriptSource::SourceFile { path }
+                            OperationScriptSource::SourceFile { path }
                                 if !path.ends_with(".rhai")
                                     || !self
                                         .source_bundle
@@ -484,6 +504,10 @@ impl InteractionDefinitionRevision {
                 }
             }
         }
+        for action in &self.action_bindings {
+            require_non_empty("action_bindings.action_key", &action.action_key)?;
+            self.validate_action_target(&action.target, &command_keys, "action_bindings.target")?;
+        }
         if let Some(lineage) = &self.lineage {
             if lineage.source_definition_id.is_nil()
                 || lineage.source_revision_id.is_nil()
@@ -500,6 +524,75 @@ impl InteractionDefinitionRevision {
             )?;
         }
         Ok(())
+    }
+
+    fn validate_action_target(
+        &self,
+        target: &InteractionActionTarget,
+        command_keys: &std::collections::HashSet<&str>,
+        field: &'static str,
+    ) -> InteractionResult<()> {
+        match target {
+            InteractionActionTarget::PlatformCommand { command_key }
+                if !command_keys.contains(command_key.as_str()) =>
+            {
+                Err(InteractionError::InvalidField {
+                    field,
+                    reason: "action 必须引用同 revision 内存在的 command",
+                })
+            }
+            InteractionActionTarget::Operation { operation_ref } => operation_ref
+                .validate()
+                .map_err(|error| InteractionError::InvalidOperationRef {
+                    reason: error.to_string(),
+                }),
+            InteractionActionTarget::OperationScript {
+                language,
+                host_api_version,
+                source,
+                requested_operations,
+            } => {
+                if language != "rhai_v1"
+                    || *host_api_version != 1
+                    || requested_operations.is_empty()
+                {
+                    return Err(InteractionError::InvalidField {
+                        field,
+                        reason: "必须声明 rhai_v1、host API V1 与至少一个 exact OperationRef",
+                    });
+                }
+                for operation_ref in requested_operations {
+                    operation_ref.validate().map_err(|error| {
+                        InteractionError::InvalidOperationRef {
+                            reason: error.to_string(),
+                        }
+                    })?;
+                }
+                match source {
+                    OperationScriptSource::Inline { source } if source.trim().is_empty() => {
+                        Err(InteractionError::InvalidField {
+                            field,
+                            reason: "inline Rhai source 不能为空",
+                        })
+                    }
+                    OperationScriptSource::SourceFile { path }
+                        if !path.ends_with(".rhai")
+                            || !self
+                                .source_bundle
+                                .files
+                                .iter()
+                                .any(|file| file.path == *path) =>
+                    {
+                        Err(InteractionError::InvalidField {
+                            field,
+                            reason: "必须引用当前 immutable SourceBundle 中的 .rhai 文件",
+                        })
+                    }
+                    _ => Ok(()),
+                }
+            }
+            InteractionActionTarget::PlatformCommand { .. } => Ok(()),
+        }
     }
 
     pub fn into_initial_definition(self) -> InteractionResult<(InteractionDefinition, Self)> {
@@ -842,10 +935,10 @@ mod tests {
             event_bindings: vec![ComponentEventBinding {
                 event_type: "refresh".into(),
                 payload_schema: serde_json::json!({"type": "object"}),
-                target: ComponentEventTarget::OperationScript {
+                target: InteractionActionTarget::OperationScript {
                     language: "rhai_v1".into(),
                     host_api_version: 1,
-                    source: ComponentOperationScriptSource::SourceFile {
+                    source: OperationScriptSource::SourceFile {
                         path: "actions/load.rhai".into(),
                     },
                     requested_operations: vec![operation_ref],
@@ -854,14 +947,59 @@ mod tests {
         });
         assert!(revision.validate().is_ok());
 
-        let ComponentEventTarget::OperationScript { source, .. } =
+        let InteractionActionTarget::OperationScript { source, .. } =
             &mut revision.component_bindings[0].event_bindings[0].target
         else {
             panic!("script target");
         };
-        *source = ComponentOperationScriptSource::SourceFile {
+        *source = OperationScriptSource::SourceFile {
             path: "actions/missing.rhai".into(),
         };
         assert!(revision.validate().is_err());
+    }
+
+    #[test]
+    fn canvas_action_does_not_require_extension_component_artifact() {
+        let project_id = Uuid::new_v4();
+        let mut revision = InteractionDefinitionRevision::new_canvas_v1(
+            Uuid::new_v4(),
+            1,
+            project_id,
+            InteractionOwner::Project(project_id),
+            "Skills",
+            "",
+            SourceBundle::new(
+                "src/main.tsx",
+                vec![
+                    SourceFile::new("src/main.tsx", "export {};", None).expect("source"),
+                    SourceFile::new("actions/load-skills.rhai", "return input;", None)
+                        .expect("script"),
+                ],
+                SourceSandboxConfig::default(),
+            )
+            .expect("bundle"),
+            serde_json::json!({}),
+            serde_json::json!({"type": "object"}),
+            "user-1",
+        )
+        .expect("revision");
+        revision.action_bindings.push(InteractionActionBinding {
+            action_key: "skills.refresh".into(),
+            payload_schema: serde_json::json!({"type": "object"}),
+            target: InteractionActionTarget::OperationScript {
+                language: "rhai_v1".into(),
+                host_api_version: 1,
+                source: OperationScriptSource::SourceFile {
+                    path: "actions/load-skills.rhai".into(),
+                },
+                requested_operations: vec![
+                    OperationRef::new("platform", "vfs", "fs_glob", 1).expect("glob"),
+                    OperationRef::new("platform", "vfs", "fs_read", 1).expect("read"),
+                ],
+            },
+        });
+
+        assert!(revision.component_bindings.is_empty());
+        assert!(revision.validate().is_ok());
     }
 }

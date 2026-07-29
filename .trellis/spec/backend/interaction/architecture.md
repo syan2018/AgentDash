@@ -33,6 +33,7 @@ InteractionDefinitionRevision {
   interaction_contract_version: 1,
   source_bundle,
   command_bindings,
+  action_bindings,
   component_bindings,
   resource_slots,
   lineage,
@@ -116,8 +117,12 @@ V1 通用 mutation handler 为 `state_patch_v1`：
 - `command_id` 在 instance scope 内幂等；相同 id + 不同 digest 返回 conflict；
 - command receipt、ordered event、next state revision 与可选 effect intent 在同一事务提交。
 
-Component event binding 只做 schema validation 和 payload pass-through，目标是版本化 platform command
-或即时 Operation/OperationScript action。平台不执行 Extension/Canvas reducer code，也不维护 generic
+Definition-level action binding 负责 Canvas source 的普通按钮和其它 host action：iframe 只提交
+`action_key + payload`，immutable revision 固定 platform command、Operation 或 OperationScript target
+及 exact Operation allowlist。它不依赖 Extension artifact。
+
+Component event binding 只属于已安装 Extension UI component，instance 创建时解析并 pin exact artifact；
+其事件可以复用相同 action 执行边界。平台不执行 Extension/Canvas reducer code，也不维护 generic
 reducer registry、mapping DSL 或 proposal aggregate。
 
 ## Reliable Effect Boundary

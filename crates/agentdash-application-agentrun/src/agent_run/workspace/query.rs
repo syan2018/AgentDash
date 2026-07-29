@@ -409,23 +409,27 @@ fn frame_runtime_model(
     AgentRunWorkspaceFrameRuntimeModel {
         frame_ref: frame_ref_model(frame),
         capability_surface: frame
-            .effective_capability_json
+            .surface
+            .capability_state
             .clone()
             .unwrap_or(serde_json::Value::Null),
         context_slice: frame
-            .context_slice_json
+            .surface
+            .context_slice
             .clone()
             .unwrap_or(serde_json::Value::Null),
         vfs_surface: frame
-            .vfs_surface_json
+            .surface
+            .vfs_surface
             .clone()
             .unwrap_or(serde_json::Value::Null),
         mcp_surface: frame
-            .mcp_surface_json
+            .surface
+            .mcp_surface
             .clone()
             .unwrap_or(serde_json::Value::Null),
         runtime_thread_refs,
-        execution_profile: frame.execution_profile_json.clone(),
+        execution_profile: frame.surface.execution_profile.clone(),
         effective_executor_config: crate::agent_run::AgentFrameSurfaceExt::typed_execution_profile(
             frame,
         )

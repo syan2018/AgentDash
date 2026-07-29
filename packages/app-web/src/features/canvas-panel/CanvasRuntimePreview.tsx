@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { JsonValue } from "../../generated/common-contracts";
 import type { InteractionOperationRefDto } from "../../generated/interaction-contracts";
-import { invokeCanvasOperation } from "../../services/canvas";
+import { executeCanvasAction, invokeCanvasOperation } from "../../services/canvas";
 import { submitCanvasAgentInput } from "../../services/canvas";
 import { persistCanvasRendererObservation } from "../../services/canvas";
 import type { AgentInputContent } from "../../generated/agent-runtime-contracts";
@@ -169,6 +169,34 @@ export function CanvasRuntimePreview({
               ? payload.idempotency_key
               : undefined,
         });
+      }
+      case "actions.invoke": {
+        if (!current.interaction_instance_id) {
+          throw new Error("当前 preview 未绑定 Interaction instance");
+        }
+        const result = await executeCanvasAction({
+          instanceId: current.interaction_instance_id,
+          actionKey: requireString(payload.action_key, "action key"),
+          payload: (payload.payload ?? {}) as JsonValue,
+          expectedStateRevision: parseStateRevision(
+            payload.expected_state_revision,
+            current.interaction_state_revision,
+          ),
+          agentRunTarget: agentRunTarget
+            ? {
+              runId: agentRunTarget.runId,
+              agentId: agentRunTarget.agentId,
+            }
+            : null,
+        });
+        if (result.instance) {
+          snapshotRef.current = {
+            ...current,
+            interaction_state: result.instance.state,
+            interaction_state_revision: Number(result.instance.state_revision),
+          };
+        }
+        return result;
       }
       case "assets.url": {
         const uri = requireString(payload.uri, "asset uri");

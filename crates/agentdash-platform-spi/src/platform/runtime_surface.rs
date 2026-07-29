@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use super::capability_delta::{
-    CapabilityStateDelta, DefaultMountDelta, McpServerReadinessSummary, NamedEntityDelta, SetDelta,
-    VfsSurfaceDelta, compute_capability_state_delta,
+    CapabilityStateDelta, DefaultMountDelta, McpServerReadinessSummary, McpSurfaceDelta,
+    NamedEntityDelta, SetDelta, VfsSurfaceDelta, compute_capability_state_delta,
+    compute_mcp_surface_delta, compute_vfs_surface_delta,
 };
 use crate::context::capability::SkillEntry;
 use crate::hooks::HookRuntimeAccess;
@@ -385,20 +386,15 @@ impl ToolCapabilityFilter {
     }
 }
 
-/// 工具 + MCP 维度的运行态投影。
+/// Callable tool admission 维度。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolDimension {
-    /// 最终生效的能力全集（well-known + custom MCP）。
+    /// 最终生效的 callable capability key 全集。
     pub capabilities: BTreeSet<crate::ToolCapability>,
     /// capability 展开后的运行态工具簇集合。
     pub enabled_clusters: BTreeSet<ToolCluster>,
     /// 运行态唯一工具级过滤表；key 是 capability key，value 是该 capability 下的工具策略。
     pub tool_policy: BTreeMap<String, ToolCapabilityFilter>,
-    /// MCP server 的 capability/draft 投影。
-    ///
-    /// AgentRun 当前可执行 MCP surface 的权威来源是 AgentFrame revision；
-    /// 此列表服务 capability replay、tool policy 关联和 runtime 工具装配快照。
-    pub mcp_servers: Vec<RuntimeMcpServer>,
 }
 
 /// Companion 维度的运行态。
@@ -414,13 +410,6 @@ pub struct ChannelDimension {
     /// 当前 AgentFrame 可见且可操作的 channel refs。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub visible_channels: Vec<ChannelCapabilityRef>,
-}
-
-/// VFS 维度的运行态。
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VfsDimension {
-    /// 运行态文件/上下文访问状态。
-    pub active: Option<Vfs>,
 }
 
 /// Skill 维度的运行态。
@@ -512,15 +501,13 @@ impl WorkspaceModuleDimension {
 /// （`replay_effect` 等纯函数在 clone 副本上操作）。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityState {
-    /// 工具 + MCP 维度。
+    /// Callable tool admission 维度。
     pub tool: ToolDimension,
     /// Companion 维度。
     pub companion: CompanionDimension,
     /// Channel 维度。
     #[serde(default)]
     pub channel: ChannelDimension,
-    /// VFS 维度。
-    pub vfs: VfsDimension,
     /// Skill 维度。
     #[serde(default)]
     pub skill: SkillDimension,
@@ -673,11 +660,9 @@ impl CapabilityState {
                     &self.tool.tool_policy,
                     &other.tool.tool_policy,
                 ),
-                mcp_servers: self.tool.mcp_servers.clone(),
             },
             companion: self.companion.clone(),
             channel: self.channel.clone(),
-            vfs: self.vfs.clone(),
             // skill 不参与 capability 交集裁剪，保持调用方当前会话可见技能面。
             skill: self.skill.clone(),
             // memory 不参与 capability 交集裁剪，保持当前会话可见发现面。

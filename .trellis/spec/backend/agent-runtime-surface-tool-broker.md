@@ -256,9 +256,28 @@ struct ToolCallCoordinates {
   guarantee。Surface rebind 必须携带原 Product profile 重新编译 desired surface，再由 Host 与当前
   offer 求交。两个 digest 证明的事实集合不同，不具有可比较的相等语义。
 - AgentFrame `surface` document 是一条 revision 内 capability/context/VFS/MCP/hook 的 canonical
-  形态，拆分字段只是 repository read projection。Canvas create/attach/copy 先生成新的 owner-local
-  AgentFrame revision并修改该 document，再刷新拆分投影和 Complete Agent surface；因此授权、能力
-  发现与后续 materialization 都能从同一历史 revision 恢复。
+  形态；`AgentFrame` 不保存任何并列 mirror，typed accessor 直接读取 document 字段。业务变化统一
+  进入 application-owned runtime-surface updater：加载 Product binding 固定的 frame、应用 typed
+  delta、持久化 immutable next revision、完成 Runtime rebind，最后 CAS 推进 Product binding。
+  这样授权、能力发现与后续 materialization 都从同一历史 revision 恢复。
+- VFS 是 AgentFrame 的独立 resource surface，不属于 CapabilityState。Capability 决定 callable
+  admission，VFS 记录 mount/path/resource facts；ExecutionAuthority 与 ToolBroker 在调用时求交。
+  VFS delta 直接比较前后 canonical VFS，并与 next frame revision 一同进入 rebind evidence。
+- Operation Gateway 按 principal 路由 authority：User workshop 使用 Project/User surface，可以拥有
+  独立于 AgentFrame 的 Project MCP/Extension Operations；AgentRun principal 使用 exact AgentFrame
+  surface。MCP 是正式 dynamic Operation provider，User 从 Project MCP preset surface 解析，
+  Agent 从 `mcp_surface` 解析；Runtime Bridge 只提交 exact OperationRef，不持有 server、credential
+  或 transport 副本。
+- User 的 `WorkspaceBinding` Operation scope 直接从已授权 Workspace binding 生成本次调用的 VFS 与
+  runtime backend anchor，因此 relay/runtime-binding MCP 不依赖 AgentFrame。Project/Interaction scope
+  只暴露不需要 backend placement 的直连 Project MCP；descriptor provenance 必须标明
+  `project.mcp_presets` 或 `agent_frame.mcp_surface`。
+- MCP tool schema 在 MCP→Operation descriptor 的唯一投影点裁切为 Gateway 支持的 JSON Schema
+  子集；未进入子集的约束仍由 MCP server 在执行时校验，不能让外部 schema 关键字使整个 dynamic
+  Operation surface 失效。
+- Agent-facing Workspace Module discovery 从同一已授权 Operation catalog 把每个 MCP server 投影为
+  `mcp:{server_key}` module，使 list/describe 能返回 exact `mcp:<server>:<tool>:vN`；该 module
+  只是 descriptor 分组，不保存第二份 MCP server、transport 或权限事实。
 - tool可见性与调用授权必须来自同一applied Product resource surface。`task_write`可见时必须存在
   对应project/task Write grant。`mounts_list`自身只需要List准入，但返回的mount catalog必须描述
   该mount在applied surface中的完整Read/Write/List/Search/Exec集合与path scopes，不能把本次调用

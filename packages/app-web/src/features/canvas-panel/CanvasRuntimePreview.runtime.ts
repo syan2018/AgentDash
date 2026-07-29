@@ -366,6 +366,17 @@ function buildCanvasHostBootScript(input: {
               : undefined,
           }),
       }),
+      actions: Object.freeze({
+        invoke: (actionKey, payload = {}, options = {}) =>
+          request("actions.invoke", {
+            action_key: String(actionKey || ""),
+            payload,
+            expected_state_revision:
+              options && Number.isInteger(options.expectedStateRevision)
+                ? Number(options.expectedStateRevision)
+                : undefined,
+          }),
+      }),
       assets: Object.freeze({
         url: (uri) => request("assets.url", { uri: String(uri || "") }),
         revoke: (url) => request("assets.revoke", { url: String(url || "") }),

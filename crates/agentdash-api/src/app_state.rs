@@ -56,8 +56,8 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunTerminalSourceReconcilePort, CompanionContinuationEffectPort,
     ProcessAgentRunForkSagaRepository, ProcessCompanionFreshSagaRepository,
     ProductAgentRunForkGraphAdapter, ProductAgentRunForkRuntimeAdapter,
-    ProductAgentRunRuntimeSnapshotAdapter, ProductCompanionFreshRuntimeAdapter,
-    build_workflow_agent_call_dispatch,
+    ProductAgentRunRuntimeSnapshotAdapter, ProductAgentRunRuntimeSurfaceUpdater,
+    ProductCompanionFreshRuntimeAdapter, build_workflow_agent_call_dispatch,
 };
 use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeProtocolInvoker};
 use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
@@ -664,14 +664,18 @@ impl AppState {
             crate::bootstrap::product_operation_mcp_access::ProductRuntimeMcpOperationAccess::new(
                 execution_authorities.clone(),
                 dynamic_runtime_tools,
+                repos.clone(),
             ),
         );
-        let canvas_mounts = Arc::new(ProductCanvasMountMaterializer::new(
-            repos.interaction_definition_repo.clone(),
-            repos.lifecycle_agent_repo.clone(),
+        let runtime_surface_updates = Arc::new(ProductAgentRunRuntimeSurfaceUpdater::new(
             repos.agent_frame_repo.clone(),
             runtime_product_bindings.clone(),
             product_runtime_provisioner.clone(),
+        ));
+        let canvas_mounts = Arc::new(ProductCanvasMountMaterializer::new(
+            repos.interaction_definition_repo.clone(),
+            repos.lifecycle_agent_repo.clone(),
+            runtime_surface_updates,
         ));
         let operation_gateway = crate::bootstrap::runtime_gateway::build_operation_gateway(
             crate::bootstrap::runtime_gateway::OperationGatewayBootstrapDeps {

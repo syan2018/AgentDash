@@ -10,15 +10,6 @@ use agentdash_domain::mcp_preset::{
     McpRuntimeBindingSource, McpRuntimeBindingTarget, McpTransportConfig,
 };
 
-pub fn preset_to_runtime_mcp_server(preset: &McpPreset) -> RuntimeMcpServer {
-    resolve_preset_mcp_server(preset, None).unwrap_or_else(|_| RuntimeMcpServer {
-        name: preset.key.clone(),
-        transport: preset.transport.clone(),
-        uses_relay: preset_uses_relay(preset),
-        readiness: Default::default(),
-    })
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct McpRuntimeBindingContext<'a> {
     pub vfs: Option<&'a Vfs>,

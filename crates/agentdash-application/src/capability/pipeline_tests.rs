@@ -51,7 +51,7 @@ fn mcp_candidates(name: &str, url: &str) -> McpCandidates {
 }
 
 fn state_has_mcp_url(output: &crate::capability::CapabilityResolverOutput, needle: &str) -> bool {
-    output.tool.mcp_servers.iter().any(|server| {
+    output.mcp_servers.iter().any(|server| {
         matches!(
             &server.transport,
             agentdash_platform_spi::McpTransportConfig::Http { url, .. } if url.contains(needle)
@@ -102,7 +102,6 @@ fn agent_node_step_directives_produce_expected_session_tools() {
     // mcp:code_analyzer → 自定义 MCP 出现在统一 CapabilityState 中
     assert!(
         output
-            .tool
             .mcp_servers
             .iter()
             .any(|server| server.name == "code_analyzer")
@@ -142,7 +141,6 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     assert!(state_has_mcp_url(&output, "/mcp/workflow/"));
     assert!(
         output
-            .tool
             .mcp_servers
             .iter()
             .any(|server| server.name == "external_analyzer")
@@ -237,7 +235,6 @@ fn phase_node_invalid_directives_are_tolerated() {
     let output = CapabilityResolver::resolve(&input, &platform());
     assert!(
         !output
-            .tool
             .mcp_servers
             .iter()
             .any(|server| server.name == "missing_server")

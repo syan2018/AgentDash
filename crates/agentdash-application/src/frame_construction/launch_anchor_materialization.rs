@@ -138,7 +138,7 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
             if frame.agent_id != agent.id
                 || frame.created_by_kind != "dispatch_launch_anchor"
                 || frame.created_by_id != created_by_id
-                || frame.execution_profile_json.as_ref() != execution_profile.as_ref()
+                || frame.surface.execution_profile.as_ref() != execution_profile.as_ref()
             {
                 return Err(construction_rejected(
                     "target_frame_id 已存在但不属于同一 launch anchor intent",
@@ -251,7 +251,6 @@ pub(super) async fn materialize_frame_context_discovery(
     let mut capability_state = frame.typed_capability_state().ok_or_else(|| {
         construction_rejected("AgentFrame 缺少 discovery 所需 canonical CapabilityState")
     })?;
-    let mcp_servers = frame.typed_mcp_servers();
     let discovery = derive_launch_context_discovery(LaunchContextDiscoveryInput {
         vfs_service,
         launch_vfs: &vfs,
@@ -285,12 +284,7 @@ pub(super) async fn materialize_frame_context_discovery(
         )));
     }
 
-    normalize_capability_state_dimensions(
-        &mut capability_state,
-        Some(vfs.clone()),
-        mcp_servers,
-        &discovery.session_capabilities,
-    );
+    normalize_capability_state_dimensions(&mut capability_state, &discovery.session_capabilities);
     capability_state.memory.inventory = discovery.discovered_memory;
     let discovered_skill_names = capability_state
         .skill
@@ -373,8 +367,7 @@ pub(super) async fn materialize_frame_context_discovery(
             "AgentFrame 缺少承载已发现 project guidelines 的 canonical context source",
         ));
     }
-    frame.surface = Some(surface);
-    frame.apply_surface_projection();
+    frame.surface = surface;
     Ok(())
 }
 

@@ -130,16 +130,17 @@ pub(super) fn activate_activity_with_platform(
     };
     let mut cap_output = CapabilityResolver::resolve_checked(&cap_input, platform)?;
     if let Some(slice_mode) = input.companion_slice_mode {
-        cap_output = CapabilityResolver::apply_companion_slice(cap_output, slice_mode);
+        cap_output.capability_state =
+            CapabilityResolver::apply_companion_slice(cap_output.capability_state, slice_mode);
     }
 
-    let mut mcp_servers = cap_output.tool.mcp_servers.clone();
-    dedupe_runtime_mcp_servers(&mut mcp_servers);
     let capability_keys = cap_output.capability_keys();
+    let mut mcp_servers = cap_output.mcp_servers;
+    dedupe_runtime_mcp_servers(&mut mcp_servers);
     let kickoff_prompt = build_kickoff_prompt_fragment(input);
 
     Ok(ActivityActivation {
-        capability_state: cap_output,
+        capability_state: cap_output.capability_state,
         mcp_servers,
         capability_keys,
         kickoff_prompt,

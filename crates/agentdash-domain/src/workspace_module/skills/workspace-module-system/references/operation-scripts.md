@@ -6,6 +6,10 @@
 surface，可以跨 `builtin:*`、Canvas、Interaction 与 Extension providers 调用，不属于某个
 Workspace Module lifecycle provider。
 
+它的核心价值是把原本需要 Agent 多轮发起的 list/read/search 等工具查询收束成一次顶层工具调用；
+互不依赖的查询通过 `ops.invoke_all` 并发执行，从而减少模型往返、重复 surface discovery 与总体
+等待时间。存在数据依赖时才使用顺序 `ops.invoke`。
+
 需要 durable retry、recovery、human gate、跨 session 状态或可恢复多步副作用时使用 Workflow。
 OperationScript 不自动成为 Interaction state command，也不承诺整段脚本可安全 replay。
 

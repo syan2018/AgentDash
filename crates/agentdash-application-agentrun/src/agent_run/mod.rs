@@ -34,8 +34,9 @@ pub use conversation_snapshot::{
 };
 pub use display_title::{AgentRunDisplayTitle, resolve_agent_run_display_title};
 pub use frame::{
-    AgentFrameSurfaceExt, PromptLaunchPath, RuntimeTraceLaunchState,
-    SessionRepositoryRehydrateMode, TerminalHookEffectBinding, resolve_prompt_launch_path,
+    AgentFrameSurfaceExt, ProductAgentRunRuntimeSurfaceUpdater, PromptLaunchPath,
+    RuntimeTraceLaunchState, SessionRepositoryRehydrateMode, TerminalHookEffectBinding,
+    resolve_prompt_launch_path,
 };
 pub use lifecycle_read_model_facade::LifecycleSubjectAssociationView;
 pub use product_command_facade::*;

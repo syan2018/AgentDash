@@ -232,12 +232,26 @@ fn merge_companion_candidates(contributions: &[ContextContributions]) -> Vec<Com
         .collect()
 }
 
-/// Resolver 输出 = CapabilityState（唯一运行态能力容器）。
-///
-/// Resolver 产出的 state 应通过 `AgentFrameBuilder::with_capability_state` 写入
-/// AgentFrame revision，成为 capability surface 的唯一权威存储。
-/// 运行时读取应从 frame 投影（`project_capability_state_from_frame`）。
-pub type CapabilityResolverOutput = CapabilityState;
+/// Resolver 同时产出 callable admission 与独立 MCP resource surface。
+#[derive(Debug, Clone, Default)]
+pub struct CapabilityResolverOutput {
+    pub capability_state: CapabilityState,
+    pub mcp_servers: Vec<agentdash_platform_spi::RuntimeMcpServer>,
+}
+
+impl std::ops::Deref for CapabilityResolverOutput {
+    type Target = CapabilityState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.capability_state
+    }
+}
+
+impl std::ops::DerefMut for CapabilityResolverOutput {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.capability_state
+    }
+}
 
 /// 统一工具能力解析器。
 ///
@@ -278,7 +292,7 @@ impl CapabilityResolver {
                 contribution_count = input.contributions.len(),
                 "CapabilityResolver resolve 降级为非严格 MCP 解析"
             );
-            CapabilityState::default()
+            CapabilityResolverOutput::default()
         })
     }
 
@@ -385,15 +399,17 @@ impl CapabilityResolver {
             agentdash_platform_spi::CompanionDimension::default()
         };
 
-        Ok(CapabilityState {
-            tool: agentdash_platform_spi::ToolDimension {
-                capabilities: effective_caps.clone(),
-                enabled_clusters,
-                tool_policy,
-                mcp_servers: resolved_mcp_servers,
+        Ok(CapabilityResolverOutput {
+            capability_state: CapabilityState {
+                tool: agentdash_platform_spi::ToolDimension {
+                    capabilities: effective_caps.clone(),
+                    enabled_clusters,
+                    tool_policy,
+                },
+                companion,
+                ..Default::default()
             },
-            companion,
-            ..Default::default()
+            mcp_servers: resolved_mcp_servers,
         })
     }
 
@@ -628,7 +644,7 @@ mod tests {
     }
 
     fn state_has_mcp_url(output: &CapabilityResolverOutput, needle: &str) -> bool {
-        output.tool.mcp_servers.iter().any(|server| {
+        output.mcp_servers.iter().any(|server| {
             matches!(
                 &server.transport,
                 agentdash_platform_spi::McpTransportConfig::Http { url, .. } if url.contains(needle)
@@ -640,11 +656,7 @@ mod tests {
         output: &'a CapabilityResolverOutput,
         name: &str,
     ) -> Option<&'a agentdash_platform_spi::RuntimeMcpServer> {
-        output
-            .tool
-            .mcp_servers
-            .iter()
-            .find(|server| server.name == name)
+        output.mcp_servers.iter().find(|server| server.name == name)
     }
 
     #[test]
@@ -723,7 +735,7 @@ mod tests {
         let input = base_input();
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        assert_eq!(output.tool.mcp_servers.len(), 1);
+        assert_eq!(output.mcp_servers.len(), 1);
         assert!(state_has_mcp_url(&output, "/mcp/relay"));
     }
 
@@ -905,7 +917,7 @@ mod tests {
         let input = base_input();
         let platform = PlatformConfig { mcp_base_url: None };
         let output = CapabilityResolver::resolve(&input, &platform);
-        assert!(output.tool.mcp_servers.is_empty());
+        assert!(output.mcp_servers.is_empty());
     }
 
     #[test]
@@ -1090,7 +1102,6 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert_eq!(
             output
-                .tool
                 .mcp_servers
                 .iter()
                 .filter(|server| server.name == "shared")
@@ -1390,7 +1401,6 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
         let relay = output
-            .tool
             .mcp_servers
             .iter()
             .find(|server| {
@@ -1402,7 +1412,7 @@ mod tests {
             .expect("project owner 应注入 relay MCP");
         assert_eq!(relay.name, "agentdash-relay-tools");
         assert!(
-            !output.tool.mcp_servers.iter().any(|server| matches!(
+            !output.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
                 agentdash_platform_spi::McpTransportConfig::Http { url, .. }
                     if url.contains("/mcp/story/")
@@ -1430,7 +1440,6 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
         let story = output
-            .tool
             .mcp_servers
             .iter()
             .find(|server| {
@@ -1470,7 +1479,7 @@ mod tests {
             "task owner 应启用 Task runtime tools"
         );
         assert!(
-            !output.tool.mcp_servers.iter().any(|server| matches!(
+            !output.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
                 agentdash_platform_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
             )),

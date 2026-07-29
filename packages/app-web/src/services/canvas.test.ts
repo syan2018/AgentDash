@@ -17,6 +17,7 @@ vi.mock("../api/client", () => ({
 }));
 
 import {
+  executeCanvasAction,
   fetchCanvasRuntimeSnapshot,
   fetchInteractionCanvasRuntimeSnapshot,
   fetchProjectCanvases,
@@ -49,6 +50,7 @@ function definition(): CanvasDefinitionDto {
     agent_projection: { version: 1, allowed_state_paths: [] },
     command_definitions: [],
     component_bindings: [],
+    action_bindings: [],
     resource_slots: [],
     access: {
       can_view: true,
@@ -173,6 +175,30 @@ describe("canvas service", () => {
         input: [{ kind: "text", text: "继续" }],
         include_interaction_state: true,
         include_render_observation: false,
+      },
+    );
+  });
+
+  it("Canvas action 只提交 action identity 并携带已验证的 AgentRun target", async () => {
+    mocks.post.mockResolvedValueOnce({ outcome: { kind: "operation_script" } });
+
+    await executeCanvasAction({
+      instanceId: "instance 1",
+      actionKey: "skills.refresh",
+      payload: { force: true },
+      expectedStateRevision: 3,
+      agentRunTarget: { runId: "run-1", agentId: "agent-1" },
+    });
+
+    expect(mocks.post).toHaveBeenCalledWith(
+      "/interaction-instances/instance%201/actions",
+      {
+        command_id: expect.any(String),
+        action_key: "skills.refresh",
+        payload: { force: true },
+        expected_state_revision: 3,
+        run_id: "run-1",
+        agent_id: "agent-1",
       },
     );
   });

@@ -67,7 +67,7 @@ impl AgentRunFrameConstructionPort for StableFrameConstruction {
             let mut frame =
                 AgentFrame::new_revision_with_id(frame_id, agent_id, 1, "dispatch_launch_anchor");
             frame.created_by_id = created_by_id;
-            frame.execution_profile_json = execution_profile;
+            frame.surface.execution_profile = execution_profile;
             self.frames.create(&frame).await.map_err(|error| {
                 AgentRunFrameSurfaceError::ConstructionRejected {
                     message: error.to_string(),

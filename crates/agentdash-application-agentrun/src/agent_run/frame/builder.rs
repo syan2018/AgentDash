@@ -15,7 +15,7 @@
 
 use agentdash_application_ports::lifecycle_surface_projection::ActivityActivation;
 use agentdash_domain::DomainError;
-use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
+use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, AgentFrameSurfaceDocument};
 use agentdash_platform_spi::{
     AgentConfig, CapabilityState, RuntimeMcpServer, SessionContextBundle, Vfs,
 };
@@ -64,8 +64,6 @@ pub fn build_lifecycle_activation_surface(
         &input.activation.mount_directives,
     );
     let mut capability_state = input.activation.capability_state.clone();
-    capability_state.tool.mcp_servers = input.activation.mcp_servers.clone();
-    capability_state.vfs.active = Some(vfs.clone());
     if capability_state.skill.skills.is_empty()
         && let Some(base) = input.inherit_skills_from
     {
@@ -156,22 +154,16 @@ impl AgentFrameBuilder {
         self
     }
 
-    /// 从 `CapabilityState` 一次性填充 capability / VFS / MCP 三个 surface 列。
+    /// 从 `CapabilityState` 填充 callable admission surface。
     ///
-    /// 内部调用 `capability_state_to_frame_surfaces` 拆分，保证写入与
-    /// `project_capability_state_from_frame` 读取完全对称。
+    /// VFS 是独立的 canonical surface，必须通过 `with_vfs_typed` 写入。
     pub fn with_capability_state(mut self, state: &CapabilityState) -> Self {
         let surfaces = capability_state_to_frame_surfaces(state);
         self.capability_surface = surfaces.effective_capability_json;
-        self.vfs_surface = surfaces.vfs_surface_json;
-        self.mcp_surface = surfaces.mcp_surface_json;
         self
     }
 
-    /// 从结构化 `Vfs` 填充 vfs_surface（独立于 CapabilityState 维度）。
-    ///
-    /// 仅当 compose 逻辑独立产出 VFS（而非从 CapabilityState 中拆分）时使用。
-    /// 若通过 `with_capability_state` 设置，VFS 会被自动提取。
+    /// 从结构化 `Vfs` 填充唯一的 VFS surface。
     pub fn with_vfs_typed(mut self, vfs: &Vfs) -> Self {
         self.vfs_surface = serde_json::to_value(vfs).ok();
         self
@@ -276,43 +268,29 @@ impl AgentFrameBuilder {
             next_revision,
             &self.created_by_kind,
         );
-        frame.effective_capability_json = self.capability_surface.clone().or_else(|| {
-            current
-                .as_ref()
-                .and_then(|frame| frame.effective_capability_json.clone())
-        });
-        frame.context_slice_json = self.context_slice.clone().or_else(|| {
-            current
-                .as_ref()
-                .and_then(|frame| frame.context_slice_json.clone())
-        });
-        frame.vfs_surface_json = self.vfs_surface.clone().or_else(|| {
-            current
-                .as_ref()
-                .and_then(|frame| frame.vfs_surface_json.clone())
-        });
-        frame.mcp_surface_json = self.mcp_surface.clone().or_else(|| {
-            current
-                .as_ref()
-                .and_then(|frame| frame.mcp_surface_json.clone())
-        });
-        frame.execution_profile_json = self.execution_profile.clone().or_else(|| {
-            current
-                .as_ref()
-                .and_then(|frame| frame.execution_profile_json.clone())
-        });
-        frame.hook_plan = self
-            .hook_plan
-            .clone()
-            .or_else(|| current.as_ref().and_then(|frame| frame.hook_plan.clone()));
+        let current_surface = current
+            .as_ref()
+            .map(AgentFrame::surface_document)
+            .unwrap_or_default();
+        frame.surface = AgentFrameSurfaceDocument {
+            capability_state: self
+                .capability_surface
+                .clone()
+                .or(current_surface.capability_state),
+            context_slice: self.context_slice.clone().or(current_surface.context_slice),
+            context_source_snapshot: self
+                .context_source_snapshot
+                .clone()
+                .or(current_surface.context_source_snapshot),
+            vfs_surface: self.vfs_surface.clone().or(current_surface.vfs_surface),
+            mcp_surface: self.mcp_surface.clone().or(current_surface.mcp_surface),
+            execution_profile: self
+                .execution_profile
+                .clone()
+                .or(current_surface.execution_profile),
+            hook_plan: self.hook_plan.clone().or(current_surface.hook_plan),
+        };
         frame.created_by_id = self.created_by_id.clone();
-        let mut surface = frame.surface_document();
-        surface.context_source_snapshot = self.context_source_snapshot.clone().or_else(|| {
-            current
-                .as_ref()
-                .and_then(|frame| frame.surface_document().context_source_snapshot)
-        });
-        frame.surface = Some(surface);
 
         Ok(frame)
     }
@@ -405,8 +383,8 @@ mod tests {
         assert_eq!(frame.agent_id, agent_id);
         assert_eq!(frame.revision, 1);
         assert_eq!(frame.created_by_kind, "dispatch");
-        assert!(frame.effective_capability_json.is_some());
-        assert!(frame.context_slice_json.is_some());
+        assert!(frame.surface.capability_state.is_some());
+        assert!(frame.surface.context_slice.is_some());
     }
 
     #[tokio::test]
@@ -422,8 +400,8 @@ mod tests {
         assert_eq!(frame.agent_id, agent_id);
         assert_eq!(frame.created_by_kind, "dispatch_launch_anchor");
         assert_eq!(frame.created_by_id.as_deref(), Some("runtime-1"));
-        assert!(frame.vfs_surface_json.is_none());
-        assert!(frame.effective_capability_json.is_none());
+        assert!(frame.surface.vfs_surface.is_none());
+        assert!(frame.surface.capability_state.is_none());
     }
 
     #[tokio::test]
@@ -443,7 +421,7 @@ mod tests {
             .await
             .expect("frame2");
         assert_eq!(frame2.revision, 2);
-        assert!(frame2.vfs_surface_json.is_some());
+        assert!(frame2.surface.vfs_surface.is_some());
     }
 
     #[tokio::test]
@@ -465,7 +443,7 @@ mod tests {
 
         assert_eq!(frame2.revision, frame1.revision + 1);
         assert_eq!(
-            frame2.execution_profile_json,
+            frame2.surface.execution_profile,
             Some(serde_json::json!({"executor": "local"}))
         );
     }
@@ -524,7 +502,8 @@ mod tests {
 
         assert_eq!(
             frame
-                .execution_profile_json
+                .surface
+                .execution_profile
                 .as_ref()
                 .and_then(|value| value.get("executor"))
                 .and_then(serde_json::Value::as_str),
@@ -532,7 +511,8 @@ mod tests {
         );
         assert_eq!(
             frame
-                .context_slice_json
+                .surface
+                .context_slice
                 .as_ref()
                 .and_then(|value| value.get("phase_tag"))
                 .and_then(serde_json::Value::as_str),
@@ -540,7 +520,8 @@ mod tests {
         );
 
         let vfs_mount_ids = frame
-            .vfs_surface_json
+            .surface
+            .vfs_surface
             .as_ref()
             .and_then(|value| value.get("mounts"))
             .and_then(serde_json::Value::as_array)
@@ -551,7 +532,8 @@ mod tests {
         assert_eq!(vfs_mount_ids, BTreeSet::from(["workspace", "lifecycle"]));
 
         let mcp_names = frame
-            .mcp_surface_json
+            .surface
+            .mcp_surface
             .as_ref()
             .and_then(serde_json::Value::as_array)
             .expect("mcp surface")
@@ -560,7 +542,7 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(mcp_names, BTreeSet::from(["workflow-tools"]));
         assert!(
-            frame.effective_capability_json.is_some(),
+            frame.surface.capability_state.is_some(),
             "capability surface should be written by the same frame revision"
         );
     }
@@ -576,8 +558,7 @@ mod tests {
             source_story_id: None,
             links: Vec::new(),
         };
-        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
-        capability_state.vfs.active = Some(vfs.clone());
+        let capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
         let mcp_servers = vec![RuntimeMcpServer {
             name: "draft-tools".to_string(),
             transport: McpTransportConfig::Http {
@@ -587,7 +568,6 @@ mod tests {
             uses_relay: false,
             readiness: Default::default(),
         }];
-        capability_state.tool.mcp_servers = mcp_servers.clone();
         let bundle = SessionContextBundle::new(Uuid::new_v4(), "owner_bootstrap");
         let draft = FrameSurfaceDraft {
             capability_state: Some(capability_state),
@@ -604,12 +584,13 @@ mod tests {
             .await
             .expect("frame");
 
-        assert!(frame.effective_capability_json.is_some());
-        assert!(frame.vfs_surface_json.is_some());
-        assert!(frame.mcp_surface_json.is_some());
+        assert!(frame.surface.capability_state.is_some());
+        assert!(frame.surface.vfs_surface.is_some());
+        assert!(frame.surface.mcp_surface.is_some());
         assert_eq!(
             frame
-                .context_slice_json
+                .surface
+                .context_slice
                 .as_ref()
                 .and_then(|value| value.get("bundle_id"))
                 .and_then(serde_json::Value::as_str)
@@ -618,7 +599,8 @@ mod tests {
         );
         assert_eq!(
             frame
-                .execution_profile_json
+                .surface
+                .execution_profile
                 .as_ref()
                 .and_then(|value| value.get("executor"))
                 .and_then(serde_json::Value::as_str),
@@ -635,6 +617,6 @@ mod tests {
             .await
             .expect("frame");
 
-        assert_eq!(frame.mcp_surface_json, Some(serde_json::json!([])));
+        assert_eq!(frame.surface.mcp_surface, Some(serde_json::json!([])));
     }
 }

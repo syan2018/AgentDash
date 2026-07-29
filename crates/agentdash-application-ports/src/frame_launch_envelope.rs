@@ -43,12 +43,13 @@ impl FrameRuntimeSurface {
             frame_id: frame.id,
             frame_revision: frame.revision,
             capability_surface: frame
-                .effective_capability_json
+                .surface
+                .capability_state
                 .clone()
                 .unwrap_or(Value::Null),
-            context_slice: frame.context_slice_json.clone().unwrap_or(Value::Null),
-            vfs_surface: frame.vfs_surface_json.clone().unwrap_or(Value::Null),
-            mcp_surface: frame.mcp_surface_json.clone().unwrap_or(Value::Null),
+            context_slice: frame.surface.context_slice.clone().unwrap_or(Value::Null),
+            vfs_surface: frame.surface.vfs_surface.clone().unwrap_or(Value::Null),
+            mcp_surface: frame.surface.mcp_surface.clone().unwrap_or(Value::Null),
             runtime_thread_id,
         }
     }

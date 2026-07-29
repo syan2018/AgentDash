@@ -5,8 +5,7 @@ use uuid::Uuid;
 
 /// AgentFrame revision 的 canonical runtime surface document。
 ///
-/// 旧 split columns 仍可作为读投影存在，但 repository 读写时以这个 document
-/// 作为同一 revision 的单一 surface 形态。
+/// 每个字段只在这个 document 中存储一次；消费者不得维护并列 mirror。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AgentFrameSurfaceDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,21 +48,8 @@ pub struct AgentFrame {
     pub id: Uuid,
     pub agent_id: Uuid,
     pub revision: i32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub surface: Option<AgentFrameSurfaceDocument>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effective_capability_json: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_slice_json: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vfs_surface_json: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp_surface_json: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub execution_profile_json: Option<serde_json::Value>,
-    /// 当前 revision 的 immutable HookPlan requirements。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hook_plan: Option<serde_json::Value>,
+    #[serde(default)]
+    pub surface: AgentFrameSurfaceDocument,
     pub created_by_kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_id: Option<String>,
@@ -76,13 +62,7 @@ impl AgentFrame {
             id: Uuid::new_v4(),
             agent_id,
             revision: 1,
-            surface: None,
-            effective_capability_json: None,
-            context_slice_json: None,
-            vfs_surface_json: None,
-            mcp_surface_json: None,
-            execution_profile_json: None,
-            hook_plan: None,
+            surface: AgentFrameSurfaceDocument::default(),
             created_by_kind: "backfill".to_string(),
             created_by_id: None,
             created_at: Utc::now(),
@@ -103,13 +83,7 @@ impl AgentFrame {
             id,
             agent_id,
             revision,
-            surface: None,
-            effective_capability_json: None,
-            context_slice_json: None,
-            vfs_surface_json: None,
-            mcp_surface_json: None,
-            execution_profile_json: None,
-            hook_plan: None,
+            surface: AgentFrameSurfaceDocument::default(),
             created_by_kind: created_by_kind.into(),
             created_by_id: None,
             created_at: Utc::now(),
@@ -117,60 +91,24 @@ impl AgentFrame {
     }
 
     pub fn surface_document(&self) -> AgentFrameSurfaceDocument {
-        self.surface
-            .clone()
-            .unwrap_or_else(|| AgentFrameSurfaceDocument {
-                capability_state: self.effective_capability_json.clone(),
-                context_slice: self.context_slice_json.clone(),
-                context_source_snapshot: None,
-                vfs_surface: self.vfs_surface_json.clone(),
-                mcp_surface: self.mcp_surface_json.clone(),
-                execution_profile: self.execution_profile_json.clone(),
-                hook_plan: self.hook_plan.clone(),
-            })
+        self.surface.clone()
     }
 
-    pub fn apply_surface_projection(&mut self) {
-        let surface = self.surface_document();
-        if surface.is_empty() {
-            return;
-        }
-        self.effective_capability_json = surface.capability_state.clone();
-        self.context_slice_json = surface.context_slice.clone();
-        self.vfs_surface_json = surface.vfs_surface.clone();
-        self.mcp_surface_json = surface.mcp_surface.clone();
-        self.execution_profile_json = surface.execution_profile.clone();
-        self.hook_plan = surface.hook_plan.clone();
-        self.surface = Some(surface);
-    }
-
-    /// Attach the immutable HookPlan to the canonical surface document and refresh its split
-    /// read projection in one operation.
+    /// Attach the immutable HookPlan to the canonical surface document.
     ///
     /// HookPlan compilation needs the already allocated frame ID, so frame construction attaches
-    /// this snapshot after `AgentFrameBuilder` has produced the uncommitted revision. Updating only
-    /// the split `hook_plan` field would be lost as soon as the canonical surface is projected.
+    /// this snapshot after `AgentFrameBuilder` has produced the uncommitted revision.
     pub fn attach_immutable_hook_plan(&mut self, hook_plan: Value) {
         let mut surface = self.surface_document();
         surface.hook_plan = Some(hook_plan);
-        self.surface = Some(surface);
-        self.apply_surface_projection();
+        self.surface = surface;
     }
 
-    /// Replaces the canonical VFS facts for this uncommitted revision and refreshes the split read
-    /// projections from that document.
-    pub fn attach_immutable_vfs_surface(
-        &mut self,
-        vfs_surface: Value,
-        capability_state: Option<Value>,
-    ) {
+    /// Replaces the canonical VFS facts for this uncommitted revision.
+    pub fn attach_immutable_vfs_surface(&mut self, vfs_surface: Value) {
         let mut surface = self.surface_document();
         surface.vfs_surface = Some(vfs_surface);
-        if let Some(capability_state) = capability_state {
-            surface.capability_state = Some(capability_state);
-        }
-        self.surface = Some(surface);
-        self.apply_surface_projection();
+        self.surface = surface;
     }
 }
 
@@ -179,47 +117,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn surface_document_projects_split_columns() {
+    fn surface_document_owns_capability_state_once() {
         let mut frame = AgentFrame::new_initial(Uuid::new_v4());
-        frame.effective_capability_json = Some(serde_json::json!({"tool": {"mcp_servers": []}}));
+        frame.surface.capability_state = Some(serde_json::json!({"tool": {"capabilities": []}}));
 
         let surface = frame.surface_document();
 
         assert_eq!(
             surface.capability_state,
-            Some(serde_json::json!({"tool": {"mcp_servers": []}}))
+            Some(serde_json::json!({"tool": {"capabilities": []}}))
         );
     }
 
     #[test]
-    fn surface_document_overrides_split_projection() {
+    fn surface_document_is_the_only_runtime_surface() {
         let mut frame = AgentFrame::new_initial(Uuid::new_v4());
-        frame.effective_capability_json = Some(serde_json::json!({"stale": true}));
-        frame.surface = Some(AgentFrameSurfaceDocument {
+        frame.surface = AgentFrameSurfaceDocument {
             capability_state: Some(serde_json::json!({"canonical": true})),
             ..Default::default()
-        });
-
-        frame.apply_surface_projection();
+        };
 
         assert_eq!(
-            frame.effective_capability_json,
+            frame.surface_document().capability_state,
             Some(serde_json::json!({"canonical": true}))
         );
     }
 
     #[test]
-    fn immutable_hook_plan_is_written_to_canonical_surface_and_split_projection() {
+    fn immutable_hook_plan_is_written_to_canonical_surface() {
         let mut frame = AgentFrame::new_initial(Uuid::new_v4());
-        frame.surface = Some(AgentFrameSurfaceDocument {
+        frame.surface = AgentFrameSurfaceDocument {
             capability_state: Some(serde_json::json!({"canonical": true})),
             ..Default::default()
-        });
+        };
         let hook_plan = serde_json::json!({"revision": 1, "requirements": [], "digest": "v1"});
 
         frame.attach_immutable_hook_plan(hook_plan.clone());
 
-        assert_eq!(frame.hook_plan, Some(hook_plan.clone()));
         assert_eq!(frame.surface_document().hook_plan, Some(hook_plan));
     }
 }

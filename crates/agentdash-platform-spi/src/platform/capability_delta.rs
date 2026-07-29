@@ -1,8 +1,9 @@
 //! 能力状态 delta 的纯数据模型与计算。
 //!
-//! delta 描述两份 `CapabilityState` 之间的结构化差异（工具能力 / 工具路径 /
-//! MCP server / companion roster / VFS / skill / memory），是运行期能力切换通知与前端投影的共同基准。
-//! 类型与计算都只依赖 spi `CapabilityState` 与 domain `Vfs`/`MountLink`，
+//! delta 描述两份 `CapabilityState` 之间的结构化差异（工具准入 / 工具路径 /
+//! companion roster / skill / memory）。MCP 与 VFS 是独立 runtime surface，
+//! 分别通过 `McpSurfaceDelta` 与 `VfsSurfaceDelta` 维护。
+//! 类型与计算都只依赖 spi `CapabilityState`，
 //! 因此放在 spi 层，供 application 的 transition / projection / 渲染各阶段消费。
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -83,11 +84,8 @@ pub struct CapabilityStateDelta {
     pub tool_clusters: SetDelta,
     pub excluded_tool_paths: SetDelta,
     pub included_tool_paths: SetDelta,
-    pub mcp_servers: NamedEntityDelta,
-    pub mcp_server_readiness: Vec<McpServerReadinessSummary>,
     pub companion_agents: NamedEntityDelta,
     pub channel_refs: NamedEntityDelta,
-    pub vfs: VfsSurfaceDelta,
     pub skills: NamedEntityDelta,
     pub memory_sources: NamedEntityDelta,
 }
@@ -98,11 +96,8 @@ impl CapabilityStateDelta {
             && self.tool_clusters.is_empty()
             && self.excluded_tool_paths.is_empty()
             && self.included_tool_paths.is_empty()
-            && self.mcp_servers.is_empty()
-            && self.mcp_server_readiness.is_empty()
             && self.companion_agents.is_empty()
             && self.channel_refs.is_empty()
-            && self.vfs.is_empty()
             && self.skills.is_empty()
             && self.memory_sources.is_empty()
     }
@@ -148,31 +143,6 @@ pub fn compute_capability_state_delta(
         tool_clusters: set_delta(&before_clusters, &after_clusters),
         excluded_tool_paths: set_delta(&before_excluded_paths, &after.excluded_tool_paths()),
         included_tool_paths: set_delta(&before_included_paths, &after.included_tool_paths()),
-        mcp_servers: named_entity_delta(
-            before
-                .map(|surface| surface.tool.mcp_servers.as_slice())
-                .unwrap_or(&[]),
-            after.tool.mcp_servers.as_slice(),
-            |server| server.name.clone(),
-        ),
-        mcp_server_readiness: after
-            .tool
-            .mcp_servers
-            .iter()
-            .filter_map(|server| match &server.readiness {
-                RuntimeMcpSourceReadiness::Unavailable {
-                    reason_code,
-                    message,
-                } => Some(McpServerReadinessSummary {
-                    name: server.name.clone(),
-                    reason_code: reason_code.clone(),
-                    message: message.clone(),
-                }),
-                RuntimeMcpSourceReadiness::Pending | RuntimeMcpSourceReadiness::Ready { .. } => {
-                    None
-                }
-            })
-            .collect(),
         companion_agents: named_entity_delta(
             before
                 .map(|surface| surface.companion.agents.as_slice())
@@ -193,10 +163,6 @@ pub fn compute_capability_state_delta(
                 )
             },
         ),
-        vfs: vfs_surface_delta(
-            before.and_then(|surface| surface.vfs.active.as_ref()),
-            after.vfs.active.as_ref(),
-        ),
         skills: named_entity_delta(
             before
                 .map(|surface| surface.skill.skills.as_slice())
@@ -209,6 +175,44 @@ pub fn compute_capability_state_delta(
             &memory_sources(Some(after)),
             memory_source_key,
         ),
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct McpSurfaceDelta {
+    pub servers: NamedEntityDelta,
+    pub readiness: Vec<McpServerReadinessSummary>,
+}
+
+impl McpSurfaceDelta {
+    pub fn is_empty(&self) -> bool {
+        self.servers.is_empty() && self.readiness.is_empty()
+    }
+}
+
+pub fn compute_mcp_surface_delta(
+    before: &[super::runtime_surface::RuntimeMcpServer],
+    after: &[super::runtime_surface::RuntimeMcpServer],
+) -> McpSurfaceDelta {
+    McpSurfaceDelta {
+        servers: named_entity_delta(before, after, |server| server.name.clone()),
+        readiness: after
+            .iter()
+            .filter_map(|server| match &server.readiness {
+                RuntimeMcpSourceReadiness::Unavailable {
+                    reason_code,
+                    message,
+                } => Some(McpServerReadinessSummary {
+                    name: server.name.clone(),
+                    reason_code: reason_code.clone(),
+                    message: message.clone(),
+                }),
+                RuntimeMcpSourceReadiness::Pending | RuntimeMcpSourceReadiness::Ready { .. } => {
+                    None
+                }
+            })
+            .collect(),
     }
 }
 
@@ -257,7 +261,7 @@ where
     }
 }
 
-fn vfs_surface_delta(before: Option<&Vfs>, after: Option<&Vfs>) -> VfsSurfaceDelta {
+pub fn compute_vfs_surface_delta(before: Option<&Vfs>, after: Option<&Vfs>) -> VfsSurfaceDelta {
     let before_mounts = before.map(|vfs| vfs.mounts.as_slice()).unwrap_or(&[]);
     let after_mounts = after.map(|vfs| vfs.mounts.as_slice()).unwrap_or(&[]);
     let before_links = before.map(|vfs| vfs.links.as_slice()).unwrap_or(&[]);
@@ -312,6 +316,27 @@ mod tests {
         let delta = compute_capability_state_delta(None, &after, &BTreeSet::new());
 
         assert_eq!(delta.channel_refs.added.len(), 1);
+        assert!(!delta.is_empty());
+    }
+
+    #[test]
+    fn mcp_delta_is_computed_from_the_independent_server_surface() {
+        let before = super::super::runtime_surface::RuntimeMcpServer::new(
+            "docs".to_owned(),
+            agentdash_domain::mcp_preset::McpTransportConfig::Http {
+                url: "https://example.test/mcp".to_owned(),
+                headers: Vec::new(),
+            },
+            false,
+        );
+        let after = before
+            .clone()
+            .with_readiness(RuntimeMcpSourceReadiness::Ready { tool_count: 3 });
+
+        let delta = compute_mcp_surface_delta(&[before], &[after]);
+
+        assert_eq!(delta.servers.changed, vec!["docs"]);
+        assert!(delta.readiness.is_empty());
         assert!(!delta.is_empty());
     }
 }

@@ -8,6 +8,7 @@ import type {
   CommitCanvasDefinitionRequest,
   CreateCanvasDefinitionRequest,
   DistributeCanvasDefinitionRequest,
+  InteractionActionResponseDto,
   InteractionOperationRefDto,
   InteractionInstanceViewDto,
   OperationWorkshopSurfaceDto,
@@ -66,6 +67,7 @@ export async function createCanvas(
     },
     command_definitions: [],
     component_bindings: [],
+    action_bindings: [],
     resource_slots: [],
   };
   return canvasFromDefinition(
@@ -333,6 +335,29 @@ export async function invokeCanvasOperation(input: {
     },
   );
   return unwrapOperationResult(response.result);
+}
+
+export async function executeCanvasAction(input: {
+  instanceId: string;
+  actionKey: string;
+  payload?: JsonValue;
+  expectedStateRevision: number;
+  agentRunTarget?: {
+    runId: string;
+    agentId: string;
+  } | null;
+}): Promise<InteractionActionResponseDto> {
+  return api.post<InteractionActionResponseDto>(
+    `/interaction-instances/${encodeURIComponent(input.instanceId)}/actions`,
+    {
+      command_id: crypto.randomUUID(),
+      action_key: input.actionKey,
+      payload: input.payload ?? {},
+      expected_state_revision: input.expectedStateRevision,
+      run_id: input.agentRunTarget?.runId,
+      agent_id: input.agentRunTarget?.agentId,
+    },
+  );
 }
 
 export async function promoteCanvasToExtension(

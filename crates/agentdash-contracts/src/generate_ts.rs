@@ -112,14 +112,14 @@ use agentdash_contracts::interaction::{
     CanvasRuntimeFeaturesDto, CanvasRuntimeSnapshotDto, CloseInteractionInstanceRequestDto,
     CommitCanvasDefinitionRequest, CreateCanvasDefinitionRequest,
     CreateInteractionInstanceRequestDto, DistributeCanvasDefinitionRequest,
-    InteractionAgentProjectionDto, InteractionCommandActorPolicyDto,
+    InteractionActionBindingDto, InteractionActionRequestDto, InteractionActionResponseDto,
+    InteractionActionTargetDto, InteractionAgentProjectionDto, InteractionCommandActorPolicyDto,
     InteractionCommandDefinitionDto, InteractionCommandRequestDto, InteractionCommandResponseDto,
     InteractionComponentBindingDto, InteractionComponentEventBindingDto,
     InteractionComponentEventRequestDto, InteractionComponentEventResponseDto,
-    InteractionComponentEventTargetDto, InteractionDefinitionAccessDto,
-    InteractionDefinitionLineageDto, InteractionDefinitionLineageKindDto,
-    InteractionDefinitionStatusDto, InteractionInstanceDto, InteractionInstanceViewDto,
-    InteractionInstanceViewQueryDto, InteractionOperationRefDto,
+    InteractionDefinitionAccessDto, InteractionDefinitionLineageDto,
+    InteractionDefinitionLineageKindDto, InteractionDefinitionStatusDto, InteractionInstanceDto,
+    InteractionInstanceViewDto, InteractionInstanceViewQueryDto, InteractionOperationRefDto,
     InteractionOperationScriptSourceDto, InteractionOwnerDto, InteractionPinnedArtifactDto,
     InteractionPresentationQueryDto, InteractionPresentationStateDto, InteractionResourceSlotDto,
     InteractionResourceSlotKindDto, InteractionRuntimeBindingDto,
@@ -940,7 +940,8 @@ fn main() {
             export_all::<InteractionStatePatchV1ContractDto>(dir);
             export_all::<InteractionCommandDefinitionDto>(dir);
             export_all::<InteractionComponentEventBindingDto>(dir);
-            export_all::<InteractionComponentEventTargetDto>(dir);
+            export_all::<InteractionActionBindingDto>(dir);
+            export_all::<InteractionActionTargetDto>(dir);
             export_all::<InteractionOperationScriptSourceDto>(dir);
             export_all::<InteractionComponentBindingDto>(dir);
             export_all::<InteractionResourceSlotKindDto>(dir);
@@ -961,6 +962,8 @@ fn main() {
             export_all::<InteractionCommandResponseDto>(dir);
             export_all::<InteractionComponentEventRequestDto>(dir);
             export_all::<InteractionComponentEventResponseDto>(dir);
+            export_all::<InteractionActionRequestDto>(dir);
+            export_all::<InteractionActionResponseDto>(dir);
             export_all::<InteractionPresentationQueryDto>(dir);
             export_all::<ReplaceInteractionPresentationRequestDto>(dir);
             export_all::<InteractionPresentationStateDto>(dir);

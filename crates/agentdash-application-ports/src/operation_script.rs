@@ -55,8 +55,10 @@ impl Default for OperationScriptLimits {
             max_string_size: 1024 * 1024,
             max_array_size: 1_000,
             max_map_size: 500,
-            max_operation_calls: 32,
-            max_parallel_operations: 4,
+            // One discovery call plus the default fs_glob result ceiling (100) must fit so a
+            // bounded inventory script can read every discovered SKILL.md in one top-level call.
+            max_operation_calls: 128,
+            max_parallel_operations: 16,
         }
     }
 }

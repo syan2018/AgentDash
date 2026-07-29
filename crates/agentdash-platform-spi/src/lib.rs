@@ -42,8 +42,9 @@ pub use agentdash_domain::backend::{
     RuntimeBackendAnchorSource,
 };
 pub use platform::capability_delta::{
-    CapabilityStateDelta, DefaultMountDelta, McpServerReadinessSummary, NamedEntityDelta, SetDelta,
-    VfsSurfaceDelta, compute_capability_state_delta,
+    CapabilityStateDelta, DefaultMountDelta, McpServerReadinessSummary, McpSurfaceDelta,
+    NamedEntityDelta, SetDelta, VfsSurfaceDelta, compute_capability_state_delta,
+    compute_mcp_surface_delta, compute_vfs_surface_delta,
 };
 pub use platform::runtime_surface::{
     CapabilityState, ChannelDimension, CompanionDimension, DiscoveredGuideline, DiscoveryContext,
@@ -52,9 +53,8 @@ pub use platform::runtime_surface::{
     PlatformToolExecutionContext, PlatformToolInvocationCoordinates, RestoredSessionState,
     RuntimeMcpServer, RuntimeMcpSourceReadiness, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule,
     RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern, SkillClusterMeta,
-    SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, VfsDimension,
-    WorkspaceModuleDimension, WorkspaceModuleVisibilityMode, partition_runtime_mcp_servers,
-    workspace_path_from_context,
+    SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, WorkspaceModuleDimension,
+    WorkspaceModuleVisibilityMode, partition_runtime_mcp_servers, workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────

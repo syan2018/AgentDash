@@ -407,6 +407,24 @@ impl AgentRunOperationHost {
             None,
         )
     }
+
+    pub fn attached_interaction(
+        gateway: Arc<OperationGateway>,
+        run_id: Uuid,
+        agent_id: Uuid,
+        instance_id: Uuid,
+    ) -> Result<BoundOperationHost, OperationExecutionError> {
+        BoundOperationHost::new(
+            gateway,
+            OperationPrincipal::server_resolved(OperationPrincipalRef::AgentRunAgent {
+                run_id,
+                agent_id,
+            }),
+            OperationScopeRef::InteractionInstance { instance_id },
+            OperationOriginRef::Interaction { instance_id },
+            None,
+        )
+    }
 }
 
 pub struct ExtensionServiceOperationHost;

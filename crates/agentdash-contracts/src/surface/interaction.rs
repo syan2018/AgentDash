@@ -98,6 +98,8 @@ pub struct CanvasDefinitionDto {
     #[serde(default)]
     pub component_bindings: Vec<InteractionComponentBindingDto>,
     #[serde(default)]
+    pub action_bindings: Vec<InteractionActionBindingDto>,
+    #[serde(default)]
     pub resource_slots: Vec<InteractionResourceSlotDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -173,6 +175,8 @@ pub struct CreateCanvasDefinitionRequest {
     #[serde(default)]
     pub component_bindings: Vec<InteractionComponentBindingDto>,
     #[serde(default)]
+    pub action_bindings: Vec<InteractionActionBindingDto>,
+    #[serde(default)]
     pub resource_slots: Vec<InteractionResourceSlotDto>,
 }
 
@@ -211,6 +215,9 @@ pub struct CommitCanvasDefinitionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub component_bindings: Option<Vec<InteractionComponentBindingDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub action_bindings: Option<Vec<InteractionActionBindingDto>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resource_slots: Option<Vec<InteractionResourceSlotDto>>,
@@ -262,12 +269,19 @@ pub struct InteractionCommandDefinitionDto {
 pub struct InteractionComponentEventBindingDto {
     pub event_type: String,
     pub payload_schema: Value,
-    pub target: InteractionComponentEventTargetDto,
+    pub target: InteractionActionTargetDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionActionBindingDto {
+    pub action_key: String,
+    pub payload_schema: Value,
+    pub target: InteractionActionTargetDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum InteractionComponentEventTargetDto {
+pub enum InteractionActionTargetDto {
     PlatformCommand {
         command_key: String,
     },
@@ -459,10 +473,38 @@ pub struct InteractionComponentEventRequestDto {
     pub event_type: String,
     pub payload: Value,
     pub expected_state_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct InteractionComponentEventResponseDto {
+    pub outcome: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub instance: Option<InteractionInstanceDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionActionRequestDto {
+    pub command_id: String,
+    pub action_key: String,
+    pub payload: Value,
+    pub expected_state_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionActionResponseDto {
     pub outcome: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

@@ -20,8 +20,9 @@ use agentdash_application::interaction::{
 };
 use agentdash_application_agentrun::agent_run::DeliverAgentRunProductInput;
 use agentdash_application_operation_gateway::{
-    HostInvocationOptions, HostOperationInvocation, HostOperationScriptProgram, OperationPrincipal,
-    OperationReadiness, UserWorkshopOperationHost, validate_json_schema_subset,
+    AgentRunOperationHost, BoundOperationHost, HostInvocationOptions, HostOperationInvocation,
+    HostOperationScriptProgram, OperationPrincipal, OperationReadiness, UserWorkshopOperationHost,
+    validate_json_schema_subset,
 };
 use agentdash_application_ports::operation_script::OperationScriptLimits;
 use agentdash_contracts::interaction::{
@@ -30,21 +31,22 @@ use agentdash_contracts::interaction::{
     CanvasRuntimeFeaturesDto, CanvasRuntimeSnapshotDto, CloseInteractionInstanceRequestDto,
     CommitCanvasDefinitionRequest, CreateCanvasDefinitionRequest,
     CreateInteractionInstanceRequestDto, DistributeCanvasDefinitionRequest,
-    InteractionAgentProjectionDto, InteractionCommandActorPolicyDto,
+    InteractionActionBindingDto, InteractionActionRequestDto, InteractionActionResponseDto,
+    InteractionActionTargetDto, InteractionAgentProjectionDto, InteractionCommandActorPolicyDto,
     InteractionCommandDefinitionDto, InteractionCommandRequestDto, InteractionCommandResponseDto,
     InteractionComponentBindingDto, InteractionComponentEventBindingDto,
     InteractionComponentEventRequestDto, InteractionComponentEventResponseDto,
-    InteractionComponentEventTargetDto, InteractionDefinitionAccessDto,
-    InteractionDefinitionLineageDto, InteractionDefinitionLineageKindDto,
-    InteractionDefinitionStatusDto, InteractionEventDto, InteractionInstanceDto,
-    InteractionInstanceViewDto, InteractionInstanceViewQueryDto, InteractionOperationRefDto,
-    InteractionOperationScriptSourceDto, InteractionOwnerDto, InteractionPinnedArtifactDto,
-    InteractionPresentationQueryDto, InteractionPresentationStateDto, InteractionRendererLeaseDto,
-    InteractionResourceSlotDto, InteractionResourceSlotKindDto, InteractionRuntimeBindingDto,
-    InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto, InteractionSourceChangesetDto,
-    InteractionSourceFileChangeDto, InteractionSourceFileDto, InteractionSourceSandboxDto,
-    InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery, ListInteractionEventsQueryDto,
-    OperationWorkshopDescriptorDto, PromoteInteractionDefinitionExtensionRequestDto,
+    InteractionDefinitionAccessDto, InteractionDefinitionLineageDto,
+    InteractionDefinitionLineageKindDto, InteractionDefinitionStatusDto, InteractionEventDto,
+    InteractionInstanceDto, InteractionInstanceViewDto, InteractionInstanceViewQueryDto,
+    InteractionOperationRefDto, InteractionOperationScriptSourceDto, InteractionOwnerDto,
+    InteractionPinnedArtifactDto, InteractionPresentationQueryDto, InteractionPresentationStateDto,
+    InteractionRendererLeaseDto, InteractionResourceSlotDto, InteractionResourceSlotKindDto,
+    InteractionRuntimeBindingDto, InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto,
+    InteractionSourceChangesetDto, InteractionSourceFileChangeDto, InteractionSourceFileDto,
+    InteractionSourceSandboxDto, InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery,
+    ListInteractionEventsQueryDto, OperationWorkshopDescriptorDto,
+    PromoteInteractionDefinitionExtensionRequestDto,
     PromoteInteractionDefinitionExtensionResponseDto, ReleaseInteractionRendererLeaseRequestDto,
     ReplaceInteractionPresentationRequestDto, UpsertInteractionRendererLeaseRequestDto,
     UpsertInteractionRuntimeBindingRequestDto,
@@ -53,13 +55,13 @@ use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::interaction::{
     AttachmentSubject, CommandActorPolicy, ComponentBinding, ComponentEventBinding,
-    ComponentEventTarget, ComponentOperationScriptSource, DefinitionLineageKind, InteractionActor,
+    DefinitionLineageKind, InteractionActionBinding, InteractionActionTarget, InteractionActor,
     InteractionAgentProjection, InteractionCommandCommit, InteractionCommandDefinition,
     InteractionCommandOrigin, InteractionDefinition, InteractionDefinitionStatus,
     InteractionOperationEffectDefinition, InteractionOwner, InteractionRuntimeBinding,
-    OperationEffectSafety, PlatformCommandHandler, ResourceSlotDefinition, ResourceSlotKind,
-    RuntimeBindingAuthorizationRef, RuntimeBindingTarget, SourceBundle, SourceBundleChangeset,
-    SourceFile, SourceFileChange, SourceSandboxConfig, StatePatchV1Contract,
+    OperationEffectSafety, OperationScriptSource, PlatformCommandHandler, ResourceSlotDefinition,
+    ResourceSlotKind, RuntimeBindingAuthorizationRef, RuntimeBindingTarget, SourceBundle,
+    SourceBundleChangeset, SourceFile, SourceFileChange, SourceSandboxConfig, StatePatchV1Contract,
 };
 use agentdash_domain::operation::{OperationOriginRef, OperationReplayPolicy, OperationScopeRef};
 use agentdash_domain::project::{ProjectAuthorizationContext, ProjectAuthorizationService};
@@ -142,6 +144,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/interaction-instances/{instance_id}/component-events",
             axum::routing::post(execute_interaction_component_event),
+        )
+        .route(
+            "/interaction-instances/{instance_id}/actions",
+            axum::routing::post(execute_interaction_action),
         )
         .route(
             "/interaction-instances/{instance_id}/close",
@@ -236,6 +242,11 @@ async fn create_canvas_definition(
                     .component_bindings
                     .into_iter()
                     .map(component_binding_from_dto)
+                    .collect::<Result<Vec<_>, _>>()?,
+                action_bindings: request
+                    .action_bindings
+                    .into_iter()
+                    .map(action_binding_from_dto)
                     .collect::<Result<Vec<_>, _>>()?,
                 resource_slots: request
                     .resource_slots
@@ -332,6 +343,15 @@ async fn commit_canvas_definition(
                         bindings
                             .into_iter()
                             .map(component_binding_from_dto)
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                    .transpose()?,
+                action_bindings: request
+                    .action_bindings
+                    .map(|bindings| {
+                        bindings
+                            .into_iter()
+                            .map(action_binding_from_dto)
                             .collect::<Result<Vec<_>, _>>()
                     })
                     .transpose()?,
@@ -864,17 +884,103 @@ async fn execute_interaction_component_event(
     validate_json_schema_subset(&event.payload_schema, &request.payload).map_err(|reason| {
         ApiError::BadRequest(format!("Component event payload 不符合 schema: {reason}"))
     })?;
+    let response = execute_definition_action(
+        &state,
+        &current_user,
+        view.instance.id,
+        &revision,
+        command_id,
+        event.target,
+        request.payload,
+        request.expected_state_revision,
+        request.run_id.as_deref(),
+        request.agent_id.as_deref(),
+    )
+    .await?;
+    Ok(Json(InteractionComponentEventResponseDto {
+        outcome: response.outcome,
+        instance: response.instance,
+    }))
+}
 
-    let response = match event.target {
-        ComponentEventTarget::PlatformCommand { command_key } => {
+async fn execute_interaction_action(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<InteractionInstancePath>,
+    Json(request): Json<InteractionActionRequestDto>,
+) -> Result<Json<InteractionActionResponseDto>, ApiError> {
+    let instance_id = parse_uuid(&path.instance_id, "instance_id")?;
+    let command_id = parse_uuid(&request.command_id, "command_id")?;
+    let view = instance_service(&state, &current_user)
+        .get(instance_id, &current_user.user_id)
+        .await?;
+    let revision = state
+        .repos
+        .interaction_definition_repo
+        .get_revision(view.instance.definition_revision_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("Interaction definition revision 不存在".into()))?;
+    let action = revision
+        .action_bindings
+        .iter()
+        .find(|binding| binding.action_key == request.action_key)
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound("Interaction action binding 不存在".into()))?;
+    validate_json_schema_subset(&action.payload_schema, &request.payload).map_err(|reason| {
+        ApiError::BadRequest(format!(
+            "Interaction action payload 不符合 schema: {reason}"
+        ))
+    })?;
+    Ok(Json(
+        execute_definition_action(
+            &state,
+            &current_user,
+            view.instance.id,
+            &revision,
+            command_id,
+            action.target,
+            request.payload,
+            request.expected_state_revision,
+            request.run_id.as_deref(),
+            request.agent_id.as_deref(),
+        )
+        .await?,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_definition_action(
+    state: &Arc<AppState>,
+    current_user: &agentdash_integration_api::AuthIdentity,
+    instance_id: Uuid,
+    revision: &agentdash_domain::interaction::InteractionDefinitionRevision,
+    command_id: Uuid,
+    target: InteractionActionTarget,
+    payload: serde_json::Value,
+    expected_state_revision: u64,
+    run_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<InteractionActionResponseDto, ApiError> {
+    let operation_host = resolve_interaction_action_operation_host(
+        state,
+        current_user,
+        instance_id,
+        revision.project_id,
+        run_id,
+        agent_id,
+    )
+    .await?;
+
+    Ok(match target {
+        InteractionActionTarget::PlatformCommand { command_key } => {
             let commit = command_service(&state, &current_user, revision.project_id)
                 .execute(
                     InteractionCommandInput {
                         instance_id,
                         command_id,
                         command_key,
-                        payload: request.payload,
-                        expected_state_revision: request.expected_state_revision,
+                        payload,
+                        expected_state_revision,
                     },
                     InteractionCommandCallerContext::AuthenticatedUser {
                         user_id: current_user.user_id.clone(),
@@ -890,7 +996,7 @@ async fn execute_interaction_component_event(
                     instance, event, ..
                 } => (instance, event, true),
             };
-            InteractionComponentEventResponseDto {
+            InteractionActionResponseDto {
                 outcome: serde_json::json!({
                     "kind": "platform_command",
                     "event_id": event.id,
@@ -900,28 +1006,23 @@ async fn execute_interaction_component_event(
                 instance: Some(interaction_instance_to_dto(instance)),
             }
         }
-        ComponentEventTarget::Operation { operation_ref } => {
-            let result = UserWorkshopOperationHost::interaction(
-                state.services.operation_gateway.clone(),
-                current_user.clone(),
-                instance_id,
-            )
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?
-            .invoke(
-                HostOperationInvocation {
-                    operation_ref,
-                    input: request.payload,
-                    idempotency_key: Some(command_id.to_string()),
-                },
-                HostInvocationOptions::default(),
-                CancellationToken::new(),
-            )
-            .await
-            .map_err(|error| ApiError::BadRequestWithCode {
-                message: error.to_string(),
-                error_code: error.code().to_string(),
-            })?;
-            InteractionComponentEventResponseDto {
+        InteractionActionTarget::Operation { operation_ref } => {
+            let result = operation_host
+                .invoke(
+                    HostOperationInvocation {
+                        operation_ref,
+                        input: payload,
+                        idempotency_key: Some(command_id.to_string()),
+                    },
+                    HostInvocationOptions::default(),
+                    CancellationToken::new(),
+                )
+                .await
+                .map_err(|error| ApiError::BadRequestWithCode {
+                    message: error.to_string(),
+                    error_code: error.code().to_string(),
+                })?;
+            InteractionActionResponseDto {
                 outcome: serde_json::json!({
                     "kind": "operation",
                     "result": result
@@ -929,15 +1030,15 @@ async fn execute_interaction_component_event(
                 instance: None,
             }
         }
-        ComponentEventTarget::OperationScript {
+        InteractionActionTarget::OperationScript {
             language,
             host_api_version,
             source,
             requested_operations,
         } => {
             let source = match source {
-                ComponentOperationScriptSource::Inline { source } => source,
-                ComponentOperationScriptSource::SourceFile { path } => revision
+                OperationScriptSource::Inline { source } => source,
+                OperationScriptSource::SourceFile { path } => revision
                     .source_bundle
                     .files
                     .iter()
@@ -953,25 +1054,20 @@ async fn execute_interaction_component_event(
                 language,
                 host_api_version,
                 source,
-                input: request.payload,
+                input: payload,
                 operation_set:
                     agentdash_application_operation_gateway::HostOperationScriptOperationSet::Exact(
                         requested_operations,
                     ),
                 limits: OperationScriptLimits::default(),
             };
-            let host = UserWorkshopOperationHost::interaction(
-                state.services.operation_gateway.clone(),
-                current_user.clone(),
-                instance_id,
-            )
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?
-            .operation_script(state.services.operation_script_engine.clone());
+            let host =
+                operation_host.operation_script(state.services.operation_script_engine.clone());
             let outcome = host
                 .execute(program, CancellationToken::new())
                 .await
                 .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-            InteractionComponentEventResponseDto {
+            InteractionActionResponseDto {
                 outcome: serde_json::json!({
                     "kind": "operation_script",
                     "result": outcome
@@ -979,8 +1075,74 @@ async fn execute_interaction_component_event(
                 instance: None,
             }
         }
-    };
-    Ok(Json(response))
+    })
+}
+
+async fn resolve_interaction_action_operation_host(
+    state: &Arc<AppState>,
+    current_user: &agentdash_integration_api::AuthIdentity,
+    instance_id: Uuid,
+    project_id: Uuid,
+    run_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<BoundOperationHost, ApiError> {
+    match (run_id, agent_id) {
+        (None, None) => UserWorkshopOperationHost::interaction(
+            state.services.operation_gateway.clone(),
+            current_user.clone(),
+            instance_id,
+        )
+        .map_err(|error| ApiError::BadRequest(error.to_string())),
+        (Some(run_id), Some(agent_id)) => {
+            let target = AgentRunTarget {
+                run_id: parse_uuid(run_id, "run_id")?,
+                agent_id: parse_uuid(agent_id, "agent_id")?,
+            };
+            let agent = state
+                .repos
+                .lifecycle_agent_repo
+                .get(target.agent_id)
+                .await?
+                .ok_or_else(|| ApiError::NotFound("Lifecycle Agent 不存在".into()))?;
+            if agent.run_id != target.run_id
+                || agent.project_id != project_id
+                || agent.created_by_user_id != current_user.user_id
+            {
+                return Err(ApiError::Forbidden(
+                    "当前用户无权使用目标 AgentRun surface".into(),
+                ));
+            }
+            let attached = state
+                .repos
+                .interaction_instance_repo
+                .list_attachments(instance_id)
+                .await?
+                .into_iter()
+                .any(|attachment| {
+                    attachment.detached_at.is_none()
+                        && attachment.subject
+                            == AttachmentSubject::AgentRun {
+                                run_id: target.run_id,
+                                agent_id: target.agent_id,
+                            }
+                });
+            if !attached {
+                return Err(ApiError::Forbidden(
+                    "Interaction 未 attach 到目标 AgentRun".into(),
+                ));
+            }
+            AgentRunOperationHost::attached_interaction(
+                state.services.operation_gateway.clone(),
+                target.run_id,
+                target.agent_id,
+                instance_id,
+            )
+            .map_err(|error| ApiError::BadRequest(error.to_string()))
+        }
+        _ => Err(ApiError::BadRequest(
+            "run_id 与 agent_id 必须同时提供".into(),
+        )),
+    }
 }
 
 async fn close_interaction_instance(
@@ -1559,39 +1721,49 @@ fn component_binding_from_dto(
                 Ok(ComponentEventBinding {
                     event_type: event.event_type,
                     payload_schema: event.payload_schema,
-                    target: component_event_target_from_dto(event.target)?,
+                    target: action_target_from_dto(event.target)?,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
-fn component_event_target_from_dto(
-    target: InteractionComponentEventTargetDto,
-) -> Result<ComponentEventTarget, ApiError> {
+fn action_binding_from_dto(
+    dto: InteractionActionBindingDto,
+) -> Result<InteractionActionBinding, ApiError> {
+    Ok(InteractionActionBinding {
+        action_key: dto.action_key,
+        payload_schema: dto.payload_schema,
+        target: action_target_from_dto(dto.target)?,
+    })
+}
+
+fn action_target_from_dto(
+    target: InteractionActionTargetDto,
+) -> Result<InteractionActionTarget, ApiError> {
     Ok(match target {
-        InteractionComponentEventTargetDto::PlatformCommand { command_key } => {
-            ComponentEventTarget::PlatformCommand { command_key }
+        InteractionActionTargetDto::PlatformCommand { command_key } => {
+            InteractionActionTarget::PlatformCommand { command_key }
         }
-        InteractionComponentEventTargetDto::Operation { operation_ref } => {
-            ComponentEventTarget::Operation {
+        InteractionActionTargetDto::Operation { operation_ref } => {
+            InteractionActionTarget::Operation {
                 operation_ref: operation_ref_from_interaction_dto(operation_ref)?,
             }
         }
-        InteractionComponentEventTargetDto::OperationScript {
+        InteractionActionTargetDto::OperationScript {
             language,
             host_api_version,
             source,
             requested_operations,
-        } => ComponentEventTarget::OperationScript {
+        } => InteractionActionTarget::OperationScript {
             language,
             host_api_version,
             source: match source {
                 InteractionOperationScriptSourceDto::Inline { source } => {
-                    ComponentOperationScriptSource::Inline { source }
+                    OperationScriptSource::Inline { source }
                 }
                 InteractionOperationScriptSourceDto::SourceFile { path } => {
-                    ComponentOperationScriptSource::SourceFile { path }
+                    OperationScriptSource::SourceFile { path }
                 }
             },
             requested_operations: requested_operations
@@ -1719,9 +1891,18 @@ fn view_to_dto(view: CanvasDefinitionView) -> CanvasDefinitionDto {
                     .map(|event| InteractionComponentEventBindingDto {
                         event_type: event.event_type,
                         payload_schema: event.payload_schema,
-                        target: component_event_target_to_dto(event.target),
+                        target: action_target_to_dto(event.target),
                     })
                     .collect(),
+            })
+            .collect(),
+        action_bindings: revision
+            .action_bindings
+            .into_iter()
+            .map(|binding| InteractionActionBindingDto {
+                action_key: binding.action_key,
+                payload_schema: binding.payload_schema,
+                target: action_target_to_dto(binding.target),
             })
             .collect(),
         resource_slots: revision
@@ -1853,31 +2034,29 @@ fn command_definition_to_dto(
     }
 }
 
-fn component_event_target_to_dto(
-    target: ComponentEventTarget,
-) -> InteractionComponentEventTargetDto {
+fn action_target_to_dto(target: InteractionActionTarget) -> InteractionActionTargetDto {
     match target {
-        ComponentEventTarget::PlatformCommand { command_key } => {
-            InteractionComponentEventTargetDto::PlatformCommand { command_key }
+        InteractionActionTarget::PlatformCommand { command_key } => {
+            InteractionActionTargetDto::PlatformCommand { command_key }
         }
-        ComponentEventTarget::Operation { operation_ref } => {
-            InteractionComponentEventTargetDto::Operation {
+        InteractionActionTarget::Operation { operation_ref } => {
+            InteractionActionTargetDto::Operation {
                 operation_ref: operation_ref_to_interaction_dto(operation_ref),
             }
         }
-        ComponentEventTarget::OperationScript {
+        InteractionActionTarget::OperationScript {
             language,
             host_api_version,
             source,
             requested_operations,
-        } => InteractionComponentEventTargetDto::OperationScript {
+        } => InteractionActionTargetDto::OperationScript {
             language,
             host_api_version,
             source: match source {
-                ComponentOperationScriptSource::Inline { source } => {
+                OperationScriptSource::Inline { source } => {
                     InteractionOperationScriptSourceDto::Inline { source }
                 }
-                ComponentOperationScriptSource::SourceFile { path } => {
+                OperationScriptSource::SourceFile { path } => {
                     InteractionOperationScriptSourceDto::SourceFile { path }
                 }
             },

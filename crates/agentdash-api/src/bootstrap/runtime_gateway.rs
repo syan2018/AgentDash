@@ -24,6 +24,7 @@ use agentdash_application_operation_gateway::{
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
 use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
+use agentdash_infrastructure::mcp::runtime_mcp_capability_key;
 use agentdash_platform_spi::AuthIdentity;
 use agentdash_platform_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_platform_spi::platform::mcp_relay::{McpRelayProvider, RelayProbeTarget};
@@ -720,6 +721,8 @@ impl agentdash_application_operation_gateway::OperationAuthorityResolver
         }
         let mut facts = Vec::new();
         let mut capabilities = std::collections::BTreeSet::from(["operation.invoke".to_string()]);
+        let mut resolved_project_id =
+            agentdash_application_operation_gateway::scope_project_id(&scope.scope_ref);
         match principal.principal_ref() {
             OperationPrincipalRef::User { user_id } => {
                 let identity = principal.user_identity().ok_or_else(|| {
@@ -769,6 +772,22 @@ impl agentdash_application_operation_gateway::OperationAuthorityResolver
                                 });
                             }
                         }
+                        let revision = self
+                            .repos
+                            .interaction_definition_repo
+                            .get_revision(instance.definition_revision_id)
+                            .await
+                            .map_err(|error| {
+                                OperationExecutionError::provider_failed(error.to_string())
+                            })?
+                            .ok_or_else(|| OperationExecutionError::NotReady {
+                                code: "interaction_revision_not_found".to_string(),
+                                message: format!(
+                                    "Interaction definition revision 不存在: {}",
+                                    instance.definition_revision_id
+                                ),
+                            })?;
+                        resolved_project_id = Some(revision.project_id);
                         facts.push(format!(
                             "interaction:{}:{}:{}:{}",
                             instance.id,
@@ -784,9 +803,22 @@ impl agentdash_application_operation_gateway::OperationAuthorityResolver
                         ));
                     }
                 }
-                if let Some(project_id) =
-                    agentdash_application_operation_gateway::scope_project_id(&scope.scope_ref)
-                {
+                if let Some(project_id) = resolved_project_id {
+                    for preset in self
+                        .repos
+                        .mcp_preset_repo
+                        .list_by_project(project_id)
+                        .await
+                        .map_err(|error| {
+                            OperationExecutionError::provider_failed(error.to_string())
+                        })?
+                    {
+                        capabilities.insert(runtime_mcp_capability_key(&preset.key));
+                        facts.push(format!(
+                            "mcp-preset:{}:{}:{}",
+                            preset.id, preset.key, preset.updated_at
+                        ));
+                    }
                     for installation in self.enabled_installations(project_id).await? {
                         capabilities.insert(format!("extension:{}", installation.extension_key));
                         facts.push(format!(

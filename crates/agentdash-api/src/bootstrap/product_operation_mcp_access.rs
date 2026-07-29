@@ -1,39 +1,46 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime::{
-    RuntimeToolAppliedSurfaceEvidence, RuntimeToolAuthorizationGrant, RuntimeToolInvocation,
-    RuntimeToolProductTarget, RuntimeToolProvenanceEvidence, RuntimeToolResolvedContext,
-    RuntimeToolResourceGrant, ToolProtocolProjector,
-};
-use agentdash_agent_runtime_contract::{
-    AgentEffectIdentity, AgentSurfaceRevision, AgentToolResult, AgentTurnId,
-};
+use agentdash_agent_runtime::ToolProtocolProjector;
 use agentdash_application::execution_authority::{
     ExecutionAuthority, ExecutionAuthorityRequest, ExecutionAuthorityResolver,
 };
+use agentdash_application::mcp_preset::{McpRuntimeBindingContext, resolve_preset_mcp_server};
+use agentdash_application::repository_set::RepositorySet;
 use agentdash_application_agentrun::agent_run::frame::runtime_backend_anchor_from_vfs;
 use agentdash_application_operation_gateway::{
     OperationAuthorizationScope, OperationExecutionError, OperationMcpAccess, OperationMcpTool,
     OperationPlacement, OperationPrincipal, OperationPrincipalRef,
 };
-use agentdash_infrastructure::mcp::{RuntimeDynamicToolCatalog, RuntimeMcpToolCatalogRequest};
-use agentdash_platform_spi::{RelayMcpCallContext, RuntimeMcpServer, RuntimeVfsAccessPolicy};
+use agentdash_domain::backend::RuntimeBackendAnchor;
+use agentdash_domain::common::{Mount, Vfs};
+use agentdash_domain::operation::OperationScopeRef;
+use agentdash_domain::workspace::WorkspaceBindingStatus;
+use agentdash_infrastructure::mcp::{
+    RuntimeDynamicToolCatalog, RuntimeMcpOperationInvocation, RuntimeMcpToolCatalogRequest,
+    runtime_mcp_capability_key,
+};
+use agentdash_platform_spi::{
+    CapabilityState, RelayMcpCallContext, RuntimeMcpServer, RuntimeVfsAccessPolicy, ToolCapability,
+};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 pub struct ProductRuntimeMcpOperationAccess {
     execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
     catalog: Arc<dyn RuntimeDynamicToolCatalog>,
+    repos: RepositorySet,
 }
 
 impl ProductRuntimeMcpOperationAccess {
     pub fn new(
         execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
         catalog: Arc<dyn RuntimeDynamicToolCatalog>,
+        repos: RepositorySet,
     ) -> Self {
         Self {
             execution_authorities,
             catalog,
+            repos,
         }
     }
 
@@ -42,33 +49,111 @@ impl ProductRuntimeMcpOperationAccess {
         principal: &OperationPrincipal,
         scope: &OperationAuthorizationScope,
     ) -> Result<ResolvedMcpSurface, OperationExecutionError> {
-        let OperationPrincipalRef::AgentRunAgent { run_id, agent_id } = principal.principal_ref()
-        else {
-            return Err(OperationExecutionError::NotReady {
-                code: "mcp_agent_surface_required".to_string(),
-                message: "MCP Operation 需要 AgentRun actor surface".to_string(),
-            });
+        let (servers, capability_state, relay_context, provenance_source) =
+            match principal.principal_ref() {
+                OperationPrincipalRef::AgentRunAgent { run_id, agent_id } => {
+                    let binding = self
+                        .resolve_agent_binding(*run_id, *agent_id, scope)
+                        .await?;
+                    let servers = binding.mcp_servers().to_vec();
+                    let vfs = binding.resources().vfs(binding.project_id());
+                    let relay_context = (!vfs.mounts.is_empty())
+                        .then(|| {
+                            let backend_anchor = runtime_backend_anchor_from_vfs(
+                                &vfs,
+                                Some("operation_gateway_mcp".to_string()),
+                            )
+                            .map_err(|error| {
+                                OperationExecutionError::provider_failed(error.to_string())
+                            })?;
+                            Ok(RelayMcpCallContext {
+                                session_id: binding.runtime_thread_id().to_string(),
+                                turn_id: None,
+                                tool_call_id: None,
+                                backend_anchor,
+                                vfs: Some(vfs.clone()),
+                                vfs_access_policy: Some(
+                                    RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs),
+                                ),
+                                identity: None,
+                            })
+                        })
+                        .transpose()?;
+                    (
+                        servers,
+                        binding.capability_state().clone(),
+                        relay_context,
+                        "agent_frame.mcp_surface",
+                    )
+                }
+                OperationPrincipalRef::User { .. } => {
+                    let project_id = self.scope_project_id(scope).await?;
+                    let (servers, relay_context) = self
+                        .resolve_user_surface(principal, scope, project_id)
+                        .await?;
+                    let mut capability_state = CapabilityState::default();
+                    for server in &servers {
+                        capability_state
+                            .tool
+                            .capabilities
+                            .insert(ToolCapability::new(runtime_mcp_capability_key(
+                                &server.name,
+                            )));
+                    }
+                    (
+                        servers,
+                        capability_state,
+                        relay_context,
+                        "project.mcp_presets",
+                    )
+                }
+                _ => {
+                    return Err(OperationExecutionError::NotReady {
+                        code: "mcp_principal_surface_unavailable".to_string(),
+                        message: "当前 principal 没有 MCP Operation surface".to_string(),
+                    });
+                }
+            };
+        let relay_backend_id = relay_context
+            .as_ref()
+            .and_then(|context| context.backend_anchor.as_ref())
+            .map(|anchor| anchor.backend_id().to_string());
+        let request = RuntimeMcpToolCatalogRequest {
+            servers: servers.clone(),
+            capability_state,
+            relay_context,
         };
-        if agentdash_application_operation_gateway::scope_project_id(&scope.scope_ref).is_none() {
-            return Err(OperationExecutionError::invalid_request(
-                "MCP Operation 需要 Project scope",
-            ));
-        }
-        let target = agentdash_domain::agent_run_target::AgentRunTarget {
-            run_id: *run_id,
-            agent_id: *agent_id,
-        };
+        let executors = self
+            .catalog
+            .resolve(request.clone())
+            .await
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?;
+        Ok(ResolvedMcpSurface {
+            servers,
+            executors,
+            relay_backend_id,
+            request,
+            provenance_source,
+        })
+    }
+
+    async fn resolve_agent_binding(
+        &self,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+        scope: &OperationAuthorizationScope,
+    ) -> Result<ExecutionAuthority, OperationExecutionError> {
         let binding = self
             .execution_authorities
-            .resolve(ExecutionAuthorityRequest::for_target(target))
+            .resolve(ExecutionAuthorityRequest::for_target(
+                agentdash_domain::agent_run_target::AgentRunTarget { run_id, agent_id },
+            ))
             .await
             .map_err(|error| OperationExecutionError::NotReady {
                 code: error.code().to_string(),
                 message: error.to_string(),
             })?;
-        if agentdash_application_operation_gateway::scope_project_id(&scope.scope_ref)
-            != Some(binding.project_id())
-        {
+        if self.scope_project_id(scope).await? != binding.project_id() {
             return Err(OperationExecutionError::CapabilitiesDenied {
                 missing: vec!["agent_run.project_scope".to_string()],
             });
@@ -81,77 +166,194 @@ impl ProductRuntimeMcpOperationAccess {
                 message: "Operation surface authority changed during projection".to_string(),
             });
         }
-        let servers = binding.mcp_servers().to_vec();
-        let vfs = binding.resources().vfs(binding.project_id());
-        let relay_context = (!vfs.mounts.is_empty())
-            .then(|| {
-                let backend_anchor = runtime_backend_anchor_from_vfs(
-                    &vfs,
-                    Some("operation_gateway_mcp".to_string()),
-                )
-                .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?;
-                Ok(RelayMcpCallContext {
-                    session_id: binding.runtime_thread_id().to_string(),
-                    turn_id: None,
-                    tool_call_id: None,
-                    backend_anchor,
-                    vfs: Some(vfs.clone()),
-                    vfs_access_policy: Some(RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs)),
-                    identity: None,
-                })
-            })
-            .transpose()?;
-        let relay_backend_id = relay_context
-            .as_ref()
-            .and_then(|context| context.backend_anchor.as_ref())
-            .map(|anchor| anchor.backend_id().to_string());
-        let executors = self
-            .catalog
-            .resolve(RuntimeMcpToolCatalogRequest {
-                servers: servers.clone(),
-                capability_state: binding.capability_state().clone(),
-                relay_context,
-            })
+        Ok(binding)
+    }
+
+    async fn resolve_user_surface(
+        &self,
+        principal: &OperationPrincipal,
+        scope: &OperationAuthorizationScope,
+        project_id: uuid::Uuid,
+    ) -> Result<(Vec<RuntimeMcpServer>, Option<RelayMcpCallContext>), OperationExecutionError> {
+        let presets = self
+            .repos
+            .mcp_preset_repo
+            .list_by_project(project_id)
             .await
             .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?;
-        Ok(ResolvedMcpSurface {
-            binding,
-            servers,
-            executors,
-            relay_backend_id,
-        })
+        let (runtime_surface, relay_context) = match &scope.scope_ref {
+            OperationScopeRef::WorkspaceBinding { workspace_id, .. } => {
+                let (vfs, backend_anchor) = self
+                    .resolve_workspace_runtime_surface(project_id, *workspace_id)
+                    .await?;
+                let context = McpRuntimeBindingContext {
+                    vfs: Some(&vfs),
+                    backend_anchor: Some(&backend_anchor),
+                };
+                let mut servers = Vec::with_capacity(presets.len());
+                for preset in presets {
+                    servers.push(resolve_preset_mcp_server(&preset, Some(&context)).map_err(
+                        |error| OperationExecutionError::NotReady {
+                            code: "mcp_runtime_binding_invalid".to_owned(),
+                            message: error.to_string(),
+                        },
+                    )?);
+                }
+                let relay_context = RelayMcpCallContext {
+                    session_id: format!("operation-workspace:{workspace_id}"),
+                    turn_id: None,
+                    tool_call_id: None,
+                    backend_anchor: Some(backend_anchor),
+                    vfs: Some(vfs.clone()),
+                    vfs_access_policy: Some(RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs)),
+                    identity: principal.user_identity().cloned(),
+                };
+                (servers, Some(relay_context))
+            }
+            OperationScopeRef::Project { .. } | OperationScopeRef::InteractionInstance { .. } => {
+                let mut servers = Vec::new();
+                for preset in presets
+                    .into_iter()
+                    .filter(|preset| preset.runtime_binding.is_none())
+                {
+                    let server = resolve_preset_mcp_server(&preset, None).map_err(|error| {
+                        OperationExecutionError::NotReady {
+                            code: "mcp_preset_invalid".to_owned(),
+                            message: error.to_string(),
+                        }
+                    })?;
+                    if !server.uses_relay {
+                        servers.push(server);
+                    }
+                }
+                (servers, None)
+            }
+            OperationScopeRef::EnvironmentSetup { .. } => {
+                return Err(OperationExecutionError::invalid_request(
+                    "MCP Operation 不接受 Setup scope",
+                ));
+            }
+        };
+        let mut servers = runtime_surface;
+        servers.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok((servers, relay_context))
+    }
+
+    async fn resolve_workspace_runtime_surface(
+        &self,
+        project_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+    ) -> Result<(Vfs, RuntimeBackendAnchor), OperationExecutionError> {
+        let workspace = self
+            .repos
+            .workspace_repo
+            .get_by_id(workspace_id)
+            .await
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+            .filter(|workspace| workspace.project_id == project_id)
+            .ok_or_else(|| OperationExecutionError::CapabilitiesDenied {
+                missing: vec!["workspace.project_scope".to_owned()],
+            })?;
+        let binding = workspace
+            .default_binding_id
+            .and_then(|binding_id| {
+                workspace
+                    .bindings
+                    .iter()
+                    .find(|binding| binding.id == binding_id)
+            })
+            .or_else(|| {
+                workspace
+                    .bindings
+                    .iter()
+                    .find(|binding| binding.status == WorkspaceBindingStatus::Ready)
+            })
+            .filter(|binding| binding.status == WorkspaceBindingStatus::Ready)
+            .ok_or_else(|| OperationExecutionError::NotReady {
+                code: "workspace_binding_unavailable".to_owned(),
+                message: format!("Workspace 没有 active binding: {workspace_id}"),
+            })?;
+        let backend_anchor = RuntimeBackendAnchor::workspace_binding(
+            binding.backend_id.clone(),
+            workspace_id,
+            binding.id,
+            binding.root_ref.clone(),
+        )
+        .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?;
+        let mount_id = "main".to_owned();
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: mount_id.clone(),
+                provider: "relay_fs".to_owned(),
+                backend_id: binding.backend_id.clone(),
+                root_ref: binding.root_ref.clone(),
+                capabilities: workspace.mount_capabilities.clone(),
+                default_write: false,
+                display_name: workspace.name.clone(),
+                metadata: serde_json::json!({
+                    "workspace_id": workspace.id,
+                    "workspace_binding_id": binding.id,
+                    "workspace_identity_payload": workspace.identity_payload,
+                    "workspace_detected_facts": binding.detected_facts,
+                }),
+            }],
+            default_mount_id: Some(mount_id),
+            source_project_id: Some(project_id.to_string()),
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        Ok((vfs, backend_anchor))
+    }
+
+    async fn scope_project_id(
+        &self,
+        scope: &OperationAuthorizationScope,
+    ) -> Result<uuid::Uuid, OperationExecutionError> {
+        match &scope.scope_ref {
+            OperationScopeRef::Project { project_id }
+            | OperationScopeRef::WorkspaceBinding { project_id, .. } => Ok(*project_id),
+            OperationScopeRef::InteractionInstance { instance_id } => {
+                let instance = self
+                    .repos
+                    .interaction_instance_repo
+                    .get(*instance_id)
+                    .await
+                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+                    .ok_or_else(|| OperationExecutionError::NotReady {
+                        code: "interaction_not_found".to_string(),
+                        message: format!("InteractionInstance 不存在: {instance_id}"),
+                    })?;
+                let revision = self
+                    .repos
+                    .interaction_definition_repo
+                    .get_revision(instance.definition_revision_id)
+                    .await
+                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+                    .ok_or_else(|| OperationExecutionError::NotReady {
+                        code: "interaction_revision_not_found".to_string(),
+                        message: format!(
+                            "Interaction definition revision 不存在: {}",
+                            instance.definition_revision_id
+                        ),
+                    })?;
+                Ok(revision.project_id)
+            }
+            OperationScopeRef::EnvironmentSetup { .. } => Err(
+                OperationExecutionError::invalid_request("MCP Operation 不接受 Setup scope"),
+            ),
+        }
     }
 }
 
 struct ResolvedMcpSurface {
-    binding: ExecutionAuthority,
     servers: Vec<RuntimeMcpServer>,
     executors: Vec<Arc<dyn agentdash_agent_runtime::RuntimeToolExecutor>>,
     relay_backend_id: Option<String>,
+    request: RuntimeMcpToolCatalogRequest,
+    provenance_source: &'static str,
 }
 
 impl ResolvedMcpSurface {
-    fn executor(
-        &self,
-        server_name: &str,
-        tool_name: &str,
-    ) -> Option<Arc<dyn agentdash_agent_runtime::RuntimeToolExecutor>> {
-        self.executors
-            .iter()
-            .find(|executor| {
-                let definition = executor.definition();
-                matches!(
-                    definition.protocol_projector,
-                    ToolProtocolProjector::Mcp { ref server_key } if server_key == server_name
-                ) && definition
-                    .provenance
-                    .tool_path
-                    .rsplit_once("::")
-                    .is_some_and(|(_, candidate)| candidate == tool_name)
-            })
-            .cloned()
-    }
-
     fn operation_tool(
         &self,
         executor: &Arc<dyn agentdash_agent_runtime::RuntimeToolExecutor>,
@@ -177,6 +379,7 @@ impl ResolvedMcpSurface {
             description: definition.description,
             input_schema: definition.parameters_schema,
             placement,
+            provenance_source: self.provenance_source.to_owned(),
         })
     }
 }
@@ -213,71 +416,16 @@ impl OperationMcpAccess for ProductRuntimeMcpOperationAccess {
             return Err(OperationExecutionError::Cancelled);
         }
         let surface = self.resolve(principal, scope).await?;
-        let executor = surface.executor(server_name, tool_name).ok_or_else(|| {
-            OperationExecutionError::NotReady {
-                code: "mcp_tool_missing".to_string(),
-                message: format!("MCP tool 不在当前 surface: {server_name}.{tool_name}"),
-            }
-        })?;
-        let definition = executor.definition();
-        let revision = surface.binding.revision().max(1);
-        let surface_digest = surface.binding.digest().to_string();
-        let resources = surface.binding.resources();
-        let evidence = surface.binding.evidence();
-        let target = surface.binding.agent_run_target().ok_or_else(|| {
-            OperationExecutionError::CapabilitiesDenied {
-                missing: vec!["platform_tool.agent_run_principal".to_string()],
-            }
-        })?;
-        let invocation = RuntimeToolInvocation {
-            context: RuntimeToolResolvedContext {
-                runtime_thread_id: surface.binding.runtime_thread_id().clone(),
-                host_binding_generation: None,
-                applied_surface_revision: AgentSurfaceRevision(revision),
-                turn_id: AgentTurnId::new("operation-gateway")
-                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
-                item_id: None,
-                effect_id: AgentEffectIdentity::new(uuid::Uuid::new_v4().to_string())
-                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?,
-                invocation_id: uuid::Uuid::new_v4().to_string(),
-                deadline_at_ms: chrono::Utc::now().timestamp_millis().max(0) as u64 + 30_000,
-            },
-            tool: definition.name.clone(),
-            arguments,
-            grant: RuntimeToolAuthorizationGrant {
-                permission: definition.permission,
-                effect: definition.effect,
-                target: RuntimeToolProductTarget {
-                    project_id: surface.binding.project_id().to_string(),
-                    run_id: target.run_id.to_string(),
-                    agent_id: target.agent_id.to_string(),
+        self.catalog
+            .invoke_operation(
+                surface.request,
+                RuntimeMcpOperationInvocation {
+                    server_name: server_name.to_owned(),
+                    tool_name: tool_name.to_owned(),
+                    arguments,
                 },
-                applied_surface: RuntimeToolAppliedSurfaceEvidence {
-                    agent_surface_revision: revision,
-                    agent_surface_digest: surface_digest.clone(),
-                    vfs_digest: resources.vfs_digest().to_string(),
-                    vfs_provenance: RuntimeToolProvenanceEvidence {
-                        source_kind: evidence.source_kind().to_string(),
-                        source_id: evidence.source_id().to_string(),
-                        source_revision: evidence.source_revision(),
-                        projection_revision: evidence.projection_revision(),
-                        captured_at_ms: evidence.captured_at_ms(),
-                    },
-                    task_digest: resources.task_digest().to_string(),
-                    product_binding_digest: evidence.binding_digest().to_string(),
-                    host_binding_generation: None,
-                },
-                resources: RuntimeToolResourceGrant::Product,
-            },
-        };
-        match executor.execute(invocation).await {
-            AgentToolResult::Completed { output } => Ok(output),
-            AgentToolResult::Rejected { code, message } => {
-                Err(OperationExecutionError::NotReady { code, message })
-            }
-            AgentToolResult::Failed { code, message } => Err(
-                OperationExecutionError::provider_failed(format!("{code}: {message}")),
-            ),
-        }
+            )
+            .await
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))
     }
 }

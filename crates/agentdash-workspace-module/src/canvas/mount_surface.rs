@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
-use agentdash_application_agentrun::agent_run::frame::{AgentFrameBuilder, FrameSurfaceDraft};
-use agentdash_application_agentrun::agent_run::{
-    AgentFrameSurfaceExt, AgentRunProductRuntimeBindingStore,
-    AgentRunProductRuntimeSurfaceRebindPort, AgentRunProductRuntimeSurfaceRebindRequest,
-    ProductAgentFrameRef, ProductAgentSurfaceFacts,
+use agentdash_application_ports::agent_frame_materialization::{
+    AgentRunRuntimeSurfaceUpdatePort, RuntimeSurfaceChange, RuntimeSurfaceUpdateRequest,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::common::{Mount, MountCapability};
@@ -12,8 +9,7 @@ use agentdash_domain::interaction::{
     InteractionDefinitionRepository, InteractionDefinitionRevision, InteractionDefinitionStatus,
     InteractionOwner,
 };
-use agentdash_domain::workflow::{AgentFrameRepository, LifecycleAgentRepository};
-use agentdash_platform_spi::WorkspaceModuleVisibilityMode;
+use agentdash_domain::workflow::{LifecycleAgentRepository, MountDirective};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -66,25 +62,19 @@ pub trait CanvasMountMaterializationPort: Send + Sync {
 pub struct ProductCanvasMountMaterializer {
     definitions: Arc<dyn InteractionDefinitionRepository>,
     agents: Arc<dyn LifecycleAgentRepository>,
-    frames: Arc<dyn AgentFrameRepository>,
-    bindings: Arc<dyn AgentRunProductRuntimeBindingStore>,
-    rebind: Arc<dyn AgentRunProductRuntimeSurfaceRebindPort>,
+    surface_updates: Arc<dyn AgentRunRuntimeSurfaceUpdatePort>,
 }
 
 impl ProductCanvasMountMaterializer {
     pub fn new(
         definitions: Arc<dyn InteractionDefinitionRepository>,
         agents: Arc<dyn LifecycleAgentRepository>,
-        frames: Arc<dyn AgentFrameRepository>,
-        bindings: Arc<dyn AgentRunProductRuntimeBindingStore>,
-        rebind: Arc<dyn AgentRunProductRuntimeSurfaceRebindPort>,
+        surface_updates: Arc<dyn AgentRunRuntimeSurfaceUpdatePort>,
     ) -> Self {
         Self {
             definitions,
             agents,
-            frames,
-            bindings,
-            rebind,
+            surface_updates,
         }
     }
 
@@ -167,126 +157,43 @@ impl CanvasMountMaterializationPort for ProductCanvasMountMaterializer {
         request: CanvasMountMaterializationRequest,
     ) -> Result<CanvasMountConvergence, CanvasMountMaterializationError> {
         let (revision, user_id) = self.resolve_revision(&request).await?;
-        let binding = self
-            .bindings
-            .load_product_binding(&request.target)
-            .await
-            .map_err(CanvasMountMaterializationError::Failed)?
-            .ok_or_else(|| {
-                CanvasMountMaterializationError::Rejected(
-                    "AgentRun Product runtime binding 不存在".to_owned(),
-                )
-            })?;
-        let current = self
-            .frames
-            .get(binding.launch_frame.frame_id)
-            .await
-            .map_err(|error| CanvasMountMaterializationError::Failed(error.to_string()))?
-            .ok_or_else(|| {
-                CanvasMountMaterializationError::Failed(
-                    "Product binding 指向的 AgentFrame 不存在".to_owned(),
-                )
-            })?;
         let module_ref = format!("canvas:{}", revision.definition_id);
         let mount = canvas_authoring_mount(&revision, &user_id);
-        let mut capability = current.typed_capability_state().ok_or_else(|| {
-            CanvasMountMaterializationError::Failed(
-                "AgentFrame 缺少 typed capability surface".to_owned(),
-            )
-        })?;
-        let mut vfs = current.typed_vfs().ok_or_else(|| {
-            CanvasMountMaterializationError::Failed("AgentFrame 缺少 typed VFS surface".to_owned())
-        })?;
-        let module_visible = capability.workspace_module.allows(&module_ref);
-        let mount_visible = vfs.mounts.iter().any(|candidate| {
-            candidate.id == mount.id
-                && candidate.provider == mount.provider
-                && candidate.backend_id == mount.backend_id
-                && candidate.root_ref == mount.root_ref
-        });
-        if module_visible && mount_visible {
-            return Ok(CanvasMountConvergence {
-                frame_id: current.id,
-                frame_revision: u64::try_from(current.revision).unwrap_or_default(),
-                wrote_frame_revision: false,
-                applied_generation: None,
-                module_ref,
-                authoring_mount_id: revision.authoring_mount_id,
-            });
-        }
-        if capability.workspace_module.mode == WorkspaceModuleVisibilityMode::Allowlist
-            && !module_visible
-        {
-            capability
-                .workspace_module
-                .allowed_module_ids
-                .push(module_ref.clone());
-            capability.workspace_module.allowed_module_ids.sort();
-            capability.workspace_module.allowed_module_ids.dedup();
-        }
-        if !mount_visible {
-            vfs.mounts.push(mount);
-            vfs.mounts.sort_by(|left, right| left.id.cmp(&right.id));
-        }
-
-        let mut draft = FrameSurfaceDraft::from_frame(&current);
-        draft.capability_state = Some(capability);
-        draft.vfs = Some(vfs);
-        let mut builder = AgentFrameBuilder::new(request.target.agent_id)
-            .with_surface_draft(&draft)
-            .with_created_by(
-                match request.intent {
+        let outcome = self
+            .surface_updates
+            .execute_runtime_surface_update(RuntimeSurfaceUpdateRequest {
+                target: request.target.clone(),
+                idempotency_key: request.idempotency_key,
+                created_by_kind: match request.intent {
                     CanvasMountIntentKind::Create => "canvas_mount_create",
                     CanvasMountIntentKind::Attach => "canvas_mount_attach",
-                },
-                Some(request.definition_id.to_string()),
-            );
-        if let Some(hook_plan) = current.hook_plan.clone() {
-            builder = builder.with_hook_plan_raw(hook_plan);
-        }
-        let next = builder
-            .build_uncommitted(self.frames.as_ref())
-            .await
-            .map_err(|error| CanvasMountMaterializationError::Failed(error.to_string()))?;
-        self.frames
-            .create(&next)
-            .await
-            .map_err(|error| CanvasMountMaterializationError::Failed(error.to_string()))?;
-        let next_ref = ProductAgentFrameRef {
-            frame_id: next.id,
-            agent_id: next.agent_id,
-            revision: u64::try_from(next.revision).map_err(|_| {
-                CanvasMountMaterializationError::Failed(
-                    "AgentFrame revision 无法投影为 Product revision".to_owned(),
-                )
-            })?,
-        };
-        let evidence = self
-            .rebind
-            .prepare_runtime_surface_rebind(AgentRunProductRuntimeSurfaceRebindRequest {
-                target: request.target.clone(),
-                runtime_thread_id: binding.runtime_thread_id.clone(),
-                idempotency_key: request.idempotency_key,
-                frame: next_ref.clone(),
-                execution_profile: binding.execution_profile.clone(),
-                surface_facts: ProductAgentSurfaceFacts::from_frame(&next),
+                }
+                .to_owned(),
+                created_by_id: Some(request.definition_id.to_string()),
+                changes: vec![
+                    RuntimeSurfaceChange::AllowWorkspaceModule {
+                        module_ref: module_ref.clone(),
+                    },
+                    RuntimeSurfaceChange::ApplyVfsDirectives {
+                        directives: vec![MountDirective::AddMount { mount }],
+                    },
+                ],
             })
             .await
             .map_err(|error| CanvasMountMaterializationError::Failed(error.to_string()))?;
-        let previous_digest = binding
-            .calculated_digest()
-            .map_err(CanvasMountMaterializationError::Failed)?;
-        let mut next_binding = binding;
-        next_binding.launch_frame = next_ref;
-        self.bindings
-            .replace_product_binding(&previous_digest, &next_binding)
-            .await
-            .map_err(CanvasMountMaterializationError::Failed)?;
         Ok(CanvasMountConvergence {
-            frame_id: next.id,
-            frame_revision: u64::try_from(next.revision).unwrap_or_default(),
-            wrote_frame_revision: true,
-            applied_generation: Some(evidence.prepared_generation),
+            frame_id: outcome.frame_id.ok_or_else(|| {
+                CanvasMountMaterializationError::Failed(
+                    "runtime surface update 未返回 AgentFrame identity".to_owned(),
+                )
+            })?,
+            frame_revision: outcome.frame_revision.ok_or_else(|| {
+                CanvasMountMaterializationError::Failed(
+                    "runtime surface update 未返回 AgentFrame revision".to_owned(),
+                )
+            })?,
+            wrote_frame_revision: outcome.wrote_frame_revision,
+            applied_generation: outcome.applied_generation,
             module_ref,
             authoring_mount_id: revision.authoring_mount_id,
         })

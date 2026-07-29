@@ -50,10 +50,6 @@ pub struct FrameLaunchSurface {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrameLaunchSurfaceError {
     MissingField(&'static str),
-    SurfaceMismatch {
-        field: &'static str,
-        expected_source: &'static str,
-    },
 }
 
 impl std::fmt::Display for FrameLaunchSurfaceError {
@@ -61,15 +57,6 @@ impl std::fmt::Display for FrameLaunchSurfaceError {
         match self {
             Self::MissingField(field) => {
                 write!(f, "FrameLaunchSurface 缺少 launch 必需字段 `{field}`")
-            }
-            Self::SurfaceMismatch {
-                field,
-                expected_source,
-            } => {
-                write!(
-                    f,
-                    "FrameLaunchSurface 字段 `{field}` 与 `{expected_source}` 不一致"
-                )
             }
         }
     }
@@ -84,19 +71,6 @@ impl FrameLaunchSurface {
         mcp_servers: Vec<RuntimeMcpServer>,
         execution_profile: AgentConfig,
     ) -> Result<Self, FrameLaunchSurfaceError> {
-        if capability_state.vfs.active.as_ref() != Some(&vfs) {
-            return Err(FrameLaunchSurfaceError::SurfaceMismatch {
-                field: "capability_state.vfs.active",
-                expected_source: "FrameSurfaceDraft.vfs",
-            });
-        }
-        if capability_state.tool.mcp_servers != mcp_servers {
-            return Err(FrameLaunchSurfaceError::SurfaceMismatch {
-                field: "capability_state.tool.mcp_servers",
-                expected_source: "FrameSurfaceDraft.mcp_servers",
-            });
-        }
-
         Ok(Self {
             capability_state,
             vfs,
@@ -270,9 +244,7 @@ mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
-    use agentdash_platform_spi::{
-        DiscoveredGuideline, McpTransportConfig, MemoryDiscoveryOutput, ToolCluster,
-    };
+    use agentdash_platform_spi::{DiscoveredGuideline, MemoryDiscoveryOutput, ToolCluster};
 
     #[test]
     fn frame_runtime_surface_from_frame_projects_all_fields() {
@@ -280,10 +252,10 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         let mut frame = AgentFrame::new_revision(agent_id, 3, "test");
-        frame.effective_capability_json = Some(serde_json::json!({"file_read": true}));
-        frame.context_slice_json = Some(serde_json::json!({"project": "demo"}));
-        frame.vfs_surface_json = Some(serde_json::json!({"mounts": []}));
-        frame.mcp_surface_json = Some(serde_json::json!({"servers": []}));
+        frame.surface.capability_state = Some(serde_json::json!({"file_read": true}));
+        frame.surface.context_slice = Some(serde_json::json!({"project": "demo"}));
+        frame.surface.vfs_surface = Some(serde_json::json!({"mounts": []}));
+        frame.surface.mcp_surface = Some(serde_json::json!({"servers": []}));
 
         let surface = FrameRuntimeSurface::from_frame(&frame, Some(session_id.to_string()));
 
@@ -371,22 +343,9 @@ mod tests {
         }
     }
 
-    fn test_mcp_server(name: &str) -> RuntimeMcpServer {
-        RuntimeMcpServer {
-            name: name.to_string(),
-            transport: McpTransportConfig::Http {
-                url: format!("http://localhost/{name}"),
-                headers: Vec::new(),
-            },
-            uses_relay: false,
-            readiness: Default::default(),
-        }
-    }
-
     #[test]
     fn frame_launch_surface_requires_vfs_field() {
-        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
-        capability_state.vfs.active = Some(test_vfs("/workspace"));
+        let capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
         let draft = FrameSurfaceDraft {
             capability_state: Some(capability_state),
             execution_profile: Some(AgentConfig::new("PI_AGENT")),
@@ -400,61 +359,11 @@ mod tests {
     }
 
     #[test]
-    fn frame_launch_surface_rejects_capability_vfs_mismatch() {
-        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
-        capability_state.vfs.active = Some(test_vfs("/other"));
-        let draft = FrameSurfaceDraft {
-            capability_state: Some(capability_state),
-            vfs: Some(test_vfs("/workspace")),
-            execution_profile: Some(AgentConfig::new("PI_AGENT")),
-            ..Default::default()
-        };
-
-        let error = FrameLaunchSurface::from_surface_draft(&draft)
-            .expect_err("capability/vfs mismatch should reject launch surface");
-
-        assert_eq!(
-            error,
-            FrameLaunchSurfaceError::SurfaceMismatch {
-                field: "capability_state.vfs.active",
-                expected_source: "FrameSurfaceDraft.vfs",
-            }
-        );
-    }
-
-    #[test]
-    fn frame_launch_surface_rejects_capability_mcp_mismatch() {
-        let vfs = test_vfs("/workspace");
-        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
-        capability_state.vfs.active = Some(vfs.clone());
-        capability_state.tool.mcp_servers = vec![test_mcp_server("capability")];
-        let draft = FrameSurfaceDraft {
-            capability_state: Some(capability_state),
-            vfs: Some(vfs),
-            mcp_servers: vec![test_mcp_server("draft")],
-            execution_profile: Some(AgentConfig::new("PI_AGENT")),
-            ..Default::default()
-        };
-
-        let error = FrameLaunchSurface::from_surface_draft(&draft)
-            .expect_err("capability/mcp mismatch should reject launch surface");
-
-        assert_eq!(
-            error,
-            FrameLaunchSurfaceError::SurfaceMismatch {
-                field: "capability_state.tool.mcp_servers",
-                expected_source: "FrameSurfaceDraft.mcp_servers",
-            }
-        );
-    }
-
-    #[test]
     fn frame_launch_surface_builds_runtime_backend_anchor_from_workspace_binding() {
         let workspace_id = Uuid::new_v4();
         let binding_id = Uuid::new_v4();
         let vfs = workspace_vfs("/workspace", workspace_id, binding_id);
-        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
-        capability_state.vfs.active = Some(vfs.clone());
+        let capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
         let surface = FrameLaunchSurface::new(
             capability_state,
             vfs,
@@ -481,8 +390,7 @@ mod tests {
         let vfs = test_vfs("/workspace");
         let mut vfs_without_backend = vfs.clone();
         vfs_without_backend.mounts[0].backend_id = " ".to_string();
-        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
-        capability_state.vfs.active = Some(vfs_without_backend.clone());
+        let capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
         let surface = FrameLaunchSurface::new(
             capability_state,
             vfs_without_backend,
@@ -501,8 +409,7 @@ mod tests {
 
     fn grouped_envelope() -> FrameLaunchEnvelope {
         let vfs = test_vfs("/workspace");
-        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
-        capability_state.vfs.active = Some(vfs.clone());
+        let capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
         let launch_surface = FrameLaunchSurface::new(
             capability_state.clone(),
             vfs.clone(),
@@ -559,13 +466,9 @@ mod tests {
         assert_eq!(envelope.launch_executor_config().executor, "PI_AGENT");
         assert_eq!(envelope.launch_vfs().mounts.len(), 1);
         assert!(envelope.launch_mcp_servers().is_empty());
-        assert!(
-            envelope
-                .launch_capability_state()
-                .vfs
-                .active
-                .as_ref()
-                .is_some()
+        assert_eq!(
+            envelope.launch_vfs().default_mount_id.as_deref(),
+            Some("workspace")
         );
     }
 

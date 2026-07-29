@@ -31,12 +31,27 @@ pub enum RuntimeMcpToolCatalogError {
     Discovery { server: String, reason: String },
     #[error("MCP runtime tool identity is invalid: {reason}")]
     InvalidTool { reason: String },
+    #[error("MCP tool `{server}.{tool}` is not present on the resolved surface")]
+    ToolMissing { server: String, tool: String },
+    #[error("MCP tool `{server}.{tool}` invocation failed: {reason}")]
+    Invocation {
+        server: String,
+        tool: String,
+        reason: String,
+    },
 }
 
+#[derive(Clone)]
 pub struct RuntimeMcpToolCatalogRequest {
     pub servers: Vec<RuntimeMcpServer>,
     pub capability_state: CapabilityState,
     pub relay_context: Option<RelayMcpCallContext>,
+}
+
+pub struct RuntimeMcpOperationInvocation {
+    pub server_name: String,
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
 }
 
 #[async_trait]
@@ -45,6 +60,16 @@ pub trait RuntimeDynamicToolCatalog: Send + Sync {
         &self,
         request: RuntimeMcpToolCatalogRequest,
     ) -> Result<Vec<Arc<dyn RuntimeToolExecutor>>, RuntimeMcpToolCatalogError>;
+
+    /// Invoke MCP as a neutral Operation caller.
+    ///
+    /// Operation Gateway owns principal admission and audit. This path intentionally does not
+    /// fabricate an Agent Runtime authorization grant for user/workshop callers.
+    async fn invoke_operation(
+        &self,
+        request: RuntimeMcpToolCatalogRequest,
+        invocation: RuntimeMcpOperationInvocation,
+    ) -> Result<serde_json::Value, RuntimeMcpToolCatalogError>;
 }
 
 /// Resolves the exact MCP definitions and execution handles bound to one Runtime target.
@@ -105,7 +130,7 @@ impl RuntimeDynamicToolCatalog for ProductionRuntimeMcpToolCatalog {
             let Some(server) = requested.get(&tool.server_name) else {
                 continue;
             };
-            let capability_key = capability_key_for_mcp_server_name(&tool.server_name);
+            let capability_key = runtime_mcp_capability_key(&tool.server_name);
             if !request.capability_state.is_capability_tool_enabled(
                 &capability_key,
                 &tool.tool_name,
@@ -128,12 +153,109 @@ impl RuntimeDynamicToolCatalog for ProductionRuntimeMcpToolCatalog {
         }
         Ok(executors)
     }
+
+    async fn invoke_operation(
+        &self,
+        request: RuntimeMcpToolCatalogRequest,
+        invocation: RuntimeMcpOperationInvocation,
+    ) -> Result<serde_json::Value, RuntimeMcpToolCatalogError> {
+        let server = request
+            .servers
+            .into_iter()
+            .find(|server| server.name == invocation.server_name)
+            .ok_or_else(|| RuntimeMcpToolCatalogError::ToolMissing {
+                server: invocation.server_name.clone(),
+                tool: invocation.tool_name.clone(),
+            })?;
+        if server.uses_relay {
+            let relay = self.relay.as_ref().ok_or_else(|| {
+                RuntimeMcpToolCatalogError::UnsupportedPlacement {
+                    server: server.name.clone(),
+                }
+            })?;
+            let arguments = arguments_object(invocation.arguments).map_err(|result| {
+                RuntimeMcpToolCatalogError::Invocation {
+                    server: server.name.clone(),
+                    tool: invocation.tool_name.clone(),
+                    reason: agent_tool_result_message(result),
+                }
+            })?;
+            let result = relay
+                .call_relay_tool(
+                    &server,
+                    &invocation.tool_name,
+                    arguments,
+                    request.relay_context,
+                )
+                .await
+                .map_err(|error| RuntimeMcpToolCatalogError::Invocation {
+                    server: server.name.clone(),
+                    tool: invocation.tool_name.clone(),
+                    reason: error.to_string(),
+                })?;
+            if result.is_error {
+                return Err(RuntimeMcpToolCatalogError::Invocation {
+                    server: server.name,
+                    tool: invocation.tool_name,
+                    reason: result.content,
+                });
+            }
+            return Ok(serde_json::json!({ "content": result.content }));
+        }
+
+        let tools = discover_direct_tools(server, &request.capability_state).await?;
+        let tool = tools
+            .into_iter()
+            .find(|tool| tool.source_tool_name == invocation.tool_name)
+            .ok_or_else(|| RuntimeMcpToolCatalogError::ToolMissing {
+                server: invocation.server_name.clone(),
+                tool: invocation.tool_name.clone(),
+            })?;
+        tool.invoke_arguments(invocation.arguments).await
+    }
 }
 
 struct DirectRuntimeMcpTool {
     definition: RuntimeToolDefinition,
     source_tool_name: String,
     client: Arc<Mutex<DirectMcpClient>>,
+}
+
+impl DirectRuntimeMcpTool {
+    async fn invoke_arguments(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, RuntimeMcpToolCatalogError> {
+        let arguments = arguments_object(arguments).map_err(|result| {
+            RuntimeMcpToolCatalogError::Invocation {
+                server: runtime_tool_server_name(&self.definition),
+                tool: self.source_tool_name.clone(),
+                reason: agent_tool_result_message(result),
+            }
+        })?;
+        let request = match arguments {
+            Some(arguments) => {
+                CallToolRequestParams::new(self.source_tool_name.clone()).with_arguments(arguments)
+            }
+            None => CallToolRequestParams::new(self.source_tool_name.clone()),
+        };
+        let result = self
+            .client
+            .lock()
+            .await
+            .call_tool(request)
+            .await
+            .map_err(|error| RuntimeMcpToolCatalogError::Invocation {
+                server: runtime_tool_server_name(&self.definition),
+                tool: self.source_tool_name.clone(),
+                reason: error.to_string(),
+            })?;
+        serde_json::to_value(result).map_err(|error| RuntimeMcpToolCatalogError::Invocation {
+            server: runtime_tool_server_name(&self.definition),
+            tool: self.source_tool_name.clone(),
+            reason: error.to_string(),
+        })
+    }
 }
 
 #[async_trait]
@@ -245,7 +367,7 @@ async fn discover_direct_tools(
                 reason: error.to_string(),
             })?;
     let client = Arc::new(Mutex::new(client));
-    let capability_key = capability_key_for_mcp_server_name(&server.name);
+    let capability_key = runtime_mcp_capability_key(&server.name);
     listed
         .into_iter()
         .filter(|tool| {
@@ -280,7 +402,7 @@ fn runtime_definition(
     parameters_schema: serde_json::Value,
 ) -> Result<RuntimeToolDefinition, RuntimeMcpToolCatalogError> {
     let stable_server_name = stable_server_name(server_name);
-    let capability_key = capability_key_for_mcp_server_name(&stable_server_name);
+    let capability_key = runtime_mcp_capability_key(&stable_server_name);
     Ok(RuntimeToolDefinition {
         name: AgentToolName::new(namespaced_tool_name(server_name, tool_name)).map_err(
             |error| RuntimeMcpToolCatalogError::InvalidTool {
@@ -317,6 +439,22 @@ fn arguments_object(
     }
 }
 
+fn runtime_tool_server_name(definition: &RuntimeToolDefinition) -> String {
+    match &definition.protocol_projector {
+        ToolProtocolProjector::Mcp { server_key } => server_key.clone(),
+        _ => definition.provenance.source.clone(),
+    }
+}
+
+fn agent_tool_result_message(result: AgentToolResult) -> String {
+    match result {
+        AgentToolResult::Rejected { code, message } | AgentToolResult::Failed { code, message } => {
+            format!("{code}: {message}")
+        }
+        AgentToolResult::Completed { .. } => "unexpected completed result".to_owned(),
+    }
+}
+
 fn build_header_map(headers: &[McpHttpHeader]) -> Result<HashMap<HeaderName, HeaderValue>, String> {
     let mut map = HashMap::new();
     for header in headers {
@@ -329,7 +467,7 @@ fn build_header_map(headers: &[McpHttpHeader]) -> Result<HashMap<HeaderName, Hea
     Ok(map)
 }
 
-fn capability_key_for_mcp_server_name(server_name: &str) -> String {
+pub fn runtime_mcp_capability_key(server_name: &str) -> String {
     let stable_name = stable_server_name(server_name);
     match stable_name.as_str() {
         "agentdash-relay-tools" => "relay_management".to_owned(),
@@ -385,7 +523,7 @@ mod tests {
             "mcp_agentdash_workflow_tools_get_lifecycle"
         );
         assert_eq!(
-            capability_key_for_mcp_server_name("agentdash-workflow-tools-8de613e7"),
+            runtime_mcp_capability_key("agentdash-workflow-tools-8de613e7"),
             "workflow_management"
         );
         let definition = runtime_definition(

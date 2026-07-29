@@ -18,6 +18,7 @@ use super::{
 
 const MODULE_ID_EXTENSION_PREFIX: &str = "ext:";
 const MODULE_ID_BUILTIN_PREFIX: &str = "builtin:";
+const MODULE_ID_MCP_PREFIX: &str = "mcp:";
 
 pub struct PlatformWorkspaceModuleProvider;
 
@@ -31,11 +32,15 @@ impl WorkspaceModuleProvider for PlatformWorkspaceModuleProvider {
         &self,
         context: &WorkspaceModuleProviderContext,
     ) -> Result<Vec<WorkspaceModuleDescriptor>, ProductRuntimeToolOutcome> {
-        Ok(build_platform_modules(&context.operations))
+        Ok(build_platform_and_mcp_modules(&context.operations))
     }
 
     fn owns_module(&self, module: &WorkspaceModuleDescriptor) -> bool {
-        module.summary.module_id.starts_with("builtin:")
+        module
+            .summary
+            .module_id
+            .starts_with(MODULE_ID_BUILTIN_PREFIX)
+            || module.summary.module_id.starts_with(MODULE_ID_MCP_PREFIX)
     }
 }
 
@@ -113,6 +118,15 @@ impl WorkspaceModuleProvider for ExtensionWorkspaceModuleProvider {
     }
 }
 
+fn build_platform_and_mcp_modules(
+    operation_catalog: &[OperationDescriptor],
+) -> Vec<WorkspaceModuleDescriptor> {
+    let mut modules = build_platform_modules(operation_catalog);
+    modules.extend(build_mcp_modules(operation_catalog));
+    modules.sort_by(|left, right| left.summary.module_id.cmp(&right.summary.module_id));
+    modules
+}
+
 fn build_platform_modules(
     operation_catalog: &[OperationDescriptor],
 ) -> Vec<WorkspaceModuleDescriptor> {
@@ -152,6 +166,48 @@ fn build_platform_modules(
                 ui_entries: Vec::new(),
                 operations,
                 runtime_backing: Some(format!("platform_tool_broker:{provider_key}")),
+                agent_state_projection: None,
+            }
+        })
+        .collect()
+}
+
+fn build_mcp_modules(operation_catalog: &[OperationDescriptor]) -> Vec<WorkspaceModuleDescriptor> {
+    let mut by_server = std::collections::BTreeMap::<String, Vec<WorkspaceModuleOperation>>::new();
+    for operation in operation_catalog
+        .iter()
+        .filter(|operation| operation.operation_ref.provider.namespace == "mcp")
+    {
+        by_server
+            .entry(operation.operation_ref.provider.provider_key.clone())
+            .or_default()
+            .push(workspace_module_operation_from_descriptor(operation));
+    }
+    by_server
+        .into_iter()
+        .map(|(server_key, mut operations)| {
+            operations.sort_by(|left, right| left.operation_key.cmp(&right.operation_key));
+            let permission_summary = operation_permissions(&operations);
+            WorkspaceModuleDescriptor {
+                summary: WorkspaceModuleSummary {
+                    module_id: format!("{MODULE_ID_MCP_PREFIX}{server_key}"),
+                    kind: WorkspaceModuleKind::new("mcp"),
+                    title: format!("MCP · {server_key}"),
+                    description: format!(
+                        "MCP server {server_key} exposed through canonical OperationGateway descriptors."
+                    ),
+                    source: server_key.clone(),
+                    ui_summary: None,
+                    operation_summary: operations
+                        .iter()
+                        .map(|operation| operation.operation_key.clone())
+                        .collect(),
+                    permission_summary,
+                    status: WorkspaceModuleStatus::ready(),
+                },
+                ui_entries: Vec::new(),
+                operations,
+                runtime_backing: Some(format!("operation_gateway:mcp:{server_key}")),
                 agent_state_projection: None,
             }
         })
@@ -285,11 +341,52 @@ mod tests {
             },
         };
 
-        let modules = build_platform_modules(&[operation]);
+        let modules = build_platform_and_mcp_modules(&[operation]);
 
         assert_eq!(modules.len(), 1);
         assert_eq!(modules[0].summary.module_id, "builtin:vfs");
         assert_eq!(modules[0].summary.kind, WorkspaceModuleKind::new("builtin"));
         assert_eq!(modules[0].operations[0].operation_key, "fs_read");
+    }
+
+    #[test]
+    fn mcp_operations_project_as_server_modules_with_exact_refs() {
+        let operation_ref = OperationRef::new("mcp", "docs", "search", 1).expect("operation ref");
+        let operation = OperationDescriptor {
+            operation_ref: operation_ref.clone(),
+            title: "search".to_owned(),
+            description: Some("Search docs".to_owned()),
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: serde_json::json!(true),
+            effect: OperationEffect::ExternalSideEffect,
+            replay_policy: OperationReplayPolicy::NonReplayable,
+            required_capabilities: BTreeSet::from(["mcp:docs".to_owned()]),
+            actor_visibility: BTreeSet::from([OperationActorKind::Agent]),
+            execution_policy: OperationExecutionPolicy::default(),
+            readiness: OperationReadiness::Ready,
+            provenance: OperationProvenance {
+                source: "agent_frame.mcp_surface".to_owned(),
+                artifact_digest: None,
+            },
+            dispatch: OperationDispatch {
+                provider: operation_ref.provider,
+                route: "docs/search".to_owned(),
+            },
+        };
+
+        let modules = build_platform_and_mcp_modules(&[operation]);
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].summary.module_id, "mcp:docs");
+        assert_eq!(modules[0].summary.kind, WorkspaceModuleKind::new("mcp"));
+        assert_eq!(
+            modules[0].operations[0].operation_ref,
+            agentdash_contracts::workspace_module::WorkspaceModuleOperationRef {
+                namespace: "mcp".to_owned(),
+                provider_key: "docs".to_owned(),
+                operation_key: "search".to_owned(),
+                contract_version: 1,
+            }
+        );
     }
 }

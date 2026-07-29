@@ -187,8 +187,6 @@ pub async fn assert_postgres_schema_ready(pool: &PgPool) -> Result<(), DomainErr
     assert_postgres_tables_ready(pool, REQUIRED_POSTGRES_TABLES).await?;
     assert_postgres_columns_ready(pool, "lifecycle_gates", &["delivery", "updated_at"]).await?;
     assert_postgres_columns_ready(pool, "lifecycle_agents", &["frames", "runtime_binding"]).await?;
-    assert_postgres_columns_ready(pool, "dash_complete_source", &["repository_schema_version"])
-        .await?;
     assert_postgres_tables_absent(pool, RETIRED_POSTGRES_TABLES).await
 }
 

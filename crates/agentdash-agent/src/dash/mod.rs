@@ -4,8 +4,6 @@ mod lifecycle;
 mod service;
 mod store;
 
-pub const DASH_REPOSITORY_SCHEMA_VERSION: i16 = 2;
-
 pub use core_execution::{
     DashBeforeToolDecision, DashCancellation, DashCompactionTurn, DashCompactionTurnOutput,
     DashCoreContext, DashCoreError, DashCoreEvent, DashCoreOutput, DashCoreTurn,

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_agent::dash::{
-    AgentSessionId, DASH_REPOSITORY_SCHEMA_VERSION, DashAgentRepository, DashAgentRepositoryState,
-    DashAgentRepositoryStore, DashServiceError,
+    AgentSessionId, DashAgentRepository, DashAgentRepositoryState, DashAgentRepositoryStore,
+    DashServiceError,
 };
 use agentdash_agent_runtime_contract::{
     AgentEffectIdentity, AgentServiceError, AgentServiceErrorCode, AgentSourceCoordinate,
@@ -168,17 +168,12 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
         &self,
         source: &AgentSourceCoordinate,
     ) -> Result<Option<AgentSourceState>, AgentServiceError> {
-        let row = sqlx::query(
-            "SELECT observation, repository_schema_version \
-             FROM dash_complete_source WHERE source_coordinate=$1",
-        )
-        .bind(source.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(agent_database_error)?;
-        if let Some(row) = &row {
-            validate_repository_schema_version(row).map_err(agent_from_dash_error)?;
-        }
+        let row =
+            sqlx::query("SELECT observation FROM dash_complete_source WHERE source_coordinate=$1")
+                .bind(source.as_str())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(agent_database_error)?;
         let observation = row
             .as_ref()
             .map(|row| {
@@ -388,7 +383,7 @@ async fn lock_source_document(
     source: &str,
 ) -> Result<Option<DashCompleteSourceDocument>, DashServiceError> {
     let row = sqlx::query(
-        "SELECT repository, metadata, repository_schema_version FROM dash_complete_source \
+        "SELECT repository, metadata FROM dash_complete_source \
          WHERE source_coordinate=$1 FOR UPDATE",
     )
     .bind(source)
@@ -408,18 +403,14 @@ async fn load_source_repository(
     pool: &PgPool,
     source: &str,
 ) -> Result<Option<DashAgentRepositoryState>, DashServiceError> {
-    let row = sqlx::query(
-        "SELECT repository, repository_schema_version FROM dash_complete_source \
-         WHERE source_coordinate=$1",
-    )
-    .bind(source)
-    .fetch_optional(pool)
-    .await
-    .map_err(dash_database_error)?;
+    let row = sqlx::query("SELECT repository FROM dash_complete_source WHERE source_coordinate=$1")
+        .bind(source)
+        .fetch_optional(pool)
+        .await
+        .map_err(dash_database_error)?;
     let Some(row) = row else {
         return Ok(None);
     };
-    validate_repository_schema_version(&row)?;
     let repository = decode_json_column(&row, "repository", "Dash repository")?;
     validate_repository_identity(source, &repository)?;
     validate_repository_document(&repository)?;
@@ -443,27 +434,10 @@ async fn load_source_metadata(
 fn decode_source_document(
     row: &sqlx::postgres::PgRow,
 ) -> Result<DashCompleteSourceDocument, DashServiceError> {
-    validate_repository_schema_version(row)?;
     Ok(DashCompleteSourceDocument {
         repository: decode_json_column(row, "repository", "Dash repository")?,
         metadata: decode_json_column(row, "metadata", "Dash source metadata")?,
     })
-}
-
-fn validate_repository_schema_version(row: &sqlx::postgres::PgRow) -> Result<(), DashServiceError> {
-    let version: i16 = row
-        .try_get("repository_schema_version")
-        .map_err(dash_database_error)?;
-    if version == DASH_REPOSITORY_SCHEMA_VERSION {
-        Ok(())
-    } else {
-        Err(DashServiceError::Internal {
-            message: format!(
-                "Dash repository schema version {version} is not current version {}",
-                DASH_REPOSITORY_SCHEMA_VERSION
-            ),
-        })
-    }
 }
 
 fn decode_json_column<T: serde::de::DeserializeOwned>(
@@ -487,14 +461,13 @@ async fn insert_source_document(
     validate_repository_document(&document.repository)?;
     sqlx::query(
         "INSERT INTO dash_complete_source(\
-             source_coordinate,repository,metadata,observation,repository_schema_version\
-         ) VALUES ($1,$2,$3,$4,$5)",
+             source_coordinate,repository,metadata,observation\
+         ) VALUES ($1,$2,$3,$4)",
     )
     .bind(source)
     .bind(dash_json(&document.repository, "Dash repository")?)
     .bind(dash_json(&document.metadata, "Dash source metadata")?)
     .bind(source_observation_json(source, &document.repository)?)
-    .bind(DASH_REPOSITORY_SCHEMA_VERSION)
     .execute(&mut **tx)
     .await
     .map_err(dash_database_error)?;
@@ -510,14 +483,13 @@ async fn replace_source_document(
     validate_repository_document(&replacement.repository)?;
     let result = sqlx::query(
         "UPDATE dash_complete_source \
-         SET repository=$2, metadata=$3, observation=$4, repository_schema_version=$5 \
+         SET repository=$2, metadata=$3, observation=$4 \
          WHERE source_coordinate=$1",
     )
     .bind(source)
     .bind(dash_json(&replacement.repository, "Dash repository")?)
     .bind(dash_json(&replacement.metadata, "Dash source metadata")?)
     .bind(source_observation_json(source, &replacement.repository)?)
-    .bind(DASH_REPOSITORY_SCHEMA_VERSION)
     .execute(&mut **tx)
     .await
     .map_err(dash_database_error)?;

@@ -357,8 +357,8 @@ mod tests {
         .expect("project dynamic tool");
 
         assert!(matches!(
-            item,
-            AgentDashThreadItem::Codex(codex::ThreadItem::DynamicToolCall {
+            item.as_codex(),
+            Some(codex::ThreadItem::DynamicToolCall {
                 namespace: None,
                 tool,
                 ..

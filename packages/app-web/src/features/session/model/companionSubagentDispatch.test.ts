@@ -270,6 +270,11 @@ describe("companion subagent dispatch presentation", () => {
 
     const card = renderToolCallCard(item, {
       agentRunTarget: { runId: "run-1", agentId: "agent-parent" },
+      itemLifecycle: {
+        phase: "terminal",
+        outcome: "succeeded",
+        error: null,
+      },
     });
 
     expect(card.header.primary).toBe("Write focused tests");

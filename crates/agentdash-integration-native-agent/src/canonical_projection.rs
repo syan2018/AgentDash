@@ -6,17 +6,16 @@ use agentdash_agent::dash::{
 use agentdash_agent_protocol::AgentCapabilityManifest;
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
-    AgentDashCompactionMode, AgentDashCompactionStatus, AgentDashNativeThreadItem,
-    AgentDashThreadItem, BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
-    CanonicalConversationRecord, ContextAgentConsumption, ContextAgentConsumptionMode,
-    ContextConnectorProfile, ContextDeliveryChannel, ContextDeliveryMetadata,
-    ContextDeliveryStatus, ContextFrame, ContextFrameChanged, ContextFrameKind,
-    ContextFrameSection, ContextFrameSource, ContextMessageRole, ContextUsageSource,
-    ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification,
-    NormalizedContextUsage, PlatformEvent, PresentationDurability, SourceInfo, ThreadTokenUsage,
-    ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown, TraceInfo, Turn,
-    TurnCompletedNotification, TurnStartedNotification, UserInputSource, UserInputSubmissionKind,
-    UserInputSubmittedNotification, WorkspaceModulePresentation,
+    AgentDashCompactionStatus, AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEnvelope,
+    BackboneEvent, CanonicalConversationPresentation, CanonicalConversationRecord,
+    ContextAgentConsumption, ContextAgentConsumptionMode, ContextConnectorProfile,
+    ContextDeliveryChannel, ContextDeliveryMetadata, ContextDeliveryStatus, ContextFrame,
+    ContextFrameChanged, ContextFrameKind, ContextFrameSection, ContextFrameSource,
+    ContextMessageRole, ContextUsageSource, ItemCompletedNotification, ItemStartedNotification,
+    ItemUpdatedNotification, NormalizedContextUsage, PlatformEvent, PresentationDurability,
+    SourceInfo, ThreadTokenUsage, ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown,
+    TraceInfo, Turn, TurnCompletedNotification, TurnStartedNotification, UserInputSource,
+    UserInputSubmissionKind, UserInputSubmittedNotification, WorkspaceModulePresentation,
 };
 
 #[cfg(test)]
@@ -164,8 +163,10 @@ pub(crate) fn entry_records(
             ));
         }
         HistoryPayload::ItemCompleted { turn_id, item_id } => {
+            let item = item(state, item_id)?;
             events.push(BackboneEvent::ItemCompleted(ItemCompletedNotification {
-                item: item(state, item_id)?,
+                terminal: terminal_evidence(&item)?,
+                item,
                 thread_id: session_id.to_owned(),
                 turn_id: turn_id.0.clone(),
                 completed_at_ms: 0,
@@ -210,8 +211,10 @@ pub(crate) fn entry_records(
         } => {
             let turn_id = AgentTurnId::new(compaction_id.0.clone());
             let item_id = AgentItemId::new(compaction_id.0.clone());
+            let item = item(state, &item_id)?;
             events.push(BackboneEvent::ItemCompleted(ItemCompletedNotification {
-                item: item(state, &item_id)?,
+                terminal: terminal_evidence(&item)?,
+                item,
                 thread_id: session_id.to_owned(),
                 turn_id: compaction_id.0.clone(),
                 completed_at_ms: *completed_at_ms as i64,
@@ -238,11 +241,13 @@ pub(crate) fn entry_records(
                 message: error.clone(),
                 retryable: false,
             };
-            events.push(BackboneEvent::ItemUpdated(ItemUpdatedNotification {
-                item: item(state, &item_id)?,
+            let item = item(state, &item_id)?;
+            events.push(BackboneEvent::ItemCompleted(ItemCompletedNotification {
+                terminal: terminal_evidence(&item)?,
+                item,
                 thread_id: session_id.to_owned(),
                 turn_id: compaction_id.0.clone(),
-                updated_at_ms: *completed_at_ms as i64,
+                completed_at_ms: *completed_at_ms as i64,
             }));
             events.push(BackboneEvent::TurnCompleted(TurnCompletedNotification {
                 thread_id: session_id.to_owned(),
@@ -255,11 +260,13 @@ pub(crate) fn entry_records(
         } => {
             let turn_id = AgentTurnId::new(compaction_id.0.clone());
             let item_id = AgentItemId::new(compaction_id.0.clone());
-            events.push(BackboneEvent::ItemUpdated(ItemUpdatedNotification {
-                item: item(state, &item_id)?,
+            let item = item(state, &item_id)?;
+            events.push(BackboneEvent::ItemCompleted(ItemCompletedNotification {
+                terminal: terminal_evidence(&item)?,
+                item,
                 thread_id: session_id.to_owned(),
                 turn_id: compaction_id.0.clone(),
-                updated_at_ms: *completed_at_ms as i64,
+                completed_at_ms: *completed_at_ms as i64,
             }));
             events.push(BackboneEvent::TurnCompleted(TurnCompletedNotification {
                 thread_id: session_id.to_owned(),
@@ -324,6 +331,13 @@ fn accepted_context_events(frames: &[ContextFrame]) -> Vec<BackboneEvent> {
             )))
         })
         .collect()
+}
+
+fn terminal_evidence(
+    item: &AgentDashThreadItem,
+) -> Result<agentdash_agent_protocol::AgentDashItemTerminal, serde_json::Error> {
+    item.terminal_evidence()
+        .map_err(<serde_json::Error as serde::ser::Error>::custom)
 }
 
 fn accepted_surface_context_events(
@@ -494,14 +508,6 @@ fn item(
                 })?;
             return Ok(AgentDashNativeThreadItem::ContextCompaction {
                 id: item_id.0.clone(),
-                mode: match compaction.mode {
-                    agentdash_agent::dash::CompactionMode::Manual => {
-                        AgentDashCompactionMode::Manual
-                    }
-                    agentdash_agent::dash::CompactionMode::AutomaticOverflow => {
-                        AgentDashCompactionMode::Automatic
-                    }
-                },
                 status: match item.status {
                     ActivityStatus::Active => AgentDashCompactionStatus::InProgress,
                     ActivityStatus::Completed => AgentDashCompactionStatus::Succeeded,
@@ -510,7 +516,7 @@ fn item(
                     ActivityStatus::Interrupted => AgentDashCompactionStatus::Cancelled,
                 },
                 error: compaction.error.clone(),
-                started_at_ms: compaction.started_at_ms,
+                started_at_ms: Some(compaction.started_at_ms),
                 completed_at_ms: compaction.completed_at_ms,
                 context_revision: compaction
                     .context_revision
@@ -681,6 +687,7 @@ mod tests {
         AgentCapabilityChannel, AgentCapabilityCompanionAgent, AgentCapabilityDiagnostic,
         AgentCapabilityMcpServer, AgentCapabilityMemorySource, AgentCapabilityMount,
         AgentCapabilitySkill, AgentCapabilityVfs, AgentCapabilityWorkspaceModule,
+        AgentDashItemTerminalOutcome,
     };
 
     fn compaction_history_with_terminal(
@@ -1135,7 +1142,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_compaction_terminates_the_turn_without_a_successful_item_boundary() {
+    fn failed_compaction_closes_the_item_and_turn_with_failed_evidence() {
         let history = compaction_history_with_terminal("compact-failed", |compaction_id| {
             HistoryPayload::CompactionFailed {
                 compaction_id,
@@ -1146,13 +1153,9 @@ mod tests {
         });
 
         let records = history_records(&history).expect("canonical compaction records");
-        assert!(!records.iter().any(|record| matches!(
-            &record.presentation.envelope.event,
-            BackboneEvent::ItemCompleted(_)
-        )));
         assert!(records.iter().any(|record| matches!(
             &record.presentation.envelope.event,
-            BackboneEvent::ItemUpdated(notification)
+            BackboneEvent::ItemCompleted(notification)
                 if matches!(
                     &notification.item,
                     AgentDashThreadItem::AgentDash(
@@ -1163,6 +1166,7 @@ mod tests {
                         }
                     ) if error == "provider unavailable"
                 )
+                && notification.terminal.outcome == AgentDashItemTerminalOutcome::Failed
         )));
         let completed_turn = records
             .iter()
@@ -1197,7 +1201,7 @@ mod tests {
         let records = history_records(&history).expect("canonical lost compaction records");
         assert!(records.iter().any(|record| matches!(
             &record.presentation.envelope.event,
-            BackboneEvent::ItemUpdated(notification)
+            BackboneEvent::ItemCompleted(notification)
                 if matches!(
                     &notification.item,
                     AgentDashThreadItem::AgentDash(
@@ -1207,6 +1211,7 @@ mod tests {
                         }
                     )
                 )
+                && notification.terminal.outcome == AgentDashItemTerminalOutcome::Lost
         )));
     }
 
@@ -1222,7 +1227,7 @@ mod tests {
         let records = history_records(&history).expect("canonical cancelled compaction records");
         assert!(records.iter().any(|record| matches!(
             &record.presentation.envelope.event,
-            BackboneEvent::ItemUpdated(notification)
+            BackboneEvent::ItemCompleted(notification)
                 if matches!(
                     &notification.item,
                     AgentDashThreadItem::AgentDash(
@@ -1232,6 +1237,7 @@ mod tests {
                         }
                     )
                 )
+                && notification.terminal.outcome == AgentDashItemTerminalOutcome::Cancelled
         )));
     }
 }

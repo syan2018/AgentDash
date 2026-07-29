@@ -55,6 +55,7 @@ export type {
 
 import type {
   BackboneEvent,
+  AgentDashItemTerminal,
   AgentDashThreadItem,
   PlatformEvent,
   UserInput,
@@ -396,6 +397,11 @@ export type TimelineOrder =
 /** 同一 item 的事实新鲜度，避免低权威事件回写高权威 UI 状态。 */
 export type SessionItemFreshness = "started" | "progress" | "completed";
 
+export type SessionItemLifecycle =
+  | { phase: "started" }
+  | { phase: "progress" }
+  | ({ phase: "terminal" } & AgentDashItemTerminal);
+
 /** 聚合组子类型（工具调用聚合） */
 export type ToolAggregationType =
   | "tool_burst"
@@ -425,6 +431,8 @@ export interface SessionDisplayEntry {
   progressSeq?: number;
   /** 同 item lifecycle freshness：completed > progress > started。 */
   itemFreshness?: SessionItemFreshness;
+  /** reducer 输出的 canonical item lifecycle；卡片不得从事件名或 item 字段再次推断。 */
+  itemLifecycle?: SessionItemLifecycle;
   event: BackboneEvent;
   turnId?: string;
   entryIndex?: number;

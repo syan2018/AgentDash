@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_protocol::{AgentDashThreadItem, CodexThreadItem, CompletedConversationItem};
+use agentdash_agent_protocol::{CodexThreadItem, CompletedConversationItem};
 use agentdash_application_vfs::{
     ListOptions, ListResult, MountError, MountOperationContext, MountProvider,
     PROVIDER_LIFECYCLE_VFS, ReadResult, RuntimeFileEntry, SearchMatch, SearchQuery, SearchResult,
@@ -794,12 +794,10 @@ fn safe_segment(value: &str) -> String {
 }
 
 fn render_message(completed: CompletedConversationItem<'_>) -> String {
-    match completed.item {
-        AgentDashThreadItem::Codex(CodexThreadItem::UserMessage { content, .. }) => {
-            render_user_input(content)
-        }
-        AgentDashThreadItem::Codex(CodexThreadItem::AgentMessage { text, .. }) => text.clone(),
-        AgentDashThreadItem::Codex(CodexThreadItem::HookPrompt { fragments, .. }) => fragments
+    match completed.item.as_codex() {
+        Some(CodexThreadItem::UserMessage { content, .. }) => render_user_input(content),
+        Some(CodexThreadItem::AgentMessage { text, .. }) => text.clone(),
+        Some(CodexThreadItem::HookPrompt { fragments, .. }) => fragments
             .iter()
             .map(|fragment| fragment.text.clone())
             .collect::<Vec<_>>()
@@ -811,21 +809,18 @@ fn render_message(completed: CompletedConversationItem<'_>) -> String {
 fn last_agent_message(projection: &LifecycleHistoryProjection) -> Option<String> {
     projection
         .items()
-        .filter_map(|completed| match completed.item {
-            AgentDashThreadItem::Codex(CodexThreadItem::AgentMessage { text, .. }) => {
-                Some(text.clone())
-            }
+        .filter_map(|completed| match completed.item.as_codex() {
+            Some(CodexThreadItem::AgentMessage { text, .. }) => Some(text.clone()),
             _ => None,
         })
         .last()
 }
 
 fn render_compaction(completed: CompletedConversationItem<'_>) -> String {
-    match completed.item {
-        AgentDashThreadItem::Codex(CodexThreadItem::ContextCompaction { id }) => {
-            format!("Context compaction: `{id}`")
-        }
-        _ => String::new(),
+    if completed.item.is_context_compaction() {
+        format!("Context compaction: `{}`", completed.item.id())
+    } else {
+        String::new()
     }
 }
 

@@ -125,13 +125,15 @@ write?: Array<LegacyAppPathString> | null, };
  */
 export type AdditionalNetworkPermissions = { enabled?: boolean | null, };
 
-export type AgentDashCompactionMode = "manual" | "automatic";
-
 export type AgentDashCompactionStatus = "inProgress" | "succeeded" | "failed" | "lost" | "cancelled";
 
-export type AgentDashNativeThreadItem = { "type": "contextCompaction", id: string, mode: AgentDashCompactionMode, status: AgentDashCompactionStatus, error: string | null, startedAtMs: bigint, completedAtMs: bigint | null, contextRevision: string | null, } | { "type": "shellExec", id: string, command: string, cwd: string | null, executionMode: ShellExecExecutionMode, arguments: JsonValue, status: DynamicToolCallStatus, aggregatedOutput: string | null, exitCode: number | null, success: boolean | null, } | { "type": "terminalControl", id: string, operation: string, terminalId: string, arguments: JsonValue, input: string | null, cols: number | null, rows: number | null, state: string | null, aggregatedOutput: string | null, exitCode: number | null, status: DynamicToolCallStatus, success: boolean | null, } | { "type": "fsRead", id: string, path: string, offset: number | null, limit: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGrep", id: string, pattern: string, path: string | null, glob: string | null, fileType: string | null, outputMode: string | null, headLimit: number | null, offset: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGlob", id: string, pattern: string, path: string | null, maxResults: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, };
+export type AgentDashItemTerminal = { outcome: AgentDashItemTerminalOutcome, error: string | null, };
 
-export type AgentDashThreadItem = AgentDashNativeThreadItem | ThreadItem;
+export type AgentDashItemTerminalOutcome = "succeeded" | "failed" | "lost" | "cancelled";
+
+export type AgentDashNativeThreadItem = { "type": "contextCompaction", id: string, status: AgentDashCompactionStatus, error: string | null, startedAtMs: bigint | null, completedAtMs: bigint | null, contextRevision: string | null, } | { "type": "shellExec", id: string, command: string, cwd: string | null, executionMode: ShellExecExecutionMode, arguments: JsonValue, status: DynamicToolCallStatus, aggregatedOutput: string | null, exitCode: number | null, success: boolean | null, } | { "type": "terminalControl", id: string, operation: string, terminalId: string, arguments: JsonValue, input: string | null, cols: number | null, rows: number | null, state: string | null, aggregatedOutput: string | null, exitCode: number | null, status: DynamicToolCallStatus, success: boolean | null, } | { "type": "fsRead", id: string, path: string, offset: number | null, limit: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGrep", id: string, pattern: string, path: string | null, glob: string | null, fileType: string | null, outputMode: string | null, headLimit: number | null, offset: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGlob", id: string, pattern: string, path: string | null, maxResults: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, };
+
+export type AgentDashThreadItem = AgentDashNativeThreadItem | Exclude<ThreadItem, { type: "contextCompaction" }>;
 
 /**
  *`AgentMessageDeltaNotification`
@@ -2106,7 +2108,7 @@ export type HookTraceTrigger = "session_start" | "user_prompt_submit" | "before_
  */
 export type ImageDetail = "auto" | "low" | "high" | "original";
 
-export type ItemCompletedNotification = { item: AgentDashThreadItem, threadId: string, turnId: string, completedAtMs: number, };
+export type ItemCompletedNotification = { item: AgentDashThreadItem, terminal: AgentDashItemTerminal, threadId: string, turnId: string, completedAtMs: number, };
 
 /**
  *[UNSTABLE] Temporary notification payload for approval auto-review. This shape is expected to change soon.

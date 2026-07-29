@@ -2791,8 +2791,8 @@ async fn exact_hooks_run_once_rewrite_and_do_not_retrigger_on_effect_replay() {
                 &record.presentation.envelope.event,
                 BackboneEvent::ItemCompleted(notification)
                     if matches!(
-                        &notification.item,
-                        agentdash_agent_protocol::AgentDashThreadItem::Codex(
+                        notification.item.as_codex(),
+                        Some(
                             codex::ThreadItem::AgentMessage { text, .. }
                         ) if text == "hooked answer"
                     )
@@ -4091,10 +4091,8 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
         .conversation
         .iter()
         .find_map(|record| match &record.presentation.envelope.event {
-            BackboneEvent::ItemCompleted(notification) => match &notification.item {
-                agentdash_agent_protocol::AgentDashThreadItem::Codex(
-                    codex::ThreadItem::AgentMessage { id, .. },
-                ) => Some(id.as_str()),
+            BackboneEvent::ItemCompleted(notification) => match notification.item.as_codex() {
+                Some(codex::ThreadItem::AgentMessage { id, .. }) => Some(id.as_str()),
                 _ => None,
             },
             _ => None,

@@ -34,13 +34,14 @@ import { parseCompanionSubagentDispatch } from "../model/companionSubagentDispat
 import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 import { parseTerminalItemMeta } from "../model/terminalItemMeta";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type { SessionItemLifecycle } from "../model/types";
 
 export interface CardContext {
   sessionId?: string;
   outputText?: string;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
-  itemLifecycle?: "started" | "updated" | "completed";
+  itemLifecycle: SessionItemLifecycle;
 }
 
 export interface CardRenderResult {
@@ -56,7 +57,7 @@ export function renderToolCallCard(
   ctx: CardContext,
 ): CardRenderResult {
   const kind = resolveKind(item);
-  const status = getItemDisplayStatus(item, ctx.itemLifecycle);
+  const status = getItemDisplayStatus(ctx.itemLifecycle);
 
   switch (item.type) {
     case "commandExecution":
@@ -458,46 +459,26 @@ function formatArgValue(value: unknown): string | null {
 // ── 状态映射 ──
 
 function getItemDisplayStatus(
-  item: AgentDashThreadItem,
-  itemLifecycle?: CardContext["itemLifecycle"],
+  lifecycle: CardContext["itemLifecycle"],
 ): DisplayStatus {
-  switch (item.type) {
-    case "commandExecution":
-    case "shellExec":
-    case "fileChange":
-    case "mcpToolCall":
-    case "dynamicToolCall":
-    case "collabAgentToolCall":
-    case "fsRead":
-    case "fsGrep":
-    case "fsGlob":
-      return item.status as DisplayStatus;
-    case "contextCompaction":
-      return resolveContextCompaction(item, itemLifecycle).displayStatus;
-    default:
-      return "completed";
-  }
+  if (lifecycle.phase !== "terminal") return "inProgress";
+  return lifecycle.outcome === "succeeded" ? "completed" : lifecycle.outcome;
 }
 
 function resolveContextCompaction(
   item: Extract<AgentDashThreadItem, { type: "contextCompaction" }>,
-  itemLifecycle?: CardContext["itemLifecycle"],
+  itemLifecycle: CardContext["itemLifecycle"],
 ): {
   status: "inProgress" | "succeeded" | "failed" | "lost" | "cancelled";
   displayStatus: DisplayStatus;
   error: string | null;
 } {
-  if ("status" in item) {
-    const displayStatus: DisplayStatus =
-      item.status === "succeeded" ? "completed" : item.status;
-    return { status: item.status, displayStatus, error: item.error };
-  }
-
-  const succeeded = itemLifecycle === "completed";
+  const terminal = itemLifecycle.phase === "terminal" ? itemLifecycle : null;
+  const status = terminal?.outcome ?? "inProgress";
   return {
-    status: succeeded ? "succeeded" : "inProgress",
-    displayStatus: succeeded ? "completed" : "inProgress",
-    error: null,
+    status,
+    displayStatus: status === "succeeded" ? "completed" : status,
+    error: terminal?.error ?? item.error,
   };
 }
 

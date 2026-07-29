@@ -25,7 +25,18 @@ describe("context compaction card", () => {
             : null,
       );
 
-      const card = renderToolCallCard(item, { itemLifecycle: "updated" });
+      const card = renderToolCallCard(item, {
+        itemLifecycle: {
+          phase: "terminal",
+          outcome: status,
+          error:
+            status === "failed"
+              ? "压缩应用失败"
+              : status === "lost"
+                ? "压缩终态恢复失败"
+                : null,
+        },
+      });
 
       expect(card.status).toBe(displayStatus);
       expect(renderToStaticMarkup(<>{card.body}</>)).toContain(expectedText);
@@ -40,7 +51,6 @@ function compactionItem(
   return {
     type: "contextCompaction",
     id: "compaction-1",
-    mode: "manual",
     status,
     error,
     startedAtMs: 1n,

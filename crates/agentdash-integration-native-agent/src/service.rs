@@ -2316,6 +2316,7 @@ fn canonical_live_event(
                 Some(result),
             )?;
             BackboneEvent::ItemCompleted(ItemCompletedNotification {
+                terminal: item.terminal_evidence().map_err(live_callback_error)?,
                 item,
                 thread_id: thread_id.to_owned(),
                 turn_id: turn_id.to_owned(),

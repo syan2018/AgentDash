@@ -47,9 +47,10 @@ context coherence。
 - 将`agentdash-agent-service-api`全部module并入`agentdash-agent-runtime-contract`。
 - 统一同domain identity/revision、authority/fidelity、execution、source availability、interaction、
   initial/context recipe与conversation nested facts；source/Product只保留最小wrapper。
-- 把`AgentRuntimeView`改为provisioning/attached discriminated Product aggregate；attached嵌入
-  canonical observation，Product projection revision与source observation revision分离。
-- Product command admission显式组合source control availability与Product lifecycle/surface policy。
+- 保留application层既有Absent/Current Product observation；`AgentRuntimeView`只包装成功读取的
+  canonical observation与browser-safe presentation evidence，不新增provisioning状态机。
+- Product lifecycle operation/admission留在Product use case，Runtime view只携带source control
+  availability。
 - 删除`agentdash-agent-service-api` crate、workspace member/dependency、schema与generated TS。
 - 删除`agent_snapshot_projection.rs`中的同构serde transcode和逐枚举复制。
 - 在统一Runtime contract增加Product context requirement/projection/error。

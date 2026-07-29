@@ -44,8 +44,9 @@ projection seam 和真实 consumer 理解。中间 transport、Product facade �
 - `AgentSourceCoordinate`/`RuntimeThreadId`、source observation revision/Product projection
   revision等不同domain保持类型隔离；Product lifecycle/admission与source lifecycle/control通过
   显式组合建模，不以同名字段互相覆盖。
-- `AgentRuntimeView`使用discriminated Product state表达provisioning与attached/source-backed状态；
-  source-backed分支嵌入canonical observation，不再平铺复制Agent snapshot。
+- Product未绑定/不可用状态由application层既有`AgentRunProductRuntimeViewObservation`表达；
+  `AgentRuntimeView`只在source read成功后存在，直接嵌入canonical observation，不新增一套
+  provisioning/attached状态机，也不再平铺复制Agent snapshot。
 - 两个wrapper都不是新的Agent事实owner：相同observation必须逐值一致，Product wrapper不得覆写、
   修正或缓存出另一份execution/context/interaction；内部一致性由contract shape与Runtime
   observation tests共同保证。

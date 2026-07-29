@@ -118,21 +118,8 @@ pub struct CompleteAgentSnapshot {
 
 pub struct AgentRuntimeView {
     pub thread_id: RuntimeThreadId,
-    pub projection_revision: ProductRuntimeRevision,
-    pub state: AgentRuntimeState,
-    pub operations: Vec<AgentRuntimeOperation>,
-    pub command_admission: AgentRuntimeCommandAdmissionMap,
-}
-
-pub enum AgentRuntimeState {
-    Provisioning {
-        binding: Option<AgentRuntimeSourceBindingEvidence>,
-    },
-    Attached {
-        binding: AgentRuntimeSourceBindingEvidence,
-        observation: AgentObservation,
-        presentation_evidence: AgentRuntimePresentationEvidence,
-    },
+    pub observation: AgentObservation,
+    pub presentation_evidence: AgentRuntimePresentationEvidence,
 }
 ```
 
@@ -141,16 +128,18 @@ pub enum AgentRuntimeState {
 - canonical facts只定义一次；
 - source identity只存在Complete Agent wrapper；
 - browser只接收Product wrapper；
-- Product-derived operation/binding不写回Agent observation；
-- source observation revision与Product projection revision使用不同类型；
-- Product command admission组合source control availability和Product lifecycle policy，不伪装成
-  Complete Agent发布的source事实；
+- Product binding与未绑定/不可用状态留在application层
+  `AgentRunProductRuntimeViewObservation`，不写入Agent observation；
+- `AgentRuntimeView`的revision就是canonical source observation revision，不再创建同值
+  `RuntimeProjectionRevision`别名；Product owner自己的document revision留在Product aggregate；
+- Product lifecycle operation receipt/admission不伪装成Complete Agent发布的source control事实；
 - attached wrapper中的observation必须与同revision Complete Agent observation逐值一致；
 - 不使用serde transcode连接两套同构类型。
 
 不能把`AgentRuntimeView`直接替换成`CompleteAgentSnapshot`：Product在source出现前已经存在
-provisioning/operation/binding状态，而且browser不能接收source coordinate与Agent-private evidence。
-保留wrapper是语义需要；平铺复制其中的observation字段不是。
+provisioning/operation/binding状态，但这些状态已经由Product use case与外层observation表达；
+browser也不能接收source coordinate与Agent-private evidence。保留安全wrapper是语义需要，
+把provisioning再塞进该wrapper或平铺复制observation都不是。
 
 identity按domain收束：
 
@@ -160,7 +149,7 @@ identity按domain收束：
 | source effect与Product operation | A0证明是否为同一业务identity；相同则统一，不同则显式关联 |
 | Agent source与Product thread | 保留两个类型 |
 | source observation revision | canonical observation/context使用同一类型 |
-| Product provisioning/projection revision | 保留独立类型，不再冒充source snapshot revision |
+| Product owner document/provisioning revision | 留在Product aggregate，不进入`AgentRuntimeView` |
 | surface revision | 若bound/applied引用同一surface ledger则统一，否则显式区分ledger |
 
 context同样拆成canonical recipe与wrapper：

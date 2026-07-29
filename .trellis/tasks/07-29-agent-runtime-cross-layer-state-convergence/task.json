@@ -3,7 +3,7 @@
   "name": "agent-runtime-cross-layer-state-convergence",
   "title": "Agent Runtime 状态面与控制面深模块收束",
   "description": "以 Context/Compaction 事故链为样本，收深 Complete Agent observation、Runtime projection、canonical item lifecycle、前端状态控制与 wire encoding normalization，降低跨层语义泄漏和变更爆炸半径。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": "refactor",
   "scope": "cross-layer",
   "package": "agent-runtime",

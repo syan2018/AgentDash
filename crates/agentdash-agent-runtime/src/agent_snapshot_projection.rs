@@ -548,6 +548,53 @@ mod tests {
     }
 
     #[test]
+    fn product_wrapper_hides_source_identity_without_mutating_observation_coordinates() {
+        let source = snapshot();
+        let expected_revision = source.revision;
+        let expected_context = source.context.clone();
+        let expected_lifecycle = source.lifecycle;
+        let expected_execution = source.execution.clone();
+
+        let projected = project_authoritative_agent_view(
+            RuntimeThreadId::new("thread-1").expect("thread"),
+            source,
+        )
+        .expect("projection");
+
+        assert_eq!(projected.thread_id.as_str(), "thread-1");
+        assert_eq!(projected.view_revision.0, expected_revision.0);
+        assert_eq!(
+            projected.context.snapshot_revision.0,
+            expected_context.snapshot_revision.0
+        );
+        assert_eq!(
+            projected.context.context_revision,
+            expected_context.context_revision
+        );
+        assert_eq!(
+            projected.context.recipe_digest.as_str(),
+            expected_context.recipe_digest.as_str()
+        );
+        assert_eq!(projected.lifecycle, project_lifecycle(expected_lifecycle));
+        assert_eq!(
+            projected.execution.active_turn.is_some(),
+            expected_execution.active_turn.is_some()
+        );
+        assert_eq!(
+            projected.execution.queued_compaction.is_some(),
+            expected_execution.queued_compaction.is_some()
+        );
+        assert_eq!(
+            projected.execution.last_compaction_outcome.is_some(),
+            expected_execution.last_compaction_outcome.is_some()
+        );
+
+        let wire = serde_json::to_string(&projected).expect("serialize Product Runtime view");
+        assert!(!wire.contains("source-1"));
+        assert!(!wire.contains("AgentSourceCoordinate"));
+    }
+
+    #[test]
     fn execution_uses_complete_agent_fact_even_when_presentation_has_not_arrived() {
         let mut snapshot = snapshot();
         snapshot.execution.active_turn = Some(AgentActiveTurnSnapshot {

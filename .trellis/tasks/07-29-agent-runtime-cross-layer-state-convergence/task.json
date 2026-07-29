@@ -1,0 +1,33 @@
+{
+  "id": "agent-runtime-cross-layer-state-convergence",
+  "name": "agent-runtime-cross-layer-state-convergence",
+  "title": "Agent Runtime 状态面与控制面深模块收束",
+  "description": "以 Context/Compaction 事故链为样本，收深 Complete Agent observation、Runtime projection、canonical item lifecycle、前端状态控制与 wire encoding normalization，降低跨层语义泄漏和变更爆炸半径。",
+  "status": "planning",
+  "dev_type": "refactor",
+  "scope": "cross-layer",
+  "package": "agent-runtime",
+  "priority": "P1",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-07-29",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/tasks/07-26-module-coupling-stable-boundary-review/",
+    ".trellis/tasks/07-17-agent-runtime-compaction-state-protocol-review/",
+    ".trellis/tasks/07-23-contextframe-input-authority-restoration/",
+    ".trellis/spec/backend/agent-runtime-kernel.md",
+    ".trellis/spec/backend/agent-runtime-context.md",
+    ".trellis/spec/cross-layer/frontend-backend-contracts.md"
+  ],
+  "notes": "独立架构任务；不创建子任务。07-26继续拥有全仓架构治理，本任务负责Agent Runtime纵向边界的可执行收束与行为证明。",
+  "meta": {}
+}

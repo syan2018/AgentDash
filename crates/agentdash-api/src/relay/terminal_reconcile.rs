@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::RuntimePayloadDigest;
+use agentdash_agent_runtime_contract::AgentPayloadDigest;
 use agentdash_application_agentrun::agent_run::{
     AgentRunTerminalAvailability, AgentRunTerminalLifecycleState, AgentRunTerminalOutputSequence,
     AgentRunTerminalProjection, AgentRunTerminalProjectionRepository,
@@ -207,8 +207,10 @@ fn source_snapshot(
 ) -> Result<AgentRunTerminalSourceSnapshot, AgentRunTerminalProjectionStoreError> {
     let encoded = serde_json::to_vec(&terminal)
         .map_err(|error| AgentRunTerminalProjectionStoreError::Persistence(error.to_string()))?;
-    let payload_digest = RuntimePayloadDigest::new(format!("sha256:{:x}", Sha256::digest(encoded)))
-        .map_err(|error| AgentRunTerminalProjectionStoreError::Persistence(error.to_string()))?;
+    let payload_digest = AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(encoded)))
+        .map_err(|error| {
+        AgentRunTerminalProjectionStoreError::Persistence(error.to_string())
+    })?;
     Ok(AgentRunTerminalSourceSnapshot {
         terminal,
         payload_digest,

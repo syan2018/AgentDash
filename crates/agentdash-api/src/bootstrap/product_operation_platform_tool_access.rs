@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agentdash_agent_runtime::{
     PlatformToolBroker, RuntimeToolDefinition, RuntimeToolResolvedContext,
 };
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentEffectIdentity, AgentSurfaceRevision, AgentToolName, AgentToolResult, AgentTurnId,
 };
 use agentdash_application::execution_authority::{

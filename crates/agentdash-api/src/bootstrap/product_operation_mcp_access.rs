@@ -5,7 +5,7 @@ use agentdash_agent_runtime::{
     RuntimeToolProductTarget, RuntimeToolProvenanceEvidence, RuntimeToolResolvedContext,
     RuntimeToolResourceGrant, ToolProtocolProjector,
 };
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentEffectIdentity, AgentSurfaceRevision, AgentToolResult, AgentTurnId,
 };
 use agentdash_application::execution_authority::{

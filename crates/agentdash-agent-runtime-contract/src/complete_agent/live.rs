@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{AgentServiceError, AgentServiceU64, AgentSourceCoordinate};
+use crate::{AgentServiceError, AgentSourceCoordinate, RuntimeU64};
 
 /// Process-local, source-scoped observation of an in-flight Agent execution.
 ///
@@ -15,7 +15,7 @@ use crate::{AgentServiceError, AgentServiceU64, AgentSourceCoordinate};
 #[serde(rename_all = "snake_case")]
 pub struct AgentLiveEvent {
     pub source: AgentSourceCoordinate,
-    pub sequence: AgentServiceU64,
+    pub sequence: RuntimeU64,
     pub record: CanonicalConversationRecord,
 }
 

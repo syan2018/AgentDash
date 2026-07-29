@@ -1,5 +1,5 @@
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeSourceBindingEvidence, RuntimePayloadDigest, RuntimeThreadId,
+    AgentPayloadDigest, AgentRuntimeSourceBindingEvidence, RuntimeThreadId,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
@@ -297,7 +297,7 @@ pub struct AgentRunTerminalChange {
     pub sequence: AgentRunTerminalChangeSequence,
     pub revision: AgentRunTerminalProjectionRevision,
     pub origin: AgentRunTerminalChangeOrigin,
-    pub payload_digest: RuntimePayloadDigest,
+    pub payload_digest: AgentPayloadDigest,
     pub delta: AgentRunTerminalProjectionDelta,
 }
 
@@ -713,7 +713,7 @@ impl From<AgentRunTerminalChangePage> for wire::AgentRunTerminalChangePage {
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunTerminalSourceSnapshot {
     pub terminal: AgentRunTerminalProjection,
-    pub payload_digest: RuntimePayloadDigest,
+    pub payload_digest: AgentPayloadDigest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -730,7 +730,7 @@ pub struct AgentRunTerminalSourceDelta {
     pub terminal_id: AgentRunTerminalId,
     pub terminal_owner_epoch_id: AgentRunTerminalOwnerEpochId,
     pub source_sequence: AgentRunTerminalSourceSequence,
-    pub payload_digest: RuntimePayloadDigest,
+    pub payload_digest: AgentPayloadDigest,
     pub delta: AgentRunTerminalProjectionDelta,
 }
 
@@ -973,13 +973,6 @@ mod tests {
             source_binding: AgentRuntimeSourceBindingEvidence {
                 source_ref: agentdash_agent_runtime_contract::RuntimeSourceRef::new("source-1")
                     .expect("source"),
-                committed_at_revision: agentdash_agent_runtime_contract::RuntimeProjectionRevision(
-                    1,
-                ),
-                applied_surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(2),
-                activated_at_revision: Some(
-                    agentdash_agent_runtime_contract::RuntimeProjectionRevision(2),
-                ),
             },
             backend_id: "backend-1".to_string(),
         }
@@ -1012,7 +1005,7 @@ mod tests {
     fn source_snapshot(owner: AgentRunTerminalOwnerFence) -> AgentRunTerminalSourceSnapshot {
         AgentRunTerminalSourceSnapshot {
             terminal: terminal(owner),
-            payload_digest: RuntimePayloadDigest::new("sha256:terminal-source-snapshot")
+            payload_digest: AgentPayloadDigest::new("sha256:terminal-source-snapshot")
                 .expect("digest"),
         }
     }
@@ -1058,7 +1051,7 @@ mod tests {
                     terminal_owner_epoch_id: owner.terminal_owner_epoch_id.clone(),
                     source_sequence: AgentRunTerminalSourceSequence(7),
                 },
-                payload_digest: RuntimePayloadDigest::new("sha256:terminal-output-7")
+                payload_digest: AgentPayloadDigest::new("sha256:terminal-output-7")
                     .expect("digest"),
                 delta: AgentRunTerminalProjectionDelta::OutputAppended {
                     terminal_id: AgentRunTerminalId::new("terminal-1").expect("terminal"),

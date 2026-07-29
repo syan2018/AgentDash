@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentRuntimeOffer, AgentSurfaceRoute, AgentSurfaceSnapshot, BoundAgentSurface,
     BoundAgentSurfaceContribution,
 };
@@ -118,7 +118,7 @@ fn route_preference(route: AgentSurfaceRoute) -> u8 {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use agentdash_agent_service_api::{
+    use agentdash_agent_runtime_contract::{
         AgentConfigurationBoundary, AgentHookAction, AgentHookBlockingSemantics,
         AgentHookDefinitionId, AgentHookEffectKind, AgentHookMutationKind, AgentHookPoint,
         AgentHookSemanticFacet, AgentHookTiming, AgentPayloadDigest, AgentProfileDigest,
@@ -441,11 +441,11 @@ mod tests {
                 .map(|contribution| contribution.semantics.kind())
                 .collect::<BTreeSet<_>>(),
             BTreeSet::from([
-                agentdash_agent_service_api::AgentSurfaceContributionKind::Instruction,
-                agentdash_agent_service_api::AgentSurfaceContributionKind::Tool,
-                agentdash_agent_service_api::AgentSurfaceContributionKind::Hook,
-                agentdash_agent_service_api::AgentSurfaceContributionKind::Workspace,
-                agentdash_agent_service_api::AgentSurfaceContributionKind::ContextRequirement,
+                agentdash_agent_runtime_contract::AgentSurfaceContributionKind::Instruction,
+                agentdash_agent_runtime_contract::AgentSurfaceContributionKind::Tool,
+                agentdash_agent_runtime_contract::AgentSurfaceContributionKind::Hook,
+                agentdash_agent_runtime_contract::AgentSurfaceContributionKind::Workspace,
+                agentdash_agent_runtime_contract::AgentSurfaceContributionKind::ContextRequirement,
             ])
         );
     }

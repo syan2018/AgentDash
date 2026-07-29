@@ -79,6 +79,7 @@ service_id!(AgentTurnId);
 service_id!(AgentItemId);
 service_id!(AgentInteractionId);
 service_id!(AgentContextPackageId);
+service_id!(AgentContextContributionId);
 service_id!(AgentContextSourceCoordinate);
 service_id!(AgentContextSourceRevision);
 service_id!(AgentSurfaceDigest);
@@ -107,10 +108,10 @@ macro_rules! service_revision {
         )]
         #[serde(transparent)]
         #[schemars(transparent)]
-        #[ts(type = "AgentServiceU64")]
+        #[ts(type = "RuntimeU64")]
         pub struct $name(
             #[serde(with = "crate::wire_u64")]
-            #[schemars(with = "crate::wire_u64::AgentServiceU64")]
+            #[schemars(with = "crate::wire_u64::RuntimeU64")]
             pub u64,
         );
     };

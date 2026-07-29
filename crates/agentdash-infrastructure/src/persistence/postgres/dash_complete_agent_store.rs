@@ -4,9 +4,9 @@ use agentdash_agent::dash::{
     AgentSessionId, DASH_REPOSITORY_SCHEMA_VERSION, DashAgentRepository, DashAgentRepositoryState,
     DashAgentRepositoryStore, DashServiceError, migrate_dash_repository,
 };
-use agentdash_agent_service_api::{
-    AgentEffectIdentity, AgentObservation, AgentServiceError, AgentServiceErrorCode,
-    AgentSourceCoordinate,
+use agentdash_agent_runtime_contract::{
+    AgentEffectIdentity, AgentServiceError, AgentServiceErrorCode, AgentSourceCoordinate,
+    AgentSourceState,
 };
 use agentdash_integration_native_agent::{
     DashCompleteAgentStore, DashCompleteAtomicCommit, DashCompleteEffectRecord,
@@ -167,7 +167,7 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
     async fn load_observation(
         &self,
         source: &AgentSourceCoordinate,
-    ) -> Result<Option<AgentObservation>, AgentServiceError> {
+    ) -> Result<Option<AgentSourceState>, AgentServiceError> {
         let row = sqlx::query(
             "SELECT observation, repository_schema_version \
              FROM dash_complete_source WHERE source_coordinate=$1",
@@ -182,7 +182,7 @@ impl DashCompleteAgentStore for PostgresDashCompleteAgentStore {
         let observation = row
             .as_ref()
             .map(|row| {
-                serde_json::from_value::<AgentObservation>(
+                serde_json::from_value::<AgentSourceState>(
                     row.try_get("observation").map_err(agent_database_error)?,
                 )
                 .map_err(|error| {

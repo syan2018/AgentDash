@@ -21,7 +21,7 @@ use agentdash_agent_protocol::{
     PresentationDurability, ProviderAttemptPhase, ProviderAttemptStatus, SourceInfo,
     ToolProtocolProjector, TraceInfo,
 };
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentActiveTurnKind, AgentActiveTurnPhase, AgentActiveTurnSnapshot, AgentAppliedEffectOutcome,
     AgentCapabilityProfile, AgentChange, AgentChangePage, AgentChangePayload, AgentChangesQuery,
     AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
@@ -34,21 +34,21 @@ use agentdash_agent_service_api::{
     AgentHostCallbacks, AgentInput, AgentInputContent, AgentInteractionRequest,
     AgentInteractionResolution, AgentInteractionSnapshot, AgentInteractionStatus,
     AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveEvent, AgentLiveEventStream,
-    AgentModelInputRole, AgentModelInputToolCall, AgentObservation, AgentObservationQuery,
-    AgentPayloadDigest, AgentQueuedCompactionSnapshot, AgentReadQuery, AgentReceiptState,
-    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
-    AgentServiceInstanceId, AgentServiceU64, AgentSnapshot, AgentSnapshotAuthority,
-    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
-    AgentSourceCursor, AgentSourceRevision, AgentSurfaceCapabilityFacet, AgentSurfaceProfile,
-    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot,
-    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnObservation,
+    AgentModelInputRole, AgentModelInputToolCall, AgentObservationQuery, AgentPayloadDigest,
+    AgentQueuedCompactionSnapshot, AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId,
+    AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
+    AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource,
+    AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor, AgentSourceRevision,
+    AgentSourceState, AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute,
+    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot, AgentToolDelivery,
+    AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnObservation,
     AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
     AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
     AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
     BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
     ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
     InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
-    ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    ResumeAgentCommand, RevokeBoundAgentSurface, RuntimeU64, SemanticFidelity,
 };
 use agentdash_integration_api::{
     AgentDashIntegration, CompleteAgentPlacementRequirement, CompleteAgentRegistrationClaim,
@@ -129,7 +129,7 @@ pub trait DashCompleteAgentStore: Send + Sync {
     async fn load_observation(
         &self,
         source: &AgentSourceCoordinate,
-    ) -> Result<Option<AgentObservation>, AgentServiceError>;
+    ) -> Result<Option<AgentSourceState>, AgentServiceError>;
 
     async fn load_effect(
         &self,
@@ -147,7 +147,7 @@ pub trait DashCompleteAgentStore: Send + Sync {
 pub fn dash_complete_agent_observation(
     source: &AgentSourceCoordinate,
     repository: &DashAgentRepositoryState,
-) -> Result<AgentObservation, AgentServiceError> {
+) -> Result<AgentSourceState, AgentServiceError> {
     let state = repository.history().state().map_err(internal)?;
     let latest_turn = repository
         .history()
@@ -174,7 +174,7 @@ pub fn dash_complete_agent_observation(
             .values()
             .any(|interaction| !interaction.cancelled && interaction.response.is_none()),
     );
-    Ok(AgentObservation {
+    Ok(AgentSourceState {
         source: source.clone(),
         revision,
         lifecycle: if state.status == agentdash_agent::dash::SessionStatus::Closed {
@@ -187,7 +187,7 @@ pub fn dash_complete_agent_observation(
         latest_turn: latest_turn
             .map(|(turn_id, turn)| {
                 Ok(AgentTurnObservation {
-                    turn_id: agentdash_agent_service_api::AgentTurnId::new(turn_id.0.clone())
+                    turn_id: agentdash_agent_runtime_contract::AgentTurnId::new(turn_id.0.clone())
                         .map_err(internal)?,
                     status: match turn.map(|turn| turn.status) {
                         Some(agentdash_agent::dash::ActivityStatus::Active) => {
@@ -933,26 +933,28 @@ impl CompleteAgentService for DashAgentCompleteService {
         );
         Ok(AgentSnapshot {
             source: query.source,
-            revision,
-            context,
-            lifecycle,
-            execution,
-            command_availability,
-            interactions: history_state
-                .interactions
-                .iter()
-                .map(|(id, interaction)| interaction_snapshot(id, interaction))
-                .collect::<Result<Vec<_>, _>>()?,
-            thread_name: history_state
-                .thread_name
-                .map(|thread_name| AgentThreadNameSnapshot {
-                    thread_name: Some(thread_name),
-                    source_info: source_info.clone(),
-                }),
-            source_info,
+            observation: agentdash_agent_runtime_contract::AgentObservation {
+                revision,
+                context,
+                lifecycle,
+                execution,
+                command_availability,
+                interactions: history_state
+                    .interactions
+                    .iter()
+                    .map(|(id, interaction)| interaction_snapshot(id, interaction))
+                    .collect::<Result<Vec<_>, _>>()?,
+                thread_name: history_state
+                    .thread_name
+                    .map(|thread_name| AgentThreadNameSnapshot {
+                        thread_name: Some(thread_name),
+                        source_info: source_info.clone(),
+                    }),
+                source_info,
+                conversation: conversation_history,
+            },
             applied_surface: source.applied_surface,
             initial_context: source.initial_context,
-            conversation_history,
         })
     }
 
@@ -1001,19 +1003,23 @@ impl CompleteAgentService for DashAgentCompleteService {
         }));
         Ok(AgentContextSnapshot {
             source: query.source,
-            snapshot_revision,
-            context_revision: recipe.context_revision.map(|revision| revision.0),
-            recipe_digest: AgentPayloadDigest::new(recipe.digest).map_err(internal)?,
-            authority: AgentContextAuthority::AgentOwned,
-            fidelity: AgentContextFidelity::Exact,
-            contributions,
+            recipe: agentdash_agent_runtime_contract::AgentContextRecipe {
+                coordinate: agentdash_agent_runtime_contract::AgentContextCoordinate {
+                    snapshot_revision,
+                    context_revision: recipe.context_revision.map(|revision| revision.0),
+                    recipe_digest: AgentPayloadDigest::new(recipe.digest).map_err(internal)?,
+                    authority: AgentContextAuthority::AgentOwned,
+                    fidelity: AgentContextFidelity::Exact,
+                },
+                contributions,
+            },
         })
     }
 
     async fn observe(
         &self,
         query: AgentObservationQuery,
-    ) -> Result<AgentObservation, AgentServiceError> {
+    ) -> Result<AgentSourceState, AgentServiceError> {
         self.store
             .load_observation(&query.source)
             .await?
@@ -1424,7 +1430,7 @@ impl DashCompleteEffectRecord {
     fn command_receipt_for(
         &self,
         source: &AgentSourceCoordinate,
-        command_id: &agentdash_agent_service_api::AgentCommandId,
+        command_id: &agentdash_agent_runtime_contract::AgentCommandId,
         request_fingerprint: &str,
     ) -> Result<AgentCommandReceipt, AgentServiceError> {
         match &self.receipt {
@@ -1450,7 +1456,7 @@ impl DashCompleteEffectRecord {
     fn fork_receipt_for(
         &self,
         source: &AgentSourceCoordinate,
-        command_id: &agentdash_agent_service_api::AgentCommandId,
+        command_id: &agentdash_agent_runtime_contract::AgentCommandId,
         request_fingerprint: &str,
     ) -> Result<ForkAgentReceipt, AgentServiceError> {
         match &self.receipt {
@@ -1474,7 +1480,7 @@ impl DashCompleteEffectRecord {
     fn apply_surface_receipt_for(
         &self,
         source: &AgentSourceCoordinate,
-        command_id: &agentdash_agent_service_api::AgentCommandId,
+        command_id: &agentdash_agent_runtime_contract::AgentCommandId,
         request_fingerprint: &str,
     ) -> Result<AppliedAgentSurfaceReceipt, AgentServiceError> {
         match &self.receipt {
@@ -1500,11 +1506,13 @@ fn translate_initial_context(
         return Err(invalid_argument("initial context package digest mismatch"));
     }
     let mode = match package.mode {
-        agentdash_agent_service_api::InitialContextMode::Compact => InitialContextMode::Compact,
-        agentdash_agent_service_api::InitialContextMode::WorkflowOnly => {
+        agentdash_agent_runtime_contract::InitialContextMode::Compact => {
+            InitialContextMode::Compact
+        }
+        agentdash_agent_runtime_contract::InitialContextMode::WorkflowOnly => {
             InitialContextMode::WorkflowOnly
         }
-        agentdash_agent_service_api::InitialContextMode::ConstraintsOnly => {
+        agentdash_agent_runtime_contract::InitialContextMode::ConstraintsOnly => {
             InitialContextMode::ConstraintsOnly
         }
     };
@@ -1513,11 +1521,11 @@ fn translate_initial_context(
         .iter()
         .map(|contribution| {
             let (kind, payload, provenance) = match contribution {
-                agentdash_agent_service_api::InitialContextContribution::CompactSummary {
+                agentdash_agent_runtime_contract::InitialContextContribution::CompactSummary {
                     summary,
                     provenance,
                 } => ("compact_summary", summary.clone(), provenance),
-                agentdash_agent_service_api::InitialContextContribution::WorkflowContext {
+                agentdash_agent_runtime_contract::InitialContextContribution::WorkflowContext {
                     payload,
                     provenance,
                 } => (
@@ -1525,7 +1533,7 @@ fn translate_initial_context(
                     serde_json::to_string(payload).map_err(internal)?,
                     provenance,
                 ),
-                agentdash_agent_service_api::InitialContextContribution::ConstraintSet {
+                agentdash_agent_runtime_contract::InitialContextContribution::ConstraintSet {
                     payload,
                     provenance,
                 } => (
@@ -1616,8 +1624,8 @@ fn service_terminal(outcome: DashTerminalOutcome) -> AgentTerminalOutcome {
 }
 
 fn dash_surface_from_bound(
-    surface: &agentdash_agent_service_api::BoundAgentSurface,
-    previous: Option<&agentdash_agent_service_api::BoundAgentSurface>,
+    surface: &agentdash_agent_runtime_contract::BoundAgentSurface,
+    previous: Option<&agentdash_agent_runtime_contract::BoundAgentSurface>,
 ) -> Result<DashSurface, AgentServiceError> {
     let mut instructions = vec![intrinsic_surface::instruction()];
     let mut tools = Vec::new();
@@ -1628,7 +1636,7 @@ fn dash_surface_from_bound(
             ));
         }
         match &contribution.payload {
-            agentdash_agent_service_api::AgentSurfaceContributionPayload::Instruction {
+            agentdash_agent_runtime_contract::AgentSurfaceContributionPayload::Instruction {
                 channel,
                 text,
                 presentation,
@@ -1638,7 +1646,7 @@ fn dash_surface_from_bound(
                 text: text.clone(),
                 presentation: presentation.clone(),
             }),
-            agentdash_agent_service_api::AgentSurfaceContributionPayload::Tool {
+            agentdash_agent_runtime_contract::AgentSurfaceContributionPayload::Tool {
                 name,
                 description,
                 input_schema,
@@ -1655,7 +1663,7 @@ fn dash_surface_from_bound(
                 context_usage_kind: provenance.context_usage_kind.clone(),
                 protocol_projector: protocol_projector.clone(),
             }),
-            agentdash_agent_service_api::AgentSurfaceContributionPayload::Workspace {
+            agentdash_agent_runtime_contract::AgentSurfaceContributionPayload::Workspace {
                 requirement,
             } => instructions.push(DashSurfaceInstruction {
                 key: contribution.key.clone(),
@@ -1664,7 +1672,7 @@ fn dash_surface_from_bound(
                 presentation:
                     agentdash_agent_protocol::AgentSurfaceInstructionPresentation::Environment,
             }),
-            agentdash_agent_service_api::AgentSurfaceContributionPayload::ContextRequirement {
+            agentdash_agent_runtime_contract::AgentSurfaceContributionPayload::ContextRequirement {
                 requirement,
             } => instructions.push(DashSurfaceInstruction {
                 key: contribution.key.clone(),
@@ -1673,7 +1681,7 @@ fn dash_surface_from_bound(
                 presentation:
                     agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
             }),
-            agentdash_agent_service_api::AgentSurfaceContributionPayload::Hook { .. } => {}
+            agentdash_agent_runtime_contract::AgentSurfaceContributionPayload::Hook { .. } => {}
         }
     }
     let digest =
@@ -1721,13 +1729,13 @@ fn text_input(input: &AgentInput) -> Result<String, AgentServiceError> {
 
 fn service_turn_id(
     id: &DashTurnId,
-) -> Result<agentdash_agent_service_api::AgentTurnId, AgentServiceError> {
-    agentdash_agent_service_api::AgentTurnId::new(id.0.clone()).map_err(internal)
+) -> Result<agentdash_agent_runtime_contract::AgentTurnId, AgentServiceError> {
+    agentdash_agent_runtime_contract::AgentTurnId::new(id.0.clone()).map_err(internal)
 }
 
 fn dash_execution_snapshot(
     state: &AgentHistoryState,
-) -> Result<agentdash_agent_service_api::AgentExecutionSnapshot, AgentServiceError> {
+) -> Result<agentdash_agent_runtime_contract::AgentExecutionSnapshot, AgentServiceError> {
     let active_turn = state
         .active_turn
         .as_ref()
@@ -1787,15 +1795,17 @@ fn dash_execution_snapshot(
                 }
             };
             Ok(AgentCompactionOutcomeSnapshot {
-                turn_id: agentdash_agent_service_api::AgentTurnId::new(compaction_id.0.clone())
-                    .map_err(internal)?,
+                turn_id: agentdash_agent_runtime_contract::AgentTurnId::new(
+                    compaction_id.0.clone(),
+                )
+                .map_err(internal)?,
                 status,
                 completed_at_ms,
                 error: compaction.error.clone(),
             })
         })
         .transpose()?;
-    Ok(agentdash_agent_service_api::AgentExecutionSnapshot {
+    Ok(agentdash_agent_runtime_contract::AgentExecutionSnapshot {
         active_turn,
         queued_compaction,
         last_compaction_outcome,
@@ -1804,8 +1814,8 @@ fn dash_execution_snapshot(
 
 fn service_item_id(
     id: &DashItemId,
-) -> Result<agentdash_agent_service_api::AgentItemId, AgentServiceError> {
-    agentdash_agent_service_api::AgentItemId::new(id.0.clone()).map_err(internal)
+) -> Result<agentdash_agent_runtime_contract::AgentItemId, AgentServiceError> {
+    agentdash_agent_runtime_contract::AgentItemId::new(id.0.clone()).map_err(internal)
 }
 
 fn interaction_snapshot(
@@ -1813,7 +1823,8 @@ fn interaction_snapshot(
     interaction: &InteractionState,
 ) -> Result<AgentInteractionSnapshot, AgentServiceError> {
     Ok(AgentInteractionSnapshot {
-        id: agentdash_agent_service_api::AgentInteractionId::new(id.0.clone()).map_err(internal)?,
+        id: agentdash_agent_runtime_contract::AgentInteractionId::new(id.0.clone())
+            .map_err(internal)?,
         turn_id: service_turn_id(&interaction.turn_id)?,
         item_id: interaction
             .item_id
@@ -2098,7 +2109,7 @@ impl DashCompleteLiveChannel {
             .into_iter()
             .flat_map(|surface| surface.contributions.iter())
             .filter_map(|contribution| match &contribution.payload {
-                agentdash_agent_service_api::AgentSurfaceContributionPayload::Tool {
+                agentdash_agent_runtime_contract::AgentSurfaceContributionPayload::Tool {
                     name,
                     protocol_projector,
                     ..
@@ -2133,7 +2144,7 @@ impl DashCompleteLiveChannel {
             };
             let _ = self.sender.send(AgentLiveEvent {
                 source: source.clone(),
-                sequence: AgentServiceU64(sequence),
+                sequence: RuntimeU64(sequence),
                 record,
             });
         }
@@ -2180,7 +2191,7 @@ impl DashExecutionCallbacks for DashCompleteLiveCallbacks {
         );
         let _ = self.live_channel.sender.send(AgentLiveEvent {
             source: self.source.clone(),
-            sequence: AgentServiceU64(sequence),
+            sequence: RuntimeU64(sequence),
             record,
         });
         Ok(())

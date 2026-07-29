@@ -393,7 +393,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    use agentdash_agent_service_api::{
+    use agentdash_agent_runtime_contract::{
         AgentServiceDefinitionId, AgentServiceErrorCode, AgentServiceInstanceId,
     };
     use tokio::io::{AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};

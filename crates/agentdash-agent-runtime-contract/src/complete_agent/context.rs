@@ -194,25 +194,21 @@ pub struct AgentContextCoordinate {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentContextSnapshot {
-    pub source: AgentSourceCoordinate,
-    pub snapshot_revision: AgentSnapshotRevision,
-    pub context_revision: Option<String>,
-    pub recipe_digest: AgentPayloadDigest,
-    pub authority: AgentContextAuthority,
-    pub fidelity: AgentContextFidelity,
+pub struct AgentContextRecipe {
+    pub coordinate: AgentContextCoordinate,
     pub contributions: Vec<AgentContextContribution>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentContextSnapshot {
+    pub source: AgentSourceCoordinate,
+    pub recipe: AgentContextRecipe,
+}
+
 impl AgentContextSnapshot {
-    pub fn coordinate(&self) -> AgentContextCoordinate {
-        AgentContextCoordinate {
-            snapshot_revision: self.snapshot_revision,
-            context_revision: self.context_revision.clone(),
-            recipe_digest: self.recipe_digest.clone(),
-            authority: self.authority,
-            fidelity: self.fidelity,
-        }
+    pub const fn coordinate(&self) -> &AgentContextCoordinate {
+        &self.recipe.coordinate
     }
 }
 

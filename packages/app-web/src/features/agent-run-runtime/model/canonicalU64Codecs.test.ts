@@ -10,7 +10,7 @@ import {
   encodeAgentCommandEnvelope,
   encodeAgentSnapshot,
   encodeAgentToolInvocation,
-} from "../../../generated/agent-service-codecs";
+} from "../../../generated/agent-runtime-service-codecs";
 import {
   decodeRuntimeWireEnvelope,
   encodeRuntimeWireEnvelope,
@@ -44,23 +44,39 @@ describe("Complete Agent canonical u64 codecs", () => {
   it("round-trips snapshot, source observation, applied surface, and change time", () => {
     const snapshot = decodeAgentSnapshot({
       source: "source-1",
-      revision: MAX_U64,
-      lifecycle: "active",
-      interactions: [],
-      thread_name: {
-        thread_name: "thread",
+      observation: {
+        revision: MAX_U64,
+        lifecycle: "active",
+        execution: {
+          active_turn: null,
+          queued_compaction: null,
+          last_compaction_outcome: null,
+        },
+        context: {
+          snapshot_revision: MAX_U64,
+          context_revision: "context-max",
+          recipe_digest: "sha256:context-max",
+          authority: "agent_owned",
+          fidelity: "exact",
+        },
+        command_availability: {},
+        interactions: [],
+        thread_name: {
+          thread_name: "thread",
+          source_info: {
+            authority: "agent_authoritative",
+            source_revision: null,
+            fidelity: "exact",
+            observed_at_ms: MAX_U64,
+          },
+        },
         source_info: {
           authority: "agent_authoritative",
           source_revision: null,
           fidelity: "exact",
           observed_at_ms: MAX_U64,
         },
-      },
-      source_info: {
-        authority: "agent_authoritative",
-        source_revision: null,
-        fidelity: "exact",
-        observed_at_ms: MAX_U64,
+        conversation: [],
       },
       applied_surface: {
         revision: MAX_U64,
@@ -68,7 +84,6 @@ describe("Complete Agent canonical u64 codecs", () => {
         contributions: [],
       },
       initial_context: null,
-      conversation_history: [],
     });
     const page = decodeAgentChangePage({
       source: "source-1",
@@ -87,12 +102,14 @@ describe("Complete Agent canonical u64 codecs", () => {
       gap: false,
     });
 
-    expect(snapshot.revision).toBe(MAX_U64_BIGINT);
-    expect(snapshot.thread_name?.source_info.observed_at_ms).toBe(MAX_U64_BIGINT);
+    expect(snapshot.observation.revision).toBe(MAX_U64_BIGINT);
+    expect(snapshot.observation.thread_name?.source_info.observed_at_ms).toBe(MAX_U64_BIGINT);
     expect(page.changes[0]?.occurred_at_ms).toBe(MAX_U64_BIGINT);
     expect(encodeAgentSnapshot(snapshot)).toMatchObject({
-      revision: MAX_U64,
-      source_info: { observed_at_ms: MAX_U64 },
+      observation: {
+        revision: MAX_U64,
+        source_info: { observed_at_ms: MAX_U64 },
+      },
       applied_surface: { revision: MAX_U64 },
     });
     expect(encodeAgentChangePage(page).changes[0]).toMatchObject({

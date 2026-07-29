@@ -251,20 +251,17 @@ use agentdash_contracts::workspace_module::{
 use ts_rs::TS;
 
 const AGENT_RUN_PRODUCT_RUNTIME_IMPORTS: &[(&str, &str)] = &[
-    ("AgentRuntimeContentBlock", "./agent-runtime-contracts"),
-    (
-        "AgentRuntimeInteractionResponse",
-        "./agent-runtime-contracts",
-    ),
+    ("AgentInputContent", "./agent-runtime-contracts"),
+    ("AgentInteractionResponse", "./agent-runtime-contracts"),
     ("AgentRuntimeOperationReceipt", "./agent-runtime-contracts"),
     (
         "AgentRuntimeSourceBindingEvidence",
         "./agent-runtime-contracts",
     ),
-    ("RuntimeInteractionId", "./agent-runtime-contracts"),
+    ("AgentInteractionId", "./agent-runtime-contracts"),
     ("RuntimeSourceRef", "./agent-runtime-contracts"),
-    ("RuntimeProjectionRevision", "./agent-runtime-contracts"),
-    ("SurfaceRevision", "./agent-runtime-contracts"),
+    ("AgentSnapshotRevision", "./agent-runtime-contracts"),
+    ("AgentSurfaceRevision", "./agent-runtime-contracts"),
 ];
 
 const LIFECYCLE_RUNTIME_IMPORTS: &[(&str, &str)] = &[
@@ -1348,8 +1345,8 @@ mod tests {
         for runtime_owned in [
             "AgentRuntimeSourceBindingEvidence",
             "RuntimeSourceRef",
-            "RuntimeProjectionRevision",
-            "SurfaceRevision",
+            "AgentSnapshotRevision",
+            "AgentSurfaceRevision",
         ] {
             assert!(
                 !exported.contains(runtime_owned),

@@ -34,9 +34,11 @@ import { ComposerPlusMenu } from "./composer/ComposerPlusMenu";
 import { DisclosureRow } from "../../../components/ui/disclosure";
 import { getTurnSectionKey } from "./turnSectionIdentity";
 
-type AgentRuntimeActiveTurn = NonNullable<AgentRuntimeView["execution"]["active_turn"]>;
+type AgentRuntimeActiveTurn = NonNullable<
+  AgentRuntimeView["observation"]["execution"]["active_turn"]
+>;
 type AgentRuntimeQueuedCompaction = NonNullable<
-  AgentRuntimeView["execution"]["queued_compaction"]
+  AgentRuntimeView["observation"]["execution"]["queued_compaction"]
 >;
 
 type ExecutorDiscoveryState = ReturnType<typeof useExecutorDiscovery>;
@@ -105,7 +107,7 @@ function ContextUsageRing({
 }: {
   usage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  contextCoordinate: AgentRuntimeView["context"] | null;
+  contextCoordinate: AgentRuntimeView["observation"]["context"] | null;
   compactContextCommand?: SessionChatCommandModel;
   onCompactContext?: () => Promise<void>;
 }) {
@@ -680,7 +682,7 @@ export function SessionChatComposer({
   workspaceId?: string | null;
   tokenUsage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  contextCoordinate: AgentRuntimeView["context"] | null;
+  contextCoordinate: AgentRuntimeView["observation"]["context"] | null;
   compactContextCommand?: SessionChatCommandModel;
   onCompactContext?: () => Promise<void>;
   onAtTrigger: (query: string) => void;

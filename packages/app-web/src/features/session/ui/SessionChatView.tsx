@@ -296,7 +296,7 @@ export function SessionChatView({
     [productCommandState, runtimeView],
   );
 
-  const contextCoordinate = runtimeView?.context ?? null;
+  const contextCoordinate = runtimeView?.observation.context ?? null;
   const rawEventsBelongToCurrentSession = useMemo(
     () =>
       rawEventsBelongToRuntimeStreamTarget({
@@ -314,7 +314,7 @@ export function SessionChatView({
 
   // ─── Action running 检测 ──────────────────────────────
 
-  const isActionRunning = runtimeView?.execution.status === "active";
+  const isActionRunning = runtimeView?.observation.execution.active_turn != null;
 
   const onLiveEventRef = useRef(onLiveEvent);
   const dispatchedLivePresentationIdsRef = useRef(new Set<string>());
@@ -688,8 +688,8 @@ export function SessionChatView({
         hasRuntimeStreamTarget={hasRuntimeStreamTarget}
         isLoading={isLoading}
         streamingEntryId={streamingEntryId}
-        activeTurn={runtimeView?.execution.active_turn ?? null}
-        queuedCompaction={runtimeView?.execution.queued_compaction ?? null}
+        activeTurn={runtimeView?.observation.execution.active_turn ?? null}
+        queuedCompaction={runtimeView?.observation.execution.queued_compaction ?? null}
         streamPrefixContent={streamPrefixContent}
         onForkFromMessageRef={intents.forkFromMessageRef}
         onScroll={handleScroll}

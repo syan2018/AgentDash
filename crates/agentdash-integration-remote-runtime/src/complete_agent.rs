@@ -6,15 +6,7 @@ use std::{
     },
 };
 
-use agentdash_agent_runtime_wire::{
-    RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAck, RuntimeWireAgentBindingTarget,
-    RuntimeWireAgentChangeNotification, RuntimeWireAgentHostCallbackRequest,
-    RuntimeWireAgentHostCallbackResponse, RuntimeWireAgentServiceDescribeRequest,
-    RuntimeWireAgentServiceRequest, RuntimeWireAgentServiceResponse, RuntimeWireEnvelope,
-    RuntimeWireFrame, RuntimeWireFrameId, RuntimeWireNotification, RuntimeWireRequest,
-    RuntimeWireResponse,
-};
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentChange, AgentChangePage, AgentChangesQuery,
     AgentCommandEnvelope, AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot,
     AgentEffectIdentity, AgentEffectInspection, AgentHookDecision, AgentHookInvocation,
@@ -23,6 +15,14 @@ use agentdash_agent_service_api::{
     AgentSnapshot, AgentSourceCoordinate, AgentToolInvocation, AgentToolResult,
     AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CompleteAgentService, CreateAgentCommand,
     ForkAgentCommand, ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
+};
+use agentdash_agent_runtime_wire::{
+    RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAck, RuntimeWireAgentBindingTarget,
+    RuntimeWireAgentChangeNotification, RuntimeWireAgentHostCallbackRequest,
+    RuntimeWireAgentHostCallbackResponse, RuntimeWireAgentServiceDescribeRequest,
+    RuntimeWireAgentServiceRequest, RuntimeWireAgentServiceResponse, RuntimeWireEnvelope,
+    RuntimeWireFrame, RuntimeWireFrameId, RuntimeWireNotification, RuntimeWireRequest,
+    RuntimeWireResponse,
 };
 use async_trait::async_trait;
 use thiserror::Error;
@@ -301,8 +301,8 @@ impl RemoteCompleteAgentService {
         callback: RuntimeWireAgentHostCallbackRequest,
     ) -> RuntimeWireAgentHostCallbackResponse {
         if callback.binding_generation() != self.target.binding_generation {
-            let error = agentdash_agent_service_api::AgentHostCallbackError::new(
-                agentdash_agent_service_api::AgentHostCallbackErrorCode::StaleBindingGeneration,
+            let error = agentdash_agent_runtime_contract::AgentHostCallbackError::new(
+                agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::StaleBindingGeneration,
                 "remote callback carries a stale source binding generation",
                 false,
             );
@@ -332,8 +332,8 @@ impl RemoteCompleteAgentService {
         else {
             return callback_error_response(
                 &callback,
-                agentdash_agent_service_api::AgentHostCallbackError::new(
-                    agentdash_agent_service_api::AgentHostCallbackErrorCode::StaleBindingGeneration,
+                agentdash_agent_runtime_contract::AgentHostCallbackError::new(
+                    agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::StaleBindingGeneration,
                     "remote callback route has no exact local generation mapping",
                     false,
                 ),
@@ -380,7 +380,7 @@ impl RemoteCompleteAgentService {
         }
         if matches!(
             &notification.change.payload,
-            agentdash_agent_service_api::AgentChangePayload::SnapshotInvalidated { .. }
+            agentdash_agent_runtime_contract::AgentChangePayload::SnapshotInvalidated { .. }
         ) {
             self.pushed_gaps
                 .lock()
@@ -1074,7 +1074,7 @@ impl AgentHostCallbacks for RuntimeWireAgentHostCallbackClient {
 #[derive(Default)]
 struct PublishedChangeState {
     last_sequence: Option<u64>,
-    cursors: HashSet<agentdash_agent_service_api::AgentSourceCursor>,
+    cursors: HashSet<agentdash_agent_runtime_contract::AgentSourceCursor>,
 }
 
 /// Local Runtime Wire terminator for one concrete Complete Agent implementation.
@@ -1176,11 +1176,12 @@ impl RuntimeWireAgentServiceEndpoint {
                 cursor: change.cursor,
                 source_revision: change.source_revision,
                 occurred_at_ms: change.occurred_at_ms,
-                payload: agentdash_agent_service_api::AgentChangePayload::SnapshotInvalidated {
-                    reason: format!(
-                        "Complete Agent source change gap: expected {expected}, received {source_sequence}"
-                    ),
-                },
+                payload:
+                    agentdash_agent_runtime_contract::AgentChangePayload::SnapshotInvalidated {
+                        reason: format!(
+                            "Complete Agent source change gap: expected {expected}, received {source_sequence}"
+                        ),
+                    },
             }
         };
         let cursor = change.cursor.clone();
@@ -1413,7 +1414,7 @@ fn validate_inspection(
 }
 
 fn validate_command_receipt(
-    expected_command_id: &agentdash_agent_service_api::AgentCommandId,
+    expected_command_id: &agentdash_agent_runtime_contract::AgentCommandId,
     expected_effect_id: &AgentEffectIdentity,
     expected_source: Option<&AgentSourceCoordinate>,
     receipt: AgentCommandReceipt,

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use agentdash_agent_runtime_contract::{AgentCommandReceipt, AgentEffectIdentity, AgentForkPoint};
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeContentBlock, AgentRuntimeInitialContextPackage, AgentRuntimeOperationReceipt,
+    AgentInputContent, AgentRuntimeOperationReceipt, InitialAgentContextPackage,
 };
-use agentdash_agent_service_api::{AgentCommandReceipt, AgentEffectIdentity, AgentForkPoint};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
@@ -18,8 +18,8 @@ use super::{
 #[derive(Debug, Clone)]
 pub struct AgentRunProductLaunchRequest {
     pub provisioning: AgentRunProductRuntimeProvisioningRequest,
-    pub initial_context: Option<AgentRuntimeInitialContextPackage>,
-    pub initial_input: Vec<AgentRuntimeContentBlock>,
+    pub initial_context: Option<InitialAgentContextPackage>,
+    pub initial_input: Vec<AgentInputContent>,
 }
 
 #[derive(Debug, Clone)]
@@ -145,7 +145,7 @@ impl AgentRunProductLaunchService {
     ) -> Result<AgentRunProductLaunchOutcome, AgentRunProductLaunchError> {
         request.provisioning.validate()?;
         if let Some(initial_context) = request.initial_context.as_ref()
-            && !initial_context.validate()
+            && (initial_context.schema_version.0 == 0 || !initial_context.digest_matches())
         {
             return Err(AgentRunProductLaunchError::Invalid(
                 "initial context package digest is invalid".to_owned(),
@@ -246,7 +246,7 @@ impl AgentRunProductLaunchService {
         &self,
         target: AgentRunTarget,
         client_command_id: String,
-        content: Vec<AgentRuntimeContentBlock>,
+        content: Vec<AgentInputContent>,
     ) -> Result<AgentRuntimeOperationReceipt, AgentRunProductLaunchError> {
         self.commands
             .execute(AgentRunProductCommandRequest {

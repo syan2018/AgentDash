@@ -5,29 +5,38 @@ import { parseAgentRuntimeUpdate } from "./agentRuntimeUpdateTransport";
 describe("Agent Runtime update transport boundary", () => {
   const update = {
     lane_sequence: "1",
-    view_revision: "2",
-    execution: {
-      status: "active",
-      active_turn: {
-        turn_id: "turn-1",
-        kind: "conversation",
-        phase: "running",
-        started_at_ms: "1000",
-        cancellable: true,
+    observation: {
+      revision: "2",
+      lifecycle: "active",
+      execution: {
+        active_turn: {
+          turn_id: "turn-1",
+          kind: "conversation",
+          phase: "running",
+          started_at_ms: "1000",
+          cancellable: true,
+        },
+        queued_compaction: null,
+        last_compaction_outcome: null,
       },
-      queued_compaction: null,
-      last_compaction_outcome: null,
-      latest_turn_id: "turn-1",
+      context: {
+        snapshot_revision: "2",
+        context_revision: "context-2",
+        recipe_digest: "sha256:context-2",
+        authority: "agent_owned",
+        fidelity: "exact",
+      },
+      command_availability: {},
+      interactions: [],
+      thread_name: null,
+      source_info: {
+        authority: "agent_authoritative",
+        source_revision: "source-2",
+        fidelity: "exact",
+        observed_at_ms: "1000",
+      },
+      conversation: [],
     },
-    context: {
-      snapshot_revision: "2",
-      context_revision: "context-2",
-      recipe_digest: "sha256:context-2",
-      authority: "source_authoritative",
-      fidelity: "exact",
-    },
-    command_availability: {},
-    interactions: [],
     presentations: [],
   };
 
@@ -35,17 +44,24 @@ describe("Agent Runtime update transport boundary", () => {
     expect(parseAgentRuntimeUpdate(update)).toEqual({
       ...update,
       lane_sequence: 1n,
-      view_revision: 2n,
-      execution: {
-        ...update.execution,
-        active_turn: {
-          ...update.execution.active_turn,
-          started_at_ms: 1000n,
+      observation: {
+        ...update.observation,
+        revision: 2n,
+        execution: {
+          ...update.observation.execution,
+          active_turn: {
+            ...update.observation.execution.active_turn,
+            started_at_ms: 1000n,
+          },
         },
-      },
-      context: {
-        ...update.context,
-        snapshot_revision: 2n,
+        context: {
+          ...update.observation.context,
+          snapshot_revision: 2n,
+        },
+        source_info: {
+          ...update.observation.source_info,
+          observed_at_ms: 1000n,
+        },
       },
     });
   });

@@ -510,7 +510,7 @@ fn first_input_command(
             agent_id: request.child_agent_id,
         },
         origin: AgentInputOrigin::Companion,
-        content: vec![agentdash_agent_service_api::AgentInputContent::Text {
+        content: vec![agentdash_agent_runtime_contract::AgentInputContent::Text {
             text: request.first_input_text.clone(),
         }],
         source: agent_input_source(request),

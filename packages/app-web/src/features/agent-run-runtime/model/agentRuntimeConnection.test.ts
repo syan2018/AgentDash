@@ -48,36 +48,42 @@ function record(
 
 function update(
   sequence: bigint,
-  overrides: Partial<AgentRuntimeUpdate> = {},
+  overrides: Partial<Omit<AgentRuntimeUpdate, "observation">> & {
+    view_revision?: bigint;
+    execution?: AgentRuntimeUpdate["observation"]["execution"];
+  } = {},
 ): AgentRuntimeUpdate {
+  const {
+    view_revision: revision = sequence + 10n,
+    execution,
+    ...updateOverrides
+  } = overrides;
   return {
     lane_sequence: sequence,
-    view_revision: sequence + 10n,
-    execution: {
-      status: "active",
-      active_turn: {
-        turn_id: "turn-live",
-        kind: "conversation",
-        phase: "running",
-        started_at_ms: 1000n,
-        cancellable: true,
+    observation: {
+      ...agentRuntimeTestFixtures.snapshots.started.observation,
+      revision,
+      execution: execution ?? {
+        active_turn: {
+          turn_id: "turn-live",
+          kind: "conversation",
+          phase: "running",
+          started_at_ms: 1000n,
+          cancellable: true,
+        },
+        queued_compaction: null,
+        last_compaction_outcome: null,
       },
-      queued_compaction: null,
-      last_compaction_outcome: null,
-      latest_turn_id: "turn-live",
+      context: {
+        ...agentRuntimeTestFixtures.snapshots.started.observation.context,
+        snapshot_revision: revision,
+        context_revision: `context-${revision}`,
+        recipe_digest: `sha256:context-${revision}`,
+      },
+      conversation: [],
     },
-    context: {
-      snapshot_revision: sequence + 10n,
-      context_revision: `context-${sequence + 10n}`,
-      recipe_digest: `sha256:context-${sequence + 10n}`,
-      authority: "source_authoritative",
-      fidelity: "exact",
-    },
-    command_availability:
-      agentRuntimeTestFixtures.snapshots.started.command_availability,
-    interactions: [],
     presentations: [],
-    ...overrides,
+    ...updateOverrides,
   };
 }
 
@@ -94,7 +100,6 @@ function dependencies(input: {
           operation_id: "operation-1",
           thread_id: "runtime-thread-child",
           status: "accepted" as const,
-          evidence: null,
           duplicate: false,
         })),
     ),
@@ -124,9 +129,10 @@ describe("AgentRuntimeConnection", () => {
 
     expect(connectionObserver.onView).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        execution: expect.objectContaining({
-          status: "active",
-          active_turn: expect.objectContaining({ turn_id: "turn-live" }),
+        observation: expect.objectContaining({
+          execution: expect.objectContaining({
+            active_turn: expect.objectContaining({ turn_id: "turn-live" }),
+          }),
         }),
       }),
     );
@@ -140,7 +146,10 @@ describe("AgentRuntimeConnection", () => {
       agentRuntimeTestFixtures.snapshots.completed,
       {
         ...agentRuntimeTestFixtures.snapshots.completed,
-        view_revision: 11n,
+        observation: {
+          ...agentRuntimeTestFixtures.snapshots.completed.observation,
+          revision: 11n,
+        },
       },
     ];
     const deps = dependencies({
@@ -157,11 +166,9 @@ describe("AgentRuntimeConnection", () => {
     transportOptions[0]?.onEvent(update(1n));
     transportOptions[0]?.onEvent(update(3n, {
       execution: {
-        status: "idle",
         active_turn: null,
         queued_compaction: null,
         last_compaction_outcome: null,
-        latest_turn_id: "turn-live",
       },
     }));
     await vi.waitFor(() => expect(deps.fetchView).toHaveBeenCalledTimes(2));
@@ -169,8 +176,10 @@ describe("AgentRuntimeConnection", () => {
     await vi.waitFor(() => {
       expect(connectionObserver.onView).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          view_revision: 13n,
-          execution: expect.objectContaining({ status: "idle" }),
+          observation: expect.objectContaining({
+            revision: 13n,
+            execution: expect.objectContaining({ active_turn: null }),
+          }),
         }),
       );
     });
@@ -182,19 +191,22 @@ describe("AgentRuntimeConnection", () => {
     const connectionObserver = observer();
     const recovered = {
       ...agentRuntimeTestFixtures.snapshots.completed,
-      conversation: [
-        record(
-          "recovered-presentation",
-          {
-            type: "thread_name_updated",
-            payload: {
-              threadId: "source-1",
-              threadName: "recovered",
+      observation: {
+        ...agentRuntimeTestFixtures.snapshots.completed.observation,
+        conversation: [
+          record(
+            "recovered-presentation",
+            {
+              type: "thread_name_updated",
+              payload: {
+                threadId: "source-1",
+                threadName: "recovered",
+              },
             },
-          },
-          "durable",
-        ),
-      ],
+            "durable",
+          ),
+        ],
+      },
     };
     const views = [
       agentRuntimeTestFixtures.snapshots.completed,
@@ -235,13 +247,11 @@ describe("AgentRuntimeConnection", () => {
 
     transportOptions[0]?.onEvent(update(1n, {
       view_revision:
-        agentRuntimeTestFixtures.snapshots.started.view_revision - 1n,
+        agentRuntimeTestFixtures.snapshots.started.observation.revision - 1n,
       execution: {
-        status: "idle",
         active_turn: null,
         queued_compaction: null,
         last_compaction_outcome: null,
-        latest_turn_id: "turn-live",
       },
       presentations: [
         record("stale-presentation", {
@@ -256,12 +266,15 @@ describe("AgentRuntimeConnection", () => {
 
     expect(connectionObserver.onView).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        view_revision:
-          agentRuntimeTestFixtures.snapshots.started.view_revision,
-        execution: expect.objectContaining({ status: "active" }),
-        conversation: expect.arrayContaining([
-          expect.objectContaining({ presentation_id: "stale-presentation" }),
-        ]),
+        observation: expect.objectContaining({
+          revision: agentRuntimeTestFixtures.snapshots.started.observation.revision,
+          execution: expect.objectContaining({
+            active_turn: expect.objectContaining({ turn_id: "turn-compaction" }),
+          }),
+          conversation: expect.arrayContaining([
+            expect.objectContaining({ presentation_id: "stale-presentation" }),
+          ]),
+        }),
       }),
     );
     connection.close();
@@ -292,11 +305,9 @@ describe("AgentRuntimeConnection", () => {
     transportOptions[0]?.onEvent(update(1n, {
       view_revision: 1n,
       execution: {
-        status: "idle",
         active_turn: null,
         queued_compaction: null,
         last_compaction_outcome: null,
-        latest_turn_id: null,
       },
       presentations: [bufferedPresentation],
     }));
@@ -306,8 +317,12 @@ describe("AgentRuntimeConnection", () => {
 
     expect(connectionObserver.onView).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        execution: expect.objectContaining({ status: "active" }),
-        conversation: expect.arrayContaining([bufferedPresentation]),
+        observation: expect.objectContaining({
+          execution: expect.objectContaining({
+            active_turn: expect.objectContaining({ turn_id: "turn-compaction" }),
+          }),
+          conversation: expect.arrayContaining([bufferedPresentation]),
+        }),
       }),
     );
     connection.close();
@@ -347,9 +362,10 @@ describe("AgentRuntimeConnection", () => {
     expect(deps.fetchView).toHaveBeenCalledTimes(2);
     expect(connectionObserver.onView).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        execution: expect.objectContaining({
-          status: "idle",
-          active_turn: null,
+        observation: expect.objectContaining({
+          execution: expect.objectContaining({
+            active_turn: null,
+          }),
         }),
       }),
     );
@@ -389,11 +405,9 @@ describe("AgentRuntimeConnection", () => {
 
     transportOptions[0]?.onEvent(update(1n, {
       execution: {
-        status: "idle",
         active_turn: null,
         queued_compaction: null,
         last_compaction_outcome: null,
-        latest_turn_id: "turn-live",
       },
       presentations: [terminal],
     }));
@@ -401,7 +415,9 @@ describe("AgentRuntimeConnection", () => {
     await vi.waitFor(() => expect(deps.fetchView).toHaveBeenCalledTimes(2));
     expect(connectionObserver.onView).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        conversation: expect.arrayContaining([terminal]),
+        observation: expect.objectContaining({
+          conversation: expect.arrayContaining([terminal]),
+        }),
       }),
     );
     connection.close();

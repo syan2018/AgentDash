@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentPayloadDigest, AgentServiceDefinitionId, AgentServiceError, AgentServiceErrorCode,
     AgentServiceInstanceId, CompleteAgentService,
 };
@@ -92,7 +92,8 @@ pub fn codex_complete_agent_contribution() -> CompleteAgentRegistrationContribut
     .expect("static Codex Complete Agent contribution")
 }
 
-pub fn codex_complete_agent_descriptor() -> agentdash_agent_service_api::AgentServiceDescriptor {
+pub fn codex_complete_agent_descriptor() -> agentdash_agent_runtime_contract::AgentServiceDescriptor
+{
     CodexCompleteAgentService::descriptor_for(
         AgentServiceDefinitionId::new(CODEX_COMPLETE_AGENT_DEFINITION_ID)
             .expect("static Codex Complete Agent definition id"),

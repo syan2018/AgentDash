@@ -507,11 +507,10 @@ async fn insert_terminal_projection(
     sqlx::query(
         "INSERT INTO agent_run_terminal_projection(
              terminal_id,target_run_id,target_agent_id,project_id,terminal_owner_epoch_id,
-             runtime_thread_id,source_ref,source_committed_revision,
-             source_applied_surface_revision,source_activated_revision,backend_id,
+             runtime_thread_id,source_ref,backend_id,
              process_state,availability,latest_source_sequence,next_output_sequence,
              max_output_bytes,projection
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)",
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
     )
     .bind(projection.terminal_id.as_str())
     .bind(projection.owner.target.run_id.to_string())
@@ -523,14 +522,6 @@ async fn insert_terminal_projection(
     )
     .bind(projection.owner.runtime_thread_id.as_str())
     .bind(binding.source_ref.as_str())
-    .bind(terminal_i64(binding.committed_at_revision.0)?)
-    .bind(terminal_i64(binding.applied_surface_revision.0)?)
-    .bind(
-        binding
-            .activated_at_revision
-            .map(|revision| terminal_i64(revision.0))
-            .transpose()?,
-    )
     .bind(&projection.owner.backend_id)
     .bind(terminal_state_name(projection.state))
     .bind(terminal_availability_name(projection.availability))
@@ -926,12 +917,14 @@ mod product_binding_persistence_tests {
             target: target.clone(),
             runtime_thread_id: RuntimeThreadId::new(thread_id.clone()).unwrap(),
             agent: agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
-                service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
+                service_instance_id: agentdash_agent_runtime_contract::AgentServiceInstanceId::new(
                     "fixture-agent",
                 )
                 .unwrap(),
-                source: agentdash_agent_service_api::AgentSourceCoordinate::new("fixture-source")
-                    .unwrap(),
+                source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new(
+                    "fixture-source",
+                )
+                .unwrap(),
             },
             launch_frame: agentdash_application_agentrun::agent_run::ProductAgentFrameRef {
                 frame_id: launch_frame_id,

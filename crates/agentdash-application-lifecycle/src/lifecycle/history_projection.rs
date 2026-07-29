@@ -1,11 +1,10 @@
 use std::sync::{Arc, OnceLock};
 
-use agentdash_agent_protocol::{
-    CanonicalConversationRecord, CanonicalConversationView, CompletedConversationItem,
-};
+use agentdash_agent_protocol::{CanonicalConversationView, CompletedConversationItem};
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeInteraction, AgentRuntimeLifecycleStatus, AgentRuntimeProjectionAuthority,
-    AgentRuntimeProjectionFidelity, AgentRuntimeView, RuntimeProjectionRevision, RuntimeThreadId,
+    AgentContextAuthority, AgentContextFidelity, AgentInteractionSnapshot, AgentLifecycleStatus,
+    AgentObservation, AgentRuntimeView, AgentSnapshotAuthority, AgentSnapshotRevision,
+    RuntimeThreadId, SemanticFidelity,
 };
 use agentdash_application_agentrun::agent_run::AgentRunProductProjectionQueryPort;
 use agentdash_domain::agent_run_target::AgentRunTarget;
@@ -21,15 +20,7 @@ use thiserror::Error;
 pub struct LifecycleHistoryProjection {
     pub target: AgentRunTarget,
     pub runtime_thread_id: RuntimeThreadId,
-    pub projection_revision: RuntimeProjectionRevision,
-    pub captured_at_ms: u64,
-    pub lifecycle: AgentRuntimeLifecycleStatus,
-    pub thread_name: Option<String>,
-    pub authority: AgentRuntimeProjectionAuthority,
-    pub fidelity: AgentRuntimeProjectionFidelity,
-    pub interactions: Vec<AgentRuntimeInteraction>,
-    /// Exact source-ordered App Server-shaped history used by events.json and reconnect readers.
-    pub conversation_history: Vec<CanonicalConversationRecord>,
+    pub observation: AgentObservation,
 }
 
 impl LifecycleHistoryProjection {
@@ -37,19 +28,51 @@ impl LifecycleHistoryProjection {
         Self {
             target,
             runtime_thread_id: snapshot.thread_id,
-            projection_revision: snapshot.view_revision,
-            captured_at_ms: snapshot.captured_at_ms,
-            lifecycle: snapshot.lifecycle,
-            thread_name: snapshot.thread_name,
-            authority: snapshot.authority,
-            fidelity: snapshot.fidelity,
-            interactions: snapshot.interactions,
-            conversation_history: snapshot.conversation,
+            observation: snapshot.observation,
         }
     }
 
+    pub const fn projection_revision(&self) -> AgentSnapshotRevision {
+        self.observation.revision
+    }
+
+    pub const fn captured_at_ms(&self) -> u64 {
+        self.observation.source_info.observed_at_ms
+    }
+
+    pub const fn lifecycle(&self) -> AgentLifecycleStatus {
+        self.observation.lifecycle
+    }
+
+    pub fn thread_name(&self) -> Option<&str> {
+        self.observation
+            .thread_name
+            .as_ref()
+            .and_then(|name| name.thread_name.as_deref())
+    }
+
+    pub const fn authority(&self) -> AgentSnapshotAuthority {
+        self.observation.source_info.authority
+    }
+
+    pub const fn fidelity(&self) -> SemanticFidelity {
+        self.observation.source_info.fidelity
+    }
+
+    pub const fn context_authority(&self) -> AgentContextAuthority {
+        self.observation.context.authority
+    }
+
+    pub const fn context_fidelity(&self) -> AgentContextFidelity {
+        self.observation.context.fidelity
+    }
+
+    pub fn interactions(&self) -> &[AgentInteractionSnapshot] {
+        &self.observation.interactions
+    }
+
     pub fn conversation(&self) -> CanonicalConversationView<'_> {
-        CanonicalConversationView::new(&self.conversation_history)
+        self.observation.conversation()
     }
 
     pub fn active_turn_id(&self) -> Option<&str> {

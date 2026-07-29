@@ -1,4 +1,4 @@
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentChange, AgentChangePage, AgentChangesQuery, AgentCommandEnvelope,
     AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot, AgentEffectIdentity,
     AgentEffectInspection, AgentHookDecision, AgentHookInvocation, AgentHostCallbackError,
@@ -199,7 +199,7 @@ pub enum RuntimeWireAgentHostCallbackResponse {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_service_api::{
+    use agentdash_agent_runtime_contract::{
         AgentAppliedEffectOutcome, AgentCallbackRouteId, AgentCommandId, AgentCommandMeta,
         AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkPoint,
         AgentHostCallbackMeta, AgentIdempotencyKey, AgentItemId, AgentPayloadDigest,
@@ -220,7 +220,7 @@ mod tests {
         constructor: impl FnOnce(
             String,
         )
-            -> Result<T, agentdash_agent_service_api::InvalidAgentServiceId>,
+            -> Result<T, agentdash_agent_runtime_contract::InvalidAgentServiceId>,
     ) -> T {
         constructor(value.to_owned()).expect("valid id")
     }
@@ -426,13 +426,14 @@ mod tests {
             change: AgentChange {
                 cursor: id(
                     "cursor-41",
-                    agentdash_agent_service_api::AgentSourceCursor::new,
+                    agentdash_agent_runtime_contract::AgentSourceCursor::new,
                 ),
                 source_revision: None,
                 occurred_at_ms: 99,
-                payload: agentdash_agent_service_api::AgentChangePayload::SnapshotInvalidated {
-                    reason: "source gap".to_owned(),
-                },
+                payload:
+                    agentdash_agent_runtime_contract::AgentChangePayload::SnapshotInvalidated {
+                        reason: "source gap".to_owned(),
+                    },
             },
         };
         let value = serde_json::to_value(notification).expect("serialize change");
@@ -482,17 +483,17 @@ mod tests {
                         } else {
                             "cursor-name-clear"
                         },
-                        agentdash_agent_service_api::AgentSourceCursor::new,
+                        agentdash_agent_runtime_contract::AgentSourceCursor::new,
                     ),
                     source_revision: None,
                     occurred_at_ms: 99,
-                    payload: agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+                    payload: agentdash_agent_runtime_contract::AgentChangePayload::ThreadNameChanged {
                         thread_name: thread_name.clone(),
-                        source_info: agentdash_agent_service_api::AgentSnapshotSource {
+                        source_info: agentdash_agent_runtime_contract::AgentSnapshotSource {
                             authority:
-                                agentdash_agent_service_api::AgentSnapshotAuthority::AgentAuthoritative,
+                                agentdash_agent_runtime_contract::AgentSnapshotAuthority::AgentAuthoritative,
                             source_revision: None,
-                            fidelity: agentdash_agent_service_api::SemanticFidelity::Exact,
+                            fidelity: agentdash_agent_runtime_contract::SemanticFidelity::Exact,
                             observed_at_ms: 99,
                         },
                     },
@@ -513,11 +514,11 @@ mod tests {
             change: AgentChange {
                 cursor: id(
                     "cursor-1",
-                    agentdash_agent_service_api::AgentSourceCursor::new,
+                    agentdash_agent_runtime_contract::AgentSourceCursor::new,
                 ),
                 source_revision: None,
                 occurred_at_ms: u64::MAX,
-                payload: agentdash_agent_service_api::AgentChangePayload::SourceObservation {
+                payload: agentdash_agent_runtime_contract::AgentChangePayload::SourceObservation {
                     state: None,
                     presentation: Vec::new(),
                 },

@@ -1,19 +1,11 @@
 use std::collections::BTreeMap;
 
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeContextAuthority, AgentRuntimeInitialContextContribution,
-    AgentRuntimeInitialContextContributionContent, AgentRuntimeInitialContextContributionKind,
-    AgentRuntimeInitialContextMode, AgentRuntimeInitialContextPackage, RuntimePayloadDigest,
-    RuntimeThreadId,
-};
-use agentdash_agent_service_api::{
     AgentBindingGeneration, AgentChangePage, AgentChangesQuery, AgentCommandEnvelope,
-    AgentCommandReceipt, AgentContextPackageId, AgentContextSchemaVersion,
-    AgentContextSourceCoordinate, AgentContextSourceRevision, AgentEffectIdentity, AgentForkPoint,
-    AgentPayloadDigest, AgentReadQuery, AgentSnapshot, AgentSourceCoordinate, AppliedAgentSurface,
-    AppliedInitialContextEvidence, ContextAuthorityKind, ContextProvenance, ForkAgentReceipt,
-    InitialAgentContextPackage, InitialContextContribution, InitialContextContributionKind,
-    InitialContextDeliveryFidelity, InitialContextMode, TypedContextPayload,
+    AgentCommandReceipt, AgentEffectIdentity, AgentForkPoint, AgentPayloadDigest, AgentReadQuery,
+    AgentSnapshot, AgentSourceCoordinate, AppliedAgentSurface, AppliedInitialContextEvidence,
+    ForkAgentReceipt, InitialAgentContextPackage, InitialContextContributionKind,
+    InitialContextDeliveryFidelity, RuntimeThreadId,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -167,116 +159,14 @@ pub trait AgentRuntimeLifecyclePort: Send + Sync {
 }
 
 pub fn map_initial_context_package(
-    package: AgentRuntimeInitialContextPackage,
+    package: InitialAgentContextPackage,
 ) -> Result<InitialAgentContextPackage, AgentRuntimeLifecycleError> {
-    if !package.validate() {
+    if package.schema_version.0 == 0 || !package.digest_matches() {
         return Err(invalid(
-            "initial context package or contribution digest is invalid",
+            "initial context package schema or digest is invalid",
         ));
     }
-    let package_id = AgentContextPackageId::new(package.package_id.into_inner())
-        .map_err(|error| invalid(error.to_string()))?;
-    if package.schema_version == 0 {
-        return Err(invalid("initial context schema version must be positive"));
-    }
-    let schema_version = AgentContextSchemaVersion(package.schema_version.into());
-    let mode = match package.mode {
-        AgentRuntimeInitialContextMode::Compact => InitialContextMode::Compact,
-        AgentRuntimeInitialContextMode::WorkflowOnly => InitialContextMode::WorkflowOnly,
-        AgentRuntimeInitialContextMode::ConstraintsOnly => InitialContextMode::ConstraintsOnly,
-    };
-    let contributions = package
-        .contributions
-        .into_iter()
-        .map(map_initial_context_contribution)
-        .collect::<Result<Vec<_>, _>>()?;
-    let digest = AgentPayloadDigest::new(package.digest.into_inner())
-        .map_err(|error| invalid(error.to_string()))?;
-    let mapped = InitialAgentContextPackage {
-        package_id,
-        schema_version,
-        mode,
-        contributions,
-        digest,
-    };
-    if !mapped.digest_matches() {
-        return Err(invalid(
-            "initial context package digest does not match its payload",
-        ));
-    }
-    Ok(mapped)
-}
-
-pub fn context_contribution_kind(
-    contribution: &AgentRuntimeInitialContextContribution,
-) -> AgentRuntimeInitialContextContributionKind {
-    match contribution.content {
-        AgentRuntimeInitialContextContributionContent::CompactSummary { .. } => {
-            AgentRuntimeInitialContextContributionKind::CompactSummary
-        }
-        AgentRuntimeInitialContextContributionContent::WorkflowContext { .. } => {
-            AgentRuntimeInitialContextContributionKind::WorkflowContext
-        }
-        AgentRuntimeInitialContextContributionContent::ConstraintSet { .. } => {
-            AgentRuntimeInitialContextContributionKind::ConstraintSet
-        }
-    }
-}
-
-pub fn runtime_payload_digest(
-    digest: &AgentPayloadDigest,
-) -> Result<RuntimePayloadDigest, AgentRuntimeLifecycleError> {
-    RuntimePayloadDigest::new(digest.as_str().to_owned())
-        .map_err(|error| invalid(error.to_string()))
-}
-
-fn map_initial_context_contribution(
-    contribution: AgentRuntimeInitialContextContribution,
-) -> Result<InitialContextContribution, AgentRuntimeLifecycleError> {
-    Ok(match contribution.content {
-        AgentRuntimeInitialContextContributionContent::CompactSummary {
-            summary,
-            provenance,
-        } => InitialContextContribution::CompactSummary {
-            summary,
-            provenance: map_context_provenance(provenance)?,
-        },
-        AgentRuntimeInitialContextContributionContent::WorkflowContext {
-            schema,
-            value,
-            provenance,
-        } => InitialContextContribution::WorkflowContext {
-            payload: TypedContextPayload { schema, value },
-            provenance: map_context_provenance(provenance)?,
-        },
-        AgentRuntimeInitialContextContributionContent::ConstraintSet {
-            schema,
-            value,
-            provenance,
-        } => InitialContextContribution::ConstraintSet {
-            payload: TypedContextPayload { schema, value },
-            provenance: map_context_provenance(provenance)?,
-        },
-    })
-}
-
-fn map_context_provenance(
-    provenance: agentdash_agent_runtime_contract::AgentRuntimeContextProvenance,
-) -> Result<ContextProvenance, AgentRuntimeLifecycleError> {
-    Ok(ContextProvenance {
-        authority: match provenance.authority {
-            AgentRuntimeContextAuthority::AgentHistory => ContextAuthorityKind::AgentHistory,
-            AgentRuntimeContextAuthority::AgentSnapshot => ContextAuthorityKind::AgentSnapshot,
-            AgentRuntimeContextAuthority::Workflow => ContextAuthorityKind::Workflow,
-            AgentRuntimeContextAuthority::Constraint => ContextAuthorityKind::Constraint,
-        },
-        source: AgentContextSourceCoordinate::new(provenance.source.into_inner())
-            .map_err(|error| invalid(error.to_string()))?,
-        revision: AgentContextSourceRevision::new(provenance.revision.into_inner())
-            .map_err(|error| invalid(error.to_string()))?,
-        digest: AgentPayloadDigest::new(provenance.digest.into_inner())
-            .map_err(|error| invalid(error.to_string()))?,
-    })
+    Ok(package)
 }
 
 fn invalid(reason: impl Into<String>) -> AgentRuntimeLifecycleError {

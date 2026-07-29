@@ -478,10 +478,10 @@
       ]
     },
     "AgentBindingGeneration": {
-      "$ref": "#/$defs/AgentServiceU64"
+      "$ref": "#/$defs/RuntimeU64"
     },
-    "AgentServiceU64": {
-      "description": "canonical unsigned-decimal Complete Agent coordinate",
+    "RuntimeU64": {
+      "description": "canonical unsigned-decimal Runtime coordinate",
       "type": "string",
       "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$",
       "maxLength": 20
@@ -547,7 +547,7 @@
       ]
     },
     "AgentSnapshotRevision": {
-      "$ref": "#/$defs/AgentServiceU64"
+      "$ref": "#/$defs/RuntimeU64"
     },
     "InitialAgentContextPackage": {
       "type": "object",
@@ -580,7 +580,7 @@
       ]
     },
     "AgentContextSchemaVersion": {
-      "$ref": "#/$defs/AgentServiceU64"
+      "$ref": "#/$defs/RuntimeU64"
     },
     "InitialContextMode": {
       "type": "string",
@@ -1231,7 +1231,7 @@
       ]
     },
     "AgentSurfaceRevision": {
-      "$ref": "#/$defs/AgentServiceU64"
+      "$ref": "#/$defs/RuntimeU64"
     },
     "BoundAgentSurfaceContribution": {
       "type": "object",
@@ -1571,7 +1571,7 @@
               }
             },
             "deadline_ms": {
-              "$ref": "#/$defs/AgentServiceU64"
+              "$ref": "#/$defs/RuntimeU64"
             },
             "kind": {
               "type": "string",
@@ -2233,7 +2233,7 @@
           "$ref": "#/$defs/AgentSurfaceRoute"
         },
         "default_deadline_ms": {
-          "$ref": "#/$defs/AgentServiceU64"
+          "$ref": "#/$defs/RuntimeU64"
         }
       },
       "required": [
@@ -2362,7 +2362,7 @@
         },
         "deadline_at_ms": {
           "description": "Absolute Unix epoch deadline. The Host must not start a callback after it.",
-          "$ref": "#/$defs/AgentServiceU64"
+          "$ref": "#/$defs/RuntimeU64"
         }
       },
       "required": [
@@ -3232,6 +3232,38 @@
         "source": {
           "type": "string"
         },
+        "observation": {
+          "$ref": "#/$defs/AgentObservation"
+        },
+        "applied_surface": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppliedAgentSurface"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppliedInitialContextEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "observation"
+      ]
+    },
+    "AgentObservation": {
+      "type": "object",
+      "properties": {
         "revision": {
           "$ref": "#/$defs/AgentSnapshotRevision"
         },
@@ -3290,27 +3322,7 @@
         "source_info": {
           "$ref": "#/$defs/AgentSnapshotSource"
         },
-        "applied_surface": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AppliedAgentSurface"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "initial_context": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AppliedInitialContextEvidence"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "conversation_history": {
+        "conversation": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/CanonicalConversationRecord"
@@ -3318,7 +3330,6 @@
         }
       },
       "required": [
-        "source",
         "revision",
         "context",
         "lifecycle",
@@ -3326,7 +3337,7 @@
         "command_availability",
         "interactions",
         "source_info",
-        "conversation_history"
+        "conversation"
       ]
     },
     "AgentContextCoordinate": {
@@ -3430,7 +3441,7 @@
           "$ref": "#/$defs/AgentActiveTurnPhase"
         },
         "started_at_ms": {
-          "$ref": "#/$defs/AgentServiceU64"
+          "$ref": "#/$defs/RuntimeU64"
         },
         "cancellable": {
           "type": "boolean"
@@ -3462,7 +3473,7 @@
       "type": "object",
       "properties": {
         "queued_at_ms": {
-          "$ref": "#/$defs/AgentServiceU64"
+          "$ref": "#/$defs/RuntimeU64"
         }
       },
       "required": [
@@ -3479,7 +3490,7 @@
           "$ref": "#/$defs/AgentCompactionOutcomeStatus"
         },
         "completed_at_ms": {
-          "$ref": "#/$defs/AgentServiceU64"
+          "$ref": "#/$defs/RuntimeU64"
         },
         "error": {
           "type": [
@@ -3903,7 +3914,7 @@
           "$ref": "#/$defs/SemanticFidelity"
         },
         "observed_at_ms": {
-          "$ref": "#/$defs/AgentServiceU64"
+          "$ref": "#/$defs/RuntimeU64"
         }
       },
       "required": [
@@ -3918,73 +3929,6 @@
         "agent_authoritative",
         "agent_observed",
         "derived"
-      ]
-    },
-    "AppliedAgentSurface": {
-      "type": "object",
-      "properties": {
-        "revision": {
-          "$ref": "#/$defs/AgentSurfaceRevision"
-        },
-        "digest": {
-          "type": "string"
-        },
-        "contributions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/AppliedAgentSurfaceContribution"
-          }
-        }
-      },
-      "required": [
-        "revision",
-        "digest",
-        "contributions"
-      ]
-    },
-    "AppliedAgentSurfaceContribution": {
-      "type": "object",
-      "properties": {
-        "key": {
-          "type": "string"
-        },
-        "route": {
-          "$ref": "#/$defs/AgentSurfaceRoute"
-        },
-        "fidelity": {
-          "$ref": "#/$defs/SemanticFidelity"
-        },
-        "semantics": {
-          "$ref": "#/$defs/AgentSurfaceSemanticFacet"
-        },
-        "payload_digest": {
-          "type": "string"
-        },
-        "status": {
-          "$ref": "#/$defs/AppliedContributionStatus"
-        },
-        "evidence": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "key",
-        "route",
-        "fidelity",
-        "semantics",
-        "payload_digest",
-        "status"
-      ]
-    },
-    "AppliedContributionStatus": {
-      "type": "string",
-      "enum": [
-        "applied",
-        "rejected",
-        "revoked"
       ]
     },
     "CanonicalConversationRecord": {
@@ -11243,6 +11187,73 @@
         }
       }
     },
+    "AppliedAgentSurface": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/AgentSurfaceRevision"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "contributions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AppliedAgentSurfaceContribution"
+          }
+        }
+      },
+      "required": [
+        "revision",
+        "digest",
+        "contributions"
+      ]
+    },
+    "AppliedAgentSurfaceContribution": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "route": {
+          "$ref": "#/$defs/AgentSurfaceRoute"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/SemanticFidelity"
+        },
+        "semantics": {
+          "$ref": "#/$defs/AgentSurfaceSemanticFacet"
+        },
+        "payload_digest": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AppliedContributionStatus"
+        },
+        "evidence": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "route",
+        "fidelity",
+        "semantics",
+        "payload_digest",
+        "status"
+      ]
+    },
+    "AppliedContributionStatus": {
+      "type": "string",
+      "enum": [
+        "applied",
+        "rejected",
+        "revoked"
+      ]
+    },
     "Result_of_AgentContextSnapshot_or_AgentServiceError": {
       "oneOf": [
         {
@@ -11275,23 +11286,20 @@
         "source": {
           "type": "string"
         },
-        "snapshot_revision": {
-          "$ref": "#/$defs/AgentSnapshotRevision"
-        },
-        "context_revision": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "recipe_digest": {
-          "type": "string"
-        },
-        "authority": {
-          "$ref": "#/$defs/AgentContextAuthority"
-        },
-        "fidelity": {
-          "$ref": "#/$defs/AgentContextFidelity"
+        "recipe": {
+          "$ref": "#/$defs/AgentContextRecipe"
+        }
+      },
+      "required": [
+        "source",
+        "recipe"
+      ]
+    },
+    "AgentContextRecipe": {
+      "type": "object",
+      "properties": {
+        "coordinate": {
+          "$ref": "#/$defs/AgentContextCoordinate"
         },
         "contributions": {
           "type": "array",
@@ -11301,11 +11309,7 @@
         }
       },
       "required": [
-        "source",
-        "snapshot_revision",
-        "recipe_digest",
-        "authority",
-        "fidelity",
+        "coordinate",
         "contributions"
       ]
     },
@@ -11482,7 +11486,7 @@
           ]
         },
         "occurred_at_ms": {
-          "$ref": "#/$defs/AgentServiceU64"
+          "$ref": "#/$defs/RuntimeU64"
         },
         "payload": {
           "$ref": "#/$defs/AgentChangePayload"

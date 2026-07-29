@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use agentdash_agent_service_api::{
-    AgentContextSnapshot, AgentServiceErrorCode, AgentSnapshotRevision,
+use agentdash_agent_runtime_contract::{
+    AgentContextAuthority, AgentContextCoordinate, AgentContextFidelity, AgentPayloadDigest,
+    AgentRuntimeContextProjection, AgentRuntimeContextRequirement, AgentServiceErrorCode,
+    AgentSnapshotRevision,
 };
 use agentdash_application::agent_run_list::{
     AgentRunListChildModel, ProjectAgentRunListInput, ProjectAgentRunListQuery,
@@ -50,7 +52,11 @@ pub struct ProductProjectionChangesQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct RuntimeContextProjectionQuery {
-    pub required_revision: Option<u64>,
+    pub snapshot_revision: u64,
+    pub context_revision: Option<String>,
+    pub recipe_digest: String,
+    pub authority: AgentContextAuthority,
+    pub fidelity: AgentContextFidelity,
 }
 
 pub fn router() -> axum::Router<Arc<AppState>> {
@@ -198,10 +204,12 @@ fn validate_fork_submit_preconditions(body: &AgentRunForkSubmitRequest) -> Resul
     }
     let has_content = body.input.iter().any(|content| {
         let value = match content {
-            agentdash_agent_service_api::AgentInputContent::Text { text } => text,
-            agentdash_agent_service_api::AgentInputContent::Image { source, .. } => source,
-            agentdash_agent_service_api::AgentInputContent::Resource { uri, .. } => uri,
-            agentdash_agent_service_api::AgentInputContent::Structured { schema, .. } => schema,
+            agentdash_agent_runtime_contract::AgentInputContent::Text { text } => text,
+            agentdash_agent_runtime_contract::AgentInputContent::Image { source, .. } => source,
+            agentdash_agent_runtime_contract::AgentInputContent::Resource { uri, .. } => uri,
+            agentdash_agent_runtime_contract::AgentInputContent::Structured { schema, .. } => {
+                schema
+            }
         };
         !value.trim().is_empty()
     });
@@ -562,7 +570,7 @@ async fn get_agent_runtime_context_projection(
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
     Query(query): Query<RuntimeContextProjectionQuery>,
-) -> Result<Json<AgentContextSnapshot>, ApiError> {
+) -> Result<Json<AgentRuntimeContextProjection>, ApiError> {
     let target = authorize_agent_run_target(
         state.as_ref(),
         &current_user,
@@ -574,7 +582,19 @@ async fn get_agent_runtime_context_projection(
     state
         .services
         .agent_run_product_projection
-        .context_snapshot(&target, query.required_revision.map(AgentSnapshotRevision))
+        .runtime_context(
+            &target,
+            AgentRuntimeContextRequirement {
+                at_least: AgentContextCoordinate {
+                    snapshot_revision: AgentSnapshotRevision(query.snapshot_revision),
+                    context_revision: query.context_revision,
+                    recipe_digest: AgentPayloadDigest::new(query.recipe_digest)
+                        .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+                    authority: query.authority,
+                    fidelity: query.fidelity,
+                },
+            },
+        )
         .await
         .map(Json)
         .map_err(agent_run_product_projection_error)
@@ -836,7 +856,7 @@ fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_service_api::{AgentInputContent, AgentServiceError};
+    use agentdash_agent_runtime_contract::{AgentInputContent, AgentServiceError};
 
     use super::*;
 

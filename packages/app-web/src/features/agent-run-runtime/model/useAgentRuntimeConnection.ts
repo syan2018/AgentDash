@@ -73,7 +73,7 @@ export function useAgentRuntimeConnection({
       onBaseline: (loaded) => {
         setView(loaded);
         setBaselinePresentationIds(new Set(
-          loaded.conversation.map((record) => record.presentation_id),
+          loaded.observation.conversation.map((record) => record.presentation_id),
         ));
         setBoundTargetKey(
           `${agentRunTarget.runId}:${agentRunTarget.agentId}`,

@@ -115,13 +115,13 @@ impl LifecycleMountProvider {
                 "run_id": projection.target.run_id,
                 "agent_id": projection.target.agent_id,
                 "runtime_thread_id": projection.runtime_thread_id,
-                "projection_revision": projection.projection_revision,
-                "captured_at_ms": projection.captured_at_ms,
-                "lifecycle": projection.lifecycle,
+                "projection_revision": projection.projection_revision(),
+                "captured_at_ms": projection.captured_at_ms(),
+                "lifecycle": projection.lifecycle(),
                 "active_turn_id": projection.active_turn_id(),
-                "thread_name": projection.thread_name,
-                "authority": projection.authority,
-                "fidelity": projection.fidelity,
+                "thread_name": projection.thread_name(),
+                "authority": projection.authority(),
+                "fidelity": projection.fidelity(),
             })),
             ["summary"] => pretty_json(&serde_json::json!({
                 "turns": projection.conversation().completed_turns().count(),
@@ -129,15 +129,15 @@ impl LifecycleMountProvider {
                 "messages": projection.message_items().count(),
                 "tools": projection.tool_items().count(),
                 "compactions": projection.compaction_items().count(),
-                "interactions": projection.interactions.len(),
+                "interactions": projection.interactions().len(),
                 "active_turn_id": projection.active_turn_id(),
             })),
             ["conclusions"] => Ok(last_agent_message(projection).unwrap_or_default()),
             ["events.json"] => pretty_json(&serde_json::json!({
                 "target": projection.target,
                 "runtime_thread_id": projection.runtime_thread_id,
-                "projection_revision": projection.projection_revision,
-                "records": projection.conversation_history,
+                "projection_revision": projection.projection_revision(),
+                "records": projection.observation.conversation,
             })),
             ["items", file] => {
                 let item = find_item_file(projection.items(), file, "json")?;
@@ -175,7 +175,7 @@ impl LifecycleMountProvider {
                     .expect("turn was resolved above");
                 let items = projection.items_for_turn(turn_id).collect::<Vec<_>>();
                 let interactions = projection
-                    .interactions
+                    .interactions()
                     .iter()
                     .filter(|interaction| interaction.turn_id.as_str() == turn_id)
                     .collect::<Vec<_>>();
@@ -435,7 +435,7 @@ impl MountProvider for LifecycleMountProvider {
         };
         let revision = if mount.metadata.get("agent_id").is_some() {
             let history = self.mount_history(mount).await?;
-            format!("runtime:{}", history.projection_revision.0)
+            format!("runtime:{}", history.projection_revision().0)
         } else {
             format!("lifecycle:{}", run.revision)
         };
@@ -904,8 +904,10 @@ mod tests {
         UserInputSubmissionKind, UserInputSubmittedNotification, text_user_input_blocks,
     };
     use agentdash_agent_runtime_contract::{
-        AgentRuntimeLifecycleStatus, AgentRuntimeProjectionAuthority,
-        AgentRuntimeProjectionFidelity, RuntimeProjectionRevision, RuntimeThreadId,
+        AgentContextAuthority, AgentContextCoordinate, AgentContextFidelity,
+        AgentExecutionSnapshot, AgentLifecycleStatus, AgentObservation, AgentPayloadDigest,
+        AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource, RuntimeThreadId,
+        SemanticFidelity,
     };
     use agentdash_domain::workflow::{AgentSource, LifecycleAgent};
     use agentdash_test_support::{
@@ -1039,14 +1041,32 @@ mod tests {
         let projection = LifecycleHistoryProjection {
             target: target.clone(),
             runtime_thread_id: RuntimeThreadId::new("runtime-thread-1").expect("thread id"),
-            projection_revision: RuntimeProjectionRevision(7),
-            captured_at_ms: 17,
-            lifecycle: AgentRuntimeLifecycleStatus::Active,
-            thread_name: None,
-            authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
-            fidelity: AgentRuntimeProjectionFidelity::Exact,
-            interactions: Vec::new(),
-            conversation_history: vec![record],
+            observation: AgentObservation {
+                revision: AgentSnapshotRevision(7),
+                context: AgentContextCoordinate {
+                    snapshot_revision: AgentSnapshotRevision(7),
+                    context_revision: Some("context-7".to_owned()),
+                    recipe_digest: AgentPayloadDigest::new("sha256:context-7").expect("digest"),
+                    authority: AgentContextAuthority::AgentOwned,
+                    fidelity: AgentContextFidelity::Exact,
+                },
+                lifecycle: AgentLifecycleStatus::Active,
+                execution: AgentExecutionSnapshot {
+                    active_turn: None,
+                    queued_compaction: None,
+                    last_compaction_outcome: None,
+                },
+                command_availability: Default::default(),
+                interactions: Vec::new(),
+                thread_name: None,
+                source_info: AgentSnapshotSource {
+                    authority: AgentSnapshotAuthority::AgentAuthoritative,
+                    source_revision: None,
+                    fidelity: SemanticFidelity::Exact,
+                    observed_at_ms: 17,
+                },
+                conversation: vec![record],
+            },
         };
 
         let run_repo = Arc::new(MemoryLifecycleRunRepository::default());

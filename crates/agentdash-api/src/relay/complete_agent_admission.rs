@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_agent_runtime_contract::{
+    AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId,
+};
 use agentdash_agent_runtime_host::{
     CompleteAgentBindingTarget, CompleteAgentLiveCatalog, CompleteAgentVerificationMethod,
     CompleteAgentVerificationRecord,
@@ -9,7 +12,6 @@ use agentdash_agent_runtime_wire::{
     RuntimeWireAgentBindingTarget, RuntimeWireAuthenticatedTransport,
     RuntimeWirePlacementProvenance, RuntimeWireServiceOfferAdvertisement,
 };
-use agentdash_agent_service_api::{AgentPayloadDigest, AgentProfileDigest, AgentServiceInstanceId};
 use agentdash_application_agentrun::agent_run::ProductExecutionProfileRef;
 use agentdash_infrastructure::{
     CompleteAgentComposition, CompleteAgentServiceSelectionCatalog,
@@ -876,11 +878,11 @@ fn trust_error(error: impl std::fmt::Display) -> RuntimeWireCompleteAgentAdmissi
 
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_runtime_host::CompleteAgentPlacement;
-    use agentdash_agent_runtime_wire::RuntimeWireAdvertisementRevision;
-    use agentdash_agent_service_api::{
+    use agentdash_agent_runtime_contract::{
         AgentBindingGeneration, AgentServiceDefinitionId, CompleteAgentLiveAttachmentId,
     };
+    use agentdash_agent_runtime_host::CompleteAgentPlacement;
+    use agentdash_agent_runtime_wire::RuntimeWireAdvertisementRevision;
 
     use super::*;
 

@@ -29,8 +29,8 @@ pub struct AgentSnapshotSource {
     pub source_revision: Option<AgentSourceRevision>,
     pub fidelity: SemanticFidelity,
     #[serde(with = "crate::wire_u64")]
-    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
-    #[ts(type = "AgentServiceU64")]
+    #[schemars(with = "crate::wire_u64::RuntimeU64")]
+    #[ts(type = "RuntimeU64")]
     pub observed_at_ms: u64,
 }
 
@@ -117,8 +117,8 @@ pub struct AgentActiveTurnSnapshot {
     pub kind: AgentActiveTurnKind,
     pub phase: AgentActiveTurnPhase,
     #[serde(with = "crate::wire_u64")]
-    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
-    #[ts(type = "AgentServiceU64")]
+    #[schemars(with = "crate::wire_u64::RuntimeU64")]
+    #[ts(type = "RuntimeU64")]
     pub started_at_ms: u64,
     pub cancellable: bool,
 }
@@ -138,8 +138,8 @@ pub struct AgentCompactionOutcomeSnapshot {
     pub turn_id: AgentTurnId,
     pub status: AgentCompactionOutcomeStatus,
     #[serde(with = "crate::wire_u64")]
-    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
-    #[ts(type = "AgentServiceU64")]
+    #[schemars(with = "crate::wire_u64::RuntimeU64")]
+    #[ts(type = "RuntimeU64")]
     pub completed_at_ms: u64,
     pub error: Option<String>,
 }
@@ -148,8 +148,8 @@ pub struct AgentCompactionOutcomeSnapshot {
 #[serde(rename_all = "snake_case")]
 pub struct AgentQueuedCompactionSnapshot {
     #[serde(with = "crate::wire_u64")]
-    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
-    #[ts(type = "AgentServiceU64")]
+    #[schemars(with = "crate::wire_u64::RuntimeU64")]
+    #[ts(type = "RuntimeU64")]
     pub queued_at_ms: u64,
 }
 
@@ -310,8 +310,7 @@ impl AgentExecutionSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentSnapshot {
-    pub source: AgentSourceCoordinate,
+pub struct AgentObservation {
     pub revision: AgentSnapshotRevision,
     pub context: crate::AgentContextCoordinate,
     pub lifecycle: AgentLifecycleStatus,
@@ -320,14 +319,13 @@ pub struct AgentSnapshot {
     pub interactions: Vec<AgentInteractionSnapshot>,
     pub thread_name: Option<AgentThreadNameSnapshot>,
     pub source_info: AgentSnapshotSource,
-    pub applied_surface: Option<crate::AppliedAgentSurface>,
-    pub initial_context: Option<crate::AppliedInitialContextEvidence>,
-    pub conversation_history: Vec<CanonicalConversationRecord>,
+    #[ts(type = "Array<CanonicalConversationRecord>")]
+    pub conversation: Vec<CanonicalConversationRecord>,
 }
 
-impl AgentSnapshot {
+impl AgentObservation {
     pub fn conversation(&self) -> agentdash_agent_protocol::CanonicalConversationView<'_> {
-        agentdash_agent_protocol::CanonicalConversationView::new(&self.conversation_history)
+        agentdash_agent_protocol::CanonicalConversationView::new(&self.conversation)
     }
 
     pub fn active_turn_id(&self) -> Option<&str> {
@@ -335,6 +333,25 @@ impl AgentSnapshot {
             .active_turn
             .as_ref()
             .map(|turn| turn.turn_id.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentSnapshot {
+    pub source: AgentSourceCoordinate,
+    pub observation: AgentObservation,
+    pub applied_surface: Option<crate::AppliedAgentSurface>,
+    pub initial_context: Option<crate::AppliedInitialContextEvidence>,
+}
+
+impl AgentSnapshot {
+    pub fn conversation(&self) -> agentdash_agent_protocol::CanonicalConversationView<'_> {
+        self.observation.conversation()
+    }
+
+    pub fn active_turn_id(&self) -> Option<&str> {
+        self.observation.active_turn_id()
     }
 }
 
@@ -360,7 +377,7 @@ pub struct AgentTurnObservation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentObservation {
+pub struct AgentSourceState {
     pub source: AgentSourceCoordinate,
     pub revision: AgentSnapshotRevision,
     pub lifecycle: AgentLifecycleStatus,
@@ -369,7 +386,7 @@ pub struct AgentObservation {
     pub latest_turn: Option<AgentTurnObservation>,
 }
 
-impl AgentObservation {
+impl AgentSourceState {
     pub fn from_snapshot(snapshot: &AgentSnapshot) -> Result<Self, String> {
         let conversation = snapshot.conversation();
         let latest_turn = conversation
@@ -384,10 +401,10 @@ impl AgentObservation {
             .transpose()?;
         Ok(Self {
             source: snapshot.source.clone(),
-            revision: snapshot.revision,
-            lifecycle: snapshot.lifecycle,
-            execution: snapshot.execution.clone(),
-            command_availability: snapshot.command_availability.clone(),
+            revision: snapshot.observation.revision,
+            lifecycle: snapshot.observation.lifecycle,
+            execution: snapshot.observation.execution.clone(),
+            command_availability: snapshot.observation.command_availability.clone(),
             latest_turn,
         })
     }
@@ -439,8 +456,8 @@ pub struct AgentChange {
     pub cursor: AgentSourceCursor,
     pub source_revision: Option<AgentSourceRevision>,
     #[serde(with = "crate::wire_u64")]
-    #[schemars(with = "crate::wire_u64::AgentServiceU64")]
-    #[ts(type = "AgentServiceU64")]
+    #[schemars(with = "crate::wire_u64::RuntimeU64")]
+    #[ts(type = "RuntimeU64")]
     pub occurred_at_ms: u64,
     pub payload: AgentChangePayload,
 }

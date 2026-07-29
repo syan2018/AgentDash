@@ -8,9 +8,11 @@ mod agent_snapshot_projection;
 mod complete_agent_surface;
 mod lifecycle;
 mod platform_tool_broker;
+mod runtime_observation;
 
 pub use agent_snapshot_projection::*;
 pub use agentdash_agent_protocol::ToolProtocolProjector;
 pub use complete_agent_surface::*;
 pub use lifecycle::*;
 pub use platform_tool_broker::*;
+pub use runtime_observation::*;

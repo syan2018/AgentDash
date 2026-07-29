@@ -7,6 +7,7 @@ use std::{
 };
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_agent_runtime_contract::*;
 use agentdash_agent_runtime_host::{
     AgentCallbackClock, CompleteAgentCallbackBroker, CompleteAgentHookHandler, CompleteAgentHost,
     CompleteAgentPlacement, CompleteAgentRuntimeTargetProvisioningRequest,
@@ -15,7 +16,6 @@ use agentdash_agent_runtime_host::{
     CompleteAgentVerifiedServiceRegistration, ProcessCompleteAgentLiveCatalog,
     ResolvedCompleteAgentHookCallback, ResolvedCompleteAgentToolCallback,
 };
-use agentdash_agent_service_api::*;
 use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::Mutex;

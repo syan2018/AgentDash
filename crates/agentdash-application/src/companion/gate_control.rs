@@ -1662,12 +1662,14 @@ mod tests {
             },
             runtime_thread_id: RuntimeThreadId::new(thread_id).expect("runtime thread id"),
             agent: agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
-                service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
+                service_instance_id: agentdash_agent_runtime_contract::AgentServiceInstanceId::new(
                     "fixture-agent",
                 )
                 .unwrap(),
-                source: agentdash_agent_service_api::AgentSourceCoordinate::new("fixture-source")
-                    .unwrap(),
+                source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new(
+                    "fixture-source",
+                )
+                .unwrap(),
             },
             launch_frame: ProductAgentFrameRef {
                 frame_id: frame.id,

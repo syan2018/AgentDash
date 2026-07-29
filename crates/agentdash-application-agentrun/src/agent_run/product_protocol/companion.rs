@@ -2,7 +2,7 @@ use std::collections::HashMap;
 #[cfg(test)]
 use std::sync::Arc;
 
-use agentdash_agent_runtime_contract::{RuntimeOperationId, RuntimeThreadId, RuntimeTurnId};
+use agentdash_agent_runtime_contract::{AgentEffectIdentity, AgentTurnId, RuntimeThreadId};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -176,7 +176,7 @@ pub struct SubmitInput {
 pub enum CompanionRuntimePreparation {
     ForkParentHistory {
         parent_runtime_thread_id: RuntimeThreadId,
-        through_turn_id: RuntimeTurnId,
+        through_turn_id: AgentTurnId,
     },
     FreshCreate {
         initial_context: CompiledInitialContextPackage,
@@ -210,7 +210,7 @@ pub struct CompanionDispatchTargetPlan {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompanionContextSources {
     pub parent_runtime_thread_id: RuntimeThreadId,
-    pub through_turn_id: Option<RuntimeTurnId>,
+    pub through_turn_id: Option<AgentTurnId>,
     pub package_id: Uuid,
     pub compact_summary: Option<(String, CompanionContextSourceDraft)>,
     pub workflow: Option<(String, Value, CompanionContextSourceDraft)>,
@@ -363,7 +363,7 @@ pub enum CompanionRuntimePreparationEvidence {
     ForkParentHistory {
         child_runtime_thread_id: RuntimeThreadId,
         parent_runtime_thread_id: RuntimeThreadId,
-        through_turn_id: RuntimeTurnId,
+        through_turn_id: AgentTurnId,
     },
     FreshCreate {
         child_runtime_thread_id: RuntimeThreadId,
@@ -513,7 +513,7 @@ pub struct CompanionFreshOperationIdentity {
     pub request_id: CompanionFreshRequestId,
     pub operation: CompanionFreshOperation,
     pub effect_id: Uuid,
-    pub runtime_operation_id: RuntimeOperationId,
+    pub runtime_operation_id: AgentEffectIdentity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1029,7 +1029,7 @@ impl CompanionFreshSaga {
             request_id: self.identities.request_id.clone(),
             operation,
             effect_id,
-            runtime_operation_id: RuntimeOperationId::new(format!(
+            runtime_operation_id: AgentEffectIdentity::new(format!(
                 "companion-fresh:{}:{}",
                 self.identities.request_id.0,
                 match operation {
@@ -1386,7 +1386,7 @@ mod tests {
     use crate::agent_run::{
         ProductAgentFrameRef, ProductAgentSurfaceFacts, ProductExecutionProfileRef,
     };
-    use agentdash_agent_service_api as service_api;
+    use agentdash_agent_runtime_contract as service_api;
     use agentdash_domain::agent_run_target::AgentRunTarget;
     use agentdash_domain::workflow::{
         AgentFrame, AgentRunLineage, AgentSource, LifecycleAgent, LifecycleRun,
@@ -1414,7 +1414,7 @@ mod tests {
     fn sources() -> CompanionContextSources {
         CompanionContextSources {
             parent_runtime_thread_id: RuntimeThreadId::new("parent").expect("parent thread"),
-            through_turn_id: Some(RuntimeTurnId::new("turn-9").expect("turn id")),
+            through_turn_id: Some(AgentTurnId::new("turn-9").expect("turn id")),
             package_id: Uuid::new_v4(),
             compact_summary: Some(("summary".to_owned(), provenance("agent_history"))),
             workflow: Some((
@@ -2328,11 +2328,11 @@ mod tests {
 
     fn exact_fork_association() -> crate::agent_run::AgentRunCompleteAgentAssociation {
         crate::agent_run::AgentRunCompleteAgentAssociation {
-            service_instance_id: agentdash_agent_service_api::AgentServiceInstanceId::new(
+            service_instance_id: agentdash_agent_runtime_contract::AgentServiceInstanceId::new(
                 "dash-test",
             )
             .expect("service"),
-            source: agentdash_agent_service_api::AgentSourceCoordinate::new(
+            source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new(
                 "source:exact-fork-child",
             )
             .expect("source"),
@@ -2354,7 +2354,7 @@ mod tests {
                     child_thread_id: saga.child().runtime_thread_id.clone(),
                     child_binding: exact_fork_association(),
                     child_history_digest:
-                        agentdash_agent_runtime_contract::RuntimePayloadDigest::new(
+                        agentdash_agent_runtime_contract::AgentPayloadDigest::new(
                             "sha256:exact-child-history",
                         )
                         .expect("history digest"),
@@ -2476,7 +2476,7 @@ mod tests {
                 run_id: Uuid::new_v4(),
                 agent_id: Uuid::new_v4(),
                 runtime_thread_id: RuntimeThreadId::new("parent").expect("parent thread"),
-                through_turn_id: RuntimeTurnId::new("turn-9").expect("turn id"),
+                through_turn_id: AgentTurnId::new("turn-9").expect("turn id"),
             },
             child: PreallocatedAgentRunChild {
                 agent_run_id: Uuid::new_v4(),
@@ -2536,7 +2536,7 @@ mod tests {
         assert_eq!(
             succeeded
                 .child_history_digest()
-                .map(agentdash_agent_runtime_contract::RuntimePayloadDigest::as_str),
+                .map(agentdash_agent_runtime_contract::AgentPayloadDigest::as_str),
             Some("sha256:exact-child-history")
         );
         assert!(succeeded.receipts().runtime_provisioning.is_some());

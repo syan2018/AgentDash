@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentAppliedEffectOutcome, AgentBindingGeneration, AgentChangesQuery, AgentCommand,
     AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentContextPackageId,
     AgentContextSchemaVersion, AgentContextSourceCoordinate, AgentContextSourceRevision,
@@ -252,16 +252,16 @@ async fn immutable_surface_command(
     service: &dyn CompleteAgentService,
     source: AgentSourceCoordinate,
     id: &str,
-) -> agentdash_agent_service_api::ApplyBoundAgentSurface {
+) -> agentdash_agent_runtime_contract::ApplyBoundAgentSurface {
     let descriptor = service.describe().await.expect("descriptor");
-    agentdash_agent_service_api::ApplyBoundAgentSurface {
+    agentdash_agent_runtime_contract::ApplyBoundAgentSurface {
         command_id: AgentCommandId::new(format!("surface-command-{id}")).expect("command"),
         effect_id: AgentEffectIdentity::new(format!("surface-effect-{id}")).expect("effect"),
         idempotency_key: AgentIdempotencyKey::new(format!("surface-idem-{id}"))
             .expect("idempotency"),
         source,
         bound_surface: BoundAgentSurface {
-            revision: agentdash_agent_service_api::AgentSurfaceRevision(2),
+            revision: agentdash_agent_runtime_contract::AgentSurfaceRevision(2),
             digest: AgentSurfaceDigest::new(format!("surface-{id}")).expect("surface"),
             offer_profile_digest: descriptor.profile_digest,
             contributions: vec![BoundAgentSurfaceContribution {
@@ -271,7 +271,7 @@ async fn immutable_surface_command(
                 fidelity: SemanticFidelity::Exact,
                 semantics: AgentSurfaceSemanticFacet::Instruction,
                 payload:
-                    agentdash_agent_service_api::AgentSurfaceContributionPayload::Instruction {
+                    agentdash_agent_runtime_contract::AgentSurfaceContributionPayload::Instruction {
                         channel: "developer".to_owned(),
                         text: "bound instruction".to_owned(),
                         presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
@@ -280,8 +280,8 @@ async fn immutable_surface_command(
                     .expect("payload"),
             }],
         },
-        callbacks: agentdash_agent_service_api::AgentHostCallbackBinding {
-            route_id: agentdash_agent_service_api::AgentCallbackRouteId::new(format!("route-{id}"))
+        callbacks: agentdash_agent_runtime_contract::AgentHostCallbackBinding {
+            route_id: agentdash_agent_runtime_contract::AgentCallbackRouteId::new(format!("route-{id}"))
                 .expect("route"),
             binding_generation: AgentBindingGeneration(7),
             delivery: AgentSurfaceRoute::ImmutableDelivery,
@@ -315,7 +315,7 @@ async fn descriptor_is_truthful_about_codex_context_change_and_surface_boundarie
 
     assert_eq!(
         descriptor.profile.source_changes,
-        agentdash_agent_service_api::AgentSourceChangeLevel::OrderedLiveStream
+        agentdash_agent_runtime_contract::AgentSourceChangeLevel::OrderedLiveStream
     );
     assert_eq!(
         descriptor
@@ -663,17 +663,23 @@ async fn snapshot_is_observed_and_live_gap_requires_thread_read_reconciliation()
         .await
         .expect("read");
     assert_eq!(
-        snapshot.source_info.authority,
-        agentdash_agent_service_api::AgentSnapshotAuthority::AgentObserved
+        snapshot.observation.source_info.authority,
+        agentdash_agent_runtime_contract::AgentSnapshotAuthority::AgentObserved
     );
-    assert_eq!(snapshot.source_info.source_revision, None);
+    assert_eq!(snapshot.observation.source_info.source_revision, None);
     assert_eq!(snapshot.conversation().completed_turns().count(), 1);
-    assert_eq!(snapshot.conversation_history.len(), 2);
-    assert!(snapshot.conversation_history.iter().all(|record| matches!(
-        record.presentation.envelope.event,
-        agentdash_agent_protocol::BackboneEvent::TurnStarted(_)
-            | agentdash_agent_protocol::BackboneEvent::TurnCompleted(_)
-    )));
+    assert_eq!(snapshot.observation.conversation.len(), 2);
+    assert!(
+        snapshot
+            .observation
+            .conversation
+            .iter()
+            .all(|record| matches!(
+                record.presentation.envelope.event,
+                agentdash_agent_protocol::BackboneEvent::TurnStarted(_)
+                    | agentdash_agent_protocol::BackboneEvent::TurnCompleted(_)
+            ))
+    );
 
     transport
         .observations
@@ -736,7 +742,7 @@ async fn live_server_request_maps_to_interaction_and_resolves_through_the_same_r
         .expect("changes");
     assert!(matches!(
         changes.changes[0].payload,
-        agentdash_agent_service_api::AgentChangePayload::InteractionChanged { .. }
+        agentdash_agent_runtime_contract::AgentChangePayload::InteractionChanged { .. }
     ));
     transport
         .push_response(
@@ -751,12 +757,15 @@ async fn live_server_request_maps_to_interaction_and_resolves_through_the_same_r
         })
         .await
         .expect("interaction snapshot");
-    assert_eq!(pending.interactions[0].turn_id.as_str(), "turn-1");
     assert_eq!(
-        pending.interactions[0]
+        pending.observation.interactions[0].turn_id.as_str(),
+        "turn-1"
+    );
+    assert_eq!(
+        pending.observation.interactions[0]
             .item_id
             .as_ref()
-            .map(agentdash_agent_service_api::AgentItemId::as_str),
+            .map(agentdash_agent_runtime_contract::AgentItemId::as_str),
         Some("item-1")
     );
 
@@ -765,9 +774,11 @@ async fn live_server_request_maps_to_interaction_and_resolves_through_the_same_r
             meta: meta("approval"),
             source,
             command: AgentCommand::ResolveInteraction {
-                interaction_id: agentdash_agent_service_api::AgentInteractionId::new("approval-1")
-                    .expect("interaction"),
-                response: agentdash_agent_service_api::AgentInteractionResponse::Approved,
+                interaction_id: agentdash_agent_runtime_contract::AgentInteractionId::new(
+                    "approval-1",
+                )
+                .expect("interaction"),
+                response: agentdash_agent_runtime_contract::AgentInteractionResponse::Approved,
             },
         })
         .await
@@ -802,11 +813,14 @@ async fn thread_read_and_name_notifications_map_source_authoritative_set_and_cle
         })
         .await
         .expect("thread/read");
-    let name = snapshot.thread_name.expect("Codex name section");
+    let name = snapshot
+        .observation
+        .thread_name
+        .expect("Codex name section");
     assert_eq!(name.thread_name.as_deref(), Some("Codex 标题"));
     assert_eq!(
         name.source_info.authority,
-        agentdash_agent_service_api::AgentSnapshotAuthority::AgentAuthoritative
+        agentdash_agent_runtime_contract::AgentSnapshotAuthority::AgentAuthoritative
     );
     assert_eq!(name.source_info.fidelity, SemanticFidelity::Exact);
 
@@ -848,12 +862,12 @@ async fn thread_read_and_name_notifications_map_source_authoritative_set_and_cle
         .expect("name changes");
     assert!(matches!(
         &changes.changes[0].payload,
-        agentdash_agent_service_api::AgentChangePayload::SourceObservation {
+        agentdash_agent_runtime_contract::AgentChangePayload::SourceObservation {
             state,
             presentation,
         } if matches!(
             state.as_deref(),
-            Some(agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+            Some(agentdash_agent_runtime_contract::AgentChangePayload::ThreadNameChanged {
                 thread_name: Some(value),
                 ..
             }) if value == "更新标题"
@@ -861,12 +875,12 @@ async fn thread_read_and_name_notifications_map_source_authoritative_set_and_cle
     ));
     assert!(matches!(
         &changes.changes[1].payload,
-        agentdash_agent_service_api::AgentChangePayload::SourceObservation {
+        agentdash_agent_runtime_contract::AgentChangePayload::SourceObservation {
             state,
             presentation,
         } if matches!(
             state.as_deref(),
-            Some(agentdash_agent_service_api::AgentChangePayload::ThreadNameChanged {
+            Some(agentdash_agent_runtime_contract::AgentChangePayload::ThreadNameChanged {
                 thread_name: None,
                 ..
             })
@@ -916,7 +930,7 @@ async fn historical_snapshot_revision_is_rejected_before_app_server_read() {
     let error = service
         .read(AgentReadQuery {
             source: AgentSourceCoordinate::new("thread-1").expect("source"),
-            at_revision: Some(agentdash_agent_service_api::AgentSnapshotRevision(3)),
+            at_revision: Some(agentdash_agent_runtime_contract::AgentSnapshotRevision(3)),
         })
         .await
         .expect_err("Codex has no stable historical snapshot API");
@@ -937,7 +951,7 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
     let resume_meta = meta("resume");
     let resume_effect = resume_meta.effect_id.clone();
     service
-        .resume(agentdash_agent_service_api::ResumeAgentCommand {
+        .resume(agentdash_agent_runtime_contract::ResumeAgentCommand {
             meta: resume_meta,
             source: source.clone(),
         })
@@ -999,13 +1013,13 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
         .push_response("thread/resume", json!({"thread": {"id": "thread-parent"}}))
         .await;
     let applied = service
-        .apply_surface(agentdash_agent_service_api::ApplyBoundAgentSurface {
+        .apply_surface(agentdash_agent_runtime_contract::ApplyBoundAgentSurface {
             command_id: AgentCommandId::new("surface-command").expect("command"),
             effect_id: AgentEffectIdentity::new("surface-effect").expect("effect"),
             idempotency_key: AgentIdempotencyKey::new("surface-idem").expect("idempotency"),
             source: source.clone(),
             bound_surface: BoundAgentSurface {
-                revision: agentdash_agent_service_api::AgentSurfaceRevision(2),
+                revision: agentdash_agent_runtime_contract::AgentSurfaceRevision(2),
                 digest: AgentSurfaceDigest::new("surface-2").expect("surface"),
                 offer_profile_digest: descriptor.profile_digest,
                 contributions: vec![BoundAgentSurfaceContribution {
@@ -1015,7 +1029,7 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
                     fidelity: SemanticFidelity::Exact,
                     semantics: AgentSurfaceSemanticFacet::Instruction,
                     payload:
-                        agentdash_agent_service_api::AgentSurfaceContributionPayload::Instruction {
+                        agentdash_agent_runtime_contract::AgentSurfaceContributionPayload::Instruction {
                             channel: "developer".to_owned(),
                             text: "bound instruction".to_owned(),
                             presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
@@ -1023,8 +1037,8 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
                     payload_digest,
                 }],
             },
-            callbacks: agentdash_agent_service_api::AgentHostCallbackBinding {
-                route_id: agentdash_agent_service_api::AgentCallbackRouteId::new("route")
+            callbacks: agentdash_agent_runtime_contract::AgentHostCallbackBinding {
+                route_id: agentdash_agent_runtime_contract::AgentCallbackRouteId::new("route")
                     .expect("route"),
                 binding_generation: AgentBindingGeneration(7),
                 delivery: AgentSurfaceRoute::ImmutableDelivery,
@@ -1034,7 +1048,7 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
         .await
         .expect("apply immutable surface");
     assert!(applied.applied.contributions.iter().all(|contribution| {
-        contribution.status == agentdash_agent_service_api::AppliedContributionStatus::Applied
+        contribution.status == agentdash_agent_runtime_contract::AppliedContributionStatus::Applied
     }));
     let apply_inspection = service
         .inspect(applied.effect_id.clone())
@@ -1059,7 +1073,7 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
             idempotency_key: AgentIdempotencyKey::new("revoke-idem").expect("idempotency"),
             binding_generation: AgentBindingGeneration(7),
             source: source.clone(),
-            expected_revision: agentdash_agent_service_api::AgentSurfaceRevision(2),
+            expected_revision: agentdash_agent_runtime_contract::AgentSurfaceRevision(2),
         })
         .await
         .expect("revoke surface");
@@ -1087,7 +1101,7 @@ async fn resume_commands_and_immutable_surface_cover_the_remaining_complete_agen
     assert!(matches!(
         closed.state,
         AgentReceiptState::Terminal {
-            outcome: agentdash_agent_service_api::AgentTerminalOutcome::Closed
+            outcome: agentdash_agent_runtime_contract::AgentTerminalOutcome::Closed
         }
     ));
 }
@@ -1099,13 +1113,13 @@ async fn apply_surface_rejects_unadvertised_dynamic_tools_before_side_effect() {
     let source = create_source(service.as_ref(), &transport).await;
     let descriptor = service.describe().await.expect("descriptor");
     let payload_digest = AgentPayloadDigest::new("sha256:tool").expect("digest");
-    let command = agentdash_agent_service_api::ApplyBoundAgentSurface {
+    let command = agentdash_agent_runtime_contract::ApplyBoundAgentSurface {
         command_id: AgentCommandId::new("surface-command").expect("command"),
         effect_id: AgentEffectIdentity::new("surface-effect").expect("effect"),
         idempotency_key: AgentIdempotencyKey::new("surface-idem").expect("idempotency"),
         source,
         bound_surface: BoundAgentSurface {
-            revision: agentdash_agent_service_api::AgentSurfaceRevision(1),
+            revision: agentdash_agent_runtime_contract::AgentSurfaceRevision(1),
             digest: AgentSurfaceDigest::new("surface").expect("surface"),
             offer_profile_digest: descriptor.profile_digest,
             contributions: vec![BoundAgentSurfaceContribution {
@@ -1118,12 +1132,12 @@ async fn apply_surface_rejects_unadvertised_dynamic_tools_before_side_effect() {
                     invocation: SemanticFidelity::Exact,
                     update: AgentToolUpdateSemantics::BindingOnly,
                 }),
-                payload: agentdash_agent_service_api::AgentSurfaceContributionPayload::Tool {
+                payload: agentdash_agent_runtime_contract::AgentSurfaceContributionPayload::Tool {
                     name: AgentToolName::new("search").expect("tool"),
                     description: "search".to_owned(),
                     input_schema: json!({"type": "object"}),
                     output_schema: None,
-                    provenance: agentdash_agent_service_api::AgentToolProvenance {
+                    provenance: agentdash_agent_runtime_contract::AgentToolProvenance {
                         capability_key: "search".to_owned(),
                         source: "test".to_owned(),
                         tool_path: "search::search".to_owned(),
@@ -1134,8 +1148,8 @@ async fn apply_surface_rejects_unadvertised_dynamic_tools_before_side_effect() {
                 payload_digest,
             }],
         },
-        callbacks: agentdash_agent_service_api::AgentHostCallbackBinding {
-            route_id: agentdash_agent_service_api::AgentCallbackRouteId::new("route")
+        callbacks: agentdash_agent_runtime_contract::AgentHostCallbackBinding {
+            route_id: agentdash_agent_runtime_contract::AgentCallbackRouteId::new("route")
                 .expect("route"),
             binding_generation: AgentBindingGeneration(7),
             delivery: AgentSurfaceRoute::AgentNativeCallback,
@@ -1360,7 +1374,7 @@ async fn malformed_surface_apply_and_revoke_settle_unknown_without_retry() {
         idempotency_key: AgentIdempotencyKey::new("revoke-malformed-idem").expect("idempotency"),
         binding_generation: AgentBindingGeneration(7),
         source: revoke_source,
-        expected_revision: agentdash_agent_service_api::AgentSurfaceRevision(2),
+        expected_revision: agentdash_agent_runtime_contract::AgentSurfaceRevision(2),
     };
     let revoke_effect = revoke.effect_id.clone();
     revoke_transport
@@ -1438,11 +1452,11 @@ async fn unknown_interaction_response_outcome_enters_effect_ledger_and_is_not_re
         meta: meta("interaction-unknown"),
         source,
         command: AgentCommand::ResolveInteraction {
-            interaction_id: agentdash_agent_service_api::AgentInteractionId::new(
+            interaction_id: agentdash_agent_runtime_contract::AgentInteractionId::new(
                 "approval-unknown",
             )
             .expect("interaction"),
-            response: agentdash_agent_service_api::AgentInteractionResponse::Approved,
+            response: agentdash_agent_runtime_contract::AgentInteractionResponse::Approved,
         },
     };
     let effect = command.meta.effect_id.clone();

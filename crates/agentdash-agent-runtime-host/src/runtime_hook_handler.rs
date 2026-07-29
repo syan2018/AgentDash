@@ -1,4 +1,4 @@
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentHookAction, AgentHookDecision, AgentHostCallbackError, AgentHostCallbackErrorCode,
 };
 use async_trait::async_trait;
@@ -46,7 +46,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use agentdash_agent_runtime_contract::RuntimeThreadId;
-    use agentdash_agent_service_api::{
+    use agentdash_agent_runtime_contract::{
         AgentBindingGeneration, AgentEffectIdentity, AgentHookDefinitionId, AgentHookInvocation,
         AgentHookPoint, AgentHookTiming, AgentHostCallbackMeta, AgentIdempotencyKey,
         AgentProfileDigest, AgentServiceInstanceId, AgentSourceCoordinate, AgentSurfaceDigest,

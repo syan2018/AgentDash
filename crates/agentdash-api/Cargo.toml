@@ -32,7 +32,6 @@ agentdash-mcp = { workspace = true }
 agentdash-relay = { workspace = true }
 agentdash-integration-api = { workspace = true }
 agentdash-integration-codex = { workspace = true }
-agentdash-agent-service-api = { workspace = true }
 agentdash-agent-runtime-host = { workspace = true }
 agentdash-agent-runtime = { workspace = true }
 agentdash-agent-runtime-contract = { workspace = true }

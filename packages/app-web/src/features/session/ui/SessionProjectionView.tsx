@@ -1,21 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import type {
   AgentContextContribution,
-  AgentContextSnapshot,
-} from "../../../generated/agent-service-api";
+} from "../../../generated/agent-runtime-contracts";
 import type { ContextFrame } from "../../../generated/backbone-protocol";
-import type { AgentRuntimeView } from "../../../generated/agent-runtime-validators";
-import {
-  fetchAgentRunRuntimeContextProjection,
-  type AgentRunRuntimeTarget,
-} from "../../../services/agentRunRuntime";
+import type {
+  AgentRuntimeContextProjection,
+  AgentRuntimeView,
+} from "../../../generated/agent-runtime-validators";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import { useAgentRuntimeContextProjection } from "../../agent-run-runtime/model/useAgentRuntimeContextProjection";
 import type { TokenUsageInfo } from "../model/types";
-import { validateContextSnapshotCommit } from "../model/contextSnapshotFence";
 import type { SessionChatCommandModel } from "./SessionChatViewTypes";
 
 export interface SessionProjectionViewProps {
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  contextCoordinate?: AgentRuntimeView["context"] | null;
+  contextCoordinate?: AgentRuntimeView["observation"]["context"] | null;
   tokenUsage?: TokenUsageInfo | null;
   compactContextCommand?: SessionChatCommandModel;
   onCompactContext?: () => Promise<void>;
@@ -23,7 +22,7 @@ export interface SessionProjectionViewProps {
 }
 
 export interface SessionProjectionViewPanelProps {
-  projection: AgentContextSnapshot | null;
+  projection: AgentRuntimeContextProjection | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   tokenUsage?: TokenUsageInfo | null;
   compactContextCommand?: SessionChatCommandModel;
@@ -223,17 +222,17 @@ export function SessionProjectionViewPanel({
         {projection ? (
           <>
             <span className="text-xs text-muted-foreground">
-              snapshot #{projection.snapshot_revision}
+              snapshot #{projection.recipe.coordinate.snapshot_revision}
             </span>
             <span className="text-xs text-muted-foreground">
-              {projection.authority} · {projection.fidelity}
+              {projection.recipe.coordinate.authority} · {projection.recipe.coordinate.fidelity}
             </span>
             <span className="text-xs text-muted-foreground">
-              {projection.contributions.length} contributions
+              {projection.recipe.contributions.length} contributions
             </span>
-            {projection.context_revision && (
+            {projection.recipe.coordinate.context_revision && (
               <span className="rounded-[6px] bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                {projection.context_revision}
+                {projection.recipe.coordinate.context_revision}
               </span>
             )}
             {tokenUsage && (
@@ -280,15 +279,15 @@ export function SessionProjectionViewPanel({
       </div>
       {projection && (
         <div className="border-t border-border px-3 py-2 text-[10px] text-muted-foreground">
-          <span className="font-mono" title={projection.recipe_digest}>
-            recipe {projection.recipe_digest}
+          <span className="font-mono" title={projection.recipe.coordinate.recipe_digest}>
+            recipe {projection.recipe.coordinate.recipe_digest}
           </span>
         </div>
       )}
       {error && <div className="border-t border-border px-3 py-2 text-xs text-destructive">{error}</div>}
-      {projection && projection.contributions.length > 0 && (
+      {projection && projection.recipe.contributions.length > 0 && (
         <div className="max-h-[34rem] overflow-y-auto">
-          {projection.contributions.map((contribution, index) => (
+          {projection.recipe.contributions.map((contribution, index) => (
             <ContributionRow
               key={contributionKey(contribution, index)}
               contribution={contribution}
@@ -296,7 +295,7 @@ export function SessionProjectionViewPanel({
           ))}
         </div>
       )}
-      {projection && projection.contributions.length === 0 && (
+      {projection && projection.recipe.contributions.length === 0 && (
         <div className="border-t border-border px-3 py-4 text-xs text-muted-foreground">
           当前模型输入配方没有 contribution。
         </div>
@@ -315,107 +314,18 @@ export function SessionProjectionView({
   onCompactContext,
   embedded = false,
 }: SessionProjectionViewProps) {
-  const [projection, setProjection] = useState<AgentContextSnapshot | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const requestGeneration = useRef(0);
-  const activeRequest = useRef<AbortController | null>(null);
-  const committedRevision = useRef<bigint | null>(null);
-  const committedTarget = useRef<string | null>(null);
-  const requestedCoordinate = useRef<string | null>(null);
-  const targetRunId = agentRunTarget?.runId;
-  const targetAgentId = agentRunTarget?.agentId;
-  const requiredSnapshotRevision = contextCoordinate?.snapshot_revision;
-  const requiredContextRevision = contextCoordinate?.context_revision;
-  const requiredRecipeDigest = contextCoordinate?.recipe_digest;
-  const requiredAuthority = contextCoordinate?.authority;
-  const requiredFidelity = contextCoordinate?.fidelity;
-
-  const refresh = useCallback(async () => {
-    if (
-      !targetRunId ||
-      !targetAgentId ||
-      requiredSnapshotRevision == null ||
-      requiredRecipeDigest == null ||
-      requiredAuthority == null ||
-      requiredFidelity == null
-    ) {
-      activeRequest.current?.abort();
-      committedRevision.current = null;
-      committedTarget.current = null;
-      requestedCoordinate.current = null;
-      setProjection(null);
-      setIsLoading(false);
-      return;
-    }
-    const targetKey = `${targetRunId}:${targetAgentId}`;
-    if (committedTarget.current !== targetKey) {
-      committedTarget.current = targetKey;
-      committedRevision.current = null;
-      requestedCoordinate.current = null;
-      setProjection(null);
-    }
-    const coordinateKey =
-      `${requiredSnapshotRevision}:${requiredContextRevision ?? ""}:${requiredRecipeDigest}`;
-    if (requestedCoordinate.current !== coordinateKey) {
-      requestedCoordinate.current = coordinateKey;
-      setProjection(null);
-    }
-    activeRequest.current?.abort();
-    const controller = new AbortController();
-    activeRequest.current = controller;
-    const generation = ++requestGeneration.current;
-    setIsLoading(true);
-    setError(null);
-    try {
-      const next = await fetchAgentRunRuntimeContextProjection({
-        runId: targetRunId,
-        agentId: targetAgentId,
-      }, requiredSnapshotRevision, controller.signal);
-      if (requestGeneration.current === generation && !controller.signal.aborted) {
-        const nextRevision = validateContextSnapshotCommit(
-          next,
-          {
-            snapshot_revision: requiredSnapshotRevision,
-            context_revision: requiredContextRevision ?? null,
-            recipe_digest: requiredRecipeDigest,
-            authority: requiredAuthority,
-            fidelity: requiredFidelity,
-          },
-          committedRevision.current,
-        );
-        committedRevision.current = nextRevision;
-        setProjection(next);
-      }
-    } catch (err) {
-      if (requestGeneration.current === generation && !controller.signal.aborted) {
-        setError(err instanceof Error ? err.message : "加载模型上下文失败");
-      }
-    } finally {
-      if (requestGeneration.current === generation && !controller.signal.aborted) {
-        setIsLoading(false);
-      }
-    }
-  }, [
-    requiredAuthority,
-    requiredContextRevision,
-    requiredFidelity,
-    requiredRecipeDigest,
-    requiredSnapshotRevision,
-    targetAgentId,
-    targetRunId,
-  ]);
-
-  useEffect(() => {
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (!cancelled) void refresh();
-    });
-    return () => {
-      cancelled = true;
-      activeRequest.current?.abort();
-    };
-  }, [refresh]);
+  const { state, refresh } = useAgentRuntimeContextProjection({
+    target: agentRunTarget,
+    required: contextCoordinate,
+  });
+  const projection =
+    state.status === "ready" || state.status === "refreshing"
+      ? state.projection
+      : state.status === "error"
+        ? state.previous
+        : null;
+  const isLoading = state.status === "loading" || state.status === "refreshing";
+  const error = state.status === "error" ? state.error.message : null;
 
   return (
     <SessionProjectionViewPanel
@@ -426,7 +336,7 @@ export function SessionProjectionView({
       onCompactContext={onCompactContext}
       isLoading={isLoading}
       error={error}
-      onRefresh={() => void refresh()}
+      onRefresh={refresh}
       embedded={embedded}
     />
   );

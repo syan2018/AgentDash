@@ -1,8 +1,8 @@
-use agentdash_agent_runtime_contract::{AgentRuntimeInitialContextPackage, RuntimeThreadId};
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentCommandReceipt, AgentEffectIdentity, AgentForkPoint, AgentPayloadDigest,
     AgentServiceInstanceId, AgentSourceCoordinate, ForkAgentReceipt,
 };
+use agentdash_agent_runtime_contract::{InitialAgentContextPackage, RuntimeThreadId};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -248,7 +248,7 @@ pub trait AgentRunProductRuntimeProvisioningPort: Send + Sync {
     async fn create_agent_source(
         &self,
         request: &AgentRunProductRuntimeProvisioningRequest,
-        initial_context: Option<AgentRuntimeInitialContextPackage>,
+        initial_context: Option<InitialAgentContextPackage>,
     ) -> Result<AgentRunProductAgentCreateEvidence, AgentRunProductRuntimeProvisioningError>;
 
     /// Forks the concrete parent Agent at an exact Agent-owned cutoff.

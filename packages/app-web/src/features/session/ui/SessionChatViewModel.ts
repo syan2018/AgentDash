@@ -19,14 +19,14 @@ function runtimeCommandAvailable(
   view: AgentRuntimeView,
   command: "submit_input" | "steer" | "interrupt" | "request_compaction",
 ): boolean {
-  return view.command_availability[command]?.status === "available";
+  return view.observation.command_availability[command]?.status === "available";
 }
 
 function runtimeCommandReason(
   view: AgentRuntimeView,
   command: "submit_input" | "steer" | "interrupt" | "request_compaction",
 ): string | undefined {
-  const availability = view.command_availability[command];
+  const availability = view.observation.command_availability[command];
   return availability?.status === "unavailable"
     ? availability.reason
     : undefined;
@@ -37,7 +37,7 @@ export function applyAgentRuntimeControlToChatCommandState(
   view: AgentRuntimeView | null,
 ): SessionChatCommandState {
   if (!view || productState.mode !== "runtime") return productState;
-  const active = view.execution.status === "active";
+  const active = view.observation.execution.active_turn != null;
   const submitAvailabilityKey = runtimeCommandAvailable(view, "submit_input")
     || !runtimeCommandAvailable(view, "steer")
     ? "submit_input"
@@ -90,7 +90,7 @@ export function applyAgentRuntimeControlToChatCommandState(
   return {
     ...productState,
     executionStatus: active ? "running_active" : "ready",
-    activeTurnId: view.execution.active_turn?.turn_id ?? null,
+    activeTurnId: view.observation.execution.active_turn?.turn_id ?? null,
     commands,
     cancelCommand,
   };

@@ -13,6 +13,7 @@ use agentdash_agent_runtime::{
     RuntimeToolProvenanceEvidence, RuntimeToolResourceGrant,
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_agent_runtime_contract::*;
 use agentdash_agent_runtime_host::{
     CompleteAgentBindingId, CompleteAgentCallbackBroker, CompleteAgentHookHandler,
     CompleteAgentHost, CompleteAgentPlacement, CompleteAgentRuntimeTarget,
@@ -22,7 +23,6 @@ use agentdash_agent_runtime_host::{
     ResolvedCompleteAgentCallbackContext, ResolvedCompleteAgentHookCallback,
     ResolvedCompleteAgentToolCallback, RuntimePlatformToolHandler,
 };
-use agentdash_agent_service_api::*;
 use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolKind, ProductRuntimeToolOutcome, ProductRuntimeToolRequest,
     ProductRuntimeToolService,
@@ -450,7 +450,7 @@ fn desired_tool_surface(tool_names: &[&str]) -> AgentSurfaceSnapshot {
                     description: format!("{name} tracer"),
                     input_schema: json!({"type": "object"}),
                     output_schema: Some(json!({"type": "object"})),
-                    provenance: agentdash_agent_service_api::AgentToolProvenance {
+                    provenance: agentdash_agent_runtime_contract::AgentToolProvenance {
                         capability_key: format!("test/{name}"),
                         source: "test".to_owned(),
                         tool_path: format!("test/{name}::{name}"),

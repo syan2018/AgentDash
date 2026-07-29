@@ -1,188 +1,10 @@
-use std::collections::BTreeMap;
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use ts_rs::TS;
 
 use agentdash_agent_protocol::CanonicalConversationRecord;
 
-use crate::{
-    RuntimeContextContributionId, RuntimeContextPackageId, RuntimeContextSourceRef,
-    RuntimeContextSourceRevision, RuntimeInteractionId, RuntimeItemId, RuntimePayloadDigest,
-    RuntimeProjectionRevision, RuntimeSourceRef, RuntimeThreadId, RuntimeTurnId, SurfaceRevision,
-};
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntimeProjectionAuthority {
-    SourceAuthoritative,
-    SourceObserved,
-    RuntimeDerived,
-}
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntimeProjectionFidelity {
-    Unsupported,
-    Observed,
-    Approximation,
-    Exact,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeThreadNameSource {
-    pub authority: AgentRuntimeProjectionAuthority,
-    pub fidelity: AgentRuntimeProjectionFidelity,
-    pub source_identity_digest: RuntimePayloadDigest,
-    pub source_revision_digest: Option<RuntimePayloadDigest>,
-    #[serde(with = "crate::wire_u64")]
-    #[schemars(with = "crate::wire_u64::RuntimeU64")]
-    #[ts(type = "RuntimeU64")]
-    pub observed_at_ms: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntimeLifecycleStatus {
-    Provisioning,
-    Active,
-    Suspended,
-    Closed,
-    Lost,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AgentRuntimeInteractionRequest {
-    Approval {
-        prompt: String,
-        reason: Option<String>,
-        proposed_action: Option<Value>,
-    },
-    UserInput {
-        prompt: String,
-        questions: Vec<AgentRuntimeInteractionQuestion>,
-    },
-    McpElicitation {
-        server: String,
-        prompt: String,
-        schema: Value,
-    },
-    DynamicTool {
-        namespace: Option<String>,
-        tool: String,
-        prompt: String,
-        arguments: Value,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeInteractionQuestion {
-    pub id: String,
-    pub prompt: String,
-    pub options: Vec<String>,
-    pub allows_free_form: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntimeInteractionStatus {
-    Pending,
-    Resolved,
-    Cancelled,
-    Expired,
-    Lost,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AgentRuntimeInteractionResolution {
-    Approved,
-    Denied { reason: Option<String> },
-    UserInput { answers: Value },
-    McpElicitation { response: Value },
-    DynamicToolResult { result: Value },
-    Cancelled { reason: Option<String> },
-    Expired,
-    Lost { reason: String },
-}
-
-/// Application command input blocks are intentionally narrower than presentation blocks.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AgentRuntimeContentBlock {
-    Text {
-        text: String,
-    },
-    Image {
-        media_type: String,
-        source: String,
-        digest: RuntimePayloadDigest,
-    },
-    Resource {
-        uri: String,
-        media_type: Option<String>,
-        digest: Option<RuntimePayloadDigest>,
-    },
-    Structured {
-        schema: String,
-        value: Value,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeInteraction {
-    pub id: RuntimeInteractionId,
-    pub turn_id: RuntimeTurnId,
-    pub item_id: Option<RuntimeItemId>,
-    pub request: AgentRuntimeInteractionRequest,
-    pub status: AgentRuntimeInteractionStatus,
-    pub resolution: Option<AgentRuntimeInteractionResolution>,
-}
-
-impl AgentRuntimeInteraction {
-    pub fn validate(&self) -> bool {
-        match (&self.status, &self.resolution) {
-            (AgentRuntimeInteractionStatus::Pending, None) => true,
-            (AgentRuntimeInteractionStatus::Resolved, Some(resolution)) => matches!(
-                (&self.request, resolution),
-                (
-                    AgentRuntimeInteractionRequest::Approval { .. },
-                    AgentRuntimeInteractionResolution::Approved
-                        | AgentRuntimeInteractionResolution::Denied { .. }
-                ) | (
-                    AgentRuntimeInteractionRequest::UserInput { .. },
-                    AgentRuntimeInteractionResolution::UserInput { .. }
-                ) | (
-                    AgentRuntimeInteractionRequest::McpElicitation { .. },
-                    AgentRuntimeInteractionResolution::McpElicitation { .. }
-                ) | (
-                    AgentRuntimeInteractionRequest::DynamicTool { .. },
-                    AgentRuntimeInteractionResolution::DynamicToolResult { .. }
-                )
-            ),
-            (
-                AgentRuntimeInteractionStatus::Cancelled,
-                Some(AgentRuntimeInteractionResolution::Cancelled { .. }),
-            )
-            | (
-                AgentRuntimeInteractionStatus::Expired,
-                Some(AgentRuntimeInteractionResolution::Expired),
-            )
-            | (
-                AgentRuntimeInteractionStatus::Lost,
-                Some(AgentRuntimeInteractionResolution::Lost { .. }),
-            ) => true,
-            _ => false,
-        }
-    }
-}
+use crate::{AgentObservation, AgentSnapshotRevision, RuntimeSourceRef, RuntimeThreadId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -208,109 +30,14 @@ impl AgentRuntimeOperationStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntimeInitialContextAppliedFidelity {
-    TypedNative {
-        applied_digest: RuntimePayloadDigest,
-    },
-    CanonicalRendered {
-        renderer_version: String,
-        rendered_digest: RuntimePayloadDigest,
-    },
-}
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntimeInitialContextContributionKind {
-    CompactSummary,
-    WorkflowContext,
-    ConstraintSet,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeInitialContextContributionEvidence {
-    pub contribution_id: RuntimeContextContributionId,
-    pub kind: AgentRuntimeInitialContextContributionKind,
-    pub contribution_digest: RuntimePayloadDigest,
-    pub provenance: AgentRuntimeAppliedContextProvenance,
-    pub fidelity: AgentRuntimeInitialContextAppliedFidelity,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeAppliedContextProvenance {
-    pub authority: crate::AgentRuntimeContextAuthority,
-    pub source: RuntimeContextSourceRef,
-    pub revision: RuntimeContextSourceRevision,
-    pub digest: RuntimePayloadDigest,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeAppliedInitialContextEvidence {
-    pub package_id: RuntimeContextPackageId,
-    pub package_digest: RuntimePayloadDigest,
-    pub contributions: Vec<AgentRuntimeInitialContextContributionEvidence>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AgentRuntimeForkCutoff {
-    Head,
-    CompletedTurn { turn_id: RuntimeTurnId },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum AgentRuntimeForkProgressEvidence {
-    ChildKnown {
-        child_thread_id: RuntimeThreadId,
-        child_source_ref: RuntimeSourceRef,
-        cutoff: AgentRuntimeForkCutoff,
-        child_history_digest: Option<RuntimePayloadDigest>,
-    },
-    Provisioned {
-        child_thread_id: RuntimeThreadId,
-        child_binding: AgentRuntimeSourceBindingEvidence,
-        cutoff: AgentRuntimeForkCutoff,
-        child_history_digest: RuntimePayloadDigest,
-    },
-}
-
+/// Product-owned evidence that a Runtime thread is bound to a source.
+///
+/// This is not part of the source observation. Binding revisions and launch evidence remain in
+/// the Product aggregate; this value only fences consumers to the selected source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeSourceBindingEvidence {
     pub source_ref: RuntimeSourceRef,
-    pub committed_at_revision: RuntimeProjectionRevision,
-    pub applied_surface_revision: SurfaceRevision,
-    pub activated_at_revision: Option<RuntimeProjectionRevision>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AgentRuntimeOperationEvidence {
-    Create {
-        binding: AgentRuntimeSourceBindingEvidence,
-        initial_context: Option<AgentRuntimeAppliedInitialContextEvidence>,
-    },
-    Resume {
-        binding: AgentRuntimeSourceBindingEvidence,
-    },
-    Rebind {
-        previous_binding: AgentRuntimeSourceBindingEvidence,
-        binding: AgentRuntimeSourceBindingEvidence,
-    },
-    Fork {
-        parent_binding: AgentRuntimeSourceBindingEvidence,
-        progress: AgentRuntimeForkProgressEvidence,
-    },
-    Activate {
-        binding: AgentRuntimeSourceBindingEvidence,
-    },
 }
 
 #[derive(
@@ -347,172 +74,33 @@ impl AgentRuntimeCommandKind {
     ];
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntimeUnavailabilityReason {
-    RuntimeNotActive,
-    AdmissionDenied,
-    BoundSurfaceUnavailable,
-    AppliedSurfaceMismatch,
-    ActiveTurnRequired,
-    NoActiveTurnRequired,
-    PendingInteractionRequired,
-    OperationInFlight,
-    SourceUnavailable,
-    ActiveTurnNotSteerable,
-    CompactionInProgress,
-    TurnNotCancellable,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeAvailabilityEvidence {
-    pub expected_view_revision: Option<RuntimeProjectionRevision>,
-    pub expected_turn_id: Option<RuntimeTurnId>,
-    pub bound_surface_revision: Option<SurfaceRevision>,
-    pub applied_surface_revision: Option<SurfaceRevision>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum AgentRuntimeCommandAvailability {
-    Available {
-        evidence: AgentRuntimeAvailabilityEvidence,
-    },
-    Unavailable {
-        reason: AgentRuntimeUnavailabilityReason,
-        evidence: AgentRuntimeAvailabilityEvidence,
-    },
-}
-
-impl AgentRuntimeCommandAvailability {
-    pub fn evidence(&self) -> &AgentRuntimeAvailabilityEvidence {
-        match self {
-            Self::Available { evidence } | Self::Unavailable { evidence, .. } => evidence,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntimeExecutionStatus {
-    Idle,
-    Active,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntimeActiveTurnKind {
-    Conversation,
-    ContextCompaction,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntimeActiveTurnPhase {
-    Running,
-    Applied,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeActiveTurn {
-    pub turn_id: RuntimeTurnId,
-    pub kind: AgentRuntimeActiveTurnKind,
-    pub phase: AgentRuntimeActiveTurnPhase,
-    #[serde(with = "crate::wire_u64")]
-    #[schemars(with = "crate::wire_u64::RuntimeU64")]
-    #[ts(type = "RuntimeU64")]
-    pub started_at_ms: u64,
-    pub cancellable: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRuntimeCompactionOutcomeStatus {
-    Succeeded,
-    Failed,
-    Lost,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeCompactionOutcome {
-    pub turn_id: RuntimeTurnId,
-    pub status: AgentRuntimeCompactionOutcomeStatus,
-    #[serde(with = "crate::wire_u64")]
-    #[schemars(with = "crate::wire_u64::RuntimeU64")]
-    #[ts(type = "RuntimeU64")]
-    pub completed_at_ms: u64,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeQueuedCompaction {
-    #[serde(with = "crate::wire_u64")]
-    #[schemars(with = "crate::wire_u64::RuntimeU64")]
-    #[ts(type = "RuntimeU64")]
-    pub queued_at_ms: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeExecutionView {
-    pub status: AgentRuntimeExecutionStatus,
-    pub active_turn: Option<AgentRuntimeActiveTurn>,
-    pub queued_compaction: Option<AgentRuntimeQueuedCompaction>,
-    pub last_compaction_outcome: Option<AgentRuntimeCompactionOutcome>,
-    pub latest_turn_id: Option<RuntimeTurnId>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRuntimeContextCoordinate {
-    pub snapshot_revision: RuntimeProjectionRevision,
-    pub context_revision: Option<String>,
-    pub recipe_digest: RuntimePayloadDigest,
-    pub authority: AgentRuntimeProjectionAuthority,
-    pub fidelity: AgentRuntimeProjectionFidelity,
-}
-
+/// Browser-safe Product wrapper around one canonical source observation.
+///
+/// The wrapper adds only Product identity. Every execution, context, interaction, control and
+/// presentation fact remains owned by `AgentObservation` and is shared with `AgentSnapshot`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeView {
     pub thread_id: RuntimeThreadId,
-    pub view_revision: RuntimeProjectionRevision,
-    #[serde(with = "crate::wire_u64")]
-    #[schemars(with = "crate::wire_u64::RuntimeU64")]
-    #[ts(type = "RuntimeU64")]
-    pub captured_at_ms: u64,
-    pub lifecycle: AgentRuntimeLifecycleStatus,
-    pub execution: AgentRuntimeExecutionView,
-    pub context: AgentRuntimeContextCoordinate,
-    pub interactions: Vec<AgentRuntimeInteraction>,
-    pub thread_name: Option<String>,
-    pub thread_name_source: Option<AgentRuntimeThreadNameSource>,
-    pub source_binding: Option<AgentRuntimeSourceBindingEvidence>,
-    pub authority: AgentRuntimeProjectionAuthority,
-    pub fidelity: AgentRuntimeProjectionFidelity,
-    pub command_availability: BTreeMap<AgentRuntimeCommandKind, AgentRuntimeCommandAvailability>,
-    #[ts(type = "Array<CanonicalConversationRecord>")]
-    pub conversation: Vec<CanonicalConversationRecord>,
+    pub observation: AgentObservation,
 }
 
 impl AgentRuntimeView {
+    pub const fn view_revision(&self) -> AgentSnapshotRevision {
+        self.observation.revision
+    }
+
     pub fn conversation(&self) -> agentdash_agent_protocol::CanonicalConversationView<'_> {
-        agentdash_agent_protocol::CanonicalConversationView::new(&self.conversation)
+        self.observation.conversation()
     }
 
     pub fn active_turn_id(&self) -> Option<&str> {
-        self.execution
-            .active_turn
-            .as_ref()
-            .map(|turn| turn.turn_id.as_str())
+        self.observation.active_turn_id()
     }
 }
 
+/// Live Runtime lane update. The authoritative observation is always replaced atomically; the
+/// triggering presentation remains separate so clients can bridge a durable-record/read race.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeUpdate {
@@ -520,11 +108,7 @@ pub struct AgentRuntimeUpdate {
     #[schemars(with = "crate::wire_u64::RuntimeU64")]
     #[ts(type = "RuntimeU64")]
     pub lane_sequence: u64,
-    pub view_revision: RuntimeProjectionRevision,
-    pub execution: AgentRuntimeExecutionView,
-    pub context: AgentRuntimeContextCoordinate,
-    pub command_availability: BTreeMap<AgentRuntimeCommandKind, AgentRuntimeCommandAvailability>,
-    pub interactions: Vec<AgentRuntimeInteraction>,
+    pub observation: AgentObservation,
     #[ts(type = "Array<CanonicalConversationRecord>")]
     pub presentations: Vec<CanonicalConversationRecord>,
 }
@@ -538,175 +122,66 @@ pub struct AgentRuntimeProjectionSchema {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
+    use crate::{
+        AgentContextAuthority, AgentContextCoordinate, AgentContextFidelity,
+        AgentExecutionSnapshot, AgentLifecycleStatus, AgentPayloadDigest, AgentSnapshotAuthority,
+        AgentSnapshotSource, SemanticFidelity,
+    };
 
-    fn id<T>(
-        value: &str,
-        constructor: impl FnOnce(String) -> Result<T, crate::InvalidRuntimeId>,
-    ) -> T {
-        constructor(value.to_owned()).expect("valid Runtime identity")
-    }
-
-    fn evidence() -> AgentRuntimeAvailabilityEvidence {
-        AgentRuntimeAvailabilityEvidence {
-            expected_view_revision: Some(RuntimeProjectionRevision(5)),
-            expected_turn_id: None,
-            bound_surface_revision: Some(SurfaceRevision(3)),
-            applied_surface_revision: Some(SurfaceRevision(3)),
+    fn observation(revision: u64) -> AgentObservation {
+        AgentObservation {
+            revision: AgentSnapshotRevision(revision),
+            context: AgentContextCoordinate {
+                snapshot_revision: AgentSnapshotRevision(revision),
+                context_revision: Some(format!("context-{revision}")),
+                recipe_digest: AgentPayloadDigest::new(format!("sha256:context-{revision}"))
+                    .expect("digest"),
+                authority: AgentContextAuthority::AgentOwned,
+                fidelity: AgentContextFidelity::Exact,
+            },
+            lifecycle: AgentLifecycleStatus::Active,
+            execution: AgentExecutionSnapshot {
+                active_turn: None,
+                queued_compaction: None,
+                last_compaction_outcome: None,
+            },
+            command_availability: BTreeMap::new(),
+            interactions: Vec::new(),
+            thread_name: None,
+            source_info: AgentSnapshotSource {
+                authority: AgentSnapshotAuthority::AgentAuthoritative,
+                source_revision: None,
+                fidelity: SemanticFidelity::Exact,
+                observed_at_ms: 42,
+            },
+            conversation: Vec::new(),
         }
     }
 
     #[test]
-    fn application_contract_round_trips_authoritative_view_and_update() {
-        let thread_id = id("runtime-thread-1", RuntimeThreadId::new);
-        let active_turn_id = id("turn-1", RuntimeTurnId::new);
-        let mut command_availability = BTreeMap::new();
-        for command in AgentRuntimeCommandKind::ALL {
-            command_availability.insert(
-                command,
-                AgentRuntimeCommandAvailability::Available {
-                    evidence: evidence(),
-                },
-            );
-        }
-        let execution = AgentRuntimeExecutionView {
-            status: AgentRuntimeExecutionStatus::Active,
-            active_turn: Some(AgentRuntimeActiveTurn {
-                turn_id: active_turn_id.clone(),
-                kind: AgentRuntimeActiveTurnKind::Conversation,
-                phase: AgentRuntimeActiveTurnPhase::Running,
-                started_at_ms: 42,
-                cancellable: true,
-            }),
-            queued_compaction: None,
-            last_compaction_outcome: None,
-            latest_turn_id: Some(active_turn_id),
-        };
-        let context = AgentRuntimeContextCoordinate {
-            snapshot_revision: RuntimeProjectionRevision(5),
-            context_revision: Some("context-5".to_owned()),
-            recipe_digest: id("sha256:context-5", RuntimePayloadDigest::new),
-            authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
-            fidelity: AgentRuntimeProjectionFidelity::Exact,
-        };
-        let contract = AgentRuntimeProjectionSchema {
-            view: AgentRuntimeView {
-                thread_id,
-                view_revision: RuntimeProjectionRevision(5),
-                captured_at_ms: 42,
-                lifecycle: AgentRuntimeLifecycleStatus::Active,
-                execution: execution.clone(),
-                context: context.clone(),
-                interactions: Vec::new(),
-                conversation: Vec::new(),
-                thread_name: None,
-                thread_name_source: None,
-                source_binding: None,
-                authority: AgentRuntimeProjectionAuthority::SourceAuthoritative,
-                fidelity: AgentRuntimeProjectionFidelity::Exact,
-                command_availability: command_availability.clone(),
-            },
-            update: AgentRuntimeUpdate {
-                lane_sequence: 7,
-                view_revision: RuntimeProjectionRevision(6),
-                execution,
-                context,
-                command_availability,
-                interactions: Vec::new(),
-                presentations: Vec::new(),
-            },
+    fn product_wrapper_preserves_the_canonical_observation_by_value() {
+        let source = observation(5);
+        let view = AgentRuntimeView {
+            thread_id: RuntimeThreadId::new("runtime-thread-1").expect("thread"),
+            observation: source.clone(),
         };
 
-        let json = serde_json::to_value(&contract).expect("serialize contract fixture");
-        assert_eq!(json["view"]["view_revision"], "5");
-        assert_eq!(
-            json["view"]["command_availability"]["submit_input"]["status"],
-            "available"
-        );
-        assert_eq!(json["update"]["lane_sequence"], "7");
-        let decoded: AgentRuntimeProjectionSchema =
-            serde_json::from_value(json).expect("deserialize contract fixture");
-        assert_eq!(decoded, contract);
+        assert_eq!(view.observation, source);
+        assert_eq!(view.view_revision(), AgentSnapshotRevision(5));
     }
 
     #[test]
-    fn schema_closure_contains_runtime_ids_and_availability() {
-        let schema = schemars::schema_for!(AgentRuntimeProjectionSchema);
-        let schema = serde_json::to_string(&schema).expect("serialize schema");
-        for required in [
-            "thread_id",
-            "thread_name",
-            "thread_name_source",
-            "turn_id",
-            "item_id",
-            "command_availability",
-        ] {
-            assert!(schema.contains(required), "missing {required}");
-        }
-        assert!(!schema.contains("AgentSourceCoordinate"));
-        assert!(!schema.contains("AgentTurnId"));
-        assert!(!schema.contains("AgentItemId"));
-    }
-
-    #[test]
-    fn operation_evidence_round_trips_without_host_identity_leakage() {
-        let source_ref = id("source-ref-1", RuntimeSourceRef::new);
-        let child_source_ref = id("source-ref-2", RuntimeSourceRef::new);
-        let child_thread_id = id("runtime-thread-2", RuntimeThreadId::new);
-        let evidence = AgentRuntimeOperationEvidence::Fork {
-            parent_binding: AgentRuntimeSourceBindingEvidence {
-                source_ref,
-                committed_at_revision: RuntimeProjectionRevision(2),
-                applied_surface_revision: SurfaceRevision(4),
-                activated_at_revision: Some(RuntimeProjectionRevision(3)),
-            },
-            progress: AgentRuntimeForkProgressEvidence::Provisioned {
-                child_thread_id,
-                child_binding: AgentRuntimeSourceBindingEvidence {
-                    source_ref: child_source_ref,
-                    committed_at_revision: RuntimeProjectionRevision(8),
-                    applied_surface_revision: SurfaceRevision(9),
-                    activated_at_revision: None,
-                },
-                cutoff: AgentRuntimeForkCutoff::CompletedTurn {
-                    turn_id: id("runtime-turn-4", RuntimeTurnId::new),
-                },
-                child_history_digest: id("sha256:history", RuntimePayloadDigest::new),
-            },
+    fn update_round_trips_the_same_observation_shape() {
+        let update = AgentRuntimeUpdate {
+            lane_sequence: u64::MAX,
+            observation: observation(6),
+            presentations: Vec::new(),
         };
-
-        let json = serde_json::to_value(&evidence).expect("serialize operation evidence");
-        assert_eq!(json["kind"], "fork");
-        assert_eq!(json["progress"]["cutoff"]["kind"], "completed_turn");
-        assert_eq!(
-            serde_json::from_value::<AgentRuntimeOperationEvidence>(json)
-                .expect("deserialize evidence"),
-            evidence
-        );
-
-        let schema = serde_json::to_string(&schemars::schema_for!(AgentRuntimeOperationEvidence))
-            .expect("serialize schema");
-        assert!(schema.contains("source_ref"));
-        assert!(!schema.contains("AgentBindingGeneration"));
-        assert!(!schema.contains("AgentSourceCoordinate"));
-        assert!(!schema.contains("CompleteAgent"));
-    }
-
-    #[test]
-    fn operation_status_exposes_the_serialized_receipt_value() {
-        for (status, expected) in [
-            (AgentRuntimeOperationStatus::Accepted, "accepted"),
-            (AgentRuntimeOperationStatus::Running, "running"),
-            (AgentRuntimeOperationStatus::Succeeded, "succeeded"),
-            (AgentRuntimeOperationStatus::Failed, "failed"),
-            (AgentRuntimeOperationStatus::Interrupted, "interrupted"),
-            (AgentRuntimeOperationStatus::Lost, "lost"),
-        ] {
-            assert_eq!(status.as_str(), expected);
-            assert_eq!(
-                serde_json::to_value(status).expect("serialize operation status"),
-                expected
-            );
-        }
+        let encoded = serde_json::to_value(&update).expect("serialize");
+        let decoded: AgentRuntimeUpdate = serde_json::from_value(encoded).expect("deserialize");
+        assert_eq!(decoded, update);
     }
 }

@@ -20,7 +20,7 @@ use agentdash_agent_protocol::{
     BackboneEvent, ContextFrameKind, ContextFrameSection, PlatformEvent, PresentationDurability,
     codex_app_server_protocol as codex,
 };
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentActiveTurnKind, AgentActiveTurnPhase, AgentAppliedEffectOutcome, AgentBindingGeneration,
     AgentCallbackRouteId, AgentChangePayload, AgentChangesQuery, AgentCommand,
     AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentCompactionOutcomeStatus,
@@ -209,7 +209,7 @@ impl DashCompleteAgentStore for RecordingCompleteStore {
     async fn load_observation(
         &self,
         source: &AgentSourceCoordinate,
-    ) -> Result<Option<agentdash_agent_service_api::AgentObservation>, AgentServiceError> {
+    ) -> Result<Option<agentdash_agent_runtime_contract::AgentSourceState>, AgentServiceError> {
         self.durable
             .read()
             .await
@@ -752,16 +752,23 @@ async fn successful_turn_commits_agent_owned_thread_name_and_projects_one_canoni
         .unwrap();
     assert_eq!(
         snapshot
+            .observation
             .thread_name
             .as_ref()
             .and_then(|name| name.thread_name.as_deref()),
         Some("消息流收束")
     );
-    assert!(snapshot.conversation_history.iter().any(|record| matches!(
-        &record.presentation.envelope.event,
-        BackboneEvent::ThreadNameUpdated(notification)
-            if notification.thread_name.as_deref() == Some("消息流收束")
-    )));
+    assert!(
+        snapshot
+            .observation
+            .conversation
+            .iter()
+            .any(|record| matches!(
+                &record.presentation.envelope.event,
+                BackboneEvent::ThreadNameUpdated(notification)
+                    if notification.thread_name.as_deref() == Some("消息流收束")
+            ))
+    );
 
     let changes = service
         .changes(AgentChangesQuery {
@@ -1123,7 +1130,8 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
         .unwrap();
     assert!(
         initial_snapshot
-            .conversation_history
+            .observation
+            .conversation
             .iter()
             .any(|record| matches!(
                 &record.presentation.envelope.event,
@@ -1196,66 +1204,107 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
         })
         .await
         .unwrap();
-    assert!(parent_snapshot.conversation_history.iter().any(|record| {
-        matches!(
-            &record.presentation.envelope.event,
-            BackboneEvent::UserInputSubmitted(_)
-        )
-    }));
+    assert!(
+        parent_snapshot
+            .observation
+            .conversation
+            .iter()
+            .any(|record| {
+                matches!(
+                    &record.presentation.envelope.event,
+                    BackboneEvent::UserInputSubmitted(_)
+                )
+            })
+    );
     let context = service
         .context(AgentContextQuery {
             source: parent.clone(),
-            required_revision: Some(parent_snapshot.revision),
+            required_revision: Some(parent_snapshot.observation.revision),
         })
         .await
         .unwrap();
-    assert_eq!(context.authority, AgentContextAuthority::AgentOwned);
-    assert_eq!(context.fidelity, AgentContextFidelity::Exact);
-    assert_eq!(context.snapshot_revision, parent_snapshot.revision);
+    assert_eq!(
+        context.recipe.coordinate.authority,
+        AgentContextAuthority::AgentOwned
+    );
+    assert_eq!(
+        context.recipe.coordinate.fidelity,
+        AgentContextFidelity::Exact
+    );
+    assert_eq!(
+        context.recipe.coordinate.snapshot_revision,
+        parent_snapshot.observation.revision
+    );
     let lower_bound_context = service
         .context(AgentContextQuery {
             source: parent.clone(),
             required_revision: Some(AgentSnapshotRevision(
-                parent_snapshot.revision.0.saturating_sub(1),
+                parent_snapshot.observation.revision.0.saturating_sub(1),
             )),
         })
         .await
         .unwrap();
     assert_eq!(
-        lower_bound_context.snapshot_revision,
-        parent_snapshot.revision
+        lower_bound_context.recipe.coordinate.snapshot_revision,
+        parent_snapshot.observation.revision
     );
     let ahead_error = service
         .context(AgentContextQuery {
             source: parent.clone(),
-            required_revision: Some(AgentSnapshotRevision(parent_snapshot.revision.0 + 1)),
+            required_revision: Some(AgentSnapshotRevision(
+                parent_snapshot.observation.revision.0 + 1,
+            )),
         })
         .await
         .unwrap_err();
     assert_eq!(ahead_error.code, AgentServiceErrorCode::Conflict);
-    assert!(context.contributions.iter().any(|contribution| matches!(
-        contribution,
-        AgentContextContribution::Frame { frame }
-            if frame.kind == ContextFrameKind::CompactionSummary
-    )));
-    assert!(context.contributions.iter().any(|contribution| matches!(
-        contribution,
-        AgentContextContribution::Message { role, content, .. }
-            if *role == agentdash_agent_service_api::AgentModelInputRole::User
-                && content == "first ordinary input"
-    )));
-    assert!(parent_snapshot.conversation_history.iter().any(|record| {
-        matches!(
-            &record.presentation.envelope.event,
-            BackboneEvent::TurnStarted(_)
-        )
-    }));
-    assert!(parent_snapshot.conversation_history.iter().any(|record| {
-        matches!(
-            &record.presentation.envelope.event,
-            BackboneEvent::TurnCompleted(_)
-        )
-    }));
+    assert!(
+        context
+            .recipe
+            .contributions
+            .iter()
+            .any(|contribution| matches!(
+                contribution,
+                AgentContextContribution::Frame { frame }
+                    if frame.kind == ContextFrameKind::CompactionSummary
+            ))
+    );
+    assert!(
+        context
+            .recipe
+            .contributions
+            .iter()
+            .any(|contribution| matches!(
+                contribution,
+                AgentContextContribution::Message { role, content, .. }
+                    if *role == agentdash_agent_runtime_contract::AgentModelInputRole::User
+                        && content == "first ordinary input"
+            ))
+    );
+    assert!(
+        parent_snapshot
+            .observation
+            .conversation
+            .iter()
+            .any(|record| {
+                matches!(
+                    &record.presentation.envelope.event,
+                    BackboneEvent::TurnStarted(_)
+                )
+            })
+    );
+    assert!(
+        parent_snapshot
+            .observation
+            .conversation
+            .iter()
+            .any(|record| {
+                matches!(
+                    &record.presentation.envelope.event,
+                    BackboneEvent::TurnCompleted(_)
+                )
+            })
+    );
 
     let fork_command = ForkAgentCommand {
         meta: meta("fork-child", "effect-fork-child"),
@@ -1326,7 +1375,7 @@ async fn fork_profile_only_advertises_recoverable_exact_cutoffs() {
         })
         .await
         .unwrap();
-    let completed_turn = agentdash_agent_service_api::AgentTurnId::new(
+    let completed_turn = agentdash_agent_runtime_contract::AgentTurnId::new(
         parent_snapshot
             .conversation()
             .completed_turn(None)
@@ -1335,7 +1384,7 @@ async fn fork_profile_only_advertises_recoverable_exact_cutoffs() {
             .clone(),
     )
     .unwrap();
-    let completed_item = agentdash_agent_service_api::AgentItemId::new(
+    let completed_item = agentdash_agent_runtime_contract::AgentItemId::new(
         parent_snapshot
             .conversation()
             .completed_items()
@@ -1407,6 +1456,7 @@ async fn fork_profile_only_advertises_recoverable_exact_cutoffs() {
     let expected_source_revision = format!("history:{digest}");
     assert_eq!(
         child_snapshot
+            .observation
             .source_info
             .source_revision
             .as_ref()
@@ -1636,7 +1686,8 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         .await
         .unwrap();
     let context_kinds = snapshot
-        .conversation_history
+        .observation
+        .conversation
         .iter()
         .filter_map(|record| match &record.presentation.envelope.event {
             BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
@@ -1661,7 +1712,8 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         ]
     );
     let revision_two_frames = snapshot
-        .conversation_history
+        .observation
+        .conversation
         .iter()
         .filter_map(|record| match &record.presentation.envelope.event {
             BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
@@ -1899,7 +1951,8 @@ async fn dash_intrinsic_prompt_is_one_accepted_fact_for_provider_and_context_fra
         .await
         .unwrap();
     let intrinsic_frames = snapshot
-        .conversation_history
+        .observation
+        .conversation
         .iter()
         .filter_map(|record| match &record.presentation.envelope.event {
             BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
@@ -1920,7 +1973,8 @@ async fn dash_intrinsic_prompt_is_one_accepted_fact_for_provider_and_context_fra
         "the same accepted intrinsic instruction must project one Identity ContextFrame"
     );
     let tool_schema_frame = snapshot
-        .conversation_history
+        .observation
+        .conversation
         .iter()
         .filter_map(|record| match &record.presentation.envelope.event {
             BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
@@ -2024,7 +2078,7 @@ async fn product_surface_cannot_replace_the_dash_intrinsic_instruction() {
         .await
         .unwrap();
     assert!(
-        snapshot.conversation_history.is_empty(),
+        snapshot.observation.conversation.is_empty(),
         "a Product collision must not commit any accepted surface history"
     );
 }
@@ -2059,7 +2113,7 @@ async fn unsupported_input_is_rejected_before_history_changes() {
         .unwrap_err();
     assert_eq!(
         error.code,
-        agentdash_agent_service_api::AgentServiceErrorCode::Unsupported
+        agentdash_agent_runtime_contract::AgentServiceErrorCode::Unsupported
     );
     let snapshot = service
         .read(AgentReadQuery {
@@ -2068,7 +2122,7 @@ async fn unsupported_input_is_rejected_before_history_changes() {
         })
         .await
         .unwrap();
-    assert_eq!(snapshot.revision, AgentSnapshotRevision(0));
+    assert_eq!(snapshot.observation.revision, AgentSnapshotRevision(0));
 }
 
 #[tokio::test]
@@ -2147,16 +2201,22 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
         })
         .await
         .unwrap();
-    assert!(snapshot.conversation_history.iter().any(|record| matches!(
-        &record.presentation.envelope.event,
-        BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
-            if changed.frame.kind == ContextFrameKind::CapabilityStateDelta
-                && changed.frame.sections.iter().any(|section| matches!(
-                    section,
-                    ContextFrameSection::ToolSchemaDelta { added_tools, .. }
-                        if added_tools.iter().any(|tool| tool.name == "read")
-                ))
-    )));
+    assert!(
+        snapshot
+            .observation
+            .conversation
+            .iter()
+            .any(|record| matches!(
+                &record.presentation.envelope.event,
+                BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
+                    if changed.frame.kind == ContextFrameKind::CapabilityStateDelta
+                        && changed.frame.sections.iter().any(|section| matches!(
+                            section,
+                            ContextFrameSection::ToolSchemaDelta { added_tools, .. }
+                                if added_tools.iter().any(|tool| tool.name == "read")
+                        ))
+            ))
+    );
     let reopened = service_with_store(store.clone());
     let replayed = reopened
         .apply_surface(apply(
@@ -2197,7 +2257,7 @@ async fn surface_apply_preserves_exact_tool_semantics_and_rejects_route_substitu
         .unwrap_err();
     assert_eq!(
         error.code,
-        agentdash_agent_service_api::AgentServiceErrorCode::Unsupported
+        agentdash_agent_runtime_contract::AgentServiceErrorCode::Unsupported
     );
     let revoke = RevokeBoundAgentSurface {
         command_id: AgentCommandId::new("command-revoke").unwrap(),
@@ -2303,7 +2363,8 @@ async fn surface_projection_reports_tool_changes_instead_of_replaying_full_schem
         .await
         .unwrap();
     let deltas = snapshot
-        .conversation_history
+        .observation
+        .conversation
         .iter()
         .filter_map(|record| match &record.presentation.envelope.event {
             BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed)) => changed
@@ -2537,7 +2598,7 @@ fn hook_execution_surface() -> BoundAgentSurface {
             route: AgentSurfaceRoute::AgentNativeCallback,
             fidelity: SemanticFidelity::Exact,
             semantics: AgentSurfaceSemanticFacet::Hook(
-                agentdash_agent_service_api::AgentHookSemanticFacet {
+                agentdash_agent_runtime_contract::AgentHookSemanticFacet {
                     point,
                     timing,
                     blocking: AgentHookBlockingSemantics::Blocking {
@@ -2702,31 +2763,44 @@ async fn exact_hooks_run_once_rewrite_and_do_not_retrigger_on_effect_replay() {
         })
         .await
         .unwrap();
-    assert!(snapshot.conversation_history.iter().any(|record| matches!(
-        &record.presentation.envelope.event,
-        BackboneEvent::ItemCompleted(notification)
-            if matches!(
-                &notification.item,
-                agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
-                    agentdash_agent_protocol::AgentDashNativeThreadItem::FsRead {
-                        success,
-                        ..
-                    }
-                ) if *success == Some(true)
-            )
-    )));
-    assert!(snapshot.conversation_history.iter().any(|record| matches!(
-        &record.presentation.envelope.event,
-        BackboneEvent::ItemCompleted(notification)
-            if matches!(
-                &notification.item,
-                agentdash_agent_protocol::AgentDashThreadItem::Codex(
-                    codex::ThreadItem::AgentMessage { text, .. }
-                ) if text == "hooked answer"
-            )
-    )));
+    assert!(
+        snapshot
+            .observation
+            .conversation
+            .iter()
+            .any(|record| matches!(
+                &record.presentation.envelope.event,
+                BackboneEvent::ItemCompleted(notification)
+                    if matches!(
+                        &notification.item,
+                        agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                            agentdash_agent_protocol::AgentDashNativeThreadItem::FsRead {
+                                success,
+                                ..
+                            }
+                        ) if *success == Some(true)
+                    )
+            ))
+    );
+    assert!(
+        snapshot
+            .observation
+            .conversation
+            .iter()
+            .any(|record| matches!(
+                &record.presentation.envelope.event,
+                BackboneEvent::ItemCompleted(notification)
+                    if matches!(
+                        &notification.item,
+                        agentdash_agent_protocol::AgentDashThreadItem::Codex(
+                            codex::ThreadItem::AgentMessage { text, .. }
+                        ) if text == "hooked answer"
+                    )
+            ))
+    );
     let usage = snapshot
-        .conversation_history
+        .observation
+        .conversation
         .iter()
         .filter_map(|record| match &record.presentation.envelope.event {
             BackboneEvent::TokenUsageUpdated(notification) => Some(&notification.token_usage),
@@ -2771,7 +2845,10 @@ async fn shared_durable_store_reopens_source_fork_tail_initial_context_and_effec
         })
         .await
         .unwrap();
-    assert_eq!(reopened.revision, submitted.snapshot_revision.unwrap());
+    assert_eq!(
+        reopened.observation.revision,
+        submitted.snapshot_revision.unwrap()
+    );
     assert_eq!(
         reopened.initial_context.unwrap().package_digest,
         package.digest
@@ -2842,7 +2919,10 @@ async fn shared_durable_store_reopens_source_fork_tail_initial_context_and_effec
         })
         .await
         .unwrap();
-    assert_eq!(parent_before.revision, parent_after.revision);
+    assert_eq!(
+        parent_before.observation.revision,
+        parent_after.observation.revision
+    );
     assert!(
         third
             .read(AgentReadQuery {
@@ -2851,8 +2931,9 @@ async fn shared_durable_store_reopens_source_fork_tail_initial_context_and_effec
             })
             .await
             .unwrap()
+            .observation
             .revision
-            > parent_after.revision
+            > parent_after.observation.revision
     );
     assert!(matches!(
         third
@@ -3297,13 +3378,19 @@ async fn active_compaction_snapshot_keeps_phase_and_owner_command_policy() {
         })
         .await
         .unwrap();
-    let turn = active.execution.active_turn.as_ref().expect("active turn");
+    let turn = active
+        .observation
+        .execution
+        .active_turn
+        .as_ref()
+        .expect("active turn");
     assert_eq!(turn.turn_id.as_str(), "compact-active");
     assert_eq!(turn.kind, AgentActiveTurnKind::ContextCompaction);
     assert_eq!(turn.phase, AgentActiveTurnPhase::Running);
     assert!(!turn.cancellable);
     assert!(matches!(
         active
+            .observation
             .command_availability
             .get(&AgentControlKind::SubmitInput),
         Some(AgentControlAvailability::Available { evidence })
@@ -3333,7 +3420,7 @@ async fn active_compaction_snapshot_keeps_phase_and_owner_command_policy() {
         ),
     ] {
         assert!(matches!(
-            active.command_availability.get(&command),
+            active.observation.command_availability.get(&command),
             Some(AgentControlAvailability::Unavailable {
                 reason: actual,
                 evidence,
@@ -3362,8 +3449,9 @@ async fn active_compaction_snapshot_keeps_phase_and_owner_command_policy() {
         })
         .await
         .unwrap();
-    assert!(terminal.execution.active_turn.is_none());
+    assert!(terminal.observation.execution.active_turn.is_none());
     let outcome = terminal
+        .observation
         .execution
         .last_compaction_outcome
         .expect("terminal compaction outcome");
@@ -3398,6 +3486,7 @@ async fn compaction_is_cancellable_only_before_the_provider_side_effect_claim() 
         .unwrap();
     assert!(
         before_side_effect
+            .observation
             .execution
             .active_turn
             .as_ref()
@@ -3405,6 +3494,7 @@ async fn compaction_is_cancellable_only_before_the_provider_side_effect_claim() 
     );
     assert!(matches!(
         before_side_effect
+            .observation
             .command_availability
             .get(&AgentControlKind::Interrupt),
         Some(AgentControlAvailability::Available { .. })
@@ -3415,7 +3505,7 @@ async fn compaction_is_cancellable_only_before_the_provider_side_effect_claim() 
             meta: meta("cancel-compaction", "cancel-compaction-effect"),
             source: source.clone(),
             command: AgentCommand::Interrupt {
-                expected_turn_id: agentdash_agent_service_api::AgentTurnId::new(
+                expected_turn_id: agentdash_agent_runtime_contract::AgentTurnId::new(
                     "cancelled-compact",
                 )
                 .unwrap(),
@@ -3489,12 +3579,18 @@ async fn manual_compaction_queues_behind_active_turn_then_promotes_once() {
         .await
         .unwrap();
     assert_eq!(
-        queued.execution.active_turn.as_ref().map(|turn| turn.kind),
+        queued
+            .observation
+            .execution
+            .active_turn
+            .as_ref()
+            .map(|turn| turn.kind),
         Some(AgentActiveTurnKind::Conversation)
     );
-    assert!(queued.execution.queued_compaction.is_some());
+    assert!(queued.observation.execution.queued_compaction.is_some());
     assert!(matches!(
         queued
+            .observation
             .command_availability
             .get(&AgentControlKind::RequestCompaction),
         Some(AgentControlAvailability::Unavailable {
@@ -3670,9 +3766,10 @@ async fn reopening_after_compactor_crash_terminalizes_unknown_outcome_as_lost() 
         })
         .await
         .unwrap();
-    assert!(snapshot.execution.active_turn.is_none());
+    assert!(snapshot.observation.execution.active_turn.is_none());
     assert_eq!(
         snapshot
+            .observation
             .execution
             .last_compaction_outcome
             .as_ref()
@@ -3782,7 +3879,7 @@ async fn manual_compaction_is_exposed_once_in_canonical_history_and_changes() {
         .changes
         .iter()
         .flat_map(|change| match &change.payload {
-            agentdash_agent_service_api::AgentChangePayload::SourceObservation {
+            agentdash_agent_runtime_contract::AgentChangePayload::SourceObservation {
                 presentation,
                 ..
             } => presentation.as_slice(),
@@ -3859,7 +3956,7 @@ fn submit_envelope(
 async fn execute_and_wait(
     service: &DashAgentCompleteService,
     request: AgentCommandEnvelope,
-) -> agentdash_agent_service_api::AgentCommandReceipt {
+) -> agentdash_agent_runtime_contract::AgentCommandReceipt {
     for _ in 0..1_000 {
         let receipt = service.execute(request.clone()).await.unwrap();
         if matches!(receipt.state, AgentReceiptState::Terminal { .. }) {
@@ -3973,7 +4070,8 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
         .await
         .unwrap();
     let completed_turn = snapshot
-        .conversation_history
+        .observation
+        .conversation
         .iter()
         .find_map(|record| match &record.presentation.envelope.event {
             BackboneEvent::TurnCompleted(notification) => Some(&notification.turn),
@@ -3989,7 +4087,8 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
         "durable turn must retain its execution duration"
     );
     let durable_item_id = snapshot
-        .conversation_history
+        .observation
+        .conversation
         .iter()
         .find_map(|record| match &record.presentation.envelope.event {
             BackboneEvent::ItemCompleted(notification) => match &notification.item {
@@ -4167,7 +4266,7 @@ async fn resume_preserves_state_old_tail_digest_and_effect_owner_is_exact() {
         })
         .await
         .unwrap();
-    assert_eq!(resumed.snapshot_revision, Some(before.revision));
+    assert_eq!(resumed.snapshot_revision, Some(before.observation.revision));
 
     let old_tail = service
         .changes(AgentChangesQuery {
@@ -4213,7 +4312,7 @@ async fn resume_preserves_state_old_tail_digest_and_effect_owner_is_exact() {
         .unwrap_err();
     assert_eq!(
         conflict.code,
-        agentdash_agent_service_api::AgentServiceErrorCode::Conflict
+        agentdash_agent_runtime_contract::AgentServiceErrorCode::Conflict
     );
 }
 
@@ -4237,8 +4336,10 @@ async fn steer_and_interrupt_orchestrate_the_active_turn() {
             meta: meta("steer", "effect-steer"),
             source: source.clone(),
             command: AgentCommand::Steer {
-                expected_turn_id: agentdash_agent_service_api::AgentTurnId::new("turn:input-steer")
-                    .unwrap(),
+                expected_turn_id: agentdash_agent_runtime_contract::AgentTurnId::new(
+                    "turn:input-steer",
+                )
+                .unwrap(),
                 input: AgentInput {
                     content: vec![AgentInputContent::Text {
                         text: "new direction".into(),
@@ -4261,12 +4362,18 @@ async fn steer_and_interrupt_orchestrate_the_active_turn() {
         })
         .await
         .unwrap();
-    assert!(steered_snapshot.conversation_history.iter().any(|record| {
-        matches!(
-            &record.presentation.envelope.event,
-            BackboneEvent::UserInputSubmitted(input) if input.item_id == "steer"
-        )
-    }));
+    assert!(
+        steered_snapshot
+            .observation
+            .conversation
+            .iter()
+            .any(|record| {
+                matches!(
+                    &record.presentation.envelope.event,
+                    BackboneEvent::UserInputSubmitted(input) if input.item_id == "steer"
+                )
+            })
+    );
     release.notify_one();
     assert!(matches!(
         execute_and_wait(&service, submit_request).await.state,
@@ -4300,7 +4407,7 @@ async fn steer_and_interrupt_orchestrate_the_active_turn() {
             meta: meta("interrupt", "effect-interrupt"),
             source: source.clone(),
             command: AgentCommand::Interrupt {
-                expected_turn_id: agentdash_agent_service_api::AgentTurnId::new(
+                expected_turn_id: agentdash_agent_runtime_contract::AgentTurnId::new(
                     "turn:input-interrupt",
                 )
                 .unwrap(),
@@ -4346,18 +4453,18 @@ async fn resolve_interaction_completes_the_suspended_turn() {
             })
             .await
             .unwrap();
-        if !snapshot.interactions.is_empty() {
+        if !snapshot.observation.interactions.is_empty() {
             break snapshot;
         }
         tokio::task::yield_now().await;
     };
-    assert_eq!(snapshot.interactions.len(), 1);
+    assert_eq!(snapshot.observation.interactions.len(), 1);
     let steer_error = service
         .execute(AgentCommandEnvelope {
             meta: meta("steer-suspended", "effect-steer-suspended"),
             source: source.clone(),
             command: AgentCommand::Steer {
-                expected_turn_id: agentdash_agent_service_api::AgentTurnId::new(
+                expected_turn_id: agentdash_agent_runtime_contract::AgentTurnId::new(
                     "turn:input-interaction",
                 )
                 .unwrap(),
@@ -4376,8 +4483,8 @@ async fn resolve_interaction_completes_the_suspended_turn() {
             meta: meta("resolve", "effect-resolve"),
             source: source.clone(),
             command: AgentCommand::ResolveInteraction {
-                interaction_id: snapshot.interactions[0].id.clone(),
-                response: agentdash_agent_service_api::AgentInteractionResponse::Approved,
+                interaction_id: snapshot.observation.interactions[0].id.clone(),
+                response: agentdash_agent_runtime_contract::AgentInteractionResponse::Approved,
             },
         })
         .await
@@ -4397,10 +4504,10 @@ async fn resolve_interaction_completes_the_suspended_turn() {
         .await
         .unwrap();
     assert_eq!(
-        resolved.interactions[0].status,
-        agentdash_agent_service_api::AgentInteractionStatus::Resolved
+        resolved.observation.interactions[0].status,
+        agentdash_agent_runtime_contract::AgentInteractionStatus::Resolved
     );
-    assert!(resolved.interactions[0].resolution.is_some());
+    assert!(resolved.observation.interactions[0].resolution.is_some());
     assert!(resolved.active_turn_id().is_none());
 }
 
@@ -4425,7 +4532,7 @@ async fn interrupt_cancels_a_suspended_interaction_and_terminalizes_the_original
             })
             .await
             .unwrap();
-        if !snapshot.interactions.is_empty() {
+        if !snapshot.observation.interactions.is_empty() {
             break;
         }
         tokio::task::yield_now().await;
@@ -4436,7 +4543,7 @@ async fn interrupt_cancels_a_suspended_interaction_and_terminalizes_the_original
             meta: meta("interrupt-interaction", "effect-interrupt-interaction"),
             source: source.clone(),
             command: AgentCommand::Interrupt {
-                expected_turn_id: agentdash_agent_service_api::AgentTurnId::new(
+                expected_turn_id: agentdash_agent_runtime_contract::AgentTurnId::new(
                     "turn:input-interaction-interrupt",
                 )
                 .unwrap(),
@@ -4465,12 +4572,12 @@ async fn interrupt_cancels_a_suspended_interaction_and_terminalizes_the_original
         .unwrap();
     assert!(snapshot.active_turn_id().is_none());
     assert_eq!(
-        snapshot.interactions[0].status,
-        agentdash_agent_service_api::AgentInteractionStatus::Cancelled
+        snapshot.observation.interactions[0].status,
+        agentdash_agent_runtime_contract::AgentInteractionStatus::Cancelled
     );
     assert!(matches!(
-        snapshot.interactions[0].resolution,
-        Some(agentdash_agent_service_api::AgentInteractionResolution::Cancelled { .. })
+        snapshot.observation.interactions[0].resolution,
+        Some(agentdash_agent_runtime_contract::AgentInteractionResolution::Cancelled { .. })
     ));
 }
 
@@ -4680,7 +4787,8 @@ async fn close_is_a_terminal_lifecycle_command() {
             })
             .await
             .unwrap()
+            .observation
             .lifecycle,
-        agentdash_agent_service_api::AgentLifecycleStatus::Closed
+        agentdash_agent_runtime_contract::AgentLifecycleStatus::Closed
     );
 }

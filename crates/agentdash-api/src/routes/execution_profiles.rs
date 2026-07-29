@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use agentdash_agent_runtime_contract::AgentServiceInstanceId;
 use agentdash_agent_runtime_host::{CompleteAgentAvailability, CompleteAgentLiveCatalog};
-use agentdash_agent_service_api::AgentServiceInstanceId;
 use agentdash_contracts::project_agent::{
     ExecutionProfileDiscoveryResponse, ExecutionProfileDto, ExecutionProfileModelDto,
     ExecutionProfileModelSelectorDto, ExecutionProfileOptionsDto, ExecutionProfileProviderDto,
@@ -259,10 +259,11 @@ mod tests {
     fn codex_profile_is_projected_independently_from_native_provider_availability() {
         assert!(
             codex_profile(CompleteAgentAvailability::Available {
-                attachment_id: agentdash_agent_service_api::CompleteAgentLiveAttachmentId::new(
-                    "attachment"
-                )
-                .unwrap(),
+                attachment_id:
+                    agentdash_agent_runtime_contract::CompleteAgentLiveAttachmentId::new(
+                        "attachment"
+                    )
+                    .unwrap(),
             })
             .available
         );

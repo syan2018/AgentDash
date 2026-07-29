@@ -115,7 +115,7 @@ export function useSessionStream({
     enabled,
   });
   const records =
-    feed.view?.conversation ?? EMPTY_CONVERSATION_HISTORY;
+    feed.view?.observation.conversation ?? EMPTY_CONVERSATION_HISTORY;
   const coordinates = useMemo(
     () => presentationCoordinates(records, feed.baselinePresentationIds),
     [feed.baselinePresentationIds, records],
@@ -161,7 +161,7 @@ export function useSessionStream({
     boundTargetKey: feed.boundTargetKey,
     isConnected: feed.lifecycle === "connected",
     isLoading: feed.isLoading,
-    isReceiving: feed.view?.execution.status === "active",
+    isReceiving: feed.view?.observation.execution.active_turn != null,
     error: feed.error,
     tokenUsage: state.tokenUsage,
     runtimeView: feed.view,

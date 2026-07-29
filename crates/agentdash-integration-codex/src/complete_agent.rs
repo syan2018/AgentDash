@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentActiveTurnKind, AgentActiveTurnPhase, AgentActiveTurnSnapshot, AgentAppliedEffectOutcome,
     AgentCapabilityProfile, AgentChange, AgentChangePage, AgentChangePayload, AgentChangesQuery,
     AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
@@ -496,7 +496,7 @@ impl CodexCompleteAgentService {
         &self,
         effect_id: &AgentEffectIdentity,
         expected_family: CommandEffectFamily,
-        expected_command_id: &agentdash_agent_service_api::AgentCommandId,
+        expected_command_id: &agentdash_agent_runtime_contract::AgentCommandId,
         expected_source: Option<&AgentSourceCoordinate>,
     ) -> Result<Option<AgentCommandReceipt>, AgentServiceError> {
         let state = self.state.read().await;
@@ -521,7 +521,7 @@ impl CodexCompleteAgentService {
     async fn mark_unknown(
         &self,
         effect_id: AgentEffectIdentity,
-        command_id: agentdash_agent_service_api::AgentCommandId,
+        command_id: agentdash_agent_runtime_contract::AgentCommandId,
     ) {
         self.state.write().await.effects.insert(
             effect_id.clone(),
@@ -536,7 +536,7 @@ impl CodexCompleteAgentService {
     async fn settle_post_dispatch_error(
         &self,
         effect_id: &AgentEffectIdentity,
-        command_id: &agentdash_agent_service_api::AgentCommandId,
+        command_id: &agentdash_agent_runtime_contract::AgentCommandId,
         error: AgentServiceError,
     ) -> AgentServiceError {
         self.mark_unknown(effect_id.clone(), command_id.clone())
@@ -627,7 +627,7 @@ impl CodexCompleteAgentService {
         method: &str,
         params: Value,
         effect_id: &AgentEffectIdentity,
-        command_id: &agentdash_agent_service_api::AgentCommandId,
+        command_id: &agentdash_agent_runtime_contract::AgentCommandId,
     ) -> Result<Value, AgentServiceError> {
         match self.transport.request(method, params).await {
             Ok(value) => Ok(value),
@@ -1248,7 +1248,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
             )?;
         let observed_at_ms = now_ms();
         let active_turn = response_active_turn(&result, observed_at_ms)?;
-        let execution = agentdash_agent_service_api::AgentExecutionSnapshot {
+        let execution = agentdash_agent_runtime_contract::AgentExecutionSnapshot {
             active_turn,
             queued_compaction: None,
             last_compaction_outcome: None,
@@ -1259,34 +1259,38 @@ impl CompleteAgentService for CodexCompleteAgentService {
             !source.pending_interactions.is_empty(),
         );
         let revision = AgentSnapshotRevision(source.revision);
-        let context = codex_context_snapshot(&query.source, revision)?.coordinate();
+        let context = codex_context_snapshot(&query.source, revision)?
+            .coordinate()
+            .clone();
         Ok(AgentSnapshot {
             source: query.source,
-            revision,
-            context,
-            lifecycle: source.lifecycle,
-            execution,
-            command_availability,
-            interactions,
-            thread_name: Some(agentdash_agent_service_api::AgentThreadNameSnapshot {
-                thread_name,
+            observation: agentdash_agent_runtime_contract::AgentObservation {
+                revision,
+                context,
+                lifecycle: source.lifecycle,
+                execution,
+                command_availability,
+                interactions,
+                thread_name: Some(agentdash_agent_runtime_contract::AgentThreadNameSnapshot {
+                    thread_name,
+                    source_info: AgentSnapshotSource {
+                        authority: AgentSnapshotAuthority::AgentAuthoritative,
+                        source_revision: None,
+                        fidelity: SemanticFidelity::Exact,
+                        observed_at_ms,
+                    },
+                }),
                 source_info: AgentSnapshotSource {
-                    authority: AgentSnapshotAuthority::AgentAuthoritative,
+                    authority: AgentSnapshotAuthority::AgentObserved,
+                    // App Server does not expose a stable durable snapshot/context revision.
                     source_revision: None,
-                    fidelity: SemanticFidelity::Exact,
+                    fidelity: SemanticFidelity::Observed,
                     observed_at_ms,
                 },
-            }),
-            source_info: AgentSnapshotSource {
-                authority: AgentSnapshotAuthority::AgentObserved,
-                // App Server does not expose a stable durable snapshot/context revision.
-                source_revision: None,
-                fidelity: SemanticFidelity::Observed,
-                observed_at_ms,
+                conversation: conversation_history,
             },
             applied_surface: source.applied_surface.clone(),
             initial_context: source.initial_context.clone(),
-            conversation_history,
         })
     }
 
@@ -1302,7 +1306,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
             .await?;
         if query
             .required_revision
-            .is_some_and(|required| snapshot.revision < required)
+            .is_some_and(|required| snapshot.observation.revision < required)
         {
             return Err(service_error(
                 AgentServiceErrorCode::Conflict,
@@ -1310,7 +1314,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 false,
             ));
         }
-        codex_context_snapshot(&query.source, snapshot.revision)
+        codex_context_snapshot(&query.source, snapshot.observation.revision)
     }
 
     async fn changes(
@@ -2085,7 +2089,7 @@ fn map_server_request(
                     .map(|question| {
                         let options = question.options;
                         let allows_free_form = question.is_other || options.is_none();
-                        agentdash_agent_service_api::AgentInteractionQuestion {
+                        agentdash_agent_runtime_contract::AgentInteractionQuestion {
                             id: question.id,
                             prompt: question.question,
                             options: options
@@ -2167,9 +2171,9 @@ fn require_notification_source(
 
 fn interaction_result(
     request: &AgentInteractionRequest,
-    response: &agentdash_agent_service_api::AgentInteractionResponse,
+    response: &agentdash_agent_runtime_contract::AgentInteractionResponse,
 ) -> Result<Value, AgentServiceError> {
-    use agentdash_agent_service_api::AgentInteractionResponse;
+    use agentdash_agent_runtime_contract::AgentInteractionResponse;
     match (request, response) {
         (AgentInteractionRequest::Approval { .. }, AgentInteractionResponse::Approved) => {
             Ok(json!({"decision": "accept"}))
@@ -2219,7 +2223,7 @@ fn parse_cursor(cursor: &AgentSourceCursor) -> Result<u64, AgentServiceError> {
 }
 
 fn successful_command_receipt(
-    command_id: &agentdash_agent_service_api::AgentCommandId,
+    command_id: &agentdash_agent_runtime_contract::AgentCommandId,
     effect_id: &AgentEffectIdentity,
     source: AgentSourceCoordinate,
     revision: AgentSnapshotRevision,
@@ -2255,15 +2259,22 @@ fn codex_context_snapshot(
     })?;
     Ok(AgentContextSnapshot {
         source: source.clone(),
-        snapshot_revision,
-        context_revision: None,
-        recipe_digest: AgentPayloadDigest::new(format!("sha256:{:x}", Sha256::digest(canonical)))
-            .map_err(|error| {
-            service_error(AgentServiceErrorCode::Internal, error.to_string(), false)
-        })?,
-        authority: AgentContextAuthority::AgentObserved,
-        fidelity: AgentContextFidelity::Observed,
-        contributions,
+        recipe: agentdash_agent_runtime_contract::AgentContextRecipe {
+            coordinate: agentdash_agent_runtime_contract::AgentContextCoordinate {
+                snapshot_revision,
+                context_revision: None,
+                recipe_digest: AgentPayloadDigest::new(format!(
+                    "sha256:{:x}",
+                    Sha256::digest(canonical)
+                ))
+                .map_err(|error| {
+                    service_error(AgentServiceErrorCode::Internal, error.to_string(), false)
+                })?,
+                authority: AgentContextAuthority::AgentObserved,
+                fidelity: AgentContextFidelity::Observed,
+            },
+            contributions,
+        },
     })
 }
 
@@ -2436,7 +2447,6 @@ mod tests {
             .expect("compaction turn");
         assert_eq!(active.kind, AgentActiveTurnKind::ContextCompaction);
         assert_eq!(active.phase, AgentActiveTurnPhase::Running);
-        assert!(active.operation_id.is_none());
     }
 
     #[test]

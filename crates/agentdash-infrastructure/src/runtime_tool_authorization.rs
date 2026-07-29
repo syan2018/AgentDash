@@ -653,7 +653,7 @@ mod tests {
     use agentdash_agent_runtime::{
         RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolPermission, RuntimeToolResolvedContext,
     };
-    use agentdash_agent_service_api::{
+    use agentdash_agent_runtime_contract::{
         AgentBindingGeneration, AgentSurfaceRevision, AgentToolName,
     };
     use agentdash_application_agentrun::agent_run::{
@@ -1304,11 +1304,11 @@ mod tests {
                 agent:
                     agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
                         service_instance_id:
-                            agentdash_agent_service_api::AgentServiceInstanceId::new(
+                            agentdash_agent_runtime_contract::AgentServiceInstanceId::new(
                                 "fixture-agent",
                             )
                             .unwrap(),
-                        source: agentdash_agent_service_api::AgentSourceCoordinate::new(
+                        source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new(
                             "fixture-source",
                         )
                         .unwrap(),
@@ -1418,10 +1418,14 @@ mod tests {
                 runtime_thread_id: RuntimeThreadId::new("thread-test").unwrap(),
                 host_binding_generation: Some(AgentBindingGeneration(1)),
                 applied_surface_revision: AgentSurfaceRevision(1),
-                turn_id: agentdash_agent_service_api::AgentTurnId::new("turn-test").unwrap(),
-                item_id: Some(agentdash_agent_service_api::AgentItemId::new("item-test").unwrap()),
-                effect_id: agentdash_agent_service_api::AgentEffectIdentity::new("effect-test")
-                    .unwrap(),
+                turn_id: agentdash_agent_runtime_contract::AgentTurnId::new("turn-test").unwrap(),
+                item_id: Some(
+                    agentdash_agent_runtime_contract::AgentItemId::new("item-test").unwrap(),
+                ),
+                effect_id: agentdash_agent_runtime_contract::AgentEffectIdentity::new(
+                    "effect-test",
+                )
+                .unwrap(),
                 invocation_id: "callback-test".to_owned(),
                 deadline_at_ms: u64::MAX,
             },

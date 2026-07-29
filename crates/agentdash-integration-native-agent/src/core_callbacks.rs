@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agentdash_agent::dash::{
     DashBeforeToolDecision, DashCoreError, DashToolCall, DashToolCallbacks, DashToolResult,
 };
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentEffectIdentity, AgentHookAction,
     AgentHookDecision, AgentHookDefinitionId, AgentHookInvocation, AgentHookPoint, AgentHookTiming,
     AgentHostCallbackMeta, AgentHostCallbacks, AgentIdempotencyKey, AgentItemId,

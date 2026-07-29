@@ -10,7 +10,7 @@ use agentdash_agent_runtime::{
     bind_complete_agent_surface,
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_agent_service_api::{
+use agentdash_agent_runtime_contract::{
     AgentAppliedEffectOutcome, AgentBindingGeneration, AgentCallbackRouteId, AgentChangePage,
     AgentChangesQuery, AgentCommandEnvelope, AgentCommandId, AgentCommandMeta, AgentCommandReceipt,
     AgentEffectIdentity, AgentEffectInspectionState, AgentForkPoint, AgentHostCallbackBinding,
@@ -1191,7 +1191,7 @@ impl AgentRuntimeLifecyclePort for CompleteAgentHost {
         runtime_thread_id: RuntimeThreadId,
         binding: AgentRuntimeAgentBinding,
         query: AgentReadQuery,
-    ) -> Result<agentdash_agent_service_api::AgentSnapshot, AgentRuntimeLifecycleError> {
+    ) -> Result<agentdash_agent_runtime_contract::AgentSnapshot, AgentRuntimeLifecycleError> {
         let (target, host_binding) = self
             .runtime_binding(&runtime_thread_id, &binding)
             .await
@@ -1421,7 +1421,9 @@ fn synthetic_surface_command_receipt(
         effect_id: derived_effect_id(effect_id, "surface").map_err(map_lifecycle_host_error)?,
         source,
         state: AgentReceiptState::AlreadyApplied { terminal: None },
-        snapshot_revision: Some(agentdash_agent_service_api::AgentSnapshotRevision(revision)),
+        snapshot_revision: Some(agentdash_agent_runtime_contract::AgentSnapshotRevision(
+            revision,
+        )),
         initial_context: None,
     })
 }
@@ -1510,7 +1512,7 @@ fn validate_surface_profile(surface: &AgentSurfaceProfile) -> Result<(), Complet
             AgentSurfaceSemanticFacet::Tool(tool)
                 if tool.invocation == SemanticFidelity::Unsupported
                     || tool.update
-                        == agentdash_agent_service_api::AgentToolUpdateSemantics::Unsupported =>
+                        == agentdash_agent_runtime_contract::AgentToolUpdateSemantics::Unsupported =>
             {
                 return Err(CompleteAgentHostError::Invariant {
                     reason: "tool capability facet declares unsupported semantics".to_owned(),
@@ -1519,7 +1521,7 @@ fn validate_surface_profile(surface: &AgentSurfaceProfile) -> Result<(), Complet
             AgentSurfaceSemanticFacet::Hook(hook)
                 if matches!(
                     hook.blocking,
-                    agentdash_agent_service_api::AgentHookBlockingSemantics::Blocking {
+                    agentdash_agent_runtime_contract::AgentHookBlockingSemantics::Blocking {
                         fidelity: SemanticFidelity::Unsupported
                     }
                 ) || hook

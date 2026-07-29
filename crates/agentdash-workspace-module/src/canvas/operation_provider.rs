@@ -249,8 +249,14 @@ fn descriptor(
             json!({
                 "type":"object",
                 "properties":{
-                    "canvas_mount_id":{"type":"string"},
-                    "title":{"type":"string","minLength":1},
+                    "canvas_mount_id":{
+                        "type":"string",
+                        "description":"Optional stable authoring mount id. Empty or invalid mount ids are rejected by the Canvas service."
+                    },
+                    "title":{
+                        "type":"string",
+                        "description":"Non-empty Canvas title. Whitespace-only values are rejected by the Canvas service."
+                    },
                     "description":{"type":"string"}
                 },
                 "required":["title"],
@@ -263,7 +269,12 @@ fn descriptor(
             "Attach an existing authorized Canvas authoring mount to the current Agent surface.",
             json!({
                 "type":"object",
-                "properties":{"canvas_mount_id":{"type":"string"}},
+                "properties":{
+                    "canvas_mount_id":{
+                        "type":"string",
+                        "description":"Existing authorized Canvas authoring mount id."
+                    }
+                },
                 "required":["canvas_mount_id"],
                 "additionalProperties":false
             }),
@@ -275,8 +286,14 @@ fn descriptor(
             json!({
                 "type":"object",
                 "properties":{
-                    "source_mount_id":{"type":"string"},
-                    "canvas_mount_id":{"type":"string"},
+                    "source_mount_id":{
+                        "type":"string",
+                        "description":"Existing authorized Canvas authoring mount id to copy."
+                    },
+                    "canvas_mount_id":{
+                        "type":"string",
+                        "description":"Optional stable authoring mount id for the new personal copy."
+                    },
                     "title":{"type":"string"},
                     "description":{"type":"string"}
                 },
@@ -313,6 +330,26 @@ fn descriptor(
         },
         operation_ref,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_application_operation_gateway::OperationCatalog;
+
+    use super::*;
+
+    #[test]
+    fn canvas_authoring_descriptors_form_a_valid_gateway_catalog() {
+        let project_id = Uuid::new_v4();
+        let descriptors = ["create", "attach", "copy"]
+            .into_iter()
+            .map(|operation| descriptor(project_id, operation))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("Canvas authoring descriptors");
+
+        OperationCatalog::try_new(descriptors)
+            .expect("Canvas authoring descriptors must use the Gateway schema subset");
+    }
 }
 
 fn map_strategy_error(error: ProductRuntimeToolOutcome) -> OperationExecutionError {

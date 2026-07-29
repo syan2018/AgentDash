@@ -32,10 +32,15 @@ pub fn operation_script_runtime_tool_schema() -> Value {
             "source".to_owned(),
             json!({
                 "type": "string",
-                "description": "Ephemeral Rhai source. Use exact operation strings obtained from the latest workspace_module_describe results."
+                "description": "Bounded ephemeral Rhai source over the current actor Operation surface. Use ops.invoke(exact_ref, input) for dependent calls or ops.invoke_all([{operation, input}, ...]) for independent calls. Exact refs use namespace:provider_key:operation_key:vN from the latest workspace_module_describe result. Use Workflow for durable execution."
             }),
         ),
-        ("input".to_owned(), json!({})),
+        (
+            "input".to_owned(),
+            json!({
+                "description": "Optional JSON exposed to the Rhai program as the global input value."
+            }),
+        ),
     ]);
     json!({
         "type": "object",
@@ -376,6 +381,12 @@ mod tests {
         property_names.sort_unstable();
         assert_eq!(property_names, vec!["input", "source"]);
         assert_eq!(schema["required"], json!(["source"]));
+        let source_description = schema["properties"]["source"]["description"]
+            .as_str()
+            .expect("source description");
+        assert!(source_description.contains("ops.invoke("));
+        assert!(source_description.contains("ops.invoke_all("));
+        assert!(source_description.contains("Use Workflow for durable execution"));
     }
 
     #[tokio::test]

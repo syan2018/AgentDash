@@ -226,6 +226,9 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
     let describe_service = Arc::new(RecordingProductToolService::new(
         ProductRuntimeToolKind::WorkspaceModuleDescribe,
     ));
+    let operate_service = Arc::new(RecordingProductToolService::new(
+        ProductRuntimeToolKind::WorkspaceModuleOperate,
+    ));
     let invoke_service = Arc::new(RecordingProductToolService::new(
         ProductRuntimeToolKind::WorkspaceModuleInvoke,
     ));
@@ -235,6 +238,7 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
     let services: Vec<Arc<dyn ProductRuntimeToolService>> = vec![
         list_service.clone(),
         describe_service.clone(),
+        operate_service.clone(),
         invoke_service.clone(),
         present_service.clone(),
     ];
@@ -256,6 +260,12 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
         "workspace_module_describe",
         RuntimeToolPermission::ProductRead,
         RuntimeToolEffect::ReadOnly,
+    );
+    assert_workspace_definition(
+        &definitions,
+        "workspace_module_operate",
+        RuntimeToolPermission::ProductWrite,
+        RuntimeToolEffect::ProductMutation,
     );
     assert_workspace_definition(
         &definitions,
@@ -283,6 +293,15 @@ async fn workspace_tools_keep_read_write_and_presentation_invariants_in_final_br
             "workspace-describe-effect",
             "workspace-describe-callback",
             json!({"module_id": "module-1"}),
+        ),
+        (
+            "workspace_module_operate",
+            "workspace-operate-effect",
+            "workspace-operate-callback",
+            json!({
+                "operation": "canvas.create",
+                "input": {"title": "Tracer Canvas"}
+            }),
         ),
         (
             "workspace_module_invoke",
@@ -699,6 +718,7 @@ fn runtime_tool_name(kind: ProductRuntimeToolKind) -> &'static str {
         ProductRuntimeToolKind::CompanionRespond => "companion_respond",
         ProductRuntimeToolKind::WorkspaceModuleList => "workspace_module_list",
         ProductRuntimeToolKind::WorkspaceModuleDescribe => "workspace_module_describe",
+        ProductRuntimeToolKind::WorkspaceModuleOperate => "workspace_module_operate",
         ProductRuntimeToolKind::WorkspaceModuleInvoke => "workspace_module_invoke",
         ProductRuntimeToolKind::WorkspaceModulePresent => "workspace_module_present",
         ProductRuntimeToolKind::OperationScript => "operation_script",

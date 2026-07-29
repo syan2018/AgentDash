@@ -184,3 +184,17 @@ Workspace Module 是通用 actor projection，而 Canvas Skill 负责 Canvas 产
   `ensure_embedded_skill_bundle`，使验证、路径归一化和内容同步使用同一实现。
 - bundle 新增文件时同步更新 `files` 声明，使编译产物中的 catalog 与源码目录保持
   完整一致。
+- 工具本地的调用形状、必填参数和最短决策提示放在
+  `RuntimeToolDefinition.description` 与 parameters schema 的 property description 中，使
+  Agent 在 Skill 未触发时仍能正确选择并调用工具。Skill 主文只保留跨工具选择与核心流程，
+  详细 host API、错误矩阵、重放语义和诊断说明放在由 `SKILL.md` 直接链接的一层
+  `references/`；这样工具合同、按需领域知识与上下文成本分别由正确 owner 承担。
+- 同一 tool cluster 的工具仍按不同执行语义保持独立 identity。例如
+  `workspace_module_operate` 只承接 provider-owned lifecycle route，
+  `workspace_module_invoke` 承接单个 described Operation，
+  `operation_script` 承接 current actor surface 上有界、ephemeral 的跨 provider 组合。Skill
+  负责解释选择关系，不能用一个宽泛入口合并不同的 authority、limits、evidence 与 replay
+  合同。
+- Skill 语义测试至少锁定主文到 references 的可发现链接、工具真实参数形状以及关键 host API
+  标识；Operation provider 测试应把完整 descriptor 集合交给 `OperationCatalog::try_new`，因为
+  单个 producer 单测无法证明 Gateway 会接纳整个 dynamic provider surface。

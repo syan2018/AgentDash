@@ -34,7 +34,7 @@ pub fn workspace_module_runtime_tool_schema(kind: ProductRuntimeToolKind) -> Val
             "properties": {
                 "module_id": {
                     "type": "string",
-                    "description": "Stable module id returned by workspace_module_list."
+                    "description": "Exact current module_id returned by workspace_module_list. Describe again after surface, authority, attachment, or revision changes."
                 }
             },
             "required": ["module_id"],
@@ -45,9 +45,12 @@ pub fn workspace_module_runtime_tool_schema(kind: ProductRuntimeToolKind) -> Val
             "properties": {
                 "operation": {
                     "type": "string",
-                    "description": "Provider-qualified Workspace Module operation route."
+                    "description": "Provider-owned lifecycle route such as canvas.create, canvas.attach, or canvas.copy. Do not use this field for descriptor operation keys or OperationScript."
                 },
-                "input": {"type": "object"}
+                "input": {
+                    "type": "object",
+                    "description": "Lifecycle input for the selected route."
+                }
             },
             "required": ["operation"],
             "additionalProperties": false
@@ -55,9 +58,17 @@ pub fn workspace_module_runtime_tool_schema(kind: ProductRuntimeToolKind) -> Val
         ProductRuntimeToolKind::WorkspaceModuleInvoke => json!({
             "type": "object",
             "properties": {
-                "module_id": {"type": "string"},
-                "operation_key": {"type": "string"},
-                "input": {}
+                "module_id": {
+                    "type": "string",
+                    "description": "Exact current module_id returned by workspace_module_list."
+                },
+                "operation_key": {
+                    "type": "string",
+                    "description": "One current operation_key returned by workspace_module_describe for this module. Use operation_script instead for bounded multi-Operation composition."
+                },
+                "input": {
+                    "description": "Input matching the selected operation contract returned by workspace_module_describe."
+                }
             },
             "required": ["module_id", "operation_key"],
             "additionalProperties": false
@@ -74,7 +85,9 @@ pub fn workspace_module_runtime_tool_schema(kind: ProductRuntimeToolKind) -> Val
                     "default": "preview",
                     "description": "Visible view key returned by workspace_module_describe."
                 },
-                "payload": {}
+                "payload": {
+                    "description": "Optional renderer payload accepted by the described view."
+                }
             },
             "required": ["module_id"],
             "additionalProperties": false
@@ -374,4 +387,38 @@ fn reject_required_provider_failures(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invoke_schema_distinguishes_one_operation_from_script_composition() {
+        let schema =
+            workspace_module_runtime_tool_schema(ProductRuntimeToolKind::WorkspaceModuleInvoke);
+
+        assert_eq!(schema["required"], json!(["module_id", "operation_key"]));
+        assert!(
+            schema["properties"]["operation_key"]["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("operation_script"))
+        );
+        assert!(schema["properties"].get("operation_ref").is_none());
+    }
+
+    #[test]
+    fn operate_schema_is_limited_to_provider_lifecycle_routes() {
+        let schema =
+            workspace_module_runtime_tool_schema(ProductRuntimeToolKind::WorkspaceModuleOperate);
+
+        assert!(
+            schema["properties"]["operation"]["description"]
+                .as_str()
+                .is_some_and(|description| {
+                    description.contains("canvas.create")
+                        && description.contains("Do not use this field")
+                })
+        );
+    }
 }

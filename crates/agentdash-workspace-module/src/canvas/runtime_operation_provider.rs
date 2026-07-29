@@ -266,6 +266,7 @@ impl DynamicOperationProvider for CanvasRuntimeOperationProvider {
             CanvasRuntimeOperation::BindData => {
                 let input: BindDataInput = serde_json::from_value(envelope.input)
                     .map_err(|error| OperationExecutionError::invalid_request(error.to_string()))?;
+                input.validate()?;
                 let revision = self
                     .definitions
                     .get_revision(instance.definition_revision_id)
@@ -379,6 +380,23 @@ struct BindDataInput {
     version_ref: Option<String>,
 }
 
+impl BindDataInput {
+    fn validate(&self) -> Result<(), OperationExecutionError> {
+        for (field, value) in [
+            ("slot_key", Some(self.slot_key.as_str())),
+            ("source_uri", Some(self.source_uri.as_str())),
+            ("version_ref", self.version_ref.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.trim().is_empty()) {
+                return Err(OperationExecutionError::invalid_request(format!(
+                    "canvas.bind_data `{field}` 不能为空"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 fn runtime_descriptor(
     instance_id: Uuid,
     operation: CanvasRuntimeOperation,
@@ -395,9 +413,18 @@ fn runtime_descriptor(
             json!({
                 "type":"object",
                 "properties":{
-                    "slot_key":{"type":"string","minLength":1},
-                    "source_uri":{"type":"string","minLength":1},
-                    "version_ref":{"type":"string","minLength":1}
+                    "slot_key":{
+                        "type":"string",
+                        "description":"Non-empty declared ResourceSlot key."
+                    },
+                    "source_uri":{
+                        "type":"string",
+                        "description":"Non-empty resource URI visible through the current authority."
+                    },
+                    "version_ref":{
+                        "type":"string",
+                        "description":"Optional non-empty resource version; defaults to current."
+                    }
                 },
                 "required":["slot_key","source_uri"],
                 "additionalProperties":false
@@ -445,6 +472,53 @@ fn runtime_descriptor(
         },
         operation_ref,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_application_operation_gateway::OperationCatalog;
+
+    use super::*;
+
+    #[test]
+    fn canvas_runtime_descriptors_form_a_valid_gateway_catalog() {
+        let instance_id = Uuid::new_v4();
+        let descriptors = [
+            CanvasRuntimeOperation::BindData,
+            CanvasRuntimeOperation::Inspect,
+            CanvasRuntimeOperation::GetInteractionState,
+        ]
+        .into_iter()
+        .map(|operation| runtime_descriptor(instance_id, operation))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("Canvas runtime descriptors");
+
+        OperationCatalog::try_new(descriptors)
+            .expect("Canvas runtime descriptors must use the Gateway schema subset");
+    }
+
+    #[test]
+    fn bind_data_rejects_empty_string_fields_after_schema_admission() {
+        for input in [
+            BindDataInput {
+                slot_key: " ".into(),
+                source_uri: "vfs://asset".into(),
+                version_ref: None,
+            },
+            BindDataInput {
+                slot_key: "hero".into(),
+                source_uri: String::new(),
+                version_ref: None,
+            },
+            BindDataInput {
+                slot_key: "hero".into(),
+                source_uri: "vfs://asset".into(),
+                version_ref: Some(" ".into()),
+            },
+        ] {
+            assert!(input.validate().is_err());
+        }
+    }
 }
 
 fn provider_failed(error: impl std::fmt::Display) -> OperationExecutionError {

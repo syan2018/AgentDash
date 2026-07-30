@@ -1,0 +1,9 @@
+{"file": ".trellis/workflow.md", "reason": "任务完成与质量门要求"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust 后端质量检查要求"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "核对 operation/path scope 没有被扩大"}
+{"file": ".trellis/spec/backend/vfs/vfs-materialization.md", "reason": "核对授权、rewrite 与物化保持同一资源语义"}
+{"file": ".trellis/spec/backend/agent-runtime-surface-tool-broker.md", "reason": "核对调用级 authority 与 grant 闭包"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对错误分类与上下文"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端终态测试与质量要求"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "核对失败事件的 reducer/store 收敛"}
+{"file": ".trellis/tasks/07-30-runtime-vfs-tool-execution-repair/research/current-failure-chain.md", "reason": "按原始故障链逐项回归"}

@@ -5,13 +5,16 @@ use agentdash_application_ports::vfs_materialization::{
     MaterializationTargetKind, VfsMaterializationTransport, VfsMaterializeContent,
     VfsMaterializeEntry, VfsMaterializeRequest,
 };
-use agentdash_platform_spi::{Mount, MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsOperation, Vfs};
+use agentdash_platform_spi::{
+    Mount, MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsOperation, Vfs,
+};
 use futures::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
 use super::inline_persistence::InlineContentOverlay;
 use super::rewrite::{
-    RewriteReplacement, apply_replacements, find_mount_uri_candidates, quote_for_shell_path,
+    RewriteReplacement, apply_replacements, find_mount_uri_candidates,
+    find_shell_mount_uri_candidates, quote_for_shell_path,
 };
 use super::service::VfsService;
 use super::service::ensure_runtime_vfs_access;
@@ -67,7 +70,7 @@ impl VfsMaterializationService {
             .iter()
             .map(|mount| mount.id.clone())
             .collect::<Vec<_>>();
-        let candidates = find_mount_uri_candidates(input.command, &mount_ids);
+        let candidates = find_shell_mount_uri_candidates(input.command, &mount_ids);
         if candidates.is_empty() {
             return Ok(RewriteShellCommandOutput {
                 command: input.command.to_string(),

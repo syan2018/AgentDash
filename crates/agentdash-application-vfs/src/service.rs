@@ -114,7 +114,7 @@ fn normalize_single_mount_patch_path(
     normalize_mount_relative_path(&raw, false).map_err(MountError::OperationFailed)
 }
 
-fn normalize_native_patch_paths(mount_id: &str, patch: &str) -> Result<String, MountError> {
+fn normalize_single_mount_patch_paths(mount_id: &str, patch: &str) -> Result<String, MountError> {
     const PATH_MARKERS: [&str; 4] = [
         "*** Add File: ",
         "*** Delete File: ",
@@ -995,6 +995,7 @@ impl VfsService {
             &compiled_policy
         };
         admit_single_mount_patch_targets(policy, mount_id, patch)?;
+        let normalized_patch = normalize_single_mount_patch_paths(mount_id, patch)?;
 
         if is_inline_mount(mount) {
             let ov = overlay.ok_or_else(|| {
@@ -1008,7 +1009,7 @@ impl VfsService {
                 overlay: ov,
                 provider_registry: &self.mount_provider_registry,
             };
-            let result = crate::apply_patch_to_target(&target, patch)
+            let result = crate::apply_patch_to_target(&target, &normalized_patch)
                 .await
                 .map_err(|e| MountError::OperationFailed(e.to_string()))?;
             return Ok(ApplyPatchResult {
@@ -1029,7 +1030,7 @@ impl VfsService {
         };
         if provider.prefers_native_apply_patch() {
             let request = ApplyPatchRequest {
-                patch: normalize_native_patch_paths(mount_id, patch)?,
+                patch: normalized_patch,
             };
             return provider.apply_patch(mount, &request, &ctx).await;
         }
@@ -1038,7 +1039,7 @@ impl VfsService {
             mount,
             ctx: &ctx,
         };
-        match crate::apply_patch_to_target(&target, patch).await {
+        match crate::apply_patch_to_target(&target, &normalized_patch).await {
             Ok(result) => Ok(ApplyPatchResult {
                 added: result.added,
                 modified: result.modified,
@@ -1046,7 +1047,7 @@ impl VfsService {
             }),
             Err(crate::ApplyPatchError::Capabilities(cap_error)) => {
                 let request = ApplyPatchRequest {
-                    patch: patch.to_string(),
+                    patch: normalized_patch,
                 };
                 return provider
                     .apply_patch(mount, &request, &ctx)
@@ -1866,12 +1867,118 @@ mod tests {
     use tokio::sync::Mutex;
 
     #[test]
-    fn native_patch_normalizes_explicit_mount_paths_without_touching_patch_body() {
+    fn single_mount_patch_normalizes_explicit_paths_without_touching_patch_body() {
         let patch = "*** Begin Patch\n*** Update File: canvas://src/main.tsx\n*** Move to: canvas://src/app.tsx\n@@\n-const uri = 'canvas://asset/logo.png';\n+const uri = 'canvas://asset/new-logo.png';\n*** End Patch";
 
         assert_eq!(
-            normalize_native_patch_paths("canvas", patch).expect("normalize patch"),
+            normalize_single_mount_patch_paths("canvas", patch).expect("normalize patch"),
             "*** Begin Patch\n*** Update File: src/main.tsx\n*** Move to: src/app.tsx\n@@\n-const uri = 'canvas://asset/logo.png';\n+const uri = 'canvas://asset/new-logo.png';\n*** End Patch"
+        );
+    }
+
+    #[derive(Default)]
+    struct CompositePatchProvider {
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl MountProvider for CompositePatchProvider {
+        fn provider_id(&self) -> &str {
+            "composite_patch"
+        }
+
+        fn supported_capabilities(&self) -> Vec<&str> {
+            vec!["read", "write", "list"]
+        }
+
+        async fn read_text(
+            &self,
+            _mount: &Mount,
+            path: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<ReadResult, MountError> {
+            self.calls.lock().await.push(format!("read:{path}"));
+            Ok(ReadResult::new(path, "old\n"))
+        }
+
+        async fn write_text(
+            &self,
+            _mount: &Mount,
+            path: &str,
+            content: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<(), MountError> {
+            self.calls
+                .lock()
+                .await
+                .push(format!("write:{path}:{content}"));
+            Ok(())
+        }
+
+        async fn list(
+            &self,
+            _mount: &Mount,
+            _options: &ListOptions,
+            _ctx: &MountOperationContext,
+        ) -> Result<ListResult, MountError> {
+            Ok(ListResult {
+                entries: Vec::new(),
+            })
+        }
+
+        async fn search_text(
+            &self,
+            _mount: &Mount,
+            _query: &SearchQuery,
+            _ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            Ok(SearchResult::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn single_mount_patch_sends_relative_paths_to_composite_provider() {
+        let provider = Arc::new(CompositePatchProvider::default());
+        let mut registry = MountProviderRegistry::new();
+        registry.register(provider.clone());
+        let service = VfsService::new(Arc::new(registry));
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "main".to_owned(),
+                provider: provider.provider_id().to_owned(),
+                backend_id: "backend".to_owned(),
+                root_ref: "workspace".to_owned(),
+                capabilities: vec![
+                    MountCapability::Read,
+                    MountCapability::Write,
+                    MountCapability::List,
+                ],
+                default_write: false,
+                display_name: "Main".to_owned(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("main".to_owned()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let patch = "\
+*** Begin Patch
+*** Update File: main://old.txt
+@@
+-old
++new
+*** End Patch";
+
+        let result = service
+            .apply_patch(&vfs, "main", patch, None, None)
+            .await
+            .expect("composite patch");
+
+        assert_eq!(result.modified, vec!["old.txt"]);
+        assert_eq!(
+            *provider.calls.lock().await,
+            vec!["read:old.txt", "write:old.txt:new\n"]
         );
     }
 

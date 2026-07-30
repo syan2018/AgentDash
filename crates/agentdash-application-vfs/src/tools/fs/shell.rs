@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::platform_shell::{PlatformShell, PlatformShellCwd};
 use crate::inline_persistence::InlineContentOverlay;
-use crate::rewrite::find_mount_uri_candidates;
+use crate::rewrite::find_shell_mount_uri_candidates;
 use crate::runtime_tool_execution::{
     VfsToolContent, VfsToolExecutionError, VfsToolExecutionResult, VfsToolUpdateSink,
 };
@@ -1144,7 +1144,7 @@ fn unresolved_current_mount_uris(command: &str, vfs: &agentdash_platform_spi::Vf
         .iter()
         .map(|mount| mount.id.clone())
         .collect::<Vec<_>>();
-    find_mount_uri_candidates(command, &mount_ids)
+    find_shell_mount_uri_candidates(command, &mount_ids)
         .into_iter()
         .map(|candidate| candidate.value)
         .collect()
@@ -1156,7 +1156,7 @@ fn unresolved_reserved_vfs_uris(command: &str) -> Vec<String> {
         .iter()
         .map(|scheme| scheme.to_string())
         .collect::<Vec<_>>();
-    find_mount_uri_candidates(command, &mount_ids)
+    find_shell_mount_uri_candidates(command, &mount_ids)
         .into_iter()
         .map(|candidate| candidate.value)
         .collect()
@@ -1848,5 +1848,29 @@ mod shell_exec_rewrite_tests {
 
         assert!(message.contains("未物化的 VFS URI"));
         assert!(message.contains("skill-assets://skills/abc-user-lookup/scripts/lookup.py"));
+    }
+
+    #[test]
+    fn vfs_uri_inside_powershell_here_string_is_not_an_unresolved_shell_path() {
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "main".to_string(),
+                provider: crate::PROVIDER_RELAY_FS.to_string(),
+                backend_id: "local-dev-1".to_string(),
+                root_ref: "D:\\workspace".to_string(),
+                capabilities: vec![agentdash_platform_spi::MountCapability::Exec],
+                default_write: true,
+                display_name: "main".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let command =
+            "$source = @'\nmain://docs/example.md\nlifecycle://skills/demo\n'@\npython update.py";
+
+        assert_eq!(unresolved_vfs_uri_message(command, &vfs), None);
     }
 }

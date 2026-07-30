@@ -1,0 +1,11 @@
+{"file": ".trellis/workflow.md", "reason": "任务阶段、实现与质量门流程"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端实现规范入口"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "VFS mount、provider 与工具边界"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "Runtime VFS operation 与 path scope 授权契约"}
+{"file": ".trellis/spec/backend/vfs/vfs-materialization.md", "reason": "shell URI rewrite、直连与跨 backend 物化契约"}
+{"file": ".trellis/spec/backend/agent-runtime-surface-tool-broker.md", "reason": "request-scoped authority 与 Tool Broker 授权边界"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "类型化错误和错误上下文约定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "服务端终态到前端投影的跨层检查方法"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Session reducer 与 store 状态收敛约定"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "前端 store/hook 修改约定，仅在复现后使用"}
+{"file": ".trellis/tasks/07-30-runtime-vfs-tool-execution-repair/research/current-failure-chain.md", "reason": "本次运行态、事件与代码根因证据"}

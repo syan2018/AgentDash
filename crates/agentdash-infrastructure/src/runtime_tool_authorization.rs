@@ -443,56 +443,108 @@ fn shell_vfs_grant(
     if operation != "start" {
         return vfs_grant(surface, AppliedVfsOperation::Exec, &[], true);
     }
-    match arguments.get("cwd").and_then(Value::as_str) {
-        Some(cwd) if cwd != "platform://" => vfs_grant(
-            surface,
-            AppliedVfsOperation::Exec,
-            &[parse_requested_vfs_path(surface, cwd, true)?],
-            false,
-        ),
+    match arguments.get("cwd").and_then(Value::as_str).map(str::trim) {
+        Some(cwd) if !cwd.is_empty() && cwd != "platform://" => {
+            let exec_grant = vfs_grant(
+                surface,
+                AppliedVfsOperation::Exec,
+                &[parse_requested_vfs_path(surface, cwd, true)?],
+                false,
+            )?;
+            let command = arguments
+                .get("command")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    denied(
+                        "invalid_vfs_tool_arguments",
+                        "shell_exec.command must be a string",
+                    )
+                })?;
+            let mount_ids = surface
+                .vfs_mounts
+                .iter()
+                .map(|mount| mount.mount_id.clone())
+                .collect::<Vec<_>>();
+            let mut read_paths = Vec::new();
+            for candidate in agentdash_application_vfs::rewrite::find_shell_mount_uri_candidates(
+                command, &mount_ids,
+            ) {
+                let requested = parse_requested_vfs_path(surface, &candidate.value, true)?;
+                if !read_paths.contains(&requested) {
+                    read_paths.push(requested);
+                }
+            }
+            let mut grants = vec![exec_grant];
+            if !read_paths.is_empty() {
+                grants.push(vfs_grant(
+                    surface,
+                    AppliedVfsOperation::Read,
+                    &read_paths,
+                    false,
+                )?);
+            }
+            merge_vfs_grants(surface, grants)
+        }
         _ => {
-            let mut mounts: Vec<RuntimeVfsMountGrant> = Vec::new();
+            let mut grants = Vec::new();
             for operation in [
                 AppliedVfsOperation::Read,
                 AppliedVfsOperation::List,
                 AppliedVfsOperation::Write,
                 AppliedVfsOperation::Exec,
             ] {
-                if let Ok(RuntimeToolResourceGrant::Vfs(grant)) =
-                    vfs_grant(surface, operation, &[], true)
-                {
-                    for mount in grant.mounts {
-                        if let Some(existing) =
-                            mounts.iter_mut().find(|existing| existing.id == mount.id)
-                        {
-                            for operation in mount.operations {
-                                if !existing.operations.contains(&operation) {
-                                    existing.operations.push(operation);
-                                }
-                            }
-                            for scope in mount.path_scopes {
-                                if !existing.path_scopes.contains(&scope) {
-                                    existing.path_scopes.push(scope);
-                                }
-                            }
-                        } else {
-                            mounts.push(mount);
-                        }
-                    }
+                if let Ok(grant) = vfs_grant(surface, operation, &[], true) {
+                    grants.push(grant);
                 }
             }
-            if mounts.is_empty() {
-                return Err(denied(
-                    "missing_vfs_grant",
-                    "platform shell has no applied VFS operations",
-                ));
-            }
-            Ok(RuntimeToolResourceGrant::Vfs(RuntimeVfsExecutionGrant {
-                default_mount_id: surface.default_mount_id.clone(),
-                mounts,
-            }))
+            merge_vfs_grants(surface, grants)
         }
     }
+}
+
+fn merge_vfs_grants(
+    surface: &agentdash_application_agentrun::agent_run::AgentRunAppliedResourceSurface,
+    grants: Vec<RuntimeToolResourceGrant>,
+) -> Result<RuntimeToolResourceGrant, RuntimeToolBrokerError> {
+    let mut mounts: Vec<RuntimeVfsMountGrant> = Vec::new();
+    for grant in grants {
+        let RuntimeToolResourceGrant::Vfs(grant) = grant else {
+            return Err(denied(
+                "invalid_vfs_grant",
+                "shell authorization produced a non-VFS grant",
+            ));
+        };
+        for mount in grant.mounts {
+            if let Some(existing) = mounts.iter_mut().find(|existing| existing.id == mount.id) {
+                for operation in mount.operations {
+                    if !existing.operations.contains(&operation) {
+                        existing.operations.push(operation);
+                    }
+                }
+                for scope in mount.path_scopes {
+                    if !existing.path_scopes.contains(&scope) {
+                        existing.path_scopes.push(scope);
+                    }
+                }
+            } else {
+                mounts.push(mount);
+            }
+        }
+    }
+    if mounts.is_empty() {
+        return Err(denied(
+            "missing_vfs_grant",
+            "shell has no applied VFS operations",
+        ));
+    }
+    let default_mount_id = surface
+        .default_mount_id
+        .clone()
+        .filter(|id| mounts.iter().any(|mount| &mount.id == id));
+    Ok(RuntimeToolResourceGrant::Vfs(RuntimeVfsExecutionGrant {
+        default_mount_id,
+        mounts,
+    }))
 }
 
 fn scope_allows(scope: &AppliedVfsPathScope, relative_path: &str) -> bool {
@@ -954,6 +1006,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shell_mount_exec_grants_read_for_command_vfs_references() {
+        let binding = binding();
+        let mut snapshot = snapshot(
+            binding.binding.target.clone(),
+            binding.binding_digest.clone(),
+        );
+        add_read_only_mount(&mut snapshot, "lifecycle", "lifecycle_vfs");
+        let authorizer = test_authorizer(
+            Arc::new(BindingFixture {
+                value: Some(binding),
+            }),
+            Arc::new(SurfaceFixture {
+                value: Ok(snapshot),
+            }),
+        );
+
+        let grant = authorizer
+            .authorize(request_with_arguments(
+                "shell_exec",
+                serde_json::json!({
+                    "cwd": "main://docs",
+                    "command": "python lifecycle://skills/demo/scripts/run.py main://docs/input.txt"
+                }),
+            ))
+            .await
+            .expect("shell command VFS references should be authorized");
+
+        let RuntimeToolResourceGrant::Vfs(vfs) = grant.resources else {
+            panic!("shell_exec must produce a VFS grant");
+        };
+        let main = vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "main")
+            .expect("main grant");
+        assert!(
+            main.operations
+                .contains(&RuntimeVfsGrantedOperation::Execute)
+        );
+        assert!(main.operations.contains(&RuntimeVfsGrantedOperation::Read));
+        let lifecycle = vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "lifecycle")
+            .expect("lifecycle grant");
+        assert_eq!(lifecycle.operations, vec![RuntimeVfsGrantedOperation::Read]);
+    }
+
+    #[tokio::test]
+    async fn shell_mount_exec_does_not_grant_read_for_here_string_data() {
+        let binding = binding();
+        let mut snapshot = snapshot(
+            binding.binding.target.clone(),
+            binding.binding_digest.clone(),
+        );
+        add_read_only_mount(&mut snapshot, "lifecycle", "lifecycle_vfs");
+        let authorizer = test_authorizer(
+            Arc::new(BindingFixture {
+                value: Some(binding),
+            }),
+            Arc::new(SurfaceFixture {
+                value: Ok(snapshot),
+            }),
+        );
+
+        let grant = authorizer
+            .authorize(request_with_arguments(
+                "shell_exec",
+                serde_json::json!({
+                    "cwd": "main://",
+                    "command": "$source = @'\nlifecycle://skills/demo\n'@\npython update.py"
+                }),
+            ))
+            .await
+            .expect("here-string data must not request a VFS read grant");
+
+        let RuntimeToolResourceGrant::Vfs(vfs) = grant.resources else {
+            panic!("shell_exec must produce a VFS grant");
+        };
+        assert_eq!(vfs.mounts.len(), 1);
+        assert_eq!(vfs.mounts[0].id, "main");
+        assert_eq!(
+            vfs.mounts[0].operations,
+            vec![RuntimeVfsGrantedOperation::Execute]
+        );
+    }
+
+    #[tokio::test]
     async fn mounts_list_reports_the_full_applied_mount_capability_surface() {
         let binding = binding();
         let snapshot = snapshot(
@@ -1390,6 +1530,24 @@ mod tests {
             product_binding_digest,
             provenance,
         }
+    }
+
+    fn add_read_only_mount(
+        surface: &mut AgentRunAppliedResourceSurface,
+        mount_id: &str,
+        provider: &str,
+    ) {
+        let mut mount = surface.vfs_mounts[0].clone();
+        mount.mount_id = mount_id.to_owned();
+        mount.provider = provider.to_owned();
+        mount.root_ref = format!("{mount_id}://root");
+        mount.capabilities = BTreeSet::from([AppliedVfsOperation::Read]);
+        surface.vfs_mounts.push(mount);
+        surface.vfs_grants.push(AppliedVfsGrant {
+            mount_id: mount_id.to_owned(),
+            operations: BTreeSet::from([AppliedVfsOperation::Read]),
+            path_scopes: vec![AppliedVfsPathScope::All],
+        });
     }
 
     fn request(tool: &str) -> RuntimeToolAuthorizationRequest {

@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RewriteCandidate {
@@ -70,6 +71,22 @@ pub fn find_mount_uri_candidates(input: &str, mount_ids: &[String]) -> Vec<Rewri
     candidates
 }
 
+/// 扫描 shell 实际执行区域里的 VFS URI。
+///
+/// PowerShell here-string 的正文是传给子程序或重定向的数据，其中的 URI 字面量
+/// 不属于 shell 路径参数。
+pub fn find_shell_mount_uri_candidates(input: &str, mount_ids: &[String]) -> Vec<RewriteCandidate> {
+    let data_ranges = powershell_here_string_ranges(input);
+    find_mount_uri_candidates(input, mount_ids)
+        .into_iter()
+        .filter(|candidate| {
+            !data_ranges
+                .iter()
+                .any(|range| range.contains(&candidate.start))
+        })
+        .collect()
+}
+
 pub fn apply_replacements(input: &str, replacements: &[RewriteReplacement]) -> String {
     let mut output = input.to_string();
     let mut sorted = replacements.to_vec();
@@ -118,6 +135,45 @@ fn is_uri_delimiter(ch: char) -> bool {
         )
 }
 
+fn powershell_here_string_ranges(input: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut active: Option<(&'static str, usize)> = None;
+    let mut line_start = 0;
+
+    for segment in input.split_inclusive('\n') {
+        let line_end = line_start + segment.len();
+        let line = segment.strip_suffix('\n').unwrap_or(segment);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+
+        if let Some((terminator, content_start)) = active {
+            if line.trim() == terminator {
+                ranges.push(content_start..line_start);
+                active = None;
+            }
+        } else if let Some(terminator) = powershell_here_string_terminator(line) {
+            active = Some((terminator, line_end));
+        }
+
+        line_start = line_end;
+    }
+
+    if let Some((_, content_start)) = active {
+        ranges.push(content_start..input.len());
+    }
+    ranges
+}
+
+fn powershell_here_string_terminator(line: &str) -> Option<&'static str> {
+    let line = line.trim_end();
+    if line.ends_with("@'") {
+        Some("'@")
+    } else if line.ends_with("@\"") {
+        Some("\"@")
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,6 +197,17 @@ mod tests {
             find_mount_uri_candidates("cat \"skill-assets://skills/foo/SKILL.md\"", &mounts);
         assert_eq!(found.len(), 1);
         assert!(found[0].quoted);
+    }
+
+    #[test]
+    fn shell_scan_ignores_powershell_here_string_data() {
+        let mounts = vec!["main".to_string(), "lifecycle".to_string()];
+        let command = "$source = @'\nmain://docs/example.md\nlifecycle://skills/demo\n'@\npython main://scripts/update.py";
+
+        let found = find_shell_mount_uri_candidates(command, &mounts);
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].value, "main://scripts/update.py");
     }
 
     #[test]

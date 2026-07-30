@@ -12,10 +12,12 @@ use agentdash_platform_spi::WorkspaceModuleDimension;
 use async_trait::async_trait;
 use serde_json::Value;
 
-/// Stable host context shared by every Workspace Module provider.
+/// Immutable pre-operation surface snapshot shared by every Workspace Module provider.
 ///
 /// The core owns authority resolution. Providers receive only the resolved Project coordinates,
-/// actor identity, visibility policy and current canonical Operation descriptors.
+/// actor identity, visibility policy and current canonical Operation descriptors. A provider that
+/// mutates the Product surface must return [`WorkspaceModuleSurfaceEffect::RefreshRequired`];
+/// callers must never reuse this snapshot to project mutation results.
 #[derive(Clone)]
 pub struct WorkspaceModuleProviderContext {
     pub project_id: uuid::Uuid,
@@ -59,6 +61,18 @@ pub struct WorkspaceModuleOperateRequest<'a> {
     pub input: Value,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceModuleOperateOutcome {
+    pub output: Value,
+    pub surface_effect: WorkspaceModuleSurfaceEffect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceModuleSurfaceEffect {
+    Unchanged,
+    RefreshRequired { module_id: String },
+}
+
 pub struct WorkspaceModulePresentationRequest<'a> {
     pub context: &'a WorkspaceModuleProviderContext,
     pub module: &'a WorkspaceModuleDescriptor,
@@ -100,7 +114,7 @@ pub trait WorkspaceModuleProvider: Send + Sync {
     async fn operate(
         &self,
         _request: WorkspaceModuleOperateRequest<'_>,
-    ) -> Result<Value, ProductRuntimeToolOutcome> {
+    ) -> Result<WorkspaceModuleOperateOutcome, ProductRuntimeToolOutcome> {
         Err(ProductRuntimeToolOutcome::Rejected {
             code: "workspace_module_operation_not_routable".to_owned(),
             message: format!(
@@ -179,7 +193,7 @@ impl WorkspaceModuleProviderRegistry {
     pub async fn operate(
         &self,
         request: WorkspaceModuleOperateRequest<'_>,
-    ) -> Result<Value, ProductRuntimeToolOutcome> {
+    ) -> Result<WorkspaceModuleOperateOutcome, ProductRuntimeToolOutcome> {
         let matching = self
             .providers
             .iter()

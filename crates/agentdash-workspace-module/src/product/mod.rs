@@ -9,9 +9,10 @@ pub use projection::{
     workspace_module_operation_from_descriptor,
 };
 pub use provider::{
-    WorkspaceModuleActor, WorkspaceModuleOperateRequest, WorkspaceModulePresentationPreparation,
-    WorkspaceModulePresentationRequest, WorkspaceModuleProvider, WorkspaceModuleProviderContext,
-    WorkspaceModuleProviderRegistry,
+    WorkspaceModuleActor, WorkspaceModuleOperateOutcome, WorkspaceModuleOperateRequest,
+    WorkspaceModulePresentationPreparation, WorkspaceModulePresentationRequest,
+    WorkspaceModuleProvider, WorkspaceModuleProviderContext, WorkspaceModuleProviderRegistry,
+    WorkspaceModuleSurfaceEffect,
 };
 pub use system_providers::{ExtensionWorkspaceModuleProvider, PlatformWorkspaceModuleProvider};
 pub use tool_service::{

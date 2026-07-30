@@ -23,8 +23,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::canvas::operation_provider::canvas_authoring_operation_ref;
 use crate::product::{
-    WorkspaceModuleActor, WorkspaceModuleOperateRequest, WorkspaceModulePresentationPreparation,
-    WorkspaceModulePresentationRequest, WorkspaceModuleProvider, WorkspaceModuleProviderContext,
+    WorkspaceModuleActor, WorkspaceModuleOperateOutcome, WorkspaceModuleOperateRequest,
+    WorkspaceModulePresentationPreparation, WorkspaceModulePresentationRequest,
+    WorkspaceModuleProvider, WorkspaceModuleProviderContext, WorkspaceModuleSurfaceEffect,
     workspace_module_operation_from_descriptor,
 };
 
@@ -299,7 +300,7 @@ impl WorkspaceModuleProvider for CanvasWorkspaceModuleProvider {
     async fn operate(
         &self,
         request: WorkspaceModuleOperateRequest<'_>,
-    ) -> Result<Value, ProductRuntimeToolOutcome> {
+    ) -> Result<WorkspaceModuleOperateOutcome, ProductRuntimeToolOutcome> {
         let operation_key = request.operation.strip_prefix("canvas.").ok_or_else(|| {
             rejected(
                 "workspace_module_operation_not_routable",
@@ -390,47 +391,38 @@ impl WorkspaceModuleProvider for CanvasWorkspaceModuleProvider {
                 )
             })?;
         let module_id = format!("canvas:{}", revision.definition_id);
-        let descriptor = self
-            .modules(request.context)
-            .await?
-            .into_iter()
-            .find(|module| module.summary.module_id == module_id)
-            .ok_or_else(|| {
-                failed(
-                    "workspace_module_canvas_projection_missing",
-                    "Canvas 已物化，但 Canvas provider 缺少对应 descriptor",
-                )
-            })?;
-        Ok(json!({
-            "content": [{
-                "type": "text",
-                "text": format!(
-                    "operated workspace module\noperation={}\nmodule_id={module_id}\ncanvas_id={}\ncanvas_mount_id={}\nvfs_mount={}://\nskill_path=lifecycle://skills/canvas-system/SKILL.md",
-                    request.operation,
-                    revision.definition_id,
-                    revision.authoring_mount_id,
-                    revision.authoring_mount_id,
-                )
-            }],
-            "is_error": false,
-            "details": {
-                "operation": request.operation,
-                "module_id": module_id,
-                "descriptor": descriptor,
-                "canvas": {
-                    "action": value.get("action").cloned().unwrap_or(Value::Null),
-                    "canvas_id": revision.definition_id,
-                    "canvas_mount_id": revision.authoring_mount_id,
-                    "vfs_mount_id": revision.authoring_mount_id,
+        Ok(WorkspaceModuleOperateOutcome {
+            output: json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!(
+                        "operated workspace module\noperation={}\nmodule_id={module_id}\ncanvas_id={}\ncanvas_mount_id={}\nvfs_mount={}://\nskill_path=lifecycle://skills/canvas-system/SKILL.md",
+                        request.operation,
+                        revision.definition_id,
+                        revision.authoring_mount_id,
+                        revision.authoring_mount_id,
+                    )
+                }],
+                "is_error": false,
+                "details": {
+                    "operation": request.operation,
                     "module_id": module_id,
-                    "presentation_uri": format!("canvas://{}", revision.definition_id),
-                    "title": revision.title,
-                    "entry_file": revision.source_bundle.entry_file,
-                    "skill_name": "canvas-system",
-                    "skill_path": "lifecycle://skills/canvas-system/SKILL.md"
+                    "canvas": {
+                        "action": value.get("action").cloned().unwrap_or(Value::Null),
+                        "canvas_id": revision.definition_id,
+                        "canvas_mount_id": revision.authoring_mount_id,
+                        "vfs_mount_id": revision.authoring_mount_id,
+                        "module_id": module_id,
+                        "presentation_uri": format!("canvas://{}", revision.definition_id),
+                        "title": revision.title,
+                        "entry_file": revision.source_bundle.entry_file,
+                        "skill_name": "canvas-system",
+                        "skill_path": "lifecycle://skills/canvas-system/SKILL.md"
+                    },
                 },
-            }
-        }))
+            }),
+            surface_effect: WorkspaceModuleSurfaceEffect::RefreshRequired { module_id },
+        })
     }
 
     fn owns_module(&self, module: &WorkspaceModuleDescriptor) -> bool {
@@ -594,10 +586,321 @@ fn failed(code: impl Into<String>, error: impl std::fmt::Display) -> ProductRunt
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
     use super::*;
-    use agentdash_domain::interaction::{
-        InteractionAgentProjection, SourceBundle, SourceFile, SourceSandboxConfig,
+    use agentdash_application_operation_gateway::{
+        EphemeralOperationResultStore, OperationAuthorityGrant, OperationAuthorityResolver,
+        OperationAuthorizationScope, OperationExecutionError, OperationOriginRef,
+        TracingOperationAuditSink,
     };
+    use agentdash_domain::DomainError;
+    use agentdash_domain::interaction::{
+        DefinitionRevisionCommit, InteractionAgentProjection, InteractionDefinition,
+        InteractionDefinitionKind, InteractionError, InteractionRuntimeBinding, SourceBundle,
+        SourceFile, SourceSandboxConfig,
+    };
+    use agentdash_domain::workflow::{AgentSource, LifecycleAgent, LifecycleAgentRepository};
+    use tokio::sync::RwLock;
+
+    use crate::canvas::mount_surface::{
+        CanvasMountConvergence, CanvasMountMaterializationError, CanvasMountMaterializationPort,
+        CanvasMountMaterializationRequest,
+    };
+    use crate::canvas::operation_provider::CanvasAuthoringOperationProvider;
+
+    #[derive(Default)]
+    struct FixtureDefinitions {
+        definitions: RwLock<BTreeMap<uuid::Uuid, InteractionDefinition>>,
+        revisions: RwLock<BTreeMap<uuid::Uuid, InteractionDefinitionRevision>>,
+    }
+
+    #[async_trait]
+    impl InteractionDefinitionRepository for FixtureDefinitions {
+        async fn create(
+            &self,
+            definition: &InteractionDefinition,
+            initial_revision: &InteractionDefinitionRevision,
+        ) -> Result<(), InteractionError> {
+            self.definitions
+                .write()
+                .await
+                .insert(definition.id, definition.clone());
+            self.revisions
+                .write()
+                .await
+                .insert(initial_revision.revision_id, initial_revision.clone());
+            Ok(())
+        }
+
+        async fn get(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<InteractionDefinition>, InteractionError> {
+            Ok(self.definitions.read().await.get(&id).cloned())
+        }
+
+        async fn get_revision(
+            &self,
+            revision_id: uuid::Uuid,
+        ) -> Result<Option<InteractionDefinitionRevision>, InteractionError> {
+            Ok(self.revisions.read().await.get(&revision_id).cloned())
+        }
+
+        async fn list_by_owner(
+            &self,
+            owner: &InteractionOwner,
+        ) -> Result<Vec<InteractionDefinition>, InteractionError> {
+            Ok(self
+                .definitions
+                .read()
+                .await
+                .values()
+                .filter(|definition| &definition.owner == owner)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_canvas_by_project(
+            &self,
+            project_id: uuid::Uuid,
+        ) -> Result<Vec<InteractionDefinition>, InteractionError> {
+            Ok(self
+                .definitions
+                .read()
+                .await
+                .values()
+                .filter(|definition| {
+                    definition.project_id == project_id
+                        && definition.kind == InteractionDefinitionKind::Canvas
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn commit_revision(
+            &self,
+            _definition_id: uuid::Uuid,
+            _commit: DefinitionRevisionCommit,
+        ) -> Result<InteractionDefinition, InteractionError> {
+            Err(fixture_persistence_error("commit_revision"))
+        }
+
+        async fn archive(
+            &self,
+            _definition_id: uuid::Uuid,
+        ) -> Result<InteractionDefinition, InteractionError> {
+            Err(fixture_persistence_error("archive"))
+        }
+    }
+
+    #[derive(Default)]
+    struct FixtureInstances;
+
+    #[async_trait]
+    impl InteractionInstanceRepository for FixtureInstances {
+        async fn create(&self, _instance: &InteractionInstance) -> Result<(), InteractionError> {
+            Ok(())
+        }
+
+        async fn get(
+            &self,
+            _id: uuid::Uuid,
+        ) -> Result<Option<InteractionInstance>, InteractionError> {
+            Ok(None)
+        }
+
+        async fn list_by_owner(
+            &self,
+            _owner: &InteractionOwner,
+        ) -> Result<Vec<InteractionInstance>, InteractionError> {
+            Ok(Vec::new())
+        }
+
+        async fn close(
+            &self,
+            _instance_id: uuid::Uuid,
+            _expected_state_revision: u64,
+        ) -> Result<InteractionInstance, InteractionError> {
+            Err(fixture_persistence_error("close"))
+        }
+
+        async fn attach(
+            &self,
+            _attachment: &InteractionAttachment,
+        ) -> Result<(), InteractionError> {
+            Ok(())
+        }
+
+        async fn detach(&self, _attachment_id: uuid::Uuid) -> Result<(), InteractionError> {
+            Ok(())
+        }
+
+        async fn list_attachments(
+            &self,
+            _instance_id: uuid::Uuid,
+        ) -> Result<Vec<InteractionAttachment>, InteractionError> {
+            Ok(Vec::new())
+        }
+
+        async fn upsert_runtime_binding(
+            &self,
+            _binding: &InteractionRuntimeBinding,
+        ) -> Result<(), InteractionError> {
+            Ok(())
+        }
+
+        async fn list_runtime_bindings(
+            &self,
+            _instance_id: uuid::Uuid,
+            _attachment_id: Option<uuid::Uuid>,
+        ) -> Result<Vec<InteractionRuntimeBinding>, InteractionError> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct FixtureLifecycleAgents {
+        agent: LifecycleAgent,
+    }
+
+    #[async_trait]
+    impl LifecycleAgentRepository for FixtureLifecycleAgents {
+        async fn create(&self, _agent: &LifecycleAgent) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn get(&self, id: uuid::Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
+            Ok((self.agent.id == id).then(|| self.agent.clone()))
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: uuid::Uuid,
+        ) -> Result<Vec<LifecycleAgent>, DomainError> {
+            Ok((self.agent.run_id == run_id)
+                .then(|| self.agent.clone())
+                .into_iter()
+                .collect())
+        }
+
+        async fn update(&self, _agent: &LifecycleAgent) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    struct AllowOperationAuthority;
+
+    #[async_trait]
+    impl OperationAuthorityResolver for AllowOperationAuthority {
+        async fn resolve(
+            &self,
+            _principal: &OperationPrincipal,
+            _scope: &OperationAuthorizationScope,
+            _origin: &OperationOriginRef,
+            _cancel: CancellationToken,
+        ) -> Result<OperationAuthorityGrant, OperationExecutionError> {
+            Ok(OperationAuthorityGrant {
+                authority_revision: "fixture-revision".to_owned(),
+                capabilities: BTreeSet::from(["operation.invoke".to_owned()]),
+            })
+        }
+    }
+
+    struct SuccessfulMountMaterializer;
+
+    #[async_trait]
+    impl CanvasMountMaterializationPort for SuccessfulMountMaterializer {
+        async fn materialize(
+            &self,
+            request: CanvasMountMaterializationRequest,
+        ) -> Result<CanvasMountConvergence, CanvasMountMaterializationError> {
+            Ok(CanvasMountConvergence {
+                frame_id: uuid::Uuid::new_v4(),
+                frame_revision: 2,
+                wrote_frame_revision: true,
+                applied_generation: Some(2),
+                module_ref: format!("canvas:{}", request.definition_id),
+                authoring_mount_id: "created-canvas".to_owned(),
+            })
+        }
+    }
+
+    fn fixture_persistence_error(operation: &'static str) -> InteractionError {
+        InteractionError::Persistence {
+            operation,
+            message: "fixture method is not used".to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_does_not_query_the_materialized_canvas_through_the_stale_input_surface() {
+        let project_id = uuid::Uuid::new_v4();
+        let run_id = uuid::Uuid::new_v4();
+        let lifecycle_agent = LifecycleAgent::new_root_for_user(
+            run_id,
+            project_id,
+            AgentSource::ProjectAgent,
+            "user-1",
+        );
+        let target = agentdash_domain::agent_run_target::AgentRunTarget {
+            run_id,
+            agent_id: lifecycle_agent.id,
+        };
+        let definitions = Arc::new(FixtureDefinitions::default());
+        let instances = Arc::new(FixtureInstances);
+        let lifecycle_agents = Arc::new(FixtureLifecycleAgents {
+            agent: lifecycle_agent,
+        });
+        let mount_materializer = Arc::new(SuccessfulMountMaterializer);
+        let operation_provider = Arc::new(CanvasAuthoringOperationProvider::new(
+            definitions.clone(),
+            lifecycle_agents,
+            mount_materializer,
+        ));
+        let operation_gateway = Arc::new(
+            OperationGateway::try_new(
+                Arc::new(AllowOperationAuthority),
+                [],
+                [operation_provider
+                    as Arc<dyn agentdash_application_operation_gateway::DynamicOperationProvider>],
+                Arc::new(EphemeralOperationResultStore::default()),
+                Arc::new(TracingOperationAuditSink),
+            )
+            .expect("operation gateway"),
+        );
+        let provider =
+            CanvasWorkspaceModuleProvider::new(definitions, instances, operation_gateway);
+        let context = WorkspaceModuleProviderContext {
+            project_id,
+            actor: WorkspaceModuleActor::AgentRunAgent {
+                user_id: "user-1".to_owned(),
+                target,
+            },
+            invocation_id: "create-canvas".to_owned(),
+            visibility: agentdash_platform_spi::WorkspaceModuleDimension::all(),
+            vfs_mounts: Vec::new(),
+            operations: Vec::new(),
+        };
+
+        let outcome = provider
+            .operate(WorkspaceModuleOperateRequest {
+                context: &context,
+                operation: "canvas.create",
+                input: json!({ "title": "Created Canvas" }),
+            })
+            .await
+            .expect("successful materialization must not query through the stale input surface");
+        let module_id = outcome.output["details"]["module_id"]
+            .as_str()
+            .expect("module id")
+            .to_owned();
+
+        assert_eq!(
+            outcome.surface_effect,
+            WorkspaceModuleSurfaceEffect::RefreshRequired { module_id }
+        );
+        assert!(outcome.output["details"].get("descriptor").is_none());
+    }
 
     #[test]
     fn runtime_projection_stays_owned_by_canvas_provider_and_is_allowlisted() {

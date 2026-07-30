@@ -714,3 +714,24 @@
 ### Next Steps
 
 - 审阅并合并本分支 PR
+
+
+## Session 75: 收束 Runtime VFS 工具执行链路
+
+**Date**: 2026-07-30
+**Task**: 收束 Runtime VFS 工具执行链路
+**Branch**: `main`
+
+### Summary
+
+统一 fs_apply_patch 的 provider 相对路径边界，并让 shell 授权、物化与未解析检查共用 PowerShell here-string 感知的 URI 扫描。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9b75628fb` | (see git log) |
+
+### Status
+
+[OK] **Completed**

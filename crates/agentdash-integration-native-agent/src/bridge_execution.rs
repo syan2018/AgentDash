@@ -3,14 +3,14 @@ use std::sync::Arc;
 use agentdash_agent::{
     AgentMessage, BridgeError, BridgeRequest, ContentPart, ConversationNamer,
     ConversationNamingInput, LlmBridge, ProviderErrorKind, StopReason, StreamChunk, ThinkingLevel,
-    ToolDefinition,
+    ToolCallDeltaContent, ToolDefinition,
     dash::{
         DashCompactionRequest, DashCompactionResult, DashCompactionTurn, DashCompactor,
         DashConversationNamer, DashConversationNamingRequest, DashCoreError,
         DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent, DashFinishReason,
         DashMessageRole, DashProvider, DashProviderEvent, DashProviderEventStream,
-        DashProviderRequest, DashServiceError, DashToolCall, DashToolCallbacks,
-        NoopDashHistoryCallbacks,
+        DashProviderRequest, DashServiceError, DashToolCall, DashToolCallDeltaContent,
+        DashToolCallbacks, NoopDashHistoryCallbacks,
     },
 };
 use async_trait::async_trait;
@@ -95,6 +95,28 @@ impl DashProvider for BridgeDashProvider {
                 StreamChunk::ReasoningDelta { text, .. } => {
                     vec![Ok(DashProviderEvent::ReasoningDelta { delta: text })]
                 }
+                StreamChunk::ToolCallDelta { id, content } => {
+                    vec![Ok(DashProviderEvent::ToolCallDelta {
+                        call_id: runtime_tool_call_id_from_bridge_id(id),
+                        content: match content {
+                            ToolCallDeltaContent::Name(name) => {
+                                DashToolCallDeltaContent::Name(name)
+                            }
+                            ToolCallDeltaContent::Arguments(arguments) => {
+                                DashToolCallDeltaContent::Arguments(arguments)
+                            }
+                        },
+                    })]
+                }
+                StreamChunk::ToolCall { info } => {
+                    vec![Ok(DashProviderEvent::ToolCallSnapshot {
+                        call: DashToolCall {
+                            call_id: info.call_id.unwrap_or(info.id),
+                            name: info.name,
+                            arguments: info.arguments,
+                        },
+                    })]
+                }
                 StreamChunk::Done(response) => {
                     let input_tokens = response.usage.context_input_tokens();
                     let output_tokens = response.usage.output;
@@ -134,14 +156,16 @@ impl DashProvider for BridgeDashProvider {
                     events
                 }
                 StreamChunk::Error(error) => vec![Err(map_bridge_error(error))],
-                // The finalized BridgeResponse is the single complete provider-round fact.
-                // Incremental tool chunks are observation-only and must not become a second
-                // executable tool-call source.
-                StreamChunk::ToolCall { .. } | StreamChunk::ToolCallDelta { .. } => Vec::new(),
             };
             stream::iter(events)
         })))
     }
+}
+
+fn runtime_tool_call_id_from_bridge_id(id: String) -> String {
+    id.split_once('|')
+        .filter(|(call_id, item_id)| !call_id.is_empty() && !item_id.is_empty())
+        .map_or(id.clone(), |(call_id, _)| call_id.to_owned())
 }
 
 /// Executes compaction as a dedicated provider turn over the exact current Dash session context.
@@ -377,7 +401,7 @@ fn map_compaction_turn_error(error: DashCoreError) -> DashServiceError {
 mod tests {
     use super::*;
     use agentdash_agent::{
-        BridgeResponse, TokenUsage, ToolCallDeltaContent, ToolCallInfo,
+        BridgeResponse, TokenUsage, ToolCallInfo,
         dash::{CompactionId, DashCoreContext, DashMessage, HistoryEntryId},
     };
     use futures::stream;
@@ -410,18 +434,18 @@ mod tests {
         ) -> std::pin::Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>> {
             Box::pin(stream::iter([
                 StreamChunk::ToolCallDelta {
-                    id: "call-1".to_owned(),
+                    id: "call-1|item-1".to_owned(),
                     content: ToolCallDeltaContent::Name("read".to_owned()),
                 },
                 StreamChunk::ToolCallDelta {
-                    id: "call-1".to_owned(),
+                    id: "call-1|item-1".to_owned(),
                     content: ToolCallDeltaContent::Arguments(r#"{"path":"Cargo.toml"}"#.to_owned()),
                 },
                 StreamChunk::Done(BridgeResponse {
                     message: AgentMessage::Assistant {
                         content: Vec::new(),
                         tool_calls: vec![ToolCallInfo {
-                            id: "call-1".to_owned(),
+                            id: "call-1|item-1".to_owned(),
                             call_id: Some("call-1".to_owned()),
                             name: "read".to_owned(),
                             arguments: serde_json::json!({"path": "Cargo.toml"}),
@@ -511,7 +535,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finalized_bridge_response_is_the_complete_tool_call_fact() {
+    async fn tool_call_draft_is_observable_but_only_the_final_response_is_executable() {
         let provider = BridgeDashProvider::new(Arc::new(DeltaOnlyToolBridge), None, 200_000);
         let events = provider
             .stream(DashProviderRequest {
@@ -530,13 +554,27 @@ mod tests {
 
         assert!(matches!(
             &events[0],
+            DashProviderEvent::ToolCallDelta {
+                call_id,
+                content: DashToolCallDeltaContent::Name(name),
+            } if call_id == "call-1" && name == "read"
+        ));
+        assert!(matches!(
+            &events[1],
+            DashProviderEvent::ToolCallDelta {
+                call_id,
+                content: DashToolCallDeltaContent::Arguments(arguments),
+            } if call_id == "call-1" && arguments == r#"{"path":"Cargo.toml"}"#
+        ));
+        assert!(matches!(
+            &events[2],
             DashProviderEvent::ToolCall { call }
                 if call.call_id == "call-1"
                     && call.name == "read"
                     && call.arguments == serde_json::json!({"path": "Cargo.toml"})
         ));
         assert!(matches!(
-            events[1],
+            events[3],
             DashProviderEvent::Completed {
                 finish_reason: DashFinishReason::ToolCalls,
                 ..

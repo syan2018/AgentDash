@@ -61,7 +61,9 @@ use sha2::{Digest, Sha256};
 use crate::DashAgentCoreToolCallbacks;
 use crate::accepted_context::{materialize_initial_context_frames, materialize_surface_frames};
 use crate::intrinsic_surface;
-use crate::tool_presentation::{ToolPresentationResult, project_tool_item};
+use crate::tool_presentation::{
+    ToolPresentationResult, project_tool_draft_item, project_tool_item,
+};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DashCompleteSourceMetadata {
@@ -2352,6 +2354,61 @@ fn canonical_live_event(
             }))
             .map_err(live_callback_error)?,
         ),
+        DashCoreEvent::ToolCallDraftStarted { call_id, name, .. } => {
+            let Some(projector) = live_channel.tool_projector(name) else {
+                return Ok(None);
+            };
+            let item = live_tool_draft_item(&execution.turn_id, call_id, name, "", &projector)?;
+            BackboneEvent::ItemStarted(ItemStartedNotification {
+                item,
+                thread_id: thread_id.to_owned(),
+                turn_id: turn_id.to_owned(),
+                started_at_ms: 0,
+            })
+        }
+        DashCoreEvent::ToolCallDraftUpdated {
+            call_id,
+            name,
+            arguments_draft,
+            ..
+        } => {
+            let Some(projector) = live_channel.tool_projector(name) else {
+                return Ok(None);
+            };
+            let item = live_tool_draft_item(
+                &execution.turn_id,
+                call_id,
+                name,
+                arguments_draft,
+                &projector,
+            )?;
+            if matches!(projector, ToolProtocolProjector::FileChange) {
+                let changes = match item.as_codex() {
+                    Some(codex::ThreadItem::FileChange { changes, .. }) => serde_json::from_value(
+                        serde_json::to_value(changes).map_err(live_callback_error)?,
+                    )
+                    .map_err(live_callback_error)?,
+                    _ => {
+                        return Err(live_callback_error(
+                            "file-change draft projector returned a non-file-change item",
+                        ));
+                    }
+                };
+                BackboneEvent::FileChangePatchUpdated(codex::FileChangePatchUpdatedNotification {
+                    changes,
+                    item_id: item.id().to_owned(),
+                    thread_id: thread_id.to_owned(),
+                    turn_id: turn_id.to_owned(),
+                })
+            } else {
+                BackboneEvent::ItemUpdated(ItemUpdatedNotification {
+                    item,
+                    thread_id: thread_id.to_owned(),
+                    turn_id: turn_id.to_owned(),
+                    updated_at_ms: 0,
+                })
+            }
+        }
         DashCoreEvent::ToolCallStarted { call, .. } => {
             let item = live_tool_item(
                 &execution.turn_id,
@@ -2400,6 +2457,18 @@ fn canonical_live_event(
         }
     };
     Ok(Some(event))
+}
+
+fn live_tool_draft_item(
+    turn_id: &DashTurnId,
+    call_id: &str,
+    tool_name: &str,
+    arguments_draft: &str,
+    projector: &ToolProtocolProjector,
+) -> Result<agentdash_agent_protocol::AgentDashThreadItem, agentdash_agent::dash::DashCoreError> {
+    let item_id = agentdash_agent::dash::execution_tool_item_id(turn_id, call_id);
+    project_tool_draft_item(&item_id.0, tool_name, arguments_draft, projector)
+        .map_err(live_callback_error)
 }
 
 fn live_tool_item(

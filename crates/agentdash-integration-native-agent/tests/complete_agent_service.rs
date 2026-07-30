@@ -13,8 +13,8 @@ use agentdash_agent::dash::{
     DashConversationNamer, DashConversationNamingRequest, DashCoreError, DashExecutionCallbacks,
     DashExecutionDependencies, DashExecutionEvent, DashFinishReason, DashProvider,
     DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashServiceError,
-    DashToolCall, DashToolCallbacks, HistoryPayload, NoopDashConversationNamer,
-    NoopDashHistoryCallbacks,
+    DashToolCall, DashToolCallDeltaContent, DashToolCallbacks, HistoryPayload,
+    NoopDashConversationNamer, NoopDashHistoryCallbacks,
 };
 use agentdash_agent_protocol::{
     BackboneEvent, ContextFrameKind, ContextFrameSection, PlatformEvent, PresentationDurability,
@@ -36,12 +36,13 @@ use agentdash_agent_runtime_contract::{
     AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshotRevision, AgentSourceCoordinate,
     AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
     AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolExecutionEvent,
-    AgentToolExecutionSequence, AgentToolInvocation, AgentToolName, AgentToolProvenance,
-    AgentToolResult, AgentToolSemanticFacet, AgentToolUpdateSemantics, ApplyBoundAgentSurface,
-    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind,
-    ContextProvenance, CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
-    InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
-    InitialContextMode, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    AgentToolExecutionSequence, AgentToolExecutionStream, AgentToolInvocation, AgentToolName,
+    AgentToolProvenance, AgentToolResult, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
+    ContextAuthorityKind, ContextProvenance, CreateAgentCommand, ForkAgentCommand,
+    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContribution,
+    InitialContextDeliveryFidelity, InitialContextMode, ResumeAgentCommand,
+    RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_native_agent::{
     DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
@@ -482,6 +483,122 @@ impl AgentHostCallbacks for ProgressHostCallbacks {
         _: AgentHookInvocation,
     ) -> Result<AgentHookDecision, AgentHostCallbackError> {
         Ok(AgentHookDecision::Allow)
+    }
+}
+
+struct BlockingPatchExecutionStream {
+    started: bool,
+    completed: bool,
+    release: Arc<Notify>,
+}
+
+#[async_trait]
+impl AgentToolExecutionStream for BlockingPatchExecutionStream {
+    async fn next(&mut self) -> Result<Option<AgentToolExecutionEvent>, AgentHostCallbackError> {
+        if !self.started {
+            self.started = true;
+            return Ok(Some(AgentToolExecutionEvent::Started));
+        }
+        if !self.completed {
+            self.release.notified().await;
+            self.completed = true;
+            return Ok(Some(AgentToolExecutionEvent::Completed {
+                result: AgentToolResult::Completed {
+                    output: serde_json::json!({
+                        "content": [{"type": "text", "text": "added: main://new.txt"}],
+                        "is_error": false,
+                        "details": {
+                            "changes": [{
+                                "path": "main://new.txt",
+                                "kind": {"type": "add"},
+                                "diff": "*** Add File: main://new.txt\n+hello"
+                            }],
+                            "errors": []
+                        }
+                    }),
+                },
+            }));
+        }
+        Ok(None)
+    }
+}
+
+struct BlockingPatchHostCallbacks {
+    release: Arc<Notify>,
+}
+
+#[async_trait]
+impl AgentHostCallbacks for BlockingPatchHostCallbacks {
+    async fn invoke_tool(
+        &self,
+        _: AgentToolInvocation,
+    ) -> Result<Box<dyn AgentToolExecutionStream>, AgentHostCallbackError> {
+        Ok(Box::new(BlockingPatchExecutionStream {
+            started: false,
+            completed: false,
+            release: self.release.clone(),
+        }))
+    }
+
+    async fn invoke_hook(
+        &self,
+        _: AgentHookInvocation,
+    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+        Ok(AgentHookDecision::Allow)
+    }
+}
+
+struct PatchDraftProvider {
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl DashProvider for PatchDraftProvider {
+    async fn stream(
+        &self,
+        _: DashProviderRequest,
+    ) -> Result<DashProviderEventStream, DashCoreError> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            Ok(Box::pin(stream::iter([
+                Ok(DashProviderEvent::ToolCallDelta {
+                    call_id: "patch-call-1".into(),
+                    content: DashToolCallDeltaContent::Name("fs_apply_patch".into()),
+                }),
+                Ok(DashProviderEvent::ToolCallDelta {
+                    call_id: "patch-call-1".into(),
+                    content: DashToolCallDeltaContent::Arguments(
+                        r#"{"patch":"*** Begin Patch\n*** Add File: main://new.txt\n+hel"#.into(),
+                    ),
+                }),
+                Ok(DashProviderEvent::ToolCall {
+                    call: DashToolCall {
+                        call_id: "patch-call-1".into(),
+                        name: "fs_apply_patch".into(),
+                        arguments: serde_json::json!({
+                            "patch": "*** Begin Patch\n*** Add File: main://new.txt\n+hello\n*** End Patch"
+                        }),
+                    },
+                }),
+                Ok(DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::ToolCalls,
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    context_window: 200_000,
+                }),
+            ])))
+        } else {
+            Ok(Box::pin(stream::iter([
+                Ok(DashProviderEvent::TextDelta {
+                    delta: "done".into(),
+                }),
+                Ok(DashProviderEvent::Completed {
+                    finish_reason: DashFinishReason::Stop,
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    context_window: 200_000,
+                }),
+            ])))
+        }
     }
 }
 
@@ -2746,6 +2863,143 @@ fn generation_surface(revision: u64) -> BoundAgentSurface {
     }
 }
 
+fn patch_generation_surface(revision: u64) -> BoundAgentSurface {
+    BoundAgentSurface {
+        revision: AgentSurfaceRevision(revision),
+        digest: AgentSurfaceDigest::new(format!("patch-generation-surface-{revision}")).unwrap(),
+        offer_profile_digest: AgentProfileDigest::new("dash-agent-profile-v1").unwrap(),
+        contributions: vec![BoundAgentSurfaceContribution {
+            key: "tool:fs_apply_patch".into(),
+            required: true,
+            route: AgentSurfaceRoute::AgentNativeCallback,
+            fidelity: SemanticFidelity::Exact,
+            semantics: AgentSurfaceSemanticFacet::Tool(AgentToolSemanticFacet {
+                delivery: AgentToolDelivery::AgentNativeCallback,
+                invocation: SemanticFidelity::Exact,
+                update: AgentToolUpdateSemantics::HotUpdate,
+            }),
+            payload: AgentSurfaceContributionPayload::Tool {
+                name: AgentToolName::new("fs_apply_patch").unwrap(),
+                description: "apply patch".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                output_schema: None,
+                provenance: tool_provenance("fs_apply_patch"),
+                protocol_projector: agentdash_agent_protocol::ToolProtocolProjector::FileChange,
+            },
+            payload_digest: AgentPayloadDigest::new(format!(
+                "sha256:patch-generation-tool-{revision}"
+            ))
+            .unwrap(),
+        }],
+    }
+}
+
+#[tokio::test]
+async fn native_patch_draft_exposes_a_live_file_change_card_before_execution_completes() {
+    let release = Arc::new(Notify::new());
+    let service = DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider: Arc::new(PatchDraftProvider {
+                calls: AtomicUsize::new(0),
+            }),
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: Arc::new(FixtureCompactor),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
+        },
+        Arc::new(BlockingPatchHostCallbacks {
+            release: release.clone(),
+        }),
+        Arc::new(RecordingCompleteStore::default()),
+    );
+    let source = create_source(&service, "dash-patch-draft").await;
+    service
+        .apply_surface(ApplyBoundAgentSurface {
+            command_id: AgentCommandId::new("patch-draft-apply").unwrap(),
+            effect_id: AgentEffectIdentity::new("patch-draft-effect-apply").unwrap(),
+            idempotency_key: AgentIdempotencyKey::new("patch-draft-idem-apply").unwrap(),
+            source: source.clone(),
+            bound_surface: patch_generation_surface(1),
+            callbacks: AgentHostCallbackBinding {
+                route_id: AgentCallbackRouteId::new("patch-draft-route").unwrap(),
+                binding_generation: AgentBindingGeneration(1),
+                delivery: AgentSurfaceRoute::AgentNativeCallback,
+                default_deadline_ms: 5_000,
+            },
+        })
+        .await
+        .unwrap();
+    let mut live = service.live_batches(source.clone()).await.unwrap();
+    let request = submit_envelope(source, "patch-draft-input", "patch-draft-effect-input");
+    assert_eq!(
+        service.execute(request.clone()).await.unwrap().state,
+        AgentReceiptState::Accepted
+    );
+
+    let mut started_item_id = None;
+    let mut saw_partial_patch = false;
+    for _ in 0..20 {
+        let batch = tokio::time::timeout(Duration::from_secs(1), live.next())
+            .await
+            .expect("patch draft should be published before the blocked tool completes")
+            .expect("live stream")
+            .expect("live batch");
+        for record in batch.presentations {
+            match record.presentation.envelope.event {
+                BackboneEvent::ItemStarted(notification)
+                    if matches!(
+                        notification.item.as_codex(),
+                        Some(codex::ThreadItem::FileChange {
+                            status: codex::PatchApplyStatus::InProgress,
+                            ..
+                        })
+                    ) =>
+                {
+                    assert_eq!(
+                        record.presentation.durability,
+                        PresentationDurability::Ephemeral
+                    );
+                    started_item_id = Some(notification.item.id().to_owned());
+                }
+                BackboneEvent::FileChangePatchUpdated(notification)
+                    if started_item_id.as_deref() == Some(notification.item_id.as_str())
+                        && notification
+                            .changes
+                            .iter()
+                            .any(|change| change.path == "main://new.txt") =>
+                {
+                    saw_partial_patch = true;
+                }
+                BackboneEvent::ItemCompleted(notification)
+                    if started_item_id.as_deref() == Some(notification.item.id()) =>
+                {
+                    panic!("blocked patch execution completed before its draft card was observed");
+                }
+                _ => {}
+            }
+        }
+        if started_item_id.is_some() && saw_partial_patch {
+            break;
+        }
+    }
+
+    assert!(
+        started_item_id.is_some(),
+        "name delta should expose the patch card"
+    );
+    assert!(
+        saw_partial_patch,
+        "partial patch arguments should update the exposed card"
+    );
+
+    release.notify_waiters();
+    assert!(matches!(
+        execute_and_wait(&service, request).await.state,
+        AgentReceiptState::Terminal { .. }
+    ));
+}
+
 #[tokio::test]
 async fn native_tool_progress_projects_one_canonical_item_lifecycle() {
     let provider = Arc::new(HookRoundProvider {
@@ -2855,6 +3109,8 @@ async fn native_tool_progress_projects_one_canonical_item_lifecycle() {
     assert_eq!(
         lifecycle,
         vec![
+            ("started", PresentationDurability::Ephemeral),
+            ("progress", PresentationDurability::Ephemeral),
             ("started", PresentationDurability::Durable),
             ("progress", PresentationDurability::Durable),
             ("progress", PresentationDurability::Ephemeral),
@@ -2867,7 +3123,7 @@ async fn native_tool_progress_projects_one_canonical_item_lifecycle() {
             .iter()
             .filter(|(stage, _)| *stage == "started")
             .count(),
-        1
+        2
     );
     assert_eq!(
         lifecycle

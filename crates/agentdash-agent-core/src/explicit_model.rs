@@ -106,6 +106,13 @@ pub struct CoreToolCall {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum CoreToolCallDeltaContent {
+    Name(String),
+    Arguments(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreToolResult {
     pub call_id: String,
     pub content: Vec<CoreToolContent>,
@@ -233,6 +240,13 @@ pub enum ProviderEvent {
     ReasoningDelta {
         delta: String,
     },
+    ToolCallDelta {
+        call_id: String,
+        content: CoreToolCallDeltaContent,
+    },
+    ToolCallSnapshot {
+        call: CoreToolCall,
+    },
     ToolCall {
         call: CoreToolCall,
     },
@@ -259,6 +273,17 @@ pub enum CoreEvent {
     ReasoningDelta {
         round: u32,
         delta: String,
+    },
+    ToolCallDraftStarted {
+        round: u32,
+        call_id: String,
+        name: String,
+    },
+    ToolCallDraftUpdated {
+        round: u32,
+        call_id: String,
+        name: String,
+        arguments_draft: String,
     },
     ToolCallStarted {
         round: u32,

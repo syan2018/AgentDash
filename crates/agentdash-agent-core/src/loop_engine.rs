@@ -1,11 +1,21 @@
+use std::collections::BTreeMap;
+
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     CoreBeforeToolDecision, CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput,
-    CoreMessage, CoreOutput, CoreProvider, CoreTokenUsage, CoreToolCall, CoreToolCallbacks,
-    CoreToolExecutionEvent, CoreToolResult, FinishReason, ProviderEvent, ProviderRequest,
+    CoreMessage, CoreOutput, CoreProvider, CoreTokenUsage, CoreToolCall, CoreToolCallDeltaContent,
+    CoreToolCallbacks, CoreToolExecutionEvent, CoreToolResult, FinishReason, ProviderEvent,
+    ProviderRequest,
 };
+
+#[derive(Default)]
+struct ToolCallDraft {
+    name: Option<String>,
+    arguments: String,
+    started: bool,
+}
 
 pub async fn run_agent_loop(
     input: CoreInput,
@@ -36,6 +46,7 @@ pub async fn run_agent_loop(
         let mut stream = provider.stream(request).await?;
         let mut assistant_text = String::new();
         let mut tool_calls = Vec::<CoreToolCall>::new();
+        let mut tool_call_drafts = BTreeMap::<String, ToolCallDraft>::new();
         let mut terminal = None;
 
         loop {
@@ -59,7 +70,65 @@ pub async fn run_agent_loop(
                         .emit(CoreEvent::ReasoningDelta { round, delta })
                         .await?;
                 }
+                ProviderEvent::ToolCallDelta { call_id, content } => {
+                    let draft = tool_call_drafts.entry(call_id.clone()).or_default();
+                    match content {
+                        CoreToolCallDeltaContent::Name(name) => {
+                            draft.name = Some(name.clone());
+                            if !draft.started {
+                                draft.started = true;
+                                callbacks
+                                    .emit(CoreEvent::ToolCallDraftStarted {
+                                        round,
+                                        call_id: call_id.clone(),
+                                        name: name.clone(),
+                                    })
+                                    .await?;
+                            }
+                            if !draft.arguments.is_empty() {
+                                callbacks
+                                    .emit(CoreEvent::ToolCallDraftUpdated {
+                                        round,
+                                        call_id,
+                                        name,
+                                        arguments_draft: draft.arguments.clone(),
+                                    })
+                                    .await?;
+                            }
+                        }
+                        CoreToolCallDeltaContent::Arguments(delta) if !delta.is_empty() => {
+                            draft.arguments.push_str(&delta);
+                            if let Some(name) = draft.name.clone() {
+                                if !draft.started {
+                                    draft.started = true;
+                                    callbacks
+                                        .emit(CoreEvent::ToolCallDraftStarted {
+                                            round,
+                                            call_id: call_id.clone(),
+                                            name: name.clone(),
+                                        })
+                                        .await?;
+                                }
+                                callbacks
+                                    .emit(CoreEvent::ToolCallDraftUpdated {
+                                        round,
+                                        call_id,
+                                        name,
+                                        arguments_draft: draft.arguments.clone(),
+                                    })
+                                    .await?;
+                            }
+                        }
+                        CoreToolCallDeltaContent::Arguments(_) => {}
+                    }
+                }
+                ProviderEvent::ToolCallSnapshot { call } => {
+                    reconcile_tool_call_draft(round, &call, &mut tool_call_drafts, callbacks)
+                        .await?;
+                }
                 ProviderEvent::ToolCall { call } => {
+                    reconcile_tool_call_draft(round, &call, &mut tool_call_drafts, callbacks)
+                        .await?;
                     tool_calls.push(call);
                 }
                 ProviderEvent::Completed {
@@ -188,6 +257,40 @@ pub async fn run_agent_loop(
             retryable: false,
         })?;
     }
+}
+
+async fn reconcile_tool_call_draft(
+    round: u32,
+    call: &CoreToolCall,
+    drafts: &mut BTreeMap<String, ToolCallDraft>,
+    callbacks: &dyn CoreCallbacks,
+) -> Result<(), CoreError> {
+    let serialized_arguments = serde_json::to_string(&call.arguments).unwrap_or_default();
+    let draft = drafts.entry(call.call_id.clone()).or_default();
+    if !draft.started {
+        draft.started = true;
+        callbacks
+            .emit(CoreEvent::ToolCallDraftStarted {
+                round,
+                call_id: call.call_id.clone(),
+                name: call.name.clone(),
+            })
+            .await?;
+    }
+    if draft.name.as_deref() != Some(call.name.as_str()) || draft.arguments != serialized_arguments
+    {
+        draft.name = Some(call.name.clone());
+        draft.arguments = serialized_arguments;
+        callbacks
+            .emit(CoreEvent::ToolCallDraftUpdated {
+                round,
+                call_id: call.call_id.clone(),
+                name: call.name.clone(),
+                arguments_draft: draft.arguments.clone(),
+            })
+            .await?;
+    }
+    Ok(())
 }
 
 async fn consume_tool_execution(

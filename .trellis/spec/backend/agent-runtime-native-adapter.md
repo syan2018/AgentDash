@@ -197,6 +197,15 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   因而压缩期间已接纳的输入不会丢失。
 - `DashProvider` 只负责一次 provider request/stream，不拥有 active turn，也不提供 steering
   方法。运行中输入的持久化、排序、消费与终态竞争都属于 Dash service/Core callback 边界。
+- provider bridge必须把工具名称与参数增量作为`ToolCallDelta`交给Core。Core按canonical
+  `call_id`累积`arguments_draft`并先后发布`ToolCallDraftStarted/Updated`；只有provider
+  terminal携带的完整`ToolCall`可以进入before-tool与执行路径。这样partial call可以驱动实时展示，
+  但不会成为第二份可执行事实。bridge暴露复合上游ID时必须在此边界收敛到完整call使用的
+  `call_id`，保证draft、执行与终态始终更新同一item。
+- tool draft只通过`DashExecutionCallbacks`进入ephemeral live。owner projector为
+  `FileChange`时，name delta先发布空changes的`ItemStarted(fileChange)`，未闭合JSON中的patch
+  前缀随后投影为`FileChangePatchUpdated`；真正执行started后再由native history发布durable
+  lifecycle。partial解析失败只保留已出现的卡片，不改变工具准入或执行结果。
 - 每个provider round确认的input/output token与模型context window以
   `ProviderUsageConfirmed`写入同一native history。folded state保存最新round并累计source totals，
   canonical snapshot/changes/live从该entry统一投影`TokenUsageUpdated`，使重连恢复与实时展示使用
@@ -292,6 +301,10 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 | provider失败 | terminal history保留真实 code/message/retryable |
 | 正常任务需要超过8次provider响应 | 继续执行，直到收到真实terminal或显式cancel |
 | source callback未绑定 | composition/configuration error |
+| `fs_apply_patch`只收到name delta | 立即发布ephemeral `ItemStarted(fileChange)`，不等待参数闭合 |
+| patch参数JSON仍未闭合但已包含文件操作 | 同一item发布`FileChangePatchUpdated`预览 |
+| provider draft与完整call使用复合ID/调用ID | bridge统一为完整call的`call_id`，不得生成第二张卡 |
+| provider只发布draft、尚未产生完整terminal call | 可以展示；不得调用before-tool或tool owner |
 | 没有 live subscriber | execution/history commit 正常完成 |
 | live subscriber lagged | retryable unavailable；重新 read |
 | history commit成功但live通知失败 | commit保持成功；subscriber重新read authoritative history |
@@ -328,6 +341,8 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - Good：Compaction进行中重连后恢复原始开始时间；完成后snapshot与live展示相同、非负的duration。
 - Good：provider首轮仍在运行时提交Steer，Dash立即持久化输入并返回成功；首轮到达`Stop`后Core把
   该输入加入同一turn transcript并发起第二轮provider请求。
+- Good：模型刚生成`fs_apply_patch`名称时即出现文件变更卡；patch字符串继续生成时，同一item持续
+  更新文件与diff；完整call确认后才进入实际VFS mutation。
 - Base：Steer与首轮`Stop`同时到达；Dash steering mutex在接纳与terminal fence之间给出唯一顺序，
   输入要么进入下一round，要么收到typed invalid state，不会成功返回后丢失。
 - Good：每个provider round只提交一次`ProviderUsageConfirmed`，canonical live显示latest round，
@@ -363,6 +378,9 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   失败的回归测试断言此前完成的每条ToolCall/ToolResult仍在native history中。
 - live composition test在执行前订阅，断言顺序为 durable user input、durable `TurnStarted`、
   ephemeral text/reasoning/tool delta 与 durable terminal；执行后从 read断言同 turn 已终态。
+- tool draft测试必须覆盖name delta早于完整call、未闭合`patch` JSON仍可生成文件预览、
+  draft与执行共享item id，以及阻塞tool terminal时live subscriber已收到
+  `ItemStarted(fileChange)`与`FileChangePatchUpdated`。
 - Compaction canonical projection测试使用固定毫秒时间，断言`TurnStarted.started_at`与terminal
   `duration_ms`同时正确，避免前端把缺失时间解释为Unix epoch。
 - surface/context tests断言 native history保存实际instruction、tools与accepted ContextFrames，
@@ -477,4 +495,15 @@ execution.provider.steer(&turn_id, &content).await?;
 repository.commit(HistoryPayload::InputAccepted { input_id, content })?;
 let steering = callbacks.drain_steering(round, terminal_boundary).await?;
 messages.extend(steering);
+```
+
+```rust
+// Wrong: 只保留provider terminal中的完整call，用户在长参数生成期间没有任何观测。
+StreamChunk::ToolCallDelta { .. } => None,
+
+// Correct: draft进入Core观测流；完整terminal call仍是唯一执行事实。
+StreamChunk::ToolCallDelta { id, content } => {
+    ProviderEvent::ToolCallDelta { call_id: normalize(id), content }
+}
+StreamChunk::Done(response) => executable_calls(response),
 ```

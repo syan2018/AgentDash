@@ -10,9 +10,9 @@ pub use core_execution::{
     DashCoreTurnResult, DashExecutionCallbacks, DashExecutionEvent, DashExecutionFailure,
     DashFinishReason, DashMessage, DashMessageRole, DashProvider, DashProviderEvent,
     DashProviderEventStream, DashProviderRequest, DashProviderRoundMaterializer,
-    DashProviderRoundSnapshots, DashToolCall, DashToolCallbacks, DashToolDefinition,
-    DashToolExecutionEvent, DashToolExecutionSequence, DashToolExecutionStream, DashToolResult,
-    execution_assistant_item_id, execution_tool_item_id,
+    DashProviderRoundSnapshots, DashToolCall, DashToolCallDeltaContent, DashToolCallbacks,
+    DashToolDefinition, DashToolExecutionEvent, DashToolExecutionSequence, DashToolExecutionStream,
+    DashToolResult, execution_assistant_item_id, execution_tool_item_id,
 };
 pub use history::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryReplayer, AgentHistoryState,

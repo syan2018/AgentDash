@@ -5,9 +5,9 @@ use std::{
 
 use agentdash_agent_core::{
     CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput, CoreMessage, CoreProvider,
-    CoreTokenUsage, CoreTool, CoreToolCall, CoreToolCallbacks, CoreToolExecutionEvent,
-    CoreToolExecutionSequence, CoreToolExecutionStream, CoreToolResult, FinishReason,
-    ProviderEvent, ProviderEventStream, ProviderRequest, run_agent_loop,
+    CoreTokenUsage, CoreTool, CoreToolCall, CoreToolCallDeltaContent, CoreToolCallbacks,
+    CoreToolExecutionEvent, CoreToolExecutionSequence, CoreToolExecutionStream, CoreToolResult,
+    FinishReason, ProviderEvent, ProviderEventStream, ProviderRequest, run_agent_loop,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -77,6 +77,108 @@ impl CoreCallbacks for EventRecorder {
         self.events.lock().unwrap().push(event);
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn provider_tool_draft_is_observable_before_the_complete_call_executes() {
+    let provider = Arc::new(ScriptedProvider {
+        rounds: Mutex::new(VecDeque::from([
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    call_id: "call-patch".into(),
+                    content: CoreToolCallDeltaContent::Name("fs_apply_patch".into()),
+                },
+                ProviderEvent::ToolCallDelta {
+                    call_id: "call-patch".into(),
+                    content: CoreToolCallDeltaContent::Arguments(
+                        r#"{"patch":"*** Begin Patch\n*** Add File: main://new.txt\n+hel"#.into(),
+                    ),
+                },
+                ProviderEvent::ToolCall {
+                    call: CoreToolCall {
+                        call_id: "call-patch".into(),
+                        name: "fs_apply_patch".into(),
+                        arguments: json!({
+                            "patch": "*** Begin Patch\n*** Add File: main://new.txt\n+hello\n*** End Patch"
+                        }),
+                    },
+                },
+                ProviderEvent::Completed {
+                    finish_reason: FinishReason::ToolCalls,
+                    usage: CoreTokenUsage::default(),
+                    context_window: 200_000,
+                },
+            ],
+            vec![
+                ProviderEvent::TextDelta {
+                    delta: "done".into(),
+                },
+                ProviderEvent::Completed {
+                    finish_reason: FinishReason::Stop,
+                    usage: CoreTokenUsage::default(),
+                    context_window: 200_000,
+                },
+            ],
+        ])),
+        requests: Mutex::new(Vec::new()),
+    });
+    let tools = ToolRecorder {
+        calls: Mutex::new(Vec::new()),
+    };
+    let callbacks = EventRecorder::default();
+
+    run_agent_loop(
+        CoreInput {
+            message: CoreMessage::user("create file"),
+        },
+        CoreContext {
+            system_prompt: String::new(),
+            history: Vec::new(),
+            tools: Vec::new(),
+        },
+        provider.as_ref(),
+        &tools,
+        &callbacks,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+
+    let events = callbacks.events.lock().unwrap();
+    let draft_started = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CoreEvent::ToolCallDraftStarted {
+                    call_id,
+                    name,
+                    ..
+                } if call_id == "call-patch" && name == "fs_apply_patch"
+            )
+        })
+        .expect("tool name delta should expose the card immediately");
+    let draft_updated = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                CoreEvent::ToolCallDraftUpdated {
+                    call_id,
+                    arguments_draft,
+                    ..
+                } if call_id == "call-patch"
+                    && arguments_draft.contains("*** Add File: main://new.txt")
+            )
+        })
+        .expect("partial arguments should update the same card");
+    let execution_started = events
+        .iter()
+        .position(|event| matches!(event, CoreEvent::ToolCallStarted { .. }))
+        .expect("complete call should execute");
+
+    assert!(draft_started < draft_updated);
+    assert!(draft_updated < execution_started);
 }
 
 #[tokio::test]

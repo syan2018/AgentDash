@@ -614,6 +614,8 @@ impl DashExecutionCallbacks for DurableDashExecutionCallbacks {
                     .await?;
             }
             DashCoreEvent::ToolCallProgress { .. } => {}
+            DashCoreEvent::ToolCallDraftStarted { .. }
+            | DashCoreEvent::ToolCallDraftUpdated { .. } => {}
             DashCoreEvent::ReasoningDelta { .. } => {}
         }
         if publish_ephemeral {

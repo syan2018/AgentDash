@@ -7,9 +7,9 @@ use std::{
 use agentdash_agent_core::{
     CoreBeforeToolDecision, CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput,
     CoreMessage, CoreOutput, CoreProvider, CoreRole, CoreTokenUsage, CoreTool, CoreToolCall,
-    CoreToolCallbacks, CoreToolContent, CoreToolExecutionEvent, CoreToolExecutionStream,
-    CoreToolResult, FinishReason, ProviderEvent, ProviderEventStream, ProviderRequest,
-    run_agent_loop,
+    CoreToolCallDeltaContent, CoreToolCallbacks, CoreToolContent, CoreToolExecutionEvent,
+    CoreToolExecutionStream, CoreToolResult, FinishReason, ProviderEvent, ProviderEventStream,
+    ProviderRequest, run_agent_loop,
 };
 use agentdash_agent_protocol::ToolProtocolProjector;
 use async_trait::async_trait;
@@ -159,6 +159,13 @@ pub enum DashFinishReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum DashToolCallDeltaContent {
+    Name(String),
+    Arguments(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DashProviderEvent {
     TextDelta {
@@ -166,6 +173,13 @@ pub enum DashProviderEvent {
     },
     ReasoningDelta {
         delta: String,
+    },
+    ToolCallDelta {
+        call_id: String,
+        content: DashToolCallDeltaContent,
+    },
+    ToolCallSnapshot {
+        call: DashToolCall,
     },
     ToolCall {
         call: DashToolCall,
@@ -194,6 +208,17 @@ pub enum DashCoreEvent {
     ReasoningDelta {
         round: u32,
         delta: String,
+    },
+    ToolCallDraftStarted {
+        round: u32,
+        call_id: String,
+        name: String,
+    },
+    ToolCallDraftUpdated {
+        round: u32,
+        call_id: String,
+        name: String,
+        arguments_draft: String,
     },
     ToolCallStarted {
         round: u32,
@@ -468,7 +493,9 @@ impl DashCompactionTurn {
             match event? {
                 DashProviderEvent::TextDelta { delta } => summary.push_str(&delta),
                 DashProviderEvent::ReasoningDelta { .. } => {}
-                DashProviderEvent::ToolCall { .. } => {
+                DashProviderEvent::ToolCallDelta { .. }
+                | DashProviderEvent::ToolCallSnapshot { .. }
+                | DashProviderEvent::ToolCall { .. } => {
                     return Err(DashCoreError::InvalidProviderTerminal);
                 }
                 DashProviderEvent::Completed {
@@ -881,6 +908,22 @@ fn provider_event(event: DashProviderEvent) -> ProviderEvent {
     match event {
         DashProviderEvent::TextDelta { delta } => ProviderEvent::TextDelta { delta },
         DashProviderEvent::ReasoningDelta { delta } => ProviderEvent::ReasoningDelta { delta },
+        DashProviderEvent::ToolCallDelta { call_id, content } => ProviderEvent::ToolCallDelta {
+            call_id,
+            content: match content {
+                DashToolCallDeltaContent::Name(name) => CoreToolCallDeltaContent::Name(name),
+                DashToolCallDeltaContent::Arguments(arguments) => {
+                    CoreToolCallDeltaContent::Arguments(arguments)
+                }
+            },
+        },
+        DashProviderEvent::ToolCallSnapshot { call } => ProviderEvent::ToolCallSnapshot {
+            call: CoreToolCall {
+                call_id: call.call_id,
+                name: call.name,
+                arguments: call.arguments,
+            },
+        },
         DashProviderEvent::ToolCall { call } => ProviderEvent::ToolCall {
             call: CoreToolCall {
                 call_id: call.call_id,
@@ -914,6 +957,26 @@ fn dash_event(event: CoreEvent) -> DashCoreEvent {
         CoreEvent::ReasoningDelta { round, delta } => {
             DashCoreEvent::ReasoningDelta { round, delta }
         }
+        CoreEvent::ToolCallDraftStarted {
+            round,
+            call_id,
+            name,
+        } => DashCoreEvent::ToolCallDraftStarted {
+            round,
+            call_id,
+            name,
+        },
+        CoreEvent::ToolCallDraftUpdated {
+            round,
+            call_id,
+            name,
+            arguments_draft,
+        } => DashCoreEvent::ToolCallDraftUpdated {
+            round,
+            call_id,
+            name,
+            arguments_draft,
+        },
         CoreEvent::ToolCallStarted { round, call } => DashCoreEvent::ToolCallStarted {
             round,
             call: DashToolCall {

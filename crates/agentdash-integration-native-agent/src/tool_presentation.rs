@@ -1,3 +1,5 @@
+use std::{iter::Peekable, str::Chars};
+
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
     AgentDashNativeThreadItem, AgentDashThreadItem, ShellExecExecutionMode, ToolProtocolProjector,
@@ -18,6 +20,38 @@ pub(crate) struct ToolPresentationResult<'a> {
     pub content: &'a [agentdash_agent::ContentPart],
     pub details: Option<&'a serde_json::Value>,
     pub is_error: bool,
+}
+
+pub(crate) fn project_tool_draft_item(
+    item_id: &str,
+    tool_name: &str,
+    arguments_draft: &str,
+    projector: &ToolProtocolProjector,
+) -> Result<AgentDashThreadItem, ToolPresentationError> {
+    if matches!(projector, ToolProtocolProjector::FileChange) {
+        let changes = extract_patch_string_from_tool_call_draft(arguments_draft)
+            .as_deref()
+            .and_then(|patch| parse_apply_patch_specs(patch).ok())
+            .unwrap_or_default();
+        return thread_item::file_change(item_id, changes, codex::PatchApplyStatus::InProgress)
+            .map(Into::into)
+            .map_err(|error| ToolPresentationError::Invalid {
+                tool: tool_name.to_owned(),
+                family: "file_change",
+                reason: error.to_string(),
+            });
+    }
+
+    project_tool_item(
+        item_id,
+        tool_name,
+        serde_json::from_str(arguments_draft)
+            .unwrap_or_else(|_| serde_json::Value::Object(Default::default())),
+        projector,
+        true,
+        false,
+        None,
+    )
 }
 
 pub(crate) fn project_tool_item(
@@ -223,6 +257,101 @@ fn integer_field(value: &serde_json::Value, keys: &[&str]) -> Option<i64> {
         .find_map(|key| value.get(key).and_then(serde_json::Value::as_i64))
 }
 
+fn extract_patch_string_from_tool_call_draft(draft: &str) -> Option<String> {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(draft) {
+        return string_arg(&value, "patch");
+    }
+    extract_json_string_field_prefix(draft, "patch")
+}
+
+fn extract_json_string_field_prefix(draft: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\"");
+    let bytes = draft.as_bytes();
+    let mut search_from = 0;
+
+    while let Some(relative_index) = draft[search_from..].find(&needle) {
+        let mut index = search_from + relative_index + needle.len();
+        index = skip_json_whitespace(bytes, index);
+        if bytes.get(index) != Some(&b':') {
+            search_from += relative_index + needle.len();
+            continue;
+        }
+        index = skip_json_whitespace(bytes, index + 1);
+        if bytes.get(index) != Some(&b'"') {
+            return None;
+        }
+        return decode_json_string_prefix(&draft[index + 1..]);
+    }
+
+    None
+}
+
+fn skip_json_whitespace(bytes: &[u8], mut index: usize) -> usize {
+    while matches!(bytes.get(index), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+        index += 1;
+    }
+    index
+}
+
+fn decode_json_string_prefix(input: &str) -> Option<String> {
+    let mut output = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => return Some(output),
+            '\\' => match chars.next() {
+                Some('"') => output.push('"'),
+                Some('\\') => output.push('\\'),
+                Some('n') => output.push('\n'),
+                Some('r') => output.push('\r'),
+                Some('t') => output.push('\t'),
+                Some('/') => output.push('/'),
+                Some('b') => output.push('\u{0008}'),
+                Some('f') => output.push('\u{000c}'),
+                Some('u') => match decode_json_unicode_escape(&mut chars) {
+                    Some(decoded) => output.push(decoded),
+                    None if output.is_empty() => return None,
+                    None => return Some(output),
+                },
+                Some(other) => output.push(other),
+                None if output.is_empty() => return None,
+                None => return Some(output),
+            },
+            other => output.push(other),
+        }
+    }
+
+    (!output.is_empty()).then_some(output)
+}
+
+fn decode_json_unicode_escape(chars: &mut Peekable<Chars<'_>>) -> Option<char> {
+    let value = decode_json_hex_code_unit(chars)?;
+    if (0xD800..=0xDBFF).contains(&value) {
+        if chars.next()? != '\\' || chars.next()? != 'u' {
+            return None;
+        }
+        let low = decode_json_hex_code_unit(chars)?;
+        if !(0xDC00..=0xDFFF).contains(&low) {
+            return None;
+        }
+        let scalar = 0x10000 + (((value - 0xD800) << 10) | (low - 0xDC00));
+        return char::from_u32(scalar);
+    }
+    if (0xDC00..=0xDFFF).contains(&value) {
+        return None;
+    }
+    char::from_u32(value)
+}
+
+fn decode_json_hex_code_unit(chars: &mut Peekable<Chars<'_>>) -> Option<u32> {
+    let mut value = 0_u32;
+    for _ in 0..4 {
+        value = (value << 4) | chars.next()?.to_digit(16)?;
+    }
+    Some(value)
+}
+
 fn parse_apply_patch_specs(patch: &str) -> Result<Vec<thread_item::FileChangeSpec>, String> {
     let lines: Vec<&str> = patch.lines().collect();
     let mut index = lines
@@ -363,6 +492,25 @@ mod tests {
                 tool,
                 ..
             }) if tool == "workspace_module_list"
+        ));
+    }
+
+    #[test]
+    fn partial_apply_patch_arguments_project_a_file_change_preview() {
+        let item = project_tool_draft_item(
+            "tool-patch",
+            "fs_apply_patch",
+            r#"{"patch":"*** Begin Patch\n*** Add File: main://src/new.rs\n+pub fn hel"#,
+            &ToolProtocolProjector::FileChange,
+        )
+        .expect("project partial patch");
+
+        assert!(matches!(
+            item.as_codex(),
+            Some(codex::ThreadItem::FileChange { changes, status, .. })
+                if changes.len() == 1
+                    && changes[0].path == "main://src/new.rs"
+                    && *status == codex::PatchApplyStatus::InProgress
         ));
     }
 }

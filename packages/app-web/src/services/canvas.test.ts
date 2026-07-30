@@ -25,6 +25,15 @@ import {
   submitCanvasAgentInput,
 } from "./canvas";
 
+function actionScriptMeta() {
+  return {
+    execution_id: "execution-1",
+    calls: [],
+    partial: false,
+    outcome_unknown: false,
+  };
+}
+
 function definition(): CanvasDefinitionDto {
   return {
     definition_id: "canvas-1",
@@ -179,7 +188,9 @@ describe("canvas service", () => {
   });
 
   it("Canvas action 只提交 action identity 并携带已验证的 AgentRun target", async () => {
-    mocks.post.mockResolvedValueOnce({ outcome: { kind: "operation_script" } });
+    mocks.post.mockResolvedValueOnce({
+      outcome: { kind: "operation_script", value: {}, meta: actionScriptMeta() },
+    });
 
     await executeCanvasAction({
       definitionId: "canvas-1",
@@ -204,7 +215,9 @@ describe("canvas service", () => {
   });
 
   it("definition preview 通过 definition action 入口执行无状态 action", async () => {
-    mocks.post.mockResolvedValueOnce({ outcome: { kind: "operation_script" } });
+    mocks.post.mockResolvedValueOnce({
+      outcome: { kind: "operation_script", value: {}, meta: actionScriptMeta() },
+    });
 
     await executeCanvasAction({
       definitionId: "canvas 1",

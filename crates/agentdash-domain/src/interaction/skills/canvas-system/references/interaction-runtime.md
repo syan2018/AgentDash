@@ -97,9 +97,11 @@ let matches = ops.invoke("platform:vfs:fs_grep:v1", #{
 #{ lines: matches.content[0].text }
 ```
 
-Canvas 按钮只调用 `window.agentdash.actions.invoke("skills.refresh", {})`，直接渲染脚本返回的
-`lines`。VFS 路径、Agent authority 和 exact Operation allowlist 都由 host/definition 控制，
-源码不携带 AgentRun identity；脚本只返回展示所需行，避免把全部 Skill 正文穿过 runtime bridge。
+Canvas 按钮只调用 `window.agentdash.actions.invoke("skills.refresh", {})`，直接获得脚本返回的
+业务值并渲染其中的 `lines`。VFS 路径、Agent authority 和 exact Operation allowlist 都由
+host/definition 控制，源码不携带 AgentRun identity；脚本只返回展示所需行，避免把全部 Skill 正文
+穿过 runtime bridge。需要检查执行证据时用 `actions.invokeRaw`，不要让常规 UI 拆
+OperationScript envelope。
 
 ## Resource slot
 

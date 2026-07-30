@@ -30,9 +30,11 @@ export type CreateInteractionInstanceRequestDto = { definition_revision_id: stri
 
 export type DistributeCanvasDefinitionRequest = { source_revision_id: string, title?: string, description?: string, };
 
+export type InteractionActionOutcomeDto = { "kind": "platform_command", value: JsonValue, } | { "kind": "operation", value: JsonValue, } | { "kind": "operation_script", value: JsonValue, meta: InteractionOperationScriptActionMetaDto, };
+
 export type InteractionActionRequestDto = { command_id: string, action_key: string, payload: JsonValue, expected_state_revision: bigint, run_id?: string, agent_id?: string, };
 
-export type InteractionActionResponseDto = { outcome: JsonValue, instance?: InteractionInstanceDto, };
+export type InteractionActionResponseDto = { outcome: InteractionActionOutcomeDto, instance?: InteractionInstanceDto, };
 
 export type InteractionActionTargetDto = { "kind": "platform_command", command_key: string, } | { "kind": "operation", operation_ref: InteractionOperationRefDto, } | { "kind": "operation_script", language: string, host_api_version: number, source: InteractionOperationScriptSourceDto, requested_operations: Array<InteractionOperationRefDto>, };
 
@@ -52,7 +54,7 @@ export type InteractionComponentEventBindingDto = { event_type: string, payload_
 
 export type InteractionComponentEventRequestDto = { command_id: string, binding_key: string, event_type: string, payload: JsonValue, expected_state_revision: bigint, run_id?: string, agent_id?: string, };
 
-export type InteractionComponentEventResponseDto = { outcome: JsonValue, instance?: InteractionInstanceDto, };
+export type InteractionComponentEventResponseDto = { outcome: InteractionActionOutcomeDto, instance?: InteractionInstanceDto, };
 
 export type InteractionDefinitionAccessDto = { can_view: boolean, can_edit_source: boolean, can_publish: boolean, can_manage_shared: boolean, can_copy: boolean, };
 
@@ -69,6 +71,8 @@ export type InteractionInstanceViewDto = { instance: InteractionInstanceDto, run
 export type InteractionInstanceViewQueryDto = { run_id?: string, agent_id?: string, };
 
 export type InteractionOperationRefDto = { namespace: string, provider_key: string, operation_key: string, contract_version: number, };
+
+export type InteractionOperationScriptActionMetaDto = { execution_id: string, calls: JsonValue, partial: boolean, outcome_unknown: boolean, };
 
 export type InteractionOperationScriptSourceDto = { "kind": "inline", source: string, } | { "kind": "source_file", path: string, };
 

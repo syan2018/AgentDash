@@ -370,7 +370,7 @@ function buildCanvasHostBootScript(input: {
           }),
       }),
       actions: Object.freeze({
-        invoke: (actionKey, payload = {}, options = {}) =>
+        invokeRaw: (actionKey, payload = {}, options = {}) =>
           request("actions.invoke", {
             action_key: String(actionKey || ""),
             payload,
@@ -379,6 +379,13 @@ function buildCanvasHostBootScript(input: {
                 ? Number(options.expectedStateRevision)
                 : undefined,
           }),
+        invoke: async (actionKey, payload = {}, options = {}) => {
+          const response = await window.agentdash.actions.invokeRaw(actionKey, payload, options);
+          if (!response || typeof response !== "object" || !response.outcome) {
+            throw new Error("Canvas action 返回值不完整");
+          }
+          return response.outcome.value;
+        },
       }),
       assets: Object.freeze({
         url: (uri) => request("assets.url", { uri: String(uri || "") }),

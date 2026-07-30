@@ -21,32 +21,35 @@ use agentdash_application::interaction::{
 use agentdash_application_agentrun::agent_run::DeliverAgentRunProductInput;
 use agentdash_application_operation_gateway::{
     AgentRunOperationHost, BoundOperationHost, HostInvocationOptions, HostOperationInvocation,
-    HostOperationScriptProgram, OperationPrincipal, OperationReadiness, UserWorkshopOperationHost,
-    validate_json_schema_subset,
+    HostOperationScriptProgram, OperationPrincipal, OperationReadiness, OperationResultValue,
+    UserWorkshopOperationHost, validate_json_schema_subset,
 };
-use agentdash_application_ports::operation_script::OperationScriptLimits;
+use agentdash_application_ports::operation_script::{
+    OperationScriptLimits, OperationScriptResultValue,
+};
 use agentdash_contracts::interaction::{
     ArchiveInteractionDefinitionResponse, CanvasAgentSubmitRequestDto,
     CanvasAgentSubmitResponseDto, CanvasDefinitionActionRequestDto, CanvasDefinitionDto,
     CanvasDefinitionListScopeDto, CanvasRuntimeFeaturesDto, CanvasRuntimeSnapshotDto,
     CloseInteractionInstanceRequestDto, CommitCanvasDefinitionRequest,
     CreateCanvasDefinitionRequest, CreateInteractionInstanceRequestDto,
-    DistributeCanvasDefinitionRequest, InteractionActionRequestDto, InteractionActionResponseDto,
-    InteractionActionTargetDto, InteractionAgentProjectionDto, InteractionCommandActorPolicyDto,
-    InteractionCommandDefinitionDto, InteractionCommandRequestDto, InteractionCommandResponseDto,
-    InteractionComponentBindingDto, InteractionComponentEventBindingDto,
-    InteractionComponentEventRequestDto, InteractionComponentEventResponseDto,
-    InteractionDefinitionAccessDto, InteractionDefinitionLineageDto,
-    InteractionDefinitionLineageKindDto, InteractionDefinitionStatusDto, InteractionEventDto,
-    InteractionInstanceDto, InteractionInstanceViewDto, InteractionInstanceViewQueryDto,
-    InteractionOperationRefDto, InteractionOperationScriptSourceDto, InteractionOwnerDto,
-    InteractionPinnedArtifactDto, InteractionPresentationQueryDto, InteractionPresentationStateDto,
-    InteractionRendererLeaseDto, InteractionResourceSlotDto, InteractionResourceSlotKindDto,
-    InteractionRuntimeBindingDto, InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto,
-    InteractionSourceChangesetDto, InteractionSourceFileChangeDto, InteractionSourceFileDto,
-    InteractionSourceSandboxDto, InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery,
-    ListInteractionEventsQueryDto, OperationWorkshopDescriptorDto,
-    PromoteInteractionDefinitionExtensionRequestDto,
+    DistributeCanvasDefinitionRequest, InteractionActionOutcomeDto, InteractionActionRequestDto,
+    InteractionActionResponseDto, InteractionActionTargetDto, InteractionAgentProjectionDto,
+    InteractionCommandActorPolicyDto, InteractionCommandDefinitionDto,
+    InteractionCommandRequestDto, InteractionCommandResponseDto, InteractionComponentBindingDto,
+    InteractionComponentEventBindingDto, InteractionComponentEventRequestDto,
+    InteractionComponentEventResponseDto, InteractionDefinitionAccessDto,
+    InteractionDefinitionLineageDto, InteractionDefinitionLineageKindDto,
+    InteractionDefinitionStatusDto, InteractionEventDto, InteractionInstanceDto,
+    InteractionInstanceViewDto, InteractionInstanceViewQueryDto, InteractionOperationRefDto,
+    InteractionOperationScriptActionMetaDto, InteractionOperationScriptSourceDto,
+    InteractionOwnerDto, InteractionPinnedArtifactDto, InteractionPresentationQueryDto,
+    InteractionPresentationStateDto, InteractionRendererLeaseDto, InteractionResourceSlotDto,
+    InteractionResourceSlotKindDto, InteractionRuntimeBindingDto,
+    InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto, InteractionSourceChangesetDto,
+    InteractionSourceFileChangeDto, InteractionSourceFileDto, InteractionSourceSandboxDto,
+    InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery, ListInteractionEventsQueryDto,
+    OperationWorkshopDescriptorDto, PromoteInteractionDefinitionExtensionRequestDto,
     PromoteInteractionDefinitionExtensionResponseDto, ReleaseInteractionRendererLeaseRequestDto,
     ReplaceInteractionPresentationRequestDto, UpsertInteractionRendererLeaseRequestDto,
     UpsertInteractionRuntimeBindingRequestDto,
@@ -1024,12 +1027,13 @@ async fn execute_definition_action(
                 } => (instance, event, true),
             };
             InteractionActionResponseDto {
-                outcome: serde_json::json!({
-                    "kind": "platform_command",
-                    "event_id": event.id,
-                    "event_sequence": event.sequence,
-                    "duplicate": duplicate
-                }),
+                outcome: InteractionActionOutcomeDto::PlatformCommand {
+                    value: serde_json::json!({
+                        "event_id": event.id,
+                        "event_sequence": event.sequence,
+                        "duplicate": duplicate
+                    }),
+                },
                 instance: Some(interaction_instance_to_dto(instance)),
             }
         }
@@ -1058,11 +1062,14 @@ async fn execute_definition_action(
                     message: error.to_string(),
                     error_code: error.code().to_string(),
                 })?;
-            InteractionActionResponseDto {
-                outcome: serde_json::json!({
-                    "kind": "operation",
-                    "result": result
+            let value = match result.value {
+                OperationResultValue::Inline { value } => value,
+                OperationResultValue::Ref { result_ref } => serde_json::json!({
+                    "result_ref": result_ref.result_id
                 }),
+            };
+            InteractionActionResponseDto {
+                outcome: InteractionActionOutcomeDto::Operation { value },
                 instance: None,
             }
         }
@@ -1112,11 +1119,23 @@ async fn execute_definition_action(
                 .execute(program, CancellationToken::new())
                 .await
                 .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-            InteractionActionResponseDto {
-                outcome: serde_json::json!({
-                    "kind": "operation_script",
-                    "result": outcome
+            let value = match outcome.value {
+                OperationScriptResultValue::Inline { value } => value,
+                OperationScriptResultValue::Ref { result_ref } => serde_json::json!({
+                    "result_ref": result_ref.result_id
                 }),
+            };
+            InteractionActionResponseDto {
+                outcome: InteractionActionOutcomeDto::OperationScript {
+                    value,
+                    meta: InteractionOperationScriptActionMetaDto {
+                        execution_id: outcome.execution_id.to_string(),
+                        calls: serde_json::to_value(outcome.calls)
+                            .map_err(|error| ApiError::Internal(error.to_string()))?,
+                        partial: outcome.partial,
+                        outcome_unknown: outcome.outcome_unknown,
+                    },
+                },
                 instance: None,
             }
         }

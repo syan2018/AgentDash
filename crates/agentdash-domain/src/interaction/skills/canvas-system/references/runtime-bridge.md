@@ -13,6 +13,11 @@ window.agentdash.actions.invoke(
   payload,
   { expectedStateRevision? },
 )
+window.agentdash.actions.invokeRaw(
+  actionKey,
+  payload,
+  { expectedStateRevision? },
+)
 
 // renderer runtime surface 已投影的 exact Operation
 window.agentdash.operations.list()
@@ -43,7 +48,9 @@ window.agentdash.diagnostics.report(observation)
 
 `actions.invoke` 只提交 action key 与 payload；可信 host 从当前 revision 的
 `canvas.json.actions` 解析 SourceBundle 固定的 OperationScript、Operation 或 platform command。
-这个 action 不需要出现在 `operations.list()` 中。
+它返回 action 的业务 `value`，不暴露 OperationScript execution envelope。需要 execution id、calls、
+partial 或 outcome_unknown 等调试证据时，使用 `actions.invokeRaw` 读取完整 response。这个 action
+不需要出现在 `operations.list()` 中。
 
 `operations.*` 只面向 renderer 当前 runtime snapshot 中的 Operation catalog。即使 Canvas attach
 了 AgentRun，`operations.list()` 也不代表该 Agent 的完整工具面；只有明确投影到这个 Canvas /

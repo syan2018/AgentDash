@@ -469,7 +469,7 @@ pub struct InteractionComponentEventRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct InteractionComponentEventResponseDto {
-    pub outcome: Value,
+    pub outcome: InteractionActionOutcomeDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub instance: Option<InteractionInstanceDto>,
@@ -497,8 +497,31 @@ pub struct CanvasDefinitionActionRequestDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InteractionActionOutcomeDto {
+    PlatformCommand {
+        value: Value,
+    },
+    Operation {
+        value: Value,
+    },
+    OperationScript {
+        value: Value,
+        meta: InteractionOperationScriptActionMetaDto,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionOperationScriptActionMetaDto {
+    pub execution_id: String,
+    pub calls: Value,
+    pub partial: bool,
+    pub outcome_unknown: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct InteractionActionResponseDto {
-    pub outcome: Value,
+    pub outcome: InteractionActionOutcomeDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub instance: Option<InteractionInstanceDto>,

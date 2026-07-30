@@ -112,25 +112,26 @@ use agentdash_contracts::interaction::{
     CanvasDefinitionListScopeDto, CanvasRuntimeFeaturesDto, CanvasRuntimeSnapshotDto,
     CloseInteractionInstanceRequestDto, CommitCanvasDefinitionRequest,
     CreateCanvasDefinitionRequest, CreateInteractionInstanceRequestDto,
-    DistributeCanvasDefinitionRequest, InteractionActionRequestDto, InteractionActionResponseDto,
-    InteractionActionTargetDto, InteractionAgentProjectionDto, InteractionCommandActorPolicyDto,
-    InteractionCommandDefinitionDto, InteractionCommandRequestDto, InteractionCommandResponseDto,
-    InteractionComponentBindingDto, InteractionComponentEventBindingDto,
-    InteractionComponentEventRequestDto, InteractionComponentEventResponseDto,
-    InteractionDefinitionAccessDto, InteractionDefinitionLineageDto,
-    InteractionDefinitionLineageKindDto, InteractionDefinitionStatusDto, InteractionInstanceDto,
-    InteractionInstanceViewDto, InteractionInstanceViewQueryDto, InteractionOperationRefDto,
-    InteractionOperationScriptSourceDto, InteractionOwnerDto, InteractionPinnedArtifactDto,
-    InteractionPresentationQueryDto, InteractionPresentationStateDto, InteractionResourceSlotDto,
-    InteractionResourceSlotKindDto, InteractionRuntimeBindingDto,
-    InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto, InteractionSourceChangesetDto,
-    InteractionSourceFileChangeDto, InteractionSourceFileDto, InteractionSourceSandboxDto,
-    InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery, OperationScriptLimitsDto,
-    OperationScriptProgramDto, OperationWorkshopDescriptorDto, OperationWorkshopInvokeRequestDto,
-    OperationWorkshopInvokeResponseDto, OperationWorkshopScriptExecuteRequestDto,
-    OperationWorkshopScriptExecuteResponseDto, OperationWorkshopSurfaceDto,
-    OperationWorkshopSurfaceRequestDto, ReplaceInteractionPresentationRequestDto,
-    UpsertInteractionRuntimeBindingRequestDto,
+    DistributeCanvasDefinitionRequest, InteractionActionOutcomeDto, InteractionActionRequestDto,
+    InteractionActionResponseDto, InteractionActionTargetDto, InteractionAgentProjectionDto,
+    InteractionCommandActorPolicyDto, InteractionCommandDefinitionDto,
+    InteractionCommandRequestDto, InteractionCommandResponseDto, InteractionComponentBindingDto,
+    InteractionComponentEventBindingDto, InteractionComponentEventRequestDto,
+    InteractionComponentEventResponseDto, InteractionDefinitionAccessDto,
+    InteractionDefinitionLineageDto, InteractionDefinitionLineageKindDto,
+    InteractionDefinitionStatusDto, InteractionInstanceDto, InteractionInstanceViewDto,
+    InteractionInstanceViewQueryDto, InteractionOperationRefDto,
+    InteractionOperationScriptActionMetaDto, InteractionOperationScriptSourceDto,
+    InteractionOwnerDto, InteractionPinnedArtifactDto, InteractionPresentationQueryDto,
+    InteractionPresentationStateDto, InteractionResourceSlotDto, InteractionResourceSlotKindDto,
+    InteractionRuntimeBindingDto, InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto,
+    InteractionSourceChangesetDto, InteractionSourceFileChangeDto, InteractionSourceFileDto,
+    InteractionSourceSandboxDto, InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery,
+    OperationScriptLimitsDto, OperationScriptProgramDto, OperationWorkshopDescriptorDto,
+    OperationWorkshopInvokeRequestDto, OperationWorkshopInvokeResponseDto,
+    OperationWorkshopScriptExecuteRequestDto, OperationWorkshopScriptExecuteResponseDto,
+    OperationWorkshopSurfaceDto, OperationWorkshopSurfaceRequestDto,
+    ReplaceInteractionPresentationRequestDto, UpsertInteractionRuntimeBindingRequestDto,
 };
 use agentdash_contracts::llm_provider::{
     CodexOAuthCredentialTargetDto, CodexOAuthFlowStatusDto, CodexOAuthStatusResponse,
@@ -963,6 +964,8 @@ fn main() {
             export_all::<InteractionComponentEventResponseDto>(dir);
             export_all::<InteractionActionRequestDto>(dir);
             export_all::<CanvasDefinitionActionRequestDto>(dir);
+            export_all::<InteractionActionOutcomeDto>(dir);
+            export_all::<InteractionOperationScriptActionMetaDto>(dir);
             export_all::<InteractionActionResponseDto>(dir);
             export_all::<InteractionPresentationQueryDto>(dir);
             export_all::<ReplaceInteractionPresentationRequestDto>(dir);

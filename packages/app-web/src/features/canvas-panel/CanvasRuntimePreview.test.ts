@@ -159,6 +159,7 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     expect(built.srcDoc).toContain("assets: Object.freeze");
     expect(built.srcDoc).toContain("operations: Object.freeze");
     expect(built.srcDoc).toContain("actions: Object.freeze");
+    expect(built.srcDoc).toContain("invokeRaw: (actionKey");
     expect(built.srcDoc).toContain("interaction: Object.freeze");
     expect(built.srcDoc).toContain("agent: Object.freeze");
     expect(built.srcDoc).toContain('const CONTRACT = "agentdash.canvas-host.v1"');

@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ContextFrame } from "../../../generated/backbone-protocol";
 import type { AgentRuntimeContextProjection } from "../../../generated/agent-runtime-codecs";
-import { validateAgentRuntimeContextProjectionCommit } from "../../agent-run-runtime/model/useAgentRuntimeContextProjection";
+import {
+  fetchAgentRuntimeContextProjectionWithRetry,
+  validateAgentRuntimeContextProjectionCommit,
+} from "../../agent-run-runtime/model/useAgentRuntimeContextProjection";
 import {
   SessionProjectionViewPanel,
 } from "./SessionProjectionView";
@@ -39,6 +42,13 @@ describe("SessionProjectionViewPanel", () => {
     expect(markup).toContain("压缩后的完整摘要");
     expect(markup).toContain("完整结构 · 1 sections");
     expect(markup).toContain("保留的用户消息");
+    expect(markup).toContain("模型输入估算");
+    expect(markup).toContain("主要段落");
+    expect(markup).toContain("消息明细");
+    expect(markup).toContain("Top Tools · 1");
+    expect(markup).toContain("完整模型输入 · 3 项");
+    expect(markup).toContain("Tool");
+    expect(markup).toContain("apply_patch");
     expect(markup).toContain("recipe sha256:recipe");
   });
 
@@ -144,6 +154,22 @@ describe("SessionProjectionView", () => {
       42n,
     )).toBe(43n);
   });
+
+  it("context projection 暂时落后时有限重试", async () => {
+    const conflict = Object.assign(new Error("behind"), { status: 409 });
+    mocks.fetchAgentRunRuntimeContextProjection
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce(sampleProjection());
+    const controller = new AbortController();
+
+    await expect(fetchAgentRuntimeContextProjectionWithRetry(
+      { runId: "run-1", agentId: "agent-1" },
+      sampleContextCoordinate(),
+      controller.signal,
+      [0],
+    )).resolves.toEqual(sampleProjection());
+    expect(mocks.fetchAgentRunRuntimeContextProjection).toHaveBeenCalledTimes(2);
+  });
 });
 
 async function importProjectionViewWithImmediateEffects() {
@@ -221,6 +247,35 @@ function sampleProjection(): AgentRuntimeContextProjection {
         authority: "agent_owned",
         fidelity: "exact",
       },
+      usage: {
+        estimated_total_tokens: 1_500n,
+        categories: [
+          {
+            kind: "compaction_summary",
+            label: "压缩摘要",
+            source: "compaction",
+            estimated_tokens: 900n,
+          },
+          {
+            kind: "user_messages",
+            label: "用户消息",
+            source: "history",
+            estimated_tokens: 600n,
+          },
+        ],
+        messages: {
+          user_message_tokens: 600n,
+          assistant_message_tokens: 0n,
+          tool_call_tokens: 0n,
+          tool_result_tokens: 0n,
+        },
+        top_tools: [{
+          name: "apply_patch",
+          definition_tokens: 120n,
+          call_tokens: 20n,
+          result_tokens: 10n,
+        }],
+      },
       contributions: [
       {
         kind: "frame",
@@ -254,6 +309,18 @@ function sampleProjection(): AgentRuntimeContextProjection {
           }],
           created_at_ms: 100n,
         } as unknown as ContextFrame,
+      },
+      {
+        kind: "tool",
+        tool: {
+          name: "apply_patch",
+          description: "修改工作区文件",
+          input_schema: { type: "object" },
+          capability_key: "workspace.write",
+          source: "native",
+          tool_path: "workspace/apply_patch",
+          context_usage_kind: "native_tools",
+        },
       },
       {
         kind: "message",

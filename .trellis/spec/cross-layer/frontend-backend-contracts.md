@@ -644,7 +644,11 @@ AgentRuntimeView / AgentRuntimeUpdate {
 
 ```text
 GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
-    ?required_revision={AgentSnapshotRevision}
+    ?snapshot_revision={AgentSnapshotRevision}
+    &context_revision={ContextRevision}
+    &recipe_digest={AgentPayloadDigest}
+    &authority={AgentContextAuthority}
+    &fidelity={AgentContextFidelity}
   -> AgentRuntimeContextProjection {
        thread_id,
        recipe: {
@@ -655,7 +659,8 @@ GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
            authority,
            fidelity,
          },
-         contributions: Frame | Message | Opaque,
+         usage: AgentContextUsageAnalysis,
+         contributions: Frame | Tool | Message | Opaque,
        },
      }
 ```
@@ -665,11 +670,12 @@ GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
 - API完成AgentRun Use授权后调用Product projection gateway；gateway解析committed binding并把
   source交给`AgentRuntimeObservation.read_context()`。只有Runtime observation构造
   `AgentContextQuery`并校验source、required revision、same-revision coordinate与fidelity。
-- Native Dash返回`AgentOwned/Exact`。`Frame`按provider system input顺序排列，随后是保留的
-  `Message`；tool call与tool result保持独立source entry identity和明确call pairing。
+- Native Dash返回`AgentOwned/Exact`。`Frame`按provider system input顺序排列，随后是已接纳
+  `Tool` definition和保留的`Message`；tool call与tool result保持独立source entry identity和
+  明确call pairing。
 - Codex仅返回可证明的`AgentObserved/Observed`，provider-private部分使用`Opaque`解释证据边界。
-- `recipe_digest`覆盖有序frames、messages与context revision。相同history/surface/checkpoint必须
-  产生相同digest。
+- `recipe_digest`覆盖有序frames、模型可见tool definitions、messages与context revision。相同
+  history/surface/checkpoint必须产生相同digest。
 - concrete Agent的同一次`read()`原子返回execution、conversation与`AgentContextCoordinate`；
   `AgentSnapshot.context.snapshot_revision`必须等于snapshot revision。Runtime view/update无损携带该
   coordinate，不能在Product或浏览器中按timeline推导digest/revision。
@@ -679,8 +685,12 @@ GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
   变化触发查询，并统一拥有AbortController、request generation、required/committed revision
   fence与已提交recipe。Session popup只消费controller state；响应低于required或committed revision
   时不得提交，响应恰好等于required revision时recipe digest与context revision必须一致。
-- `ContextFrame`同时展示`rendered_text`与完整typed结构；provider token usage继续来自provider
-  usage事实，不由字符估算覆盖。
+- projection endpoint暂时低于required coordinate时返回conflict；controller做有限退避重试，
+  coordinate推进或重试耗尽后明确结束loading。
+- Inspector先展示recipe派生的主要段落、消息与Top Tools用量，再以折叠区展示完整模型输入。
+  `ContextFrame`同时展示`rendered_text`与完整typed结构，CompactionSummary正文直接可读。
+- provider token usage继续来自provider usage事实，不由recipe字符估算覆盖；压缩生效会使旧
+  provider pressure失效，UI等待下一次provider确认时展示更新状态。
 
 ### 10.4 Validation & Error Matrix
 

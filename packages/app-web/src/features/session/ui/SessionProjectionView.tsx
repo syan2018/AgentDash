@@ -12,6 +12,8 @@ import { useAgentRuntimeContextProjection } from "../../agent-run-runtime/model/
 import type { TokenUsageInfo } from "../model/types";
 import type { SessionChatCommandModel } from "./SessionChatViewTypes";
 
+type AgentContextUsageAnalysis = AgentRuntimeContextProjection["recipe"]["usage"];
+
 export interface SessionProjectionViewProps {
   agentRunTarget?: AgentRunRuntimeTarget | null;
   contextCoordinate?: AgentRuntimeView["observation"]["context"] | null;
@@ -63,22 +65,114 @@ function CompactContextIcon({ loading }: { loading: boolean }) {
   );
 }
 
-function formatNumber(value: number | undefined): string {
+function formatNumber(value: number | bigint | undefined): string {
   if (value == null) return "-";
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return String(value);
+  const numeric = typeof value === "bigint" ? Number(value) : value;
+  if (numeric >= 1_000_000) return `${(numeric / 1_000_000).toFixed(1)}M`;
+  if (numeric >= 1_000) return `${(numeric / 1_000).toFixed(1)}K`;
+  return String(numeric);
+}
+
+function formatPercentage(value: number | bigint, total: number | bigint): string {
+  const numericTotal = Number(total);
+  if (numericTotal <= 0) return "0%";
+  return `${Math.round((Number(value) / numericTotal) * 100)}%`;
 }
 
 function contributionKey(contribution: AgentContextContribution, index: number): string {
   switch (contribution.kind) {
     case "frame":
       return `frame:${contribution.frame.id}`;
+    case "tool":
+      return `tool:${contribution.tool.name}:${index}`;
     case "message":
       return `message:${contribution.source_entry_id}:${index}`;
     case "opaque":
       return `opaque:${contribution.label}:${index}`;
   }
+}
+
+function ContextUsageSummary({
+  usage,
+  providerUsage,
+}: {
+  usage: AgentContextUsageAnalysis;
+  providerUsage?: TokenUsageInfo | null;
+}) {
+  const messageRows = [
+    ["用户消息", usage.messages.user_message_tokens],
+    ["助手消息", usage.messages.assistant_message_tokens],
+    ["工具调用", usage.messages.tool_call_tokens],
+    ["工具结果", usage.messages.tool_result_tokens],
+  ] as const;
+
+  return (
+    <section className="border-t border-border px-3 py-3 text-xs">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="font-medium">模型输入估算</span>
+        <span className="text-base font-semibold">
+          {formatNumber(usage.estimated_total_tokens)} tokens
+        </span>
+        {providerUsage && (
+          <span className="text-muted-foreground">
+            Provider 最近确认 {formatNumber(providerUsage.currentContextTokens)}
+          </span>
+        )}
+      </div>
+      <div className="mt-3 grid gap-4 md:grid-cols-2">
+        <div>
+          <div className="mb-1.5 font-medium text-muted-foreground">主要段落</div>
+          <div className="space-y-1">
+            {usage.categories.length === 0 && (
+              <div className="text-muted-foreground">Agent 未提供可估算分类</div>
+            )}
+            {usage.categories.map((category) => (
+              <div key={category.kind} className="flex items-center justify-between gap-3">
+                <span className="truncate" title={`${category.kind} · ${category.source}`}>
+                  {category.label}
+                </span>
+                <span className="shrink-0 font-mono text-muted-foreground">
+                  {formatNumber(category.estimated_tokens)}
+                  {" · "}
+                  {formatPercentage(category.estimated_tokens, usage.estimated_total_tokens)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="mb-1.5 font-medium text-muted-foreground">消息明细</div>
+          <div className="space-y-1">
+            {messageRows.map(([label, tokens]) => (
+              <div key={label} className="flex items-center justify-between gap-3">
+                <span>{label}</span>
+                <span className="font-mono text-muted-foreground">{formatNumber(tokens)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      {usage.top_tools.length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer font-medium text-muted-foreground">
+            Top Tools · {usage.top_tools.length}
+          </summary>
+          <div className="mt-1.5 space-y-1">
+            {usage.top_tools.map((tool) => (
+              <div key={tool.name} className="flex flex-wrap items-center justify-between gap-x-3">
+                <span className="font-mono">{tool.name}</span>
+                <span className="text-muted-foreground">
+                  定义 {formatNumber(tool.definition_tokens)}
+                  {" · "}调用 {formatNumber(tool.call_tokens)}
+                  {" · "}结果 {formatNumber(tool.result_tokens)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </section>
+  );
 }
 
 function FrameContribution({ frame }: { frame: ContextFrame }) {
@@ -142,10 +236,42 @@ function MessageContribution({
   );
 }
 
+function ToolContribution({
+  contribution,
+}: {
+  contribution: Extract<AgentContextContribution, { kind: "tool" }>;
+}) {
+  const { tool } = contribution;
+  return (
+    <article className="space-y-2 border-t border-border/70 px-3 py-3 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5 font-medium">
+          Tool
+        </span>
+        <span className="font-mono">{tool.name}</span>
+        <span className="rounded-[6px] bg-secondary px-1.5 py-0.5 text-muted-foreground">
+          {tool.context_usage_kind}
+        </span>
+      </div>
+      <p className="text-foreground/85">{tool.description}</p>
+      <details>
+        <summary className="cursor-pointer text-[10px] text-muted-foreground">
+          输入 Schema · {tool.source}
+        </summary>
+        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-[6px] bg-secondary p-2 text-[10px] text-muted-foreground">
+          {JSON.stringify(tool.input_schema, null, 2)}
+        </pre>
+      </details>
+    </article>
+  );
+}
+
 function ContributionRow({ contribution }: { contribution: AgentContextContribution }) {
   switch (contribution.kind) {
     case "frame":
       return <FrameContribution frame={contribution.frame} />;
+    case "tool":
+      return <ToolContribution contribution={contribution} />;
     case "message":
       return <MessageContribution contribution={contribution} />;
     case "opaque":
@@ -285,15 +411,23 @@ export function SessionProjectionViewPanel({
         </div>
       )}
       {error && <div className="border-t border-border px-3 py-2 text-xs text-destructive">{error}</div>}
+      {projection && (
+        <ContextUsageSummary usage={projection.recipe.usage} providerUsage={tokenUsage} />
+      )}
       {projection && projection.recipe.contributions.length > 0 && (
-        <div className="max-h-[34rem] overflow-y-auto">
-          {projection.recipe.contributions.map((contribution, index) => (
-            <ContributionRow
-              key={contributionKey(contribution, index)}
-              contribution={contribution}
-            />
-          ))}
-        </div>
+        <details className="border-t border-border">
+          <summary className="cursor-pointer px-3 py-2 text-xs text-muted-foreground">
+            完整模型输入 · {projection.recipe.contributions.length} 项
+          </summary>
+          <div className="max-h-[34rem] overflow-y-auto">
+            {projection.recipe.contributions.map((contribution, index) => (
+              <ContributionRow
+                key={contributionKey(contribution, index)}
+                contribution={contribution}
+              />
+            ))}
+          </div>
+        </details>
       )}
       {projection && projection.recipe.contributions.length === 0 && (
         <div className="border-t border-border px-3 py-4 text-xs text-muted-foreground">

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 8;
+pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 9;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
@@ -154,7 +154,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn revision_eight_is_the_only_accepted_revision() {
+    fn revision_nine_is_the_only_accepted_revision() {
         let bytes = serde_json::to_vec(&RuntimeWireEnvelope {
             protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
             frame_id: RuntimeWireFrameId(1),
@@ -175,7 +175,7 @@ mod tests {
             decode_frame(&serde_json::to_vec(&old).expect("encode old frame")),
             Err(RuntimeProtocolViolation::UnsupportedRevision {
                 received: 4,
-                supported: 8,
+                supported: 9,
             })
         );
     }
@@ -197,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn revision_eight_typescript_root_exports_lossless_decimal_frame_ids() {
+    fn revision_nine_typescript_root_exports_lossless_decimal_frame_ids() {
         let temp = tempfile::tempdir().expect("create TypeScript export directory");
         RuntimeWireEnvelope::export_all_to(temp.path()).expect("export Runtime Wire contracts");
         RuntimeWireU64::export_all_to(temp.path()).expect("export Wire u64");

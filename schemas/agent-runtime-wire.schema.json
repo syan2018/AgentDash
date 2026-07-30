@@ -1225,6 +1225,22 @@
         },
         {
           "properties": {
+            "kind": {
+              "const": "tool",
+              "type": "string"
+            },
+            "tool": {
+              "$ref": "#/$defs/AgentModelInputToolDefinition"
+            }
+          },
+          "required": [
+            "kind",
+            "tool"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
             "content": {
               "type": "string"
             },
@@ -1322,6 +1338,29 @@
       ],
       "type": "string"
     },
+    "AgentContextMessageUsage": {
+      "properties": {
+        "assistant_message_tokens": {
+          "$ref": "#/$defs/RuntimeU64"
+        },
+        "tool_call_tokens": {
+          "$ref": "#/$defs/RuntimeU64"
+        },
+        "tool_result_tokens": {
+          "$ref": "#/$defs/RuntimeU64"
+        },
+        "user_message_tokens": {
+          "$ref": "#/$defs/RuntimeU64"
+        }
+      },
+      "required": [
+        "user_message_tokens",
+        "assistant_message_tokens",
+        "tool_call_tokens",
+        "tool_result_tokens"
+      ],
+      "type": "object"
+    },
     "AgentContextQuery": {
       "properties": {
         "required_revision": {
@@ -1353,10 +1392,14 @@
         },
         "coordinate": {
           "$ref": "#/$defs/AgentContextCoordinate"
+        },
+        "usage": {
+          "$ref": "#/$defs/AgentContextUsageAnalysis"
         }
       },
       "required": [
         "coordinate",
+        "usage",
         "contributions"
       ],
       "type": "object"
@@ -1376,6 +1419,81 @@
       "required": [
         "source",
         "recipe"
+      ],
+      "type": "object"
+    },
+    "AgentContextToolUsage": {
+      "properties": {
+        "call_tokens": {
+          "$ref": "#/$defs/RuntimeU64"
+        },
+        "definition_tokens": {
+          "$ref": "#/$defs/RuntimeU64"
+        },
+        "name": {
+          "type": "string"
+        },
+        "result_tokens": {
+          "$ref": "#/$defs/RuntimeU64"
+        }
+      },
+      "required": [
+        "name",
+        "definition_tokens",
+        "call_tokens",
+        "result_tokens"
+      ],
+      "type": "object"
+    },
+    "AgentContextUsageAnalysis": {
+      "properties": {
+        "categories": {
+          "items": {
+            "$ref": "#/$defs/AgentContextUsageCategory"
+          },
+          "type": "array"
+        },
+        "estimated_total_tokens": {
+          "$ref": "#/$defs/RuntimeU64"
+        },
+        "messages": {
+          "$ref": "#/$defs/AgentContextMessageUsage"
+        },
+        "top_tools": {
+          "items": {
+            "$ref": "#/$defs/AgentContextToolUsage"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "estimated_total_tokens",
+        "categories",
+        "messages",
+        "top_tools"
+      ],
+      "type": "object"
+    },
+    "AgentContextUsageCategory": {
+      "properties": {
+        "estimated_tokens": {
+          "$ref": "#/$defs/RuntimeU64"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "source",
+        "estimated_tokens"
       ],
       "type": "object"
     },
@@ -3002,6 +3120,39 @@
         "call_id",
         "name",
         "arguments"
+      ],
+      "type": "object"
+    },
+    "AgentModelInputToolDefinition": {
+      "properties": {
+        "capability_key": {
+          "type": "string"
+        },
+        "context_usage_kind": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "input_schema": true,
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "tool_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "input_schema",
+        "capability_key",
+        "source",
+        "tool_path",
+        "context_usage_kind"
       ],
       "type": "object"
     },

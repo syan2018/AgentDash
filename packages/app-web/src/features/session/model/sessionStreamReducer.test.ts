@@ -343,6 +343,52 @@ describe("session stream tool progress", () => {
   });
 });
 
+describe("session stream context usage", () => {
+  it("压缩生效后清除旧 Provider 上下文用量", () => {
+    const initial = {
+      ...createInitialStreamState([]),
+      tokenUsage: {
+        modelContextWindow: 200_000,
+        effectiveContextWindow: 180_000,
+        reserveTokens: 20_000,
+        providerContextTokens: 150_000,
+        pendingEstimateTokens: 0,
+        currentContextTokens: 150_000,
+        cumulativeTotalTokens: 150_000,
+        usageSource: "provider" as const,
+        last: {
+          inputTokens: 150_000,
+          outputTokens: 1_000,
+          totalTokens: 151_000,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          reasoningTokens: 0,
+        },
+        total: {
+          inputTokens: 150_000,
+          outputTokens: 1_000,
+          totalTokens: 151_000,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          reasoningTokens: 0,
+        },
+      },
+    };
+
+    const next = reduceStreamState(initial, [
+      event(1, {
+        type: "executor_context_compacted",
+        payload: {
+          threadId: "session-1",
+          turnId: "compaction-1",
+        },
+      }, false, "compaction-1"),
+    ]);
+
+    expect(next.tokenUsage).toBeNull();
+  });
+});
+
 describe("terminal turn absorption", () => {
   it("ignores late message, reasoning and tool progress while allowing a new turn", () => {
     const toolStarted = event(

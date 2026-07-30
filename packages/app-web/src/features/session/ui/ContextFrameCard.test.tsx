@@ -191,6 +191,7 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("projection: v7");
     expect(markup).toContain("source: 3-42");
     expect(markup).toContain("checkpoint compaction-1");
+    expect(markup).toContain("压缩后的历史摘要");
   });
 
   it("渲染 skill_delta 的 provider scoped identity", () => {

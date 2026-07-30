@@ -854,6 +854,11 @@ function CompactionSummaryBody({ section }: { section: CompactionSummarySection 
           checkpoint {section.compaction_id}
         </div>
       )}
+      {section.summary && (
+        <div className="whitespace-pre-wrap rounded-[6px] bg-secondary/50 px-2.5 py-2 text-xs leading-relaxed text-foreground/80">
+          {section.summary}
+        </div>
+      )}
       {section.compacted_until_ref != null && (
         <CompactedUntilRefBlock value={section.compacted_until_ref} />
       )}

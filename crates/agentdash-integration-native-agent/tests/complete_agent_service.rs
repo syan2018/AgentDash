@@ -1408,6 +1408,7 @@ async fn native_complete_agent_create_input_and_fork_use_dash_history_authority(
         context.recipe.coordinate.snapshot_revision,
         parent_snapshot.observation.revision
     );
+    assert!(context.recipe.usage.estimated_total_tokens.0 > 0);
     let lower_bound_context = service
         .context(AgentContextQuery {
             source: parent.clone(),

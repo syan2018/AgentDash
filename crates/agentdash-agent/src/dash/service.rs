@@ -156,12 +156,46 @@ pub struct DashContextRecipeMessage {
     pub message: DashMessage,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DashContextUsageCategory {
+    pub kind: String,
+    pub label: String,
+    pub source: String,
+    pub estimated_tokens: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DashContextMessageUsage {
+    pub user_message_tokens: u64,
+    pub assistant_message_tokens: u64,
+    pub tool_call_tokens: u64,
+    pub tool_result_tokens: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DashContextToolUsage {
+    pub name: String,
+    pub definition_tokens: u64,
+    pub call_tokens: u64,
+    pub result_tokens: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DashContextUsageAnalysis {
+    pub estimated_total_tokens: u64,
+    pub categories: Vec<DashContextUsageCategory>,
+    pub messages: DashContextMessageUsage,
+    pub top_tools: Vec<DashContextToolUsage>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DashContextRecipe {
     pub snapshot_revision: u64,
     pub context_revision: Option<ContextRevision>,
     pub frames: Vec<agentdash_agent_protocol::ContextFrame>,
+    pub tools: Vec<DashToolDefinition>,
     pub messages: Vec<DashContextRecipeMessage>,
+    pub usage: DashContextUsageAnalysis,
     pub digest: String,
 }
 
@@ -3160,9 +3194,6 @@ fn materialize_accepted_context_frames(
                 .map(|frame| (frame, None)),
         );
     }
-    if let Some(compaction_frame) = compaction_frame {
-        frames.push((compaction_frame.clone(), None));
-    }
     frames.extend(
         surface_append_frames
             .iter()
@@ -3186,7 +3217,14 @@ fn materialize_accepted_context_frames(
                 right.0.id.as_str(),
             ))
     });
-    frames.into_iter().map(|(frame, _)| frame).collect()
+    let mut frames = frames
+        .into_iter()
+        .map(|(frame, _)| frame)
+        .collect::<Vec<_>>();
+    if let Some(compaction_frame) = compaction_frame {
+        frames.push(compaction_frame.clone());
+    }
+    frames
 }
 
 fn accepted_surface_append_frames(
@@ -3236,6 +3274,8 @@ pub fn context_recipe_from_history_state(
 ) -> Result<DashContextRecipe, DashServiceError> {
     let materialized = materialize_session_context_from_state(history, history_state, None, false)?;
     let snapshot_revision = history_state.entry_count;
+    let frames = materialized.frames;
+    let tools = materialized.context.tools;
     let messages = materialized
         .context
         .history
@@ -3246,21 +3286,260 @@ pub fn context_recipe_from_history_state(
             message,
         })
         .collect::<Vec<_>>();
+    let model_tools = tools
+        .iter()
+        .map(|tool| {
+            (
+                &tool.name,
+                &tool.description,
+                &tool.input_schema,
+                &tool.capability_key,
+                &tool.source,
+                &tool.tool_path,
+                &tool.context_usage_kind,
+            )
+        })
+        .collect::<Vec<_>>();
     let encoded = serde_json::to_vec(&(
-        &materialized.frames,
+        &frames,
+        &model_tools,
         &messages,
         &materialized.context_revision,
     ))
     .map_err(|error| DashServiceError::Internal {
         message: format!("encode Dash context recipe: {error}"),
     })?;
+    let usage = analyze_context_usage(&frames, &tools, &messages);
     Ok(DashContextRecipe {
         snapshot_revision,
         context_revision: materialized.context_revision,
-        frames: materialized.frames,
+        frames,
+        tools,
         messages,
+        usage,
         digest: format!("sha256:{:x}", Sha256::digest(encoded)),
     })
+}
+
+pub fn compaction_context_frames_from_history_state(
+    history: &AgentHistory,
+    history_state: &AgentHistoryState,
+    summary_frame: &agentdash_agent_protocol::ContextFrame,
+) -> Vec<agentdash_agent_protocol::ContextFrame> {
+    let entries = history_entries_at_state(history, history_state);
+    materialize_accepted_context_frames(
+        history_state.surface.as_ref(),
+        history_state.initial_context.as_ref(),
+        Some(summary_frame),
+        &accepted_surface_append_frames(entries),
+    )
+}
+
+fn analyze_context_usage(
+    frames: &[agentdash_agent_protocol::ContextFrame],
+    tools: &[DashToolDefinition],
+    messages: &[DashContextRecipeMessage],
+) -> DashContextUsageAnalysis {
+    let mut categories = BTreeMap::<String, DashContextUsageCategory>::new();
+    let mut message_usage = DashContextMessageUsage::default();
+    let mut tool_usage = BTreeMap::<String, DashContextToolUsage>::new();
+    let mut call_tools = BTreeMap::<String, String>::new();
+
+    for frame in frames {
+        let estimated_tokens = estimate_non_empty_text(&frame.rendered_text);
+        let kind = frame.kind.as_key().to_owned();
+        add_usage_category(
+            &mut categories,
+            kind.clone(),
+            frame.delivery_metadata.frontend_label.clone(),
+            if kind == "compaction_summary" {
+                "compaction"
+            } else {
+                "agent_frame"
+            },
+            estimated_tokens,
+        );
+    }
+
+    for tool in tools {
+        let definition_tokens = crate::estimate_tool_tokens(&crate::ToolDefinition {
+            name: tool.name.clone(),
+            description: tool.description.clone(),
+            parameters: tool.input_schema.clone(),
+        });
+        add_usage_category(
+            &mut categories,
+            "tool_schemas".to_owned(),
+            "Tool schemas".to_owned(),
+            "accepted_surface",
+            definition_tokens,
+        );
+        tool_usage.insert(
+            tool.name.clone(),
+            DashContextToolUsage {
+                name: tool.name.clone(),
+                definition_tokens,
+                call_tokens: 0,
+                result_tokens: 0,
+            },
+        );
+    }
+
+    for entry in messages {
+        let message = &entry.message;
+        let content_tokens = estimate_non_empty_text(&message.content);
+        match message.role {
+            DashMessageRole::User => {
+                message_usage.user_message_tokens = message_usage
+                    .user_message_tokens
+                    .saturating_add(content_tokens);
+            }
+            DashMessageRole::Assistant => {
+                message_usage.assistant_message_tokens = message_usage
+                    .assistant_message_tokens
+                    .saturating_add(content_tokens);
+                for call in &message.tool_calls {
+                    let call_tokens = estimate_dash_tool_call(call);
+                    message_usage.tool_call_tokens =
+                        message_usage.tool_call_tokens.saturating_add(call_tokens);
+                    call_tools.insert(call.call_id.clone(), call.name.clone());
+                    let usage = tool_usage.entry(call.name.clone()).or_insert_with(|| {
+                        DashContextToolUsage {
+                            name: call.name.clone(),
+                            definition_tokens: 0,
+                            call_tokens: 0,
+                            result_tokens: 0,
+                        }
+                    });
+                    usage.call_tokens = usage.call_tokens.saturating_add(call_tokens);
+                }
+            }
+            DashMessageRole::Tool => {
+                let result_tokens = content_tokens.saturating_add(
+                    message
+                        .tool_call_id
+                        .as_deref()
+                        .map(crate::text_tokens)
+                        .unwrap_or_default(),
+                );
+                message_usage.tool_result_tokens = message_usage
+                    .tool_result_tokens
+                    .saturating_add(result_tokens);
+                if let Some(name) = message
+                    .tool_call_id
+                    .as_ref()
+                    .and_then(|call_id| call_tools.get(call_id))
+                {
+                    let usage =
+                        tool_usage
+                            .entry(name.clone())
+                            .or_insert_with(|| DashContextToolUsage {
+                                name: name.clone(),
+                                definition_tokens: 0,
+                                call_tokens: 0,
+                                result_tokens: 0,
+                            });
+                    usage.result_tokens = usage.result_tokens.saturating_add(result_tokens);
+                }
+            }
+        }
+    }
+
+    add_usage_category(
+        &mut categories,
+        "user_messages".to_owned(),
+        "用户消息".to_owned(),
+        "history",
+        message_usage.user_message_tokens,
+    );
+    add_usage_category(
+        &mut categories,
+        "assistant_messages".to_owned(),
+        "助手消息".to_owned(),
+        "history",
+        message_usage.assistant_message_tokens,
+    );
+    add_usage_category(
+        &mut categories,
+        "tool_calls".to_owned(),
+        "工具调用".to_owned(),
+        "history",
+        message_usage.tool_call_tokens,
+    );
+    add_usage_category(
+        &mut categories,
+        "tool_results".to_owned(),
+        "工具结果".to_owned(),
+        "history",
+        message_usage.tool_result_tokens,
+    );
+
+    let categories = categories
+        .into_values()
+        .filter(|category| category.estimated_tokens > 0)
+        .collect::<Vec<_>>();
+    let estimated_total_tokens = categories.iter().fold(0_u64, |total, category| {
+        total.saturating_add(category.estimated_tokens)
+    });
+    let mut top_tools = tool_usage.into_values().collect::<Vec<_>>();
+    top_tools.sort_by_key(|usage| {
+        std::cmp::Reverse(
+            usage
+                .definition_tokens
+                .saturating_add(usage.call_tokens)
+                .saturating_add(usage.result_tokens),
+        )
+    });
+    top_tools.truncate(10);
+
+    DashContextUsageAnalysis {
+        estimated_total_tokens,
+        categories,
+        messages: message_usage,
+        top_tools,
+    }
+}
+
+fn add_usage_category(
+    categories: &mut BTreeMap<String, DashContextUsageCategory>,
+    kind: String,
+    label: String,
+    source: &str,
+    estimated_tokens: u64,
+) {
+    let category = categories
+        .entry(kind.clone())
+        .or_insert_with(|| DashContextUsageCategory {
+            kind,
+            label,
+            source: source.to_owned(),
+            estimated_tokens: 0,
+        });
+    category.estimated_tokens = category.estimated_tokens.saturating_add(estimated_tokens);
+}
+
+fn estimate_non_empty_text(text: &str) -> u64 {
+    if text.is_empty() {
+        0
+    } else {
+        crate::text_tokens(text)
+    }
+}
+
+fn estimate_dash_tool_call(call: &DashToolCall) -> u64 {
+    serde_json::to_string(call)
+        .map(|encoded| crate::text_tokens(&encoded))
+        .unwrap_or_else(|_| crate::text_tokens(&call.name))
+}
+
+fn history_entries_at_state<'a>(
+    history: &'a AgentHistory,
+    history_state: &AgentHistoryState,
+) -> &'a [AgentHistoryEntry] {
+    let entry_count = usize::try_from(history_state.entry_count)
+        .unwrap_or(usize::MAX)
+        .min(history.entries().len());
+    &history.entries()[..entry_count]
 }
 
 fn materialize_session_context(
@@ -3285,7 +3564,7 @@ fn materialize_session_context_from_state(
 ) -> Result<MaterializedSessionContext, DashServiceError> {
     let surface = history_state.surface.clone();
     let initial_context = history_state.initial_context.clone();
-    let entries = history_source.entries();
+    let entries = history_entries_at_state(history_source, history_state);
     let mut applied_compactions = BTreeMap::new();
     let mut latest_compaction = None;
     for (index, entry) in entries.iter().enumerate() {

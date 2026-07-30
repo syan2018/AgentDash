@@ -27,26 +27,28 @@ use agentdash_agent_runtime_contract::{
     AgentCommand, AgentCommandCapability, AgentCommandEnvelope, AgentCommandReceipt,
     AgentCompactionMode, AgentCompactionOutcomeSnapshot, AgentCompactionOutcomeStatus,
     AgentConfigurationBoundary, AgentContextAuthority, AgentContextContribution,
-    AgentContextCoordinate, AgentContextFidelity, AgentContextQuery, AgentContextSnapshot,
-    AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkCapability,
-    AgentForkCutoffKind, AgentForkPoint, AgentHookBlockingSemantics, AgentHookMutationKind,
-    AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming, AgentHostCallbackBinding,
-    AgentHostCallbacks, AgentInput, AgentInputContent, AgentInteractionRequest,
-    AgentInteractionResolution, AgentInteractionSnapshot, AgentInteractionStatus,
-    AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveBatch, AgentLiveBatchStream,
-    AgentLiveStreamError, AgentModelInputRole, AgentModelInputToolCall, AgentObservationQuery,
-    AgentObservationState, AgentPayloadDigest, AgentQueuedCompactionSnapshot, AgentReadQuery,
-    AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
-    AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshot, AgentSnapshotAuthority,
-    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
-    AgentSourceCursor, AgentSourceRevision, AgentSourceState, AgentSurfaceCapabilityFacet,
-    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
-    AgentThreadNameSnapshot, AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics,
-    AgentTurnObservation, AppliedAgentCommandReceipt, AppliedAgentSurface,
-    AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt, AppliedContributionStatus,
-    AppliedForkAgentReceipt, AppliedInitialContextEvidence, ApplyBoundAgentSurface,
-    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand,
-    ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
+    AgentContextCoordinate, AgentContextFidelity, AgentContextMessageUsage, AgentContextQuery,
+    AgentContextSnapshot, AgentContextToolUsage, AgentContextUsageAnalysis,
+    AgentContextUsageCategory, AgentEffectIdentity, AgentEffectInspection,
+    AgentEffectInspectionState, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint,
+    AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet,
+    AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbacks, AgentInput, AgentInputContent,
+    AgentInteractionRequest, AgentInteractionResolution, AgentInteractionSnapshot,
+    AgentInteractionStatus, AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveBatch,
+    AgentLiveBatchStream, AgentLiveStreamError, AgentModelInputRole, AgentModelInputToolCall,
+    AgentModelInputToolDefinition, AgentObservationQuery, AgentObservationState,
+    AgentPayloadDigest, AgentQueuedCompactionSnapshot, AgentReadQuery, AgentReceiptState,
+    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
+    AgentServiceInstanceId, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
+    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
+    AgentSourceRevision, AgentSourceState, AgentSurfaceCapabilityFacet, AgentSurfaceProfile,
+    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot,
+    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnObservation,
+    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
+    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
+    BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
+    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
     InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
     ResumeAgentCommand, RevokeBoundAgentSurface, RuntimeU64, SemanticFidelity,
 };
@@ -1028,11 +1030,28 @@ impl CompleteAgentService for DashAgentCompleteService {
                 "Dash Agent context has not reached the required snapshot revision",
             ));
         }
+        let usage = dash_context_usage(&recipe.usage);
         let mut contributions = recipe
             .frames
             .into_iter()
             .map(|frame| AgentContextContribution::Frame { frame })
             .collect::<Vec<_>>();
+        contributions.extend(
+            recipe
+                .tools
+                .into_iter()
+                .map(|tool| AgentContextContribution::Tool {
+                    tool: AgentModelInputToolDefinition {
+                        name: tool.name,
+                        description: tool.description,
+                        input_schema: tool.input_schema,
+                        capability_key: tool.capability_key,
+                        source: tool.source,
+                        tool_path: tool.tool_path,
+                        context_usage_kind: tool.context_usage_kind,
+                    },
+                }),
+        );
         contributions.extend(recipe.messages.into_iter().map(|entry| {
             let message = entry.message;
             AgentContextContribution::Message {
@@ -1066,6 +1085,7 @@ impl CompleteAgentService for DashAgentCompleteService {
                     authority: AgentContextAuthority::AgentOwned,
                     fidelity: AgentContextFidelity::Exact,
                 },
+                usage,
                 contributions,
             },
         })
@@ -1110,6 +1130,7 @@ impl CompleteAgentService for DashAgentCompleteService {
                 let change = selected_changes.next().expect("peeked change exists");
                 let state_payload = dash_change_payload(&change, state)?;
                 let presentation = crate::canonical_projection::entry_records(
+                    &history,
                     query.source.as_str(),
                     &change.entry,
                     previous_surface.as_ref(),
@@ -1378,6 +1399,40 @@ impl CompleteAgentService for DashAgentCompleteService {
         self.reconcile_live_surface_from_durable_metadata(&command.source, &service)
             .await?;
         Ok(receipt)
+    }
+}
+
+fn dash_context_usage(
+    usage: &agentdash_agent::dash::DashContextUsageAnalysis,
+) -> AgentContextUsageAnalysis {
+    AgentContextUsageAnalysis {
+        estimated_total_tokens: RuntimeU64(usage.estimated_total_tokens),
+        categories: usage
+            .categories
+            .iter()
+            .map(|category| AgentContextUsageCategory {
+                kind: category.kind.clone(),
+                label: category.label.clone(),
+                source: category.source.clone(),
+                estimated_tokens: RuntimeU64(category.estimated_tokens),
+            })
+            .collect(),
+        messages: AgentContextMessageUsage {
+            user_message_tokens: RuntimeU64(usage.messages.user_message_tokens),
+            assistant_message_tokens: RuntimeU64(usage.messages.assistant_message_tokens),
+            tool_call_tokens: RuntimeU64(usage.messages.tool_call_tokens),
+            tool_result_tokens: RuntimeU64(usage.messages.tool_result_tokens),
+        },
+        top_tools: usage
+            .top_tools
+            .iter()
+            .map(|tool| AgentContextToolUsage {
+                name: tool.name.clone(),
+                definition_tokens: RuntimeU64(tool.definition_tokens),
+                call_tokens: RuntimeU64(tool.call_tokens),
+                result_tokens: RuntimeU64(tool.result_tokens),
+            })
+            .collect(),
     }
 }
 
@@ -2273,6 +2328,7 @@ impl DashHistoryCallbacks for DashCompleteLiveCallbacks {
             };
             records.extend(
                 crate::canonical_projection::entry_records(
+                    &commit.history,
                     self.source.as_str(),
                     &projection.entry,
                     projection.previous_surface.as_ref(),

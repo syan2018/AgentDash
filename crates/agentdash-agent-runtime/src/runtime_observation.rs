@@ -234,6 +234,22 @@ mod tests {
         }
     }
 
+    fn empty_context_usage() -> agentdash_agent_runtime_contract::AgentContextUsageAnalysis {
+        use agentdash_agent_runtime_contract::{AgentContextMessageUsage, RuntimeU64};
+
+        agentdash_agent_runtime_contract::AgentContextUsageAnalysis {
+            estimated_total_tokens: RuntimeU64(0),
+            categories: Vec::new(),
+            messages: AgentContextMessageUsage {
+                user_message_tokens: RuntimeU64(0),
+                assistant_message_tokens: RuntimeU64(0),
+                tool_call_tokens: RuntimeU64(0),
+                tool_result_tokens: RuntimeU64(0),
+            },
+            top_tools: Vec::new(),
+        }
+    }
+
     fn observation_with(snapshot: AgentContextSnapshot) -> AgentRuntimeObservation {
         let source = snapshot.source.clone();
         AgentRuntimeObservation::new(
@@ -253,6 +269,7 @@ mod tests {
             source,
             recipe: AgentContextRecipe {
                 coordinate: coordinate(6, "sha256:context-6"),
+                usage: empty_context_usage(),
                 contributions: Vec::new(),
             },
         });
@@ -280,6 +297,7 @@ mod tests {
             source,
             recipe: AgentContextRecipe {
                 coordinate: coordinate(7, "sha256:stale"),
+                usage: empty_context_usage(),
                 contributions: Vec::new(),
             },
         });
@@ -305,6 +323,7 @@ mod tests {
             source,
             recipe: AgentContextRecipe {
                 coordinate: actual.clone(),
+                usage: empty_context_usage(),
                 contributions: Vec::new(),
             },
         });
@@ -328,6 +347,7 @@ mod tests {
                 source: source.clone(),
                 recipe: AgentContextRecipe {
                     coordinate: coordinate(1, "sha256:context-1"),
+                    usage: empty_context_usage(),
                     contributions: Vec::new(),
                 },
             },

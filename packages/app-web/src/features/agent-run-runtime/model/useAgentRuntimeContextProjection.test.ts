@@ -26,6 +26,17 @@ function projection(
     thread_id: "thread-1",
     recipe: {
       coordinate: coordinate(revision, digest),
+      usage: {
+        estimated_total_tokens: 0n,
+        categories: [],
+        messages: {
+          user_message_tokens: 0n,
+          assistant_message_tokens: 0n,
+          tool_call_tokens: 0n,
+          tool_result_tokens: 0n,
+        },
+        top_tools: [],
+      },
       contributions: [],
     },
   };

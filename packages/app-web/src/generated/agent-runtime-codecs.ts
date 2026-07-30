@@ -101,15 +101,15 @@ type EncodingVariant = { guards: Record<string, unknown>; plan: EncodingPlan };
 const ENCODING_PLANS: Record<string, EncodingPlan> = {
   "AgentChange": {
     "kind": "ref",
-    "name": "p0022"
+    "name": "p0027"
   },
   "AgentChangePage": {
     "kind": "ref",
-    "name": "p0008"
+    "name": "p0012"
   },
   "AgentCommandEnvelope": {
     "kind": "ref",
-    "name": "p0020"
+    "name": "p0025"
   },
   "AgentCommandReceipt": {
     "kind": "object",
@@ -127,15 +127,15 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
   },
   "AgentEffectInspection": {
     "kind": "ref",
-    "name": "p0029"
+    "name": "p0034"
   },
   "AgentHookInvocation": {
     "kind": "ref",
-    "name": "p0019"
+    "name": "p0024"
   },
   "AgentRuntimeContextProjection": {
     "kind": "ref",
-    "name": "p0027"
+    "name": "p0032"
   },
   "AgentRuntimeContractSchema": {
     "kind": "object",
@@ -149,7 +149,7 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0032"
+                "name": "p0037"
               }
             },
             "applied_surface": {
@@ -170,21 +170,21 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0007"
+                "name": "p0009"
               }
             },
             "bound_surface": {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0015"
+                "name": "p0019"
               }
             },
             "change_page": {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0008"
+                "name": "p0012"
               }
             },
             "context_query": {
@@ -208,56 +208,56 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0027"
+                "name": "p0032"
               }
             },
             "create": {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0017"
+                "name": "p0022"
               }
             },
             "desired_surface": {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0028"
+                "name": "p0033"
               }
             },
             "execute": {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0020"
+                "name": "p0025"
               }
             },
             "execution_snapshot": {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0004"
+                "name": "p0005"
               }
             },
             "fork": {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0020"
+                "name": "p0025"
               }
             },
             "hook_invocation": {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0019"
+                "name": "p0024"
               }
             },
             "inspection": {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0029"
+                "name": "p0034"
               }
             },
             "live_batch": {
@@ -275,7 +275,7 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
                     "required": false,
                     "plan": {
                       "kind": "ref",
-                      "name": "p0002"
+                      "name": "p0003"
                     }
                   }
                 }
@@ -290,14 +290,14 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
                     "required": true,
                     "plan": {
                       "kind": "ref",
-                      "name": "p0009"
+                      "name": "p0013"
                     }
                   },
                   "execution": {
                     "required": true,
                     "plan": {
                       "kind": "ref",
-                      "name": "p0004"
+                      "name": "p0005"
                     }
                   },
                   "revision": {
@@ -347,7 +347,7 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0020"
+                "name": "p0025"
               }
             },
             "revoke_surface": {
@@ -374,7 +374,7 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0005"
+                "name": "p0006"
               }
             },
             "tool_execution_event": {
@@ -405,7 +405,7 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
               "required": true,
               "plan": {
                 "kind": "ref",
-                "name": "p0019"
+                "name": "p0024"
               }
             }
           }
@@ -415,7 +415,7 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0027"
+          "name": "p0032"
         }
       },
       "context_requirement": {
@@ -458,7 +458,7 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0021"
+          "name": "p0026"
         }
       }
     }
@@ -473,64 +473,64 @@ const ENCODING_PLANS: Record<string, EncodingPlan> = {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0031"
+          "name": "p0036"
         }
       },
       "update": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0018"
+          "name": "p0023"
         }
       },
       "view": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0021"
+          "name": "p0026"
         }
       }
     }
   },
   "AgentRuntimeStreamFrame": {
     "kind": "ref",
-    "name": "p0031"
+    "name": "p0036"
   },
   "AgentRuntimeUpdate": {
     "kind": "ref",
-    "name": "p0018"
+    "name": "p0023"
   },
   "AgentRuntimeView": {
     "kind": "ref",
-    "name": "p0021"
+    "name": "p0026"
   },
   "AgentSnapshot": {
     "kind": "ref",
-    "name": "p0005"
+    "name": "p0006"
   },
   "AgentSurfaceSnapshot": {
     "kind": "ref",
-    "name": "p0028"
+    "name": "p0033"
   },
   "AgentToolInvocation": {
     "kind": "ref",
-    "name": "p0019"
+    "name": "p0024"
   },
   "ApplyBoundAgentSurface": {
     "kind": "ref",
-    "name": "p0007"
+    "name": "p0009"
   },
   "CreateAgentCommand": {
     "kind": "ref",
-    "name": "p0017"
+    "name": "p0022"
   },
   "ForkAgentCommand": {
     "kind": "ref",
-    "name": "p0020"
+    "name": "p0025"
   },
   "ResumeAgentCommand": {
     "kind": "ref",
-    "name": "p0020"
+    "name": "p0025"
   },
   "RevokeBoundAgentSurface": {
     "kind": "object",
@@ -555,24 +555,31 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
     "kind": "array",
     "items": {
       "kind": "ref",
-      "name": "p0022"
+      "name": "p0010"
     }
   },
   "p0001": {
     "kind": "array",
     "items": {
       "kind": "ref",
-      "name": "p0024"
+      "name": "p0027"
     }
   },
   "p0002": {
-    "kind": "nullable",
-    "inner": {
+    "kind": "array",
+    "items": {
       "kind": "ref",
-      "name": "p0010"
+      "name": "p0029"
     }
   },
   "p0003": {
+    "kind": "nullable",
+    "inner": {
+      "kind": "ref",
+      "name": "p0014"
+    }
+  },
+  "p0004": {
     "kind": "nullable",
     "inner": {
       "kind": "object",
@@ -594,7 +601,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0004": {
+  "p0005": {
     "kind": "object",
     "fields": {
       "active_turn": {
@@ -650,7 +657,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0005": {
+  "p0006": {
     "kind": "object",
     "fields": {
       "applied_surface": {
@@ -674,12 +681,41 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0010"
+          "name": "p0014"
         }
       }
     }
   },
-  "p0006": {
+  "p0007": {
+    "kind": "object",
+    "fields": {
+      "assistant_message_tokens": {
+        "required": true,
+        "plan": {
+          "kind": "scalar"
+        }
+      },
+      "tool_call_tokens": {
+        "required": true,
+        "plan": {
+          "kind": "scalar"
+        }
+      },
+      "tool_result_tokens": {
+        "required": true,
+        "plan": {
+          "kind": "scalar"
+        }
+      },
+      "user_message_tokens": {
+        "required": true,
+        "plan": {
+          "kind": "scalar"
+        }
+      }
+    }
+  },
+  "p0008": {
     "kind": "object",
     "fields": {
       "binding_generation": {
@@ -699,14 +735,14 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0007": {
+  "p0009": {
     "kind": "object",
     "fields": {
       "bound_surface": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0015"
+          "name": "p0019"
         }
       },
       "callbacks": {
@@ -731,10 +767,63 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0008": {
+  "p0010": {
     "kind": "object",
     "fields": {
-      "changes": {
+      "call_tokens": {
+        "required": true,
+        "plan": {
+          "kind": "scalar"
+        }
+      },
+      "definition_tokens": {
+        "required": true,
+        "plan": {
+          "kind": "scalar"
+        }
+      },
+      "result_tokens": {
+        "required": true,
+        "plan": {
+          "kind": "scalar"
+        }
+      }
+    }
+  },
+  "p0011": {
+    "kind": "object",
+    "fields": {
+      "categories": {
+        "required": true,
+        "plan": {
+          "kind": "array",
+          "items": {
+            "kind": "object",
+            "fields": {
+              "estimated_tokens": {
+                "required": true,
+                "plan": {
+                  "kind": "scalar"
+                }
+              }
+            }
+          }
+        }
+      },
+      "estimated_total_tokens": {
+        "required": true,
+        "plan": {
+          "kind": "scalar"
+        }
+      },
+      "messages": {
+        "required": true,
+        "plan": {
+          "kind": "ref",
+          "name": "p0007"
+        }
+      },
+      "top_tools": {
         "required": true,
         "plan": {
           "kind": "ref",
@@ -743,68 +832,80 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0009": {
+  "p0012": {
+    "kind": "object",
+    "fields": {
+      "changes": {
+        "required": true,
+        "plan": {
+          "kind": "ref",
+          "name": "p0001"
+        }
+      }
+    }
+  },
+  "p0013": {
     "kind": "object",
     "fields": {
       "close": {
         "required": false,
         "plan": {
           "kind": "ref",
-          "name": "p0034"
+          "name": "p0039"
         }
       },
       "fork": {
         "required": false,
         "plan": {
           "kind": "ref",
-          "name": "p0034"
+          "name": "p0039"
         }
       },
       "interrupt": {
         "required": false,
         "plan": {
           "kind": "ref",
-          "name": "p0034"
+          "name": "p0039"
         }
       },
       "request_compaction": {
         "required": false,
         "plan": {
           "kind": "ref",
-          "name": "p0034"
+          "name": "p0039"
         }
       },
       "resolve_interaction": {
         "required": false,
         "plan": {
           "kind": "ref",
-          "name": "p0034"
+          "name": "p0039"
         }
       },
       "steer": {
         "required": false,
         "plan": {
           "kind": "ref",
-          "name": "p0034"
+          "name": "p0039"
         }
       },
       "submit_input": {
         "required": false,
         "plan": {
           "kind": "ref",
-          "name": "p0034"
+          "name": "p0039"
         }
       }
     }
   },
-  "p0010": {
+  "p0014": {
     "kind": "object",
     "fields": {
       "command_availability": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0009"
+          "name": "p0013"
         }
       },
       "context": {
@@ -825,7 +926,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0004"
+          "name": "p0005"
         }
       },
       "revision": {
@@ -852,31 +953,31 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         "required": false,
         "plan": {
           "kind": "ref",
-          "name": "p0003"
+          "name": "p0004"
         }
       }
     }
   },
-  "p0011": {
+  "p0015": {
     "kind": "object",
     "fields": {
       "command_availability": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0009"
+          "name": "p0013"
         }
       },
       "execution": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0004"
+          "name": "p0005"
         }
       }
     }
   },
-  "p0012": {
+  "p0016": {
     "kind": "object",
     "fields": {
       "connection_epoch": {
@@ -895,12 +996,12 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         "required": false,
         "plan": {
           "kind": "ref",
-          "name": "p0002"
+          "name": "p0003"
         }
       }
     }
   },
-  "p0013": {
+  "p0017": {
     "kind": "object",
     "fields": {
       "connection_epoch": {
@@ -920,7 +1021,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0014": {
+  "p0018": {
     "kind": "object",
     "fields": {
       "connection_epoch": {
@@ -933,19 +1034,19 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0021"
+          "name": "p0026"
         }
       }
     }
   },
-  "p0015": {
+  "p0019": {
     "kind": "object",
     "fields": {
       "contributions": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0001"
+          "name": "p0002"
         }
       },
       "revision": {
@@ -956,7 +1057,33 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0016": {
+  "p0020": {
+    "kind": "object",
+    "fields": {
+      "coordinate": {
+        "required": true,
+        "plan": {
+          "kind": "object",
+          "fields": {
+            "snapshot_revision": {
+              "required": true,
+              "plan": {
+                "kind": "scalar"
+              }
+            }
+          }
+        }
+      },
+      "usage": {
+        "required": true,
+        "plan": {
+          "kind": "ref",
+          "name": "p0011"
+        }
+      }
+    }
+  },
+  "p0021": {
     "kind": "object",
     "fields": {
       "evidence": {
@@ -975,7 +1102,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0017": {
+  "p0022": {
     "kind": "object",
     "fields": {
       "initial_context": {
@@ -999,12 +1126,12 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0006"
+          "name": "p0008"
         }
       }
     }
   },
-  "p0018": {
+  "p0023": {
     "kind": "object",
     "fields": {
       "lane_sequence": {
@@ -1017,12 +1144,12 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         "required": false,
         "plan": {
           "kind": "ref",
-          "name": "p0002"
+          "name": "p0003"
         }
       }
     }
   },
-  "p0019": {
+  "p0024": {
     "kind": "object",
     "fields": {
       "meta": {
@@ -1047,31 +1174,31 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0020": {
+  "p0025": {
     "kind": "object",
     "fields": {
       "meta": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0006"
+          "name": "p0008"
         }
       }
     }
   },
-  "p0021": {
+  "p0026": {
     "kind": "object",
     "fields": {
       "observation": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0010"
+          "name": "p0014"
         }
       }
     }
   },
-  "p0022": {
+  "p0027": {
     "kind": "object",
     "fields": {
       "occurred_at_ms": {
@@ -1084,24 +1211,24 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0033"
+          "name": "p0038"
         }
       }
     }
   },
-  "p0023": {
+  "p0028": {
     "kind": "object",
     "fields": {
       "outcome": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0032"
+          "name": "p0037"
         }
       }
     }
   },
-  "p0024": {
+  "p0029": {
     "kind": "object",
     "fields": {
       "payload": {
@@ -1130,7 +1257,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0025": {
+  "p0030": {
     "kind": "object",
     "fields": {
       "receipt": {
@@ -1157,7 +1284,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0026": {
+  "p0031": {
     "kind": "object",
     "fields": {
       "receipt": {
@@ -1179,41 +1306,26 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0027": {
+  "p0032": {
     "kind": "object",
     "fields": {
       "recipe": {
         "required": true,
         "plan": {
-          "kind": "object",
-          "fields": {
-            "coordinate": {
-              "required": true,
-              "plan": {
-                "kind": "object",
-                "fields": {
-                  "snapshot_revision": {
-                    "required": true,
-                    "plan": {
-                      "kind": "scalar"
-                    }
-                  }
-                }
-              }
-            }
-          }
+          "kind": "ref",
+          "name": "p0020"
         }
       }
     }
   },
-  "p0028": {
+  "p0033": {
     "kind": "object",
     "fields": {
       "requirements": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0001"
+          "name": "p0002"
         }
       },
       "revision": {
@@ -1224,19 +1336,19 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     }
   },
-  "p0029": {
+  "p0034": {
     "kind": "object",
     "fields": {
       "state": {
         "required": true,
         "plan": {
           "kind": "ref",
-          "name": "p0030"
+          "name": "p0035"
         }
       }
     }
   },
-  "p0030": {
+  "p0035": {
     "kind": "union",
     "variants": [
       {
@@ -1245,12 +1357,12 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0023"
+          "name": "p0028"
         }
       }
     ]
   },
-  "p0031": {
+  "p0036": {
     "kind": "union",
     "variants": [
       {
@@ -1259,7 +1371,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0014"
+          "name": "p0018"
         }
       },
       {
@@ -1268,7 +1380,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0012"
+          "name": "p0016"
         }
       },
       {
@@ -1277,12 +1389,12 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0013"
+          "name": "p0017"
         }
       }
     ]
   },
-  "p0032": {
+  "p0037": {
     "kind": "union",
     "variants": [
       {
@@ -1291,7 +1403,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0026"
+          "name": "p0031"
         }
       },
       {
@@ -1300,7 +1412,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0026"
+          "name": "p0031"
         }
       },
       {
@@ -1309,7 +1421,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0026"
+          "name": "p0031"
         }
       },
       {
@@ -1318,7 +1430,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0025"
+          "name": "p0030"
         }
       },
       {
@@ -1327,12 +1439,12 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0026"
+          "name": "p0031"
         }
       }
     ]
   },
-  "p0033": {
+  "p0038": {
     "kind": "union",
     "variants": [
       {
@@ -1365,7 +1477,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0011"
+          "name": "p0015"
         }
       },
       {
@@ -1394,7 +1506,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
       }
     ]
   },
-  "p0034": {
+  "p0039": {
     "kind": "union",
     "variants": [
       {
@@ -1403,7 +1515,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0016"
+          "name": "p0021"
         }
       },
       {
@@ -1412,7 +1524,7 @@ const ENCODING_DEFINITIONS: Record<string, EncodingPlan> = {
         },
         "plan": {
           "kind": "ref",
-          "name": "p0016"
+          "name": "p0021"
         }
       }
     ]

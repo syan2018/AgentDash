@@ -686,6 +686,9 @@ export function reduceStreamState(
       event,
     );
     entries = applyEventToEntries(entries, event);
+    if (event.notification.event.type === "executor_context_compacted") {
+      tokenUsage = null;
+    }
     const usage = extractTokenUsageFromEvent(event.notification.event);
     if (usage) {
       tokenUsage = tokenUsage ? { ...tokenUsage, ...usage } : usage;

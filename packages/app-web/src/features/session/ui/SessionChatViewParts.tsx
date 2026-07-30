@@ -143,6 +143,7 @@ function ContextUsageRing({
   const percent = usage && maxTokens
     ? Math.min(Math.round((currentContextTokens / maxTokens) * 100), 100)
     : undefined;
+  const contextUsagePending = usage == null && contextCoordinate != null;
   const hasLastFlow = Boolean(
     last && (last.inputTokens > 0 || last.outputTokens > 0 || pendingEstimateTokens > 0),
   );
@@ -181,6 +182,9 @@ function ContextUsageRing({
         {percent != null && (
           <span className="tabular-nums font-medium">{percent}%</span>
         )}
+        {contextUsagePending && (
+          <span className="font-medium">更新中</span>
+        )}
       </button>
 
       {/* hover 摘要 — 仅在浮层未展开时显示，向上弹出 */}
@@ -203,7 +207,9 @@ function ContextUsageRing({
               )}
             </>
           ) : (
-            <span className="text-muted-foreground">查看上下文用量明细</span>
+            <span className="text-muted-foreground">
+              {contextUsagePending ? "等待 Provider 用量确认" : "查看上下文用量明细"}
+            </span>
           )}
           <span className="mt-0.5 block text-[10px] text-muted-foreground/60">点击查看完整明细</span>
         </span>

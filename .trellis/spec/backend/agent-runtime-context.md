@@ -63,7 +63,8 @@ intent；change feed按history revision即时派生。
 
 `CompactionApplied`保存最终CompactionSummary ContextFrame。后续provider round、overflow
 continuation与canonical presentation直接使用该frame的`rendered_text`，使summary恢复与用户看到的
-compaction evidence保持同一revision。
+compaction evidence保持同一revision。canonical presentation在该摘要前重新发布当前已接纳的
+AgentFrame ContextFrame，使时间线按“权威上下文刷新、压缩摘要”呈现这次事实切换。
 
 Manual compaction：
 
@@ -127,6 +128,7 @@ pub struct AgentContextSnapshot {
 
 pub struct AgentContextRecipe {
     pub coordinate: AgentContextCoordinate,
+    pub usage: AgentContextUsageAnalysis,
     pub contributions: Vec<AgentContextContribution>,
 }
 ```
@@ -138,13 +140,18 @@ pub struct AgentContextRecipe {
   source range、first-kept coordinate、统计与真实created time。
 - normal provider round、compaction input、post-compaction continuation和context query调用同一个
   history materializer；frame排序、retained boundary和tool pairing只有一份实现。
+- current recipe按provider输入顺序包含typed ContextFrame、已接纳Tool definition与retained
+  Message；CompactionSummary固定排在其它权威ContextFrame之后。
+- `usage`从同一次物化得到的frames、tools与messages派生，不写入history；因此Inspector分类与
+  实际recipe成员使用同一估算口径。
 - tool call message使用call entry identity，tool result message使用result entry identity；
   retained membership由history boundary和materializer确定，不在Applied重复保存entry列表。
 - failed/lost/cancelled只写terminal evidence，current context revision与recipe保持上一个成功值。
 - `context_revision`由Started保存的source digest、canonical summary和retained boundary确定性生成；
   history fold校验该值。
 - Runtime context projection直接返回完整`AgentContextRecipe`。浏览器因此同时看到coordinate、
-  typed ContextFrame、retained Message与Opaque evidence，不把compaction summary当成recipe本身。
+  usage、typed ContextFrame、Tool definition、retained Message与Opaque evidence，不把
+  compaction summary当成recipe本身。
 
 ### 9.4 Validation & Error Matrix
 

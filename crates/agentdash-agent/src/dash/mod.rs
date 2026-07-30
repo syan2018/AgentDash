@@ -31,11 +31,13 @@ pub use lifecycle::{
 pub use service::{
     DashAgentChanges, DashAgentRead, DashAgentRepository, DashAgentRepositoryState,
     DashAgentRepositoryStore, DashAgentService, DashCommandReceipt, DashCommandRequest,
-    DashCompactionRequest, DashCompactionResult, DashCompactor, DashContextRecipe,
-    DashContextRecipeMessage, DashConversationNamer, DashConversationNamingRequest,
+    DashCompactionRequest, DashCompactionResult, DashCompactor, DashContextMessageUsage,
+    DashContextRecipe, DashContextRecipeMessage, DashContextToolUsage, DashContextUsageAnalysis,
+    DashContextUsageCategory, DashConversationNamer, DashConversationNamingRequest,
     DashEffectInspection, DashExecutionDependencies, DashHistoryCallbacks, DashHistoryCommit,
     DashPublicCommand, DashReceiptState, DashServiceError, DashTerminalOutcome,
-    NoopDashConversationNamer, NoopDashHistoryCallbacks, context_recipe_from_history_state,
+    NoopDashConversationNamer, NoopDashHistoryCallbacks,
+    compaction_context_frames_from_history_state, context_recipe_from_history_state,
 };
 pub use store::{
     CommandSettlement, DashAgentChange, DashAgentCommit, DashAgentStore, DashChangeCursor,

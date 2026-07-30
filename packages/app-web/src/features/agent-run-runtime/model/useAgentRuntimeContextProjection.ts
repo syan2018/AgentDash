@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ApiHttpError } from "../../../api/client";
 import type {
   AgentRuntimeContextProjection,
   AgentRuntimeView,
@@ -44,6 +45,41 @@ function committedProjection(
   return state.status === "error" && state.targetKey === key
     ? state.previous
     : null;
+}
+
+function waitForContextProjectionRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timeout = globalThis.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    function onAbort() {
+      globalThis.clearTimeout(timeout);
+      reject(signal.reason);
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+export async function fetchAgentRuntimeContextProjectionWithRetry(
+  target: AgentRunRuntimeTarget,
+  required: RuntimeContextCoordinate,
+  signal: AbortSignal,
+  retryDelaysMs: readonly number[] = [80, 160, 320, 640, 1_000],
+): Promise<AgentRuntimeContextProjection> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fetchAgentRunRuntimeContextProjection(target, required, signal);
+    } catch (error) {
+      const status = (error as ApiHttpError | null)?.status;
+      if (status !== 409 || attempt >= retryDelaysMs.length) throw error;
+      await waitForContextProjectionRetry(retryDelaysMs[attempt], signal);
+    }
+  }
 }
 
 export function validateAgentRuntimeContextProjectionCommit(
@@ -164,7 +200,7 @@ export function useAgentRuntimeContextProjection(input: {
       });
     });
 
-    void fetchAgentRunRuntimeContextProjection(target, required, controller.signal)
+    void fetchAgentRuntimeContextProjectionWithRetry(target, required, controller.signal)
       .then((projection) => {
         if (controller.signal.aborted || requestGeneration.current !== generation) return;
         fence.current.commit(key, projection, required);

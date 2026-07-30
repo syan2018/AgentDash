@@ -116,17 +116,19 @@ export type AgentConfigurationBoundary = "static_service" | "binding" | "create"
 
 export type AgentContextAuthority = "agent_owned" | "agent_observed";
 
-export type AgentContextContribution = { "kind": "frame", frame: ContextFrame, } | { "kind": "message", source_entry_id: string, role: AgentModelInputRole, content: string, tool_call_id: string | null, tool_calls: Array<AgentModelInputToolCall>, is_error: boolean, } | { "kind": "opaque", label: string, evidence: string, };
+export type AgentContextContribution = { "kind": "frame", frame: ContextFrame, } | { "kind": "tool", tool: AgentModelInputToolDefinition, } | { "kind": "message", source_entry_id: string, role: AgentModelInputRole, content: string, tool_call_id: string | null, tool_calls: Array<AgentModelInputToolCall>, is_error: boolean, } | { "kind": "opaque", label: string, evidence: string, };
 
 export type AgentContextCoordinate = { snapshot_revision: AgentSnapshotRevision, context_revision: string | null, recipe_digest: AgentPayloadDigest, authority: AgentContextAuthority, fidelity: AgentContextFidelity, };
 
 export type AgentContextFidelity = "exact" | "observed";
 
+export type AgentContextMessageUsage = { user_message_tokens: RuntimeU64, assistant_message_tokens: RuntimeU64, tool_call_tokens: RuntimeU64, tool_result_tokens: RuntimeU64, };
+
 export type AgentContextPackageId = string;
 
 export type AgentContextQuery = { source: AgentSourceCoordinate, required_revision: AgentSnapshotRevision | null, };
 
-export type AgentContextRecipe = { coordinate: AgentContextCoordinate, contributions: Array<AgentContextContribution>, };
+export type AgentContextRecipe = { coordinate: AgentContextCoordinate, usage: AgentContextUsageAnalysis, contributions: Array<AgentContextContribution>, };
 
 export type AgentContextSchemaVersion = RuntimeU64;
 
@@ -135,6 +137,12 @@ export type AgentContextSnapshot = { source: AgentSourceCoordinate, recipe: Agen
 export type AgentContextSourceCoordinate = string;
 
 export type AgentContextSourceRevision = string;
+
+export type AgentContextToolUsage = { name: string, definition_tokens: RuntimeU64, call_tokens: RuntimeU64, result_tokens: RuntimeU64, };
+
+export type AgentContextUsageAnalysis = { estimated_total_tokens: RuntimeU64, categories: Array<AgentContextUsageCategory>, messages: AgentContextMessageUsage, top_tools: Array<AgentContextToolUsage>, };
+
+export type AgentContextUsageCategory = { kind: string, label: string, source: string, estimated_tokens: RuntimeU64, };
 
 export type AgentControlAvailability = { "status": "available", evidence: AgentControlAvailabilityEvidence, } | { "status": "unavailable", reason: AgentControlUnavailabilityReason, evidence: AgentControlAvailabilityEvidence, };
 
@@ -221,6 +229,8 @@ export type AgentLifecycleStatus = "creating" | "active" | "suspended" | "closed
 export type AgentModelInputRole = "user" | "assistant" | "tool";
 
 export type AgentModelInputToolCall = { call_id: string, name: string, arguments: JsonValue, };
+
+export type AgentModelInputToolDefinition = { name: string, description: string, input_schema: JsonValue, capability_key: string, source: string, tool_path: string, context_usage_kind: string, };
 
 export type AgentObservation = { revision: AgentSnapshotRevision, context: AgentContextCoordinate, lifecycle: AgentLifecycleStatus, execution: AgentExecutionSnapshot, command_availability: { [key in AgentControlKind]?: AgentControlAvailability }, interactions: Array<AgentInteractionSnapshot>, thread_name: AgentThreadNameSnapshot | null, source_info: AgentSnapshotSource, conversation: Array<CanonicalConversationRecord>, };
 

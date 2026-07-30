@@ -7,6 +7,7 @@ use ts_rs::TS;
 use crate::{
     AgentContextPackageId, AgentContextSchemaVersion, AgentContextSourceCoordinate,
     AgentContextSourceRevision, AgentPayloadDigest, AgentSnapshotRevision, AgentSourceCoordinate,
+    RuntimeU64,
 };
 
 #[derive(
@@ -156,10 +157,25 @@ pub struct AgentModelInputToolCall {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentModelInputToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub input_schema: Value,
+    pub capability_key: String,
+    pub source: String,
+    pub tool_path: String,
+    pub context_usage_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentContextContribution {
     Frame {
         frame: agentdash_agent_protocol::ContextFrame,
+    },
+    Tool {
+        tool: AgentModelInputToolDefinition,
     },
     Message {
         source_entry_id: String,
@@ -173,6 +189,42 @@ pub enum AgentContextContribution {
         label: String,
         evidence: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentContextUsageCategory {
+    pub kind: String,
+    pub label: String,
+    pub source: String,
+    pub estimated_tokens: RuntimeU64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentContextMessageUsage {
+    pub user_message_tokens: RuntimeU64,
+    pub assistant_message_tokens: RuntimeU64,
+    pub tool_call_tokens: RuntimeU64,
+    pub tool_result_tokens: RuntimeU64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentContextToolUsage {
+    pub name: String,
+    pub definition_tokens: RuntimeU64,
+    pub call_tokens: RuntimeU64,
+    pub result_tokens: RuntimeU64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentContextUsageAnalysis {
+    pub estimated_total_tokens: RuntimeU64,
+    pub categories: Vec<AgentContextUsageCategory>,
+    pub messages: AgentContextMessageUsage,
+    pub top_tools: Vec<AgentContextToolUsage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -196,6 +248,7 @@ pub struct AgentContextCoordinate {
 #[serde(rename_all = "snake_case")]
 pub struct AgentContextRecipe {
     pub coordinate: AgentContextCoordinate,
+    pub usage: AgentContextUsageAnalysis,
     pub contributions: Vec<AgentContextContribution>,
 }
 

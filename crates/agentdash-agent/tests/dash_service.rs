@@ -791,6 +791,11 @@ async fn compaction_receives_the_same_materialized_session_context_as_a_normal_t
             .any(|frame| frame.rendered_text.contains("captured summary"))
     );
     assert_eq!(
+        recipe.frames.last().map(|frame| frame.kind),
+        Some(agentdash_agent_protocol::ContextFrameKind::CompactionSummary)
+    );
+    assert!(recipe.usage.estimated_total_tokens > 0);
+    assert_eq!(
         recipe
             .messages
             .iter()

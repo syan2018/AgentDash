@@ -80,7 +80,7 @@ authority，同时不会覆盖read窗口内已经观察到的ephemeral或刚提�
 | `Platform(SessionMetaUpdate)` | 按 key 分发 | 选择性可见 |
 | `TokenUsageUpdated` | 更新 `tokenUsage` state | 否（header 圆环） |
 
-`tokenUsage` 聚合后必须保留当前上下文与累计消耗的语义差异：header 圆环和上下文窗口百分比使用 `currentContextTokens / effectiveContextWindow`，累计统计使用 `cumulativeTotalTokens` 或 provider `total` breakdown。上下文查看窗口消费 session projection 返回的 `context_usage` 分类与 token usage state 的窗口信息；这样 UI 负责渲染，不重新实现后端的 token estimate 口径。
+`tokenUsage` 聚合后必须保留当前上下文与累计消耗的语义差异：header 圆环和上下文窗口百分比使用 `currentContextTokens / effectiveContextWindow`，累计统计使用 `cumulativeTotalTokens` 或 provider `total` breakdown。`executor_context_compacted`到达后旧provider pressure不再代表当前recipe，应清空并等待新的provider确认。上下文查看窗口消费session projection返回的`recipe.usage`分类与token usage state的窗口信息；这样UI负责渲染，不重新实现后端的token estimate口径。
 
 ### isPendingApproval 终态保护
 

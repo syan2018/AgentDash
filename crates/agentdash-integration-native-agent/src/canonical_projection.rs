@@ -33,6 +33,7 @@ pub(crate) fn history_records(
             .apply(entry)
             .expect("validated Dash history prefix must fold");
         records.extend(entry_records(
+            history,
             &history.session_id.0,
             entry,
             previous_surface.as_ref(),
@@ -43,6 +44,7 @@ pub(crate) fn history_records(
 }
 
 pub(crate) fn entry_records(
+    history: &AgentHistory,
     session_id: &str,
     entry: &AgentHistoryEntry,
     previous_surface: Option<&agentdash_agent::dash::DashSurface>,
@@ -201,9 +203,13 @@ pub(crate) fn entry_records(
                     turn_id: compaction_id.0.clone(),
                 },
             ));
-            events.extend(accepted_context_events(std::slice::from_ref(
-                summary_frame.as_ref(),
-            )));
+            events.extend(accepted_context_events(
+                &agentdash_agent::dash::compaction_context_frames_from_history_state(
+                    history,
+                    state,
+                    summary_frame.as_ref(),
+                ),
+            ));
         }
         HistoryPayload::CompactionCompleted {
             compaction_id,

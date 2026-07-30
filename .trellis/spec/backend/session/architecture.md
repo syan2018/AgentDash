@@ -31,8 +31,9 @@ live
 
 ## 3. Contracts
 
-- Product input通过 `AgentRunProductInputDeliveryPort` 同步交接。成功必须包含 concrete Agent
-  operation receipt；Agent不可用时当前请求失败。
+- Product input通过 `AgentRunProductInputDeliveryPort` 持久接收到 AgentRun Mailbox。
+  intake receipt 与 concrete Agent operation receipt 是两个不同事实；Agent不可用时已接收
+  envelope 保持 queued/blocked，并以同一 message/effect identity 恢复。
 - 相同 target/client identity/payload 派生同一 handoff/effect；不同 payload复用 identity是
   typed conflict。
 - conversation snapshot来自 `CompleteAgentService::read(source)`，并在内存中投影为平台
@@ -58,7 +59,7 @@ live
 | Condition | Required behavior |
 | --- | --- |
 | Product association缺失 | typed not bound/unavailable |
-| duplicate input | 返回原 Agent receipt |
+| duplicate input | 返回原 Mailbox message；若 concrete effect 已接纳则同时返回原 Agent receipt |
 | duplicate identity + different payload | typed conflict |
 | active turn/interaction已变化 | typed stale coordinate；refresh snapshot |
 | live gap/lag | 清除partial lane并重新read |
@@ -67,14 +68,14 @@ live
 
 ## 5. Good / Base / Bad Cases
 
-- Good：输入同步进入Agent；UI先收到已提交的用户输入与turn开始，再观察live delta，终态后
-  snapshot保存同一完整history。
+- Good：输入先进入durable Mailbox；idle时dispatcher提交新Turn，active时保持Pending，UI从
+  Mailbox与Agent snapshot两个owner投影观察状态，终态后snapshot保存同一完整history。
 - Base：连接中断时partial文本丢失，重连snapshot仍恢复Agent已提交内容。
 - Bad：平台保存journal/projection再与Agent history比较；两份conversation没有独立业务意义。
 
 ## 6. Tests Required
 
-- input identity/replay/conflict/unavailable测试。
+- Mailbox input identity/replay/conflict/unavailable recovery测试。
 - snapshot mapper覆盖所有message/item/terminal/interaction/compaction类型。
 - waiting items组合测试证明Product gate与Agent history分层。
 - durable input/turn顺序、live delta、gap、disconnect、snapshot recovery测试。

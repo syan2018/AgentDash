@@ -351,14 +351,12 @@ fn command_to_contract(
         },
         command_id: command.command_id,
         runtime_command: match command.kind {
-            app_agent_run::ConversationCommandKindModel::SubmitMessage => {
-                agentdash_agent_runtime_contract::AgentRuntimeCommandKind::SubmitInput
-            }
+            app_agent_run::ConversationCommandKindModel::SubmitMessage => None,
             app_agent_run::ConversationCommandKindModel::Cancel => {
-                agentdash_agent_runtime_contract::AgentRuntimeCommandKind::Interrupt
+                Some(agentdash_agent_runtime_contract::AgentRuntimeCommandKind::Interrupt)
             }
             app_agent_run::ConversationCommandKindModel::CompactContext => {
-                agentdash_agent_runtime_contract::AgentRuntimeCommandKind::RequestCompaction
+                Some(agentdash_agent_runtime_contract::AgentRuntimeCommandKind::RequestCompaction)
             }
         },
         shortcut: command.shortcut,

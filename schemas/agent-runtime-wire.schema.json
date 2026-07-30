@@ -2217,7 +2217,9 @@
         "rewrite_input",
         "rewrite_result",
         "add_context",
-        "emit_effect"
+        "emit_effect",
+        "continue_turn",
+        "refresh_surface"
       ],
       "type": "string"
     },
@@ -2374,6 +2376,36 @@
       ],
       "type": "object"
     },
+    "AgentHookOutcome": {
+      "properties": {
+        "continue_turn": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentInputContent"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentHookDecision"
+          },
+          "type": "array"
+        },
+        "diagnostics": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "refresh_surface": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "AgentHookPoint": {
       "enum": [
         "before_turn",
@@ -2396,7 +2428,13 @@
         "effects": {
           "additionalProperties": false,
           "properties": {
+            "continue_turn": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
             "emit_effect": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
+            "refresh_surface": {
               "$ref": "#/$defs/SemanticFidelity"
             }
           },
@@ -9440,12 +9478,12 @@
         }
       ]
     },
-    "Result_of_AgentHookDecision_or_AgentHostCallbackError": {
+    "Result_of_AgentHookOutcome_or_AgentHostCallbackError": {
       "oneOf": [
         {
           "properties": {
             "Ok": {
-              "$ref": "#/$defs/AgentHookDecision"
+              "$ref": "#/$defs/AgentHookOutcome"
             }
           },
           "required": [
@@ -10082,7 +10120,7 @@
               "type": "string"
             },
             "result": {
-              "$ref": "#/$defs/Result_of_AgentHookDecision_or_AgentHostCallbackError"
+              "$ref": "#/$defs/Result_of_AgentHookOutcome_or_AgentHostCallbackError"
             }
           },
           "required": [

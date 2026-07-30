@@ -14,6 +14,7 @@ use agentdash_agent_runtime_contract::{
 use agentdash_application_ports::agent_frame_materialization::{
     AgentRunFrameConstructionPort, FrameConstructionCommand,
 };
+use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentRunLineage, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
@@ -24,9 +25,10 @@ use serde_json::json;
 use thiserror::Error;
 
 use crate::agent_run::{
-    AgentRunCompleteAgentResolverPort, AgentRunProductLaunchRequest, AgentRunProductLaunchService,
+    AgentRunCompleteAgentResolverPort, AgentRunProductInputDeliveryPort,
+    AgentRunProductLaunchRequest, AgentRunProductLaunchService,
     AgentRunProductRuntimeBindingRepository, AgentRunProductRuntimeProvisioningRequest,
-    ProductAgentFrameRef, ProductAgentSurfaceFacts,
+    DeliverAgentRunProductInput, ProductAgentFrameRef, ProductAgentSurfaceFacts,
 };
 
 use super::{
@@ -202,11 +204,18 @@ impl AgentRunForkRuntimePort for ProductAgentRunForkRuntimeAdapter {
 /// Direct concrete-Agent fresh Companion protocol adapter.
 pub struct ProductCompanionFreshRuntimeAdapter {
     product_launch: Arc<AgentRunProductLaunchService>,
+    product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
 }
 
 impl ProductCompanionFreshRuntimeAdapter {
-    pub fn with_product_launch(product_launch: Arc<AgentRunProductLaunchService>) -> Self {
-        Self { product_launch }
+    pub fn new(
+        product_launch: Arc<AgentRunProductLaunchService>,
+        product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
+    ) -> Self {
+        Self {
+            product_launch,
+            product_input_delivery,
+        }
     }
 
     fn initial_context(
@@ -276,14 +285,21 @@ impl ProductCompanionFreshRuntimeAdapter {
                 ))
             }
             CompanionFreshOperation::SubmitFirstInput => {
-                self.product_launch
-                    .submit_input(
-                        saga.provisioning().target.clone(),
-                        identity.runtime_operation_id.as_str().to_owned(),
-                        vec![AgentInputContent::Text {
+                self.product_input_delivery
+                    .deliver(DeliverAgentRunProductInput {
+                        target: saga.provisioning().target.clone(),
+                        origin: AgentInputOrigin::Companion,
+                        content: vec![AgentInputContent::Text {
                             text: saga.plan().first_submit_input.text.clone(),
                         }],
-                    )
+                        source: AgentInputSourceIdentity::new(
+                            "companion",
+                            "fresh_first_input",
+                            "agent",
+                        )
+                        .with_correlation_ref(identity.effect_id.to_string()),
+                        client_command_id: identity.runtime_operation_id.as_str().to_owned(),
+                    })
                     .await
                     .map_err(|error| error.to_string())?;
                 Ok(CompanionFreshEffectOutcome::Applied(

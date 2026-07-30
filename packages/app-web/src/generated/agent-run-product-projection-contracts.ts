@@ -9,7 +9,7 @@ export type AgentInput = { content: Array<AgentInputContent>, };
 
 export type AgentRunProductProjectionContractSchema = { runtime_command: AgentRunProductRuntimeCommandRequest, runtime_command_receipt: AgentRuntimeOperationReceipt, terminal_snapshot: AgentRunTerminalSnapshot, terminal_change_page: AgentRunTerminalChangePage, };
 
-export type AgentRunProductRuntimeCommand = { "kind": "resume" } | { "kind": "submit_input", content: Array<AgentInputContent>, } | { "kind": "interrupt" } | { "kind": "request_compaction" } | { "kind": "resolve_interaction", interaction_id: AgentInteractionId, response: AgentInteractionResponse, } | { "kind": "close" };
+export type AgentRunProductRuntimeCommand = { "kind": "resume" } | { "kind": "interrupt" } | { "kind": "request_compaction" } | { "kind": "resolve_interaction", interaction_id: AgentInteractionId, response: AgentInteractionResponse, } | { "kind": "close" };
 
 export type AgentRunProductRuntimeCommandRequest = { client_command_id: string, command: AgentRunProductRuntimeCommand, };
 

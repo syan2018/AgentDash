@@ -14,6 +14,8 @@ import type {
   SessionChatViewIntents,
 } from "../../session";
 import type { ExecutorConfig } from "../../../services/executor";
+import type { MailboxMessageView } from "../../../generated/agent-run-mailbox-contracts";
+import type { ConversationWaitingItemView } from "../../../generated/workflow-contracts";
 
 // Adapter boundary to the reusable SessionChatView shell. Workspace supplies Product bindings;
 // AgentRuntimeView supplies execution and command availability.
@@ -23,6 +25,18 @@ export type AgentRunChatModel = SessionChatModel;
 export type AgentRunChatModelConfig = SessionChatModelConfig;
 export type AgentRunChatSubmitIntent = SessionChatSubmitIntent;
 export type AgentRunChatViewIntents = SessionChatViewIntents;
+
+export interface AgentRunChatMailboxModel {
+  messages: MailboxMessageView[];
+  waiting_items: ConversationWaitingItemView[];
+  paused: boolean;
+  user_attention: boolean;
+  hide_system_steer_messages: boolean;
+  can_resume: boolean;
+  promoteAction?: AgentRunChatCommandModel;
+  deleteAction?: AgentRunChatCommandModel;
+  resumeAction?: AgentRunChatCommandModel;
+}
 
 export interface LocalDraftStartAction {
   source: "local_draft";
@@ -277,7 +291,10 @@ function normalizeShortcut(value: string | undefined): AgentRunChatCommandModel[
   return undefined;
 }
 
-function projectCommand(command: AgentRunConversationCommand): AgentRunChatCommandModel {
+function projectCommand(
+  command: AgentRunConversationCommand,
+  mailboxComposerEnabled = false,
+): AgentRunChatCommandModel {
   if (isLocalDraftStartAction(command)) {
     return {
       command_id: command.command_id,
@@ -290,13 +307,18 @@ function projectCommand(command: AgentRunConversationCommand): AgentRunChatComma
       shortcut: normalizeShortcut(command.shortcut),
     };
   }
+  const mailboxComposerInput = command.kind === "submit_message";
   return {
     command_id: command.command_id,
     kind: command.kind,
     runtimeCommand: command.runtime_command,
-    enabled: false,
-    unavailable_reason: "Agent Runtime view 正在加载。",
-    disabled_code: "runtime_view_loading",
+    enabled: mailboxComposerInput ? mailboxComposerEnabled : false,
+    unavailable_reason: mailboxComposerInput
+      ? mailboxComposerEnabled ? undefined : "当前用户不能控制该 AgentRun。"
+      : "Agent Runtime view 正在加载。",
+    disabled_code: mailboxComposerInput
+      ? mailboxComposerEnabled ? undefined : "agent_run_control_forbidden"
+      : "runtime_view_loading",
     requires_input: command.requires_input,
     executor_config_policy: normalizeExecutorConfigPolicy(command.executor_config_policy),
     shortcut: normalizeShortcut(command.shortcut),
@@ -322,7 +344,8 @@ export function conversationCommandByKind(
 export function projectAgentRunChatCommandState(
   commandState: AgentRunConversationCommandState,
 ): AgentRunChatCommandState {
-  const runtimeCommands = commandState.commands.commands.map(projectCommand);
+  const runtimeCommands = commandState.commands.commands.map((command) =>
+    projectCommand(command, commandState.commands.ownership.current_user_controls_run));
   const commands = commandState.localDraftAction
     ? [projectCommand(commandState.localDraftAction), ...runtimeCommands]
     : runtimeCommands;

@@ -6,5 +6,5 @@
     "agent-runtime-wire-codecs.ts",
     "agent-runtime-wire.schema.json"
   ],
-  "digest": "sha256:b8f512bb08a2ecae931ef5962da6e76b6152e452a9aefef84237ebdbc8dae56a"
+  "digest": "sha256:18e5f587efd5c5ab440d518efd8c35ec8765e7067d90acd417993cf2929a478c"
 }

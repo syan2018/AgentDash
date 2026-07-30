@@ -1253,7 +1253,9 @@ pub struct AgentRunOwnershipView {
 pub struct ConversationCommandView {
     pub kind: ConversationCommandKind,
     pub command_id: String,
-    pub runtime_command: AgentRuntimeCommandKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_command: Option<AgentRuntimeCommandKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub shortcut: Option<String>,

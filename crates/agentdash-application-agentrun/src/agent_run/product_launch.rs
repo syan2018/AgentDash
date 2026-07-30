@@ -242,22 +242,6 @@ impl AgentRunProductLaunchService {
         Ok(binding)
     }
 
-    pub async fn submit_input(
-        &self,
-        target: AgentRunTarget,
-        client_command_id: String,
-        content: Vec<AgentInputContent>,
-    ) -> Result<AgentRuntimeOperationReceipt, AgentRunProductLaunchError> {
-        self.commands
-            .execute(AgentRunProductCommandRequest {
-                target,
-                client_command_id,
-                command: AgentRunProductCommand::SubmitInput { content },
-            })
-            .await
-            .map_err(|error| AgentRunProductLaunchError::Command(error.to_string()))
-    }
-
     pub async fn load_product_binding(
         &self,
         target: &AgentRunTarget,

@@ -36,6 +36,7 @@ pub use operation_script::{RhaiOperationScriptConfig, RhaiOperationScriptEngine}
 pub use persistence::postgres::PostgresAgentFrameRepository;
 pub use persistence::postgres::PostgresAgentLineageRepository;
 pub use persistence::postgres::PostgresAgentRunForkGraphStore;
+pub use persistence::postgres::PostgresAgentRunMailboxRepository;
 pub use persistence::postgres::PostgresAgentRunProductRuntimeBindingRepository;
 pub use persistence::postgres::PostgresAgentRunTerminalProjectionStore;
 pub use persistence::postgres::PostgresAuthSessionRepository;

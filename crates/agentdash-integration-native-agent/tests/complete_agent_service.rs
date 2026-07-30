@@ -30,19 +30,19 @@ use agentdash_agent_runtime_contract::{
     AgentControlUnavailabilityReason, AgentEffectIdentity, AgentEffectInspectionState,
     AgentForkCutoffKind, AgentForkPoint, AgentHookAction, AgentHookBlockingSemantics,
     AgentHookDecision, AgentHookDefinitionId, AgentHookInvocation, AgentHookMutationKind,
-    AgentHookPoint, AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbackError,
-    AgentHostCallbacks, AgentIdempotencyKey, AgentInput, AgentInputContent, AgentObservationQuery,
-    AgentPayloadDigest, AgentProfileDigest, AgentReadQuery, AgentReceiptState, AgentServiceError,
-    AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshotRevision, AgentSourceCoordinate,
-    AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolExecutionEvent,
-    AgentToolExecutionSequence, AgentToolExecutionStream, AgentToolInvocation, AgentToolName,
-    AgentToolProvenance, AgentToolResult, AgentToolSemanticFacet, AgentToolUpdateSemantics,
-    ApplyBoundAgentSurface, BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService,
-    ContextAuthorityKind, ContextProvenance, CreateAgentCommand, ForkAgentCommand,
-    InitialAgentContextPackage, InitialContextAppliedEvidence, InitialContextContribution,
-    InitialContextDeliveryFidelity, InitialContextMode, ResumeAgentCommand,
-    RevokeBoundAgentSurface, SemanticFidelity,
+    AgentHookOutcome, AgentHookPoint, AgentHookTiming, AgentHostCallbackBinding,
+    AgentHostCallbackError, AgentHostCallbacks, AgentIdempotencyKey, AgentInput, AgentInputContent,
+    AgentObservationQuery, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
+    AgentReceiptState, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
+    AgentSnapshotRevision, AgentSourceCoordinate, AgentSurfaceContributionPayload,
+    AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet,
+    AgentTerminalOutcome, AgentToolDelivery, AgentToolExecutionEvent, AgentToolExecutionSequence,
+    AgentToolExecutionStream, AgentToolInvocation, AgentToolName, AgentToolProvenance,
+    AgentToolResult, AgentToolSemanticFacet, AgentToolUpdateSemantics, ApplyBoundAgentSurface,
+    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind,
+    ContextProvenance, CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
+    InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
+    InitialContextMode, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
 use agentdash_integration_native_agent::{
     DashAgentCompleteService, DashCompleteAgentStore, DashCompleteAtomicCommit,
@@ -440,8 +440,8 @@ impl AgentHostCallbacks for FixtureHostCallbacks {
     async fn invoke_hook(
         &self,
         _: AgentHookInvocation,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
-        Ok(AgentHookDecision::Allow)
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError> {
+        Ok(AgentHookOutcome::allow())
     }
 }
 
@@ -481,8 +481,8 @@ impl AgentHostCallbacks for ProgressHostCallbacks {
     async fn invoke_hook(
         &self,
         _: AgentHookInvocation,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
-        Ok(AgentHookDecision::Allow)
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError> {
+        Ok(AgentHookOutcome::allow())
     }
 }
 
@@ -543,8 +543,8 @@ impl AgentHostCallbacks for BlockingPatchHostCallbacks {
     async fn invoke_hook(
         &self,
         _: AgentHookInvocation,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
-        Ok(AgentHookDecision::Allow)
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError> {
+        Ok(AgentHookOutcome::allow())
     }
 }
 
@@ -713,8 +713,8 @@ impl AgentHostCallbacks for SurfaceGenerationHostCallbacks {
     async fn invoke_hook(
         &self,
         _: AgentHookInvocation,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
-        Ok(AgentHookDecision::Allow)
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError> {
+        Ok(AgentHookOutcome::allow())
     }
 }
 
@@ -747,7 +747,7 @@ impl AgentHostCallbacks for HookExecutionCallbacks {
     async fn invoke_hook(
         &self,
         call: AgentHookInvocation,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError> {
         assert_eq!(call.meta.binding_generation, AgentBindingGeneration(11));
         assert_eq!(call.meta.source.as_str(), "dash-hook-execution");
         assert_eq!(call.meta.turn_id.as_str(), "turn:hook-input");
@@ -756,20 +756,24 @@ impl AgentHostCallbacks for HookExecutionCallbacks {
         match call.point {
             AgentHookPoint::BeforeTool => {
                 self.before.fetch_add(1, Ordering::SeqCst);
-                Ok(AgentHookDecision::ReplaceInput {
-                    input: serde_json::json!({"arguments": {"rewritten": true}}),
-                })
+                Ok(AgentHookOutcome::from_decision(
+                    AgentHookDecision::ReplaceInput {
+                        input: serde_json::json!({"arguments": {"rewritten": true}}),
+                    },
+                ))
             }
             AgentHookPoint::AfterTool => {
                 self.after.fetch_add(1, Ordering::SeqCst);
-                Ok(AgentHookDecision::ReplaceResult {
-                    result: serde_json::json!({
-                        "content": "rewritten-result",
-                        "is_error": false
-                    }),
-                })
+                Ok(AgentHookOutcome::from_decision(
+                    AgentHookDecision::ReplaceResult {
+                        result: serde_json::json!({
+                            "content": "rewritten-result",
+                            "is_error": false
+                        }),
+                    },
+                ))
             }
-            _ => Ok(AgentHookDecision::Allow),
+            _ => Ok(AgentHookOutcome::allow()),
         }
     }
 }

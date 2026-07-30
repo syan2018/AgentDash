@@ -3,6 +3,7 @@ mod conversation_snapshot;
 mod display_title;
 pub mod frame;
 pub(crate) mod lifecycle_read_model_facade;
+pub mod mailbox;
 mod product_command_facade;
 mod product_delete;
 mod product_fork;

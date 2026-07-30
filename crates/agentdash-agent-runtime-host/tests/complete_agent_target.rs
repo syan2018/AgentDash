@@ -492,8 +492,8 @@ impl CompleteAgentHookHandler for AllowHookHandler {
     async fn invoke(
         &self,
         _callback: ResolvedCompleteAgentHookCallback,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
-        Ok(AgentHookDecision::Allow)
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError> {
+        Ok(AgentHookOutcome::allow())
     }
 }
 

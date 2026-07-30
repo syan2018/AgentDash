@@ -1,5 +1,5 @@
 use agentdash_agent_runtime_contract::{
-    AgentHookAction, AgentHookDecision, AgentHostCallbackError, AgentHostCallbackErrorCode,
+    AgentHookAction, AgentHookOutcome, AgentHostCallbackError, AgentHostCallbackErrorCode,
 };
 use async_trait::async_trait;
 
@@ -25,13 +25,13 @@ impl CompleteAgentHookHandler for RuntimePlatformHookHandler {
     async fn invoke(
         &self,
         callback: ResolvedCompleteAgentHookCallback,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError> {
         if callback
             .invocation
             .allowed_actions
             .contains(&AgentHookAction::AllowOrDeny)
         {
-            return Ok(AgentHookDecision::Allow);
+            return Ok(AgentHookOutcome::allow());
         }
         Err(AgentHostCallbackError::new(
             AgentHostCallbackErrorCode::Unsupported,
@@ -62,7 +62,7 @@ mod tests {
             .invoke(callback(BTreeSet::from([AgentHookAction::AllowOrDeny])))
             .await
             .expect("allow/deny hook");
-        assert_eq!(decision, AgentHookDecision::Allow);
+        assert_eq!(decision, AgentHookOutcome::allow());
     }
 
     #[tokio::test]

@@ -197,11 +197,14 @@ POST /agent-runs/{run_id}/agents/{agent_id}/runtime/commands
 
 ### 3. Contracts
 
-- `AgentRunProductView` 只包含 Lifecycle identity/shell、current AgentFrame、`model_config`、subject associations 与 `resource_surface`；不嵌入 Runtime snapshot、mailbox command policy或旧 RuntimeSession source anchor。
+- `AgentRunProductView` 只包含 Lifecycle identity/shell、current AgentFrame、`model_config`、
+  subject associations 与 `resource_surface`。Mailbox 使用独立 generated projection，Runtime
+  snapshot继续属于 `AgentRuntimeView`。
 - Runtime command enabled 状态只读取 `AgentRuntimeView.command_availability`。Workspace action ID
   只绑定 Runtime command kind，不携带自造 stale guard。
-- Draft create可以携带model/runtime/backend selection；既有Run的 submit/interrupt/compact/
-  interaction response统一发送generated Runtime command。
+- Draft create可以携带model/runtime/backend selection；既有 Run 的 composer input 发送
+  generated Mailbox request，interrupt/compact/interaction response发送 generated Runtime
+  control command。
 - Runtime event只提供interaction identity与展示内容；response按钮读取刷新后的`interaction_respond` availability。context popup直接消费`RuntimeContextView`并用target generation丢弃迟到响应。
 - 服务端在 mutating command 前 inspect 当前 Runtime snapshot并生成 `AgentRunCommandGuard`，因此请求只携带幂等 `client_command_id` 与命令 payload。
 - workspace product 与 Runtime connection 独立加载、独立记录错误；Workspace refresh失败不得
@@ -231,7 +234,8 @@ POST /agent-runs/{run_id}/agents/{agent_id}/runtime/commands
 ### 6. Tests Required
 
 - state model测试首次单路失败与refresh单路失败保留语义。
-- command-state测试submit/steer/interrupt/compact只由`command_availability`决定。
+- command-state测试显式 Steer/interrupt/compact读取`command_availability`与 expected turn；
+  Queue/Pending/暂停和排序读取 Mailbox projection。
 - service测试URL encoding与request不再发送dead command precondition。
 - service/feed/context测试覆盖generic interaction route、四类Runtime lifecycle invalidation与target-key迟到响应隔离。
 - generated contract check、frontend typecheck及真实Draft create-run验证model/surface/runtime三条事实一致。

@@ -5,6 +5,7 @@ interface ComposerSendButtonProps {
   isSending: boolean;
   isCancelling: boolean;
   cancelDisabled: boolean;
+  hasContent: boolean;
   submitCommand?: SessionChatCommandModel;
   onSubmit: (command: SessionChatCommandModel) => void;
   onCancel: () => void;
@@ -33,13 +34,17 @@ export function ComposerSendButton({
   isSending,
   isCancelling,
   cancelDisabled,
+  hasContent,
   submitCommand,
   onSubmit,
   onCancel,
 }: ComposerSendButtonProps) {
   const submitDisabled = isSending || !submitCommand?.enabled;
+  const submitTitle = isRunning
+    ? "排队（Ctrl/Cmd+Enter 可 Steer）"
+    : optionalCommandTitle(submitCommand, "发送");
 
-  if (isRunning) {
+  if (isRunning && !hasContent) {
     return (
       <button
         type="button"
@@ -59,7 +64,7 @@ export function ComposerSendButton({
       type="button"
       disabled={submitDisabled}
       onClick={() => { if (submitCommand) onSubmit(submitCommand); }}
-      title={isSending ? "发送中…" : optionalCommandTitle(submitCommand, "发送")}
+      title={isSending ? "发送中…" : submitTitle}
       className="flex h-8 w-8 items-center justify-center rounded-[50%] bg-foreground text-background transition-opacity hover:opacity-80 disabled:opacity-30"
     >
       {isSending ? <Spinner /> : <ArrowUpIcon />}

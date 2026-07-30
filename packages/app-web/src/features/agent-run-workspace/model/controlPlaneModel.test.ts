@@ -36,7 +36,7 @@ function command(input: {
   return {
     kind: input.kind,
     command_id: input.command_id,
-    runtime_command: runtimeCommand,
+    runtime_command: input.kind === "submit_message" ? undefined : runtimeCommand,
     requires_input: input.kind === "submit_message",
     executor_config_policy: "optional",
     placement: input.placement ?? ["composer_primary"],

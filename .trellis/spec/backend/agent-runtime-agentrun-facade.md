@@ -1,13 +1,13 @@
-# AgentRun Product / Agent Facade
+# AgentRun Product / Complete Agent Facade
 
 ## 1. Scope / Trigger
 
-本规范适用于 AgentRun launch、input、fork、surface rebind、conversation read/live stream、
-workspace/list/delete 与 Lifecycle/Companion/Routine/Workflow 对 Agent 的调用。修改 Product
-command、association、AgentFrame 或 presentation query 时必须复核。
+本规范适用于 AgentRun launch、Mailbox input、fork、surface rebind、conversation read/live、
+workspace/list/delete，以及 Lifecycle/Companion/Routine/Workflow/Channel 对 Agent 的调用。
+修改 Product command、Mailbox、association、AgentFrame 或 presentation query 时必须复核。
 
-Facade 的职责是组合 Product shell 与 concrete Agent authority，不保存一套“Product Runtime
-执行状态”。
+Facade 组合 Product shell 与 concrete Agent authority；AgentRun Product 拥有输入交付承诺，
+Complete Agent拥有执行历史。
 
 ## 2. Signatures
 
@@ -22,164 +22,99 @@ pub struct DeliverAgentRunProductInput {
 
 pub struct AgentRunProductInputDelivery {
     pub handoff_id: Uuid,
-    pub operation_receipt: AgentRuntimeOperationReceipt,
+    pub mailbox_message_id: Uuid,
+    pub operation_receipt: Option<AgentRuntimeOperationReceipt>,
+    pub queued: bool,
 }
 
-pub trait AgentRunProductInputDeliveryPort {
-    async fn deliver(
-        &self,
-        command: DeliverAgentRunProductInput,
-    ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError>;
-}
-
-pub trait LifecycleAgentRepository {
-    async fn initialize_title_from_agent(
-        &self,
-        target: &AgentRunTarget,
-        title: &str,
-    ) -> Result<bool, DomainError>;
+pub enum AgentRunMailboxDeliveryIntent {
+    Queue,
+    Steer { expected_turn_id: AgentTurnId },
 }
 ```
-
-ProjectAgent Draft 创建与用户输入是两个明确命令：
 
 ```http
 POST /projects/{project_id}/agents/{project_agent_id}/agent-runs
-POST /agent-runs/{run_id}/agents/{agent_id}/runtime/commands
+POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit
+GET  /agent-runs/{run_id}/agents/{agent_id}/mailbox
+POST /agent-runs/{run_id}/agents/{agent_id}/mailbox/resume
+POST /agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/promote
+PUT  /agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}/move
+DELETE /agent-runs/{run_id}/agents/{agent_id}/mailbox/messages/{message_id}
 ```
 
-前者只返回已建立的 `run_id + agent_id + frame_id`；后者才携带
-`AgentInputContent[] + client_command_id` 并返回 concrete Agent receipt。
-
-```rust
-pub enum AgentRunProductRuntimeViewObservation {
-    Absent { requested_target: AgentRunTarget },
-    Current {
-        product_binding: AgentRunProductRuntimeBinding,
-        snapshot: AgentRuntimeView,
-    },
-}
-```
-
-`AgentRunProductProjectionGateway::runtime_view` 从 binding 解析 service/source，调用
-`CompleteAgentService::read` 并即时 normalize；它不读取 Runtime projection repository。
+Runtime `/runtime/commands` 承载 interrupt、compaction、interaction 等即时控制；
+Composer input使用Mailbox route。
 
 ## 3. Contracts
 
 - launch 先写 LifecycleRun/LifecycleAgent/AgentFrame 与 execution profile intent，再 materialize
-  当前 Complete Agent，创建 source，最后把 stable association 写回 LifecycleAgent owner
-  document。
-- ProjectAgent Draft launch只建立可读取、可订阅的Product/Agent target。首条用户输入在客户端进入
-  该target后使用标准 Runtime `submit_input` command同步handoff，原因是update subscriber必须先拥有真实source
-  coordinate，才能观察user input → turn start → partial output的完整顺序。
-- `runtime_thread_id` 是 Product/Agent 桥接坐标；concrete source coordinate 仍由 Agent owner。
-- input handoff 是同步合同。`handoff_id` 从 target + client command id 确定性派生；成功返回
-  concrete operation receipt，不存在 queued 结果。
-- concrete Agent 首次生成非空 thread name 后，同一次 input handoff 从 authoritative snapshot
-  调用 `initialize_title_from_agent` 初始化 `LifecycleAgent.workspace_title`。该更新必须以
-  `run_id + agent_id + title absent` 为条件原子执行；此后 AgentRun 标题由 Product 独立持有，
-  Agent-native thread name 的后续变化不会覆盖用户修改。
-- Product 不提供离线输入队列。Agent unavailable 直接返回 typed error，调用者使用同一 client
-  identity 重试。
-- Companion、Routine、Workflow 与 human response 都调用同一个
-  `AgentRunProductInputDeliveryPort`。其 owner-local document可以保存 handoff/operation
-  coordinate，但不能建立 mailbox lifecycle。
-- list/workspace/delete 先读取 Product shell。标题只从 `LifecycleAgent.workspace_title` 解析。
-  Project AgentRun list 是轻量 Product 文档查询，其 query dependencies、application model 与
-  response contract均不包含 Complete Agent projection；workspace详情可按自身合同组合 Agent
-  snapshot，但不得改变 Product shell 的成立条件。
-- conversation snapshot 每次来自 concrete Agent authoritative read。`waiting_items` 来自
-  LifecycleGate 等 Product owner，和 Agent history在 response 组合，不合并为 mailbox。
-- live stream 直接订阅 concrete Agent source 的 process-local batches。每个浏览器connection
-  先订阅source，再读取conversation baseline并作为首帧发送；断线重连建立新epoch和新baseline，
-  因为process-local lane sequence只描述本次连接内的顺序。
-- Product live gateway只校验source并无损转发owner batch，不为每条presentation读取完整
-  authoritative snapshot；完整read只服务baseline、显式刷新和lane失效恢复。
-- AgentFrame history与 association保存在 LifecycleAgent owner-local JSONB；Dash/Codex history
-  不进入 Product document。
-- binding digest只 attests Product association document 本身。它不包含 Host generation、
-  applied surface、Agent revision 或 availability，也不与这些值做跨 owner equality gate。
-- surface rebind 编译当前 immutable AgentFrame intent并通过当前 Host route交给 concrete Agent。
-  applied evidence由 Agent receipt/inspection证明，不另建 Product snapshot table。
+  当前 Complete Agent、创建 source，最后把 stable association写回 LifecycleAgent。
+- ProjectAgent Draft launch只建立可读取、可订阅的 Product/Agent target。首条用户输入在目标页
+  建立 history/live baseline后进入同一 Mailbox composer intake，因而首条与 follow-up共享
+  durability、source identity和Queue/Steer语义。
+- Mailbox以 `run_id + agent_id` 为 owner。每条消息保存 payload、origin、source identity、
+  delivery/barrier/drain mode、priority/order、claim lease和 concrete delivery evidence。
+- Queue在 idle 时提交新Turn，在active时保持Pending；显式Steer携带匹配active turn的
+  `expected_turn_id`，只在当前owner允许Steer时调用 concrete `AgentCommand::Steer`。
+- `handoff_id/mailbox_message_id`证明 Product 已接收；`operation_receipt`证明 concrete Agent
+  已接纳。调用方分别保存这两类证据，不以其中一个推断另一个。
+- dispatcher按owner获取lease，以 message派生稳定Agent effect identity。execute结果未知时
+  inspect同一identity；`NotApplied`才重派，`Unknown`保留恢复状态。
+- Companion先形成Channel delivery intent，再以稳定delivery identity materialize Mailbox。
+  Routine、Workflow、Canvas和human response使用同一个 Product input delivery port。
+- conversation snapshot来自 concrete Agent authoritative read；Mailbox与waiting items作为
+  独立Product projection展示，不并入Agent history。
+- live stream直接订阅 concrete Agent process-local batches；Mailbox worker的正确性来自
+  PostgreSQL scan/lease与authoritative read，live terminal只用于低延迟唤醒。
+- list/workspace/delete先读取Product shell。AgentFrame history与association保存在
+  LifecycleAgent owner-local JSONB；Dash/Codex history不进入Product document。
 
 ## 4. Validation & Error Matrix
 
 | 条件 | 结果 |
 | --- | --- |
-| target 不存在或跨 Project | side effect 前 not found/forbidden |
-| input 为空或 client command id 非法 | bad request |
-| Agent unavailable | typed unavailable；无 pending Product row |
-| duplicate client command | 返回同一 Agent effect/operation receipt |
-| 相同 client id 不同 payload | typed conflict |
-| Agent title 为空 | 不初始化 AgentRun title，保持 pending |
-| AgentRun title 已存在 | conditional update 返回 false，保留当前 Product title/source |
-| 首次标题持久化失败 | handoff 返回 typed unavailable；调用者以同一 client id 重试，Agent effect 不重复 |
-| list item 无 association | 返回 Product item；list不解析association |
-| Complete Agent service/source不可用 | list结果与延迟不受影响；workspace Agent enrichment按typed unavailable处理 |
-| binding 指向非 owner AgentFrame | Product document conflict |
-| live stream gap/disconnect | 客户端重读 snapshot |
-| delete Product owner | 删除 Product 局部 document；concrete Agent 按自己的生命周期关闭/删除 |
+| target不存在或跨Project | side effect前 not found/forbidden |
+| input为空或client command id非法 | bad request |
+| Queue到达active turn | durable Pending |
+| Steer缺少/错配expected turn | typed stale；不创建Steer effect |
+| Agent unavailable | envelope保持queued/blocked并可恢复 |
+| duplicate source identity且payload一致 | 返回同一Mailbox message |
+| duplicate source identity但payload不同 | typed conflict |
+| dispatcher lease被其它owner持有 | 本worker跳过该AgentRun |
+| execute response unknown | 保持consuming/unknown并inspect同一effect |
+| Complete Agent service/source不可用 | Product shell与Mailbox仍可读 |
+| live stream gap/disconnect | 客户端重读snapshot；worker继续按durable scan运行 |
 
 ## 5. Good / Base / Bad Cases
 
-- Good：Project Agent launch 创建 owner-local frames/association并立即返回target；前端进入该target、
-  完成authoritative history baseline后用标准input handoff投递首条输入，同时收到live delta。
-- Good：Dash 首次命名写入自身 history 后，input handoff 将同名值仅初始化到 LifecycleAgent；用户
-  后续重命名只修改 LifecycleAgent，列表与 workspace 不再依赖 Dash service 可用性。
-- Base：Codex/Dash 暂时离线，列表仍展示 AgentRun shell；进入workspace时再解析当前Agent状态。
-- Bad：List 为了展示状态逐项读取 Complete Agent snapshot。全量Agent history既不是列表事实，
-  也会让列表延迟随Agent数量和history体积增长。
-- Bad：Companion 把同步输入命名为 mailbox 并保存 queued/claim/settlement。下游 Agent receipt
-  已经是唯一接收证据。
+- Good：active turn期间用户按Enter，消息立即显示Pending；terminal后dispatcher按顺序提交下一Turn。
+- Good：Ctrl/Cmd+Enter携带当前turn id，Native在safe boundary消费Steer，authoritative history
+  保留submission kind与source。
+- Base：Agent暂时离线，列表和Mailbox仍可读；恢复后同一message/effect identity继续投递。
+- Bad：producer直接调用concrete Submit/Steer会跳过Product durability、source dedup与顺序承诺。
 
 ## 6. Tests Required
 
-- launch tests 覆盖 Product facts → Agent create → association commit，Create请求不携带或执行
-  Agent input，以及Create applied 后回包丢失时的同 effect inspection。
-- input tests 覆盖 deterministic handoff、accepted receipt、duplicate、payload conflict 与
-  unavailable 零持久化。
-- title tests 覆盖首次非空初始化、空标题忽略、已有 Product title 不覆盖、持久化失败后同 client id
-  重试，以及 list/workspace 始终返回已存标题。
-- list tests 通过 `ProjectAgentRunListQueryDeps` 的编译期依赖面证明没有 Complete Agent projection，
-  并覆盖分页、lineage、subject与Product lifecycle状态；workspace tests单独注入 binding missing、
-  service resolve failure与Agent read failure，断言 Product shell仍返回。
-- conversation tests 覆盖 Agent history + LifecycleGate waiting items，且 contract没有 mailbox。
-- stream tests 覆盖 live delta 和 disconnect → authoritative snapshot。
-- Companion/Routine/Workflow tests 断言统一 input handoff port 与 owner-local receipt。
-- migration tests 断言 frames/association owner-local，Product schema没有同步 input handoff 的
-  独立 queue/receipt/global binding tables。
+- launch测试覆盖Product facts → Agent create → association commit；Draft首条输入使用Mailbox route。
+- Mailbox PostgreSQL测试覆盖source dedup、owner lease、顺序claim、pause/resume、move、delete、
+  expired claim recovery与accepted receipt恢复。
+- command测试覆盖idle Queue、active Queue、explicit Steer、stale expected turn和Submit/Steer不互换。
+- producer测试覆盖Channel/Companion/Routine/Workflow/Canvas均生成稳定Mailbox source。
+- list/workspace测试在Agent resolve/read失败时仍返回Product shell与Mailbox。
+- frontend service/component测试覆盖Queue/Steer request差异、Waiting/Steer/Pending、promote、
+  recall/retry、reorder、delete、resume及错误详情。
 
 ## 7. Wrong vs Correct
 
 ```rust
-// Wrong: 在 Agent 接收前返回 queued 并承诺后台投递。
-let message = mailbox.enqueue(draft).await?;
-Ok(Queued(message.id))
+// Wrong: producer直接选择concrete命令，Product无法恢复交付承诺。
+complete_agent.execute(AgentCommand::Steer { content, expected_turn_id }).await?;
 
-// Correct: 当前请求完成 concrete Agent handoff。
-let receipt = product_input_delivery.deliver(input).await?;
-Ok(Accepted(receipt.operation_receipt))
-```
-
-```rust
-// Wrong: Project列表为每个Agent读取完整authoritative snapshot。
-let runtime = projection.runtime_presentation_view(&target).await?;
-
-// Correct: Project列表只投影Product-owned列表事实。
-let item = AgentRunListEntryModel {
-    title: lifecycle_agent.workspace_title,
-    lifecycle_status: lifecycle_agent.status,
-    // lineage、subject、activity等Product facts
-};
-```
-
-```rust
-// Wrong: 每次展示都把 Agent-native thread name 当作 AgentRun 标题读穿。
-let title = runtime_view.thread_name.unwrap_or_else(|| "新会话".to_owned());
-
-// Correct: 首次命名只初始化一次，之后展示读取 Product-owned LifecycleAgent。
-lifecycle_agents
-    .initialize_title_from_agent(&target, &snapshot_title)
-    .await?;
-let title = lifecycle_agent.workspace_title;
+// Correct: producer声明Product delivery intent，由Mailbox durable materialize并调度。
+mailbox.accept(AgentRunMailboxIntakeCommand {
+    delivery_intent: AgentRunMailboxDeliveryIntent::Steer { expected_turn_id },
+    content,
+    ..command
+}).await?;
 ```

@@ -1,3 +1,5 @@
+mod agent_run_mailbox;
+mod agent_run_mailbox_contracts;
 mod agent_run_workspace;
 pub mod auth_routes;
 pub mod backend_access;
@@ -90,6 +92,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(companion_gates::router())
         .merge(task_plan::router())
         .merge(lifecycle_agents::router())
+        .merge(agent_run_mailbox::router())
         .merge(lifecycle_views::router())
         .merge(workflows::router())
         .merge(story_runs::router())

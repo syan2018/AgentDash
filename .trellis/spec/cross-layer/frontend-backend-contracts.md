@@ -81,12 +81,14 @@ AgentRunCommandReceipt {
 ### Contracts
 
 - Project Agent create 先建立 Lifecycle run/agent/frame 产品事实，再通过
-  `AgentRunProductInputDeliveryPort` 同步交接首条 Agent input。响应只有在 concrete Agent
-  返回 operation receipt 后才报告 accepted。
+  `AgentRunProductInputDeliveryPort` 将首条 Agent input 持久接收到 AgentRun Mailbox。
+  Product intake receipt 证明输入已被 owner 接收；只有本次调度已获得 concrete Agent
+  operation receipt 时，响应才同时携带 concrete admission evidence。
 - ProjectAgent 决定 executor/Integration identity并提供默认运行参数；create-run 使用独立的 `model_selection` 与 `backend_selection` 表达逐 Run 意图，不暴露完整 executor config。`model_selection` 聚合 Provider、model、agent variant 与 thinking level；admission 在 provision 前将这些 generated contract 分片与 ProjectAgent defaults 编译成 effective config并写入 AgentFrame execution profile。这些意图不是无状态 HTTP override，也不改写 ProjectAgent defaults。
-- Submit/interrupt/compact/interaction command 成功返回 concrete Agent `OperationReceipt`；重复
-  `client_command_id` 命中同一 Agent effect，不存在 queued response 或 Product background
-  delivery。
+- Composer Queue/Steer 先返回 Mailbox intake 与当前 durable projection；重复
+  `client_command_id` 命中同一 Mailbox message，并以稳定 Agent effect identity 恢复 concrete
+  delivery。interrupt/compact/interaction 等即时控制命令成功时直接返回 concrete Agent
+  `OperationReceipt`。
 - UI 命令可用性来自 authoritative Agent snapshot 经内存 mapper 得到的当前 view；Lifecycle
   status、executor kind、HTTP success 与任何持久 presentation cache 都不能推导命令权限。
 - LifecycleAgent owner document 中的 association 是 `run_id + agent_id` 到 concrete Agent
@@ -107,9 +109,10 @@ AgentRunCommandReceipt {
   Runtime thread summary。
 - Agent resolve/read 失败不能清空 Product workspace。Project list不发起Agent resolve/read；
   前端直接展示Product shell，进入workspace后再建立authoritative snapshot/live lane。
-- submit、interrupt、context、compaction、interaction 与 tool approval 均通过 Runtime command
-  route，最终由
-  concrete Agent command/inspection证明；不存在独立 session command 或 vendor DTO 路径。
+- Composer 输入通过 AgentRun Mailbox route；Queue/Steer 先形成 Product envelope，再由
+  dispatcher 调用 Complete Agent command/inspection。interrupt、context、compaction、
+  interaction 与 tool approval 仍直接通过 Runtime control route，因为它们是当前 owner 上的
+  即时控制而非可排队输入。
 - Interaction response使用generated `InteractionResponse` union；approval、user input、MCP elicitation与dynamic tool result共用一个`/respond` route。UI只有在刷新后的Runtime snapshot声明`interaction_respond=available`时才启用对应控件。
 - Runtime context popup只读取`AgentRuntimeContextProjection`，并以
   `AgentRuntimeView.observation.context`作为required coordinate；source query与snapshot校验由
@@ -117,8 +120,9 @@ AgentRunCommandReceipt {
   context revision迟到响应不能覆盖当前popup。
 - RuntimeWire/Relay 只承载 Complete Agent transport；其 connection epoch、route 与 generation
   不进入浏览器合同或 Product persistence。
-- LifecycleGate 等 Product owner 的 waiting facts单独展示；Agent input handoff不形成 mailbox
-  projection。没有真实 Agent/Product command 的管理动作不进入 UI。
+- LifecycleGate 等 Product owner 的 waiting facts单独展示；所有 Agent-visible input 通过
+  Mailbox projection 展示 Waiting/Steer/Pending 及其 durable source。Mailbox control 只操作
+  Product-owned envelope，Runtime control 只操作当前 concrete Agent execution。
 
 ### Validation & Error Matrix
 
@@ -139,7 +143,7 @@ AgentRunCommandReceipt {
 | context target A响应晚于target B，或snapshot低于required/committed revision | 旧响应丢弃；popup只提交匹配当前target与context coordinate的结果 |
 | Driver回报与`runtime_turn_id`不同的Turn | critical protocol violation；matching identity只作为Observed ack |
 | command availability=false | UI 禁用且 API 在副作用前拒绝 |
-| Agent unavailable | 当前请求 typed unavailable；无 queued Product row |
+| Agent unavailable | Mailbox 保留 queued/blocked envelope；恢复后使用同一 message/effect identity |
 | command duplicate | 返回原 operation receipt |
 | update connection断开 | 清除 partial lane并重读 view；Product shell保持可用 |
 | NDJSON URL 未经过 `buildApiPath` | frontend contract test失败；不得请求缺少`/api`的同名页面路由 |
@@ -164,8 +168,8 @@ AgentRunCommandReceipt {
 - Connection tests 覆盖 authoritative view baseline、duplicate update、disconnect/gap、reconnect
   与 typed stream error。
 - Interaction feed tests保留`interaction_id/kind/prompt/terminal`并证明response控件只消费刷新后的availability；context popup tests覆盖target切换、revision fence与digest coordinate。
-- Connection URL test断言完整AgentRun scoped view/updates endpoint，不请求已删除的 mailbox 或
-  Runtime change-tail endpoint。
+- Connection URL test断言完整 AgentRun scoped Runtime view/updates endpoint；Mailbox service
+  单独断言 scoped list/composer/control routes，二者不共享 cursor。
 - Stream state测试覆盖target切换、连接lane变化、重复sequence、terminal与Lagged后snapshot
   recovery。
 - Route ledger test至少枚举AgentRun list/workspace/runtime view/update/commands/context的前端
@@ -175,8 +179,8 @@ AgentRunCommandReceipt {
 - Project列表测试覆盖service URL、generated DTO消费、Product lifecycle presentation与state分页；
   失效测试断言只有`agent_run_list` typed projection event刷新，普通`StateChanged`不重复查询；
   真实产品验证覆盖侧栏、完整列表、列表行导航及列表延迟不随Agent snapshot体积增长。
-- Project Agent create E2E 覆盖 lifecycle facts → Agent create/source association → synchronous
-  first input → operation response → Runtime update → reconnect view。
+- Project Agent create E2E 覆盖 lifecycle facts → Agent create/source association → Mailbox
+  first input → operation response/queued receipt → Runtime update → reconnect view。
 - Create-run contract generation test断言 generated TypeScript 只暴露 `model_selection` 与 `backend_selection`，不重新引入可覆盖 executor 的请求字段。
 
 ### Scenario: Typed Active Turn 与 Owner Command Policy
@@ -232,8 +236,11 @@ bound_surface_revision/applied_surface_revision`证据的command availability。
 - Compaction active时Submit表示durable deferred input并保持可用；Steer、重复Compact、Fork与
   Close关闭。Interrupt只在provider side-effect claim前的`cancellable=true`阶段开放。草稿编辑
   与只读浏览不属于Agent command。
-- Product command facade先读取owner availability：只有Steer可用时才把产品Submit映射为
-  `AgentCommand::Steer`；否则只在Submit可用时提交新Turn。
+- Product command facade 保持 Submit 与 Steer 一义一命令。Mailbox dispatcher 只在 Queue
+  可开启新 Turn 时调用 Submit；显式 Steer 先校验 owner availability 与 expected turn，再调用
+  `AgentCommand::Steer`。
+- Product conversation contract中的 `submit_message.runtime_command`为空，因为 Composer 是
+  AgentRun Mailbox intake；Cancel与Compact继续携带各自的即时 Runtime command。
 - `SourceObservation.state=ExecutionChanged`与同次canonical presentation共同发布
   running/applied/terminal；Runtime update继续在同一lane携带execution、commands和presentation。
 - Native Compaction item携带`mode/status/error/started_at_ms/completed_at_ms/
@@ -245,7 +252,7 @@ bound_surface_revision/applied_surface_revision`证据的command availability。
 
 | Condition | Required behavior |
 | --- | --- |
-| active conversation Turn | Steer/可取消的Interrupt可用；Submit按Steer执行 |
+| active conversation Turn | 普通 Queue 保持 Pending；显式 Steer 与可取消的 Interrupt 按 owner 证据开放 |
 | active conversation Turn + queued compaction | 保持当前Steer；重复Compact/Fork/Close不可用 |
 | active Compaction、`cancellable=false` | deferred Submit可用；Steer/Interrupt/重复Compact/Fork/Close不可用 |
 | active Compaction、`cancellable=true` | deferred Submit与Interrupt按owner证据开放 |
@@ -259,8 +266,8 @@ bound_surface_revision/applied_surface_revision`证据的command availability。
 
 - Good：Native reload在Compaction running阶段恢复同一turn identity、开始时间和命令矩阵；等待
   effect的调用方继续使用提交时获得的receipt。
-- Base：普通Turn继续通过owner开放Steer；Compaction期间相同Submit入口按owner事实写入deferred
-  command，不复制Turn类型判断。
+- Base：普通 Turn 的 Queue 留在 Mailbox，显式 Steer 继续通过 owner 开放；Compaction 期间输入
+  同样先进入 Mailbox，由 dispatcher 等待可提交边界。
 - Bad：只根据`execution.status=active`启用Steer/Interrupt，会把Compaction误当普通对话Turn。
 
 #### 6. Tests Required
@@ -270,10 +277,10 @@ bound_surface_revision/applied_surface_revision`证据的command availability。
 - Native changes测试断言running → applied → terminal均以`ExecutionChanged`发布，并与canonical
   Compaction Turn presentation同lane出现。
 - Runtime mapper测试断言typed Turn和owner unavailable reason无损映射。
-- Product command facade测试断言普通Turn的Submit映射Steer，Compaction Turn的Submit映射
-  deferred input。
-- frontend selector测试断言Compaction期间Submit保持可用，Cancel/Compact按phase与owner
-  reason门禁；queued状态来自Runtime view。
+- Product command facade测试断言 Submit 与 Steer 不互相改写；Mailbox测试覆盖 active
+  conversation/compaction 时 Queue 保持 pending。
+- frontend selector测试断言 Cancel/Compact 按 phase 与 owner reason 门禁；queued 状态来自
+  Mailbox projection。
 - canonical projection与frontend reducer/card测试覆盖succeeded/failed/lost/cancelled四类终态。
 - Codex fixture断言可观察ContextCompaction进入typed active Turn。
 
@@ -295,8 +302,9 @@ const submitGate = isAvailable(view, "submit_input")
 
 - Companion/subagent dispatch 以 Lifecycle run/agent/frame、assignment/activity attempt 与 canonical Runtime thread/operation refs表达。
 - Workflow、Gate、Task、Story 只保存产品编排与 evidence 坐标；Runtime terminal 通过 canonical Runtime event/snapshot 投影，不保存另一份执行 session 状态。
-- 等待状态由 LifecycleGate 持久化；gate result通过同步 Agent input handoff唤醒目标 Agent。
-  Gate owner只保存 waiting fact 与 handoff/operation coordinate作为下游证据。
+- 等待状态由 LifecycleGate 持久化；gate result以稳定source identity materialize AgentRun
+  Mailbox message。Gate owner保存 waiting fact、mailbox message与operation coordinate作为
+  分层下游证据。
 - UI 可以展示 Runtime trace link，但不得把 trace metadata当作 AgentRun command authority。
 
 ## 5. Workspace Module, Canvas and VFS

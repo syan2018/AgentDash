@@ -894,8 +894,30 @@ fn test_service_with_gate_repo(
         Arc::new(NoopAgentFrameRepo),
         Arc::new(NoopRuntimeBindingRepo),
         gate_repo,
+        Arc::new(NoopMailboxQuery),
         terminal_registry,
     )
+}
+
+struct NoopMailboxQuery;
+
+#[async_trait]
+impl WaitActivityMailboxQuery for NoopMailboxQuery {
+    async fn get_message(
+        &self,
+        _id: Uuid,
+    ) -> Result<Option<agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage>, DomainError>
+    {
+        Ok(None)
+    }
+
+    async fn list_messages(
+        &self,
+        _run_id: Uuid,
+        _agent_id: Uuid,
+    ) -> Result<Vec<agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage>, DomainError> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Default)]

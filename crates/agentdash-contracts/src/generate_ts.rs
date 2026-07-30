@@ -18,6 +18,13 @@ use agentdash_contracts::agent_run_interaction::{
     AgentRunToolCallApprovalResponse, AgentRunToolCallRejectionResponse, BackendSelectionModeDto,
     BackendSelectionRequestDto,
 };
+use agentdash_contracts::agent_run_mailbox::{
+    AgentRunComposerDeliveryIntent, AgentRunComposerSubmitRequest, AgentRunMailboxCommandRequest,
+    AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxMoveResponse,
+    AgentRunMailboxPromoteRequest, AgentRunMailboxView, ConsumptionBarrier, MailboxDelivery,
+    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageStatus, MailboxMessageView,
+    MailboxSourceIdentity, MailboxStateView, SteeringStopEffect,
+};
 use agentdash_contracts::agent_run_product_projection::AgentRunProductProjectionContractSchema;
 use agentdash_contracts::auth::{
     AuthGroup, AuthMode, AuthStartRequest, AuthStartResponse, CurrentUser, DirectoryGroup,
@@ -366,6 +373,33 @@ fn main() {
             export_all::<AgentRunForkLineageView>(dir);
             export_all::<AgentRunForkOutcomeView>(dir);
             export_all::<AgentRunForkResponse>(dir);
+        },
+    );
+
+    // --- project-agent-contracts.ts (canonical source for agent-construct Ref DTOs) ---
+    emit_domain(
+        &generated_dir,
+        "agent-run-mailbox-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<MailboxMessageStatus>(dir);
+            export_all::<MailboxMessageOrigin>(dir);
+            export_all::<MailboxSourceIdentity>(dir);
+            export_all::<SteeringStopEffect>(dir);
+            export_all::<MailboxDelivery>(dir);
+            export_all::<ConsumptionBarrier>(dir);
+            export_all::<MailboxDrainMode>(dir);
+            export_all::<MailboxMessageView>(dir);
+            export_all::<MailboxStateView>(dir);
+            export_all::<AgentRunMailboxView>(dir);
+            export_all::<AgentRunMailboxCommandRequest>(dir);
+            export_all::<AgentRunMailboxPromoteRequest>(dir);
+            export_all::<AgentRunMailboxMoveRequest>(dir);
+            export_all::<AgentRunMailboxMoveResponse>(dir);
+            export_all::<AgentRunMailboxMessageContentView>(dir);
+            export_all::<AgentRunComposerDeliveryIntent>(dir);
+            export_all::<AgentRunComposerSubmitRequest>(dir);
         },
     );
 

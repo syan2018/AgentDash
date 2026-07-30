@@ -9,7 +9,7 @@ use agentdash_agent::dash::{
 };
 use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentHookAction, AgentHookDecision,
-    AgentHookDefinitionId, AgentHookInvocation, AgentHookPoint, AgentHookTiming,
+    AgentHookDefinitionId, AgentHookInvocation, AgentHookOutcome, AgentHookPoint, AgentHookTiming,
     AgentHostCallbackError, AgentHostCallbackErrorCode, AgentHostCallbacks, AgentPayloadDigest,
     AgentProfileDigest, AgentSourceCoordinate, AgentSurfaceContributionPayload, AgentSurfaceDigest,
     AgentSurfaceRevision, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentToolInvocation,
@@ -38,6 +38,7 @@ struct RecordingCallbacks {
     tools: Mutex<Vec<AgentToolInvocation>>,
     hooks: Mutex<Vec<AgentHookInvocation>>,
     decisions: Mutex<VecDeque<AgentHookDecision>>,
+    outcomes: Mutex<VecDeque<AgentHookOutcome>>,
     tool_output: Mutex<Option<serde_json::Value>>,
 }
 
@@ -68,15 +69,67 @@ impl AgentHostCallbacks for RecordingCallbacks {
     async fn invoke_hook(
         &self,
         call: AgentHookInvocation,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError> {
         self.hooks.lock().unwrap().push(call);
-        Ok(self
-            .decisions
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or(AgentHookDecision::Allow))
+        if let Some(outcome) = self.outcomes.lock().unwrap().pop_front() {
+            return Ok(outcome);
+        }
+        Ok(AgentHookOutcome::from_decision(
+            self.decisions
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(AgentHookDecision::Allow),
+        ))
     }
+}
+
+#[tokio::test]
+async fn after_turn_continuation_is_admitted_before_before_stop() {
+    let host = Arc::new(RecordingCallbacks::default());
+    host.outcomes.lock().unwrap().push_back(AgentHookOutcome {
+        continue_turn: vec![agentdash_agent_runtime_contract::AgentInputContent::Text {
+            text: "continue from hook".to_owned(),
+        }],
+        ..AgentHookOutcome::allow()
+    });
+    let surface = BoundAgentSurface {
+        revision: AgentSurfaceRevision(1),
+        digest: AgentSurfaceDigest::new("boundary-surface").unwrap(),
+        offer_profile_digest: AgentProfileDigest::new("dash-agent-profile-v1").unwrap(),
+        contributions: vec![
+            hook_contribution(
+                "after-turn",
+                AgentHookPoint::AfterTurn,
+                AgentHookTiming::After,
+                AgentHookAction::ContinueTurn,
+            ),
+            hook_contribution(
+                "before-stop",
+                AgentHookPoint::BeforeStop,
+                AgentHookTiming::Before,
+                AgentHookAction::ContinueTurn,
+            ),
+        ],
+    };
+    let callbacks = DashAgentCoreToolCallbacks::from_bound_surface(
+        host.clone(),
+        AgentCallbackRouteId::new("route-boundary").unwrap(),
+        AgentBindingGeneration(5),
+        AgentSourceCoordinate::new("source-boundary").unwrap(),
+        5_000,
+        &surface,
+    );
+
+    let continuation = callbacks
+        .turn_boundary(&agentdash_agent::dash::AgentTurnId::new("turn-boundary"))
+        .await
+        .unwrap();
+
+    assert_eq!(continuation, vec!["continue from hook"]);
+    let hooks = host.hooks.lock().unwrap();
+    assert_eq!(hooks.len(), 1);
+    assert_eq!(hooks[0].point, AgentHookPoint::AfterTurn);
 }
 
 #[tokio::test]
@@ -298,7 +351,7 @@ impl AgentHostCallbacks for RejectingHookCallbacks {
     async fn invoke_hook(
         &self,
         _: AgentHookInvocation,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError> {
         Err(AgentHostCallbackError::new(
             self.code,
             format!("{:?}", self.code),

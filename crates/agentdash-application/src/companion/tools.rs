@@ -4,7 +4,7 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
-use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
+use agentdash_domain::agent_input::AgentInputSourceIdentity;
 use agentdash_domain::channel::{
     Channel, ChannelAddress, ChannelDeliveryIntent, ChannelDeliveryState, ChannelDeliveryStatus,
     ChannelDeliveryTarget, ChannelMedium, ChannelMessage, ChannelOwner, ChannelParticipant,
@@ -73,13 +73,11 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunProductInputDeliveryPort, CompanionAdoptionMode as ProtocolCompanionAdoptionMode,
     CompanionContextMode, CompanionContextSourceDraft, CompanionContextSources,
     CompanionContinuationInputSource, CompanionContinuationPhase, CompanionContinuationRequest,
-    CompiledContextAuthority, DeliverAgentRunProductInput, SubmitInput,
-    companion_after_dispatch_hook_effect_identity, compile_companion_dispatch_target,
-    run_companion_continuation,
+    CompiledContextAuthority, SubmitInput, companion_after_dispatch_hook_effect_identity,
+    compile_companion_dispatch_target, run_companion_continuation,
 };
 use agentdash_application_workflow::WorkflowScriptPreflightOutput;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
-use agentdash_domain::agent_run_target::AgentRunTarget;
 use sha2::{Digest, Sha256};
 
 pub use agentdash_platform_spi::CompanionSliceMode;
@@ -354,10 +352,7 @@ pub(crate) fn companion_channel_delivery_intent(
         address,
     );
     message.correlation_ref = source.correlation_ref.clone();
-    ChannelDeliveryIntent::new(
-        message,
-        ChannelDeliveryTarget::AgentInput { run_id, agent_id },
-    )
+    ChannelDeliveryIntent::new(message, ChannelDeliveryTarget::Mailbox { run_id, agent_id })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -956,23 +951,21 @@ async fn deliver_companion_input_handoff_message(
         &input.input_text,
     );
     let client_command_id = input.client_command_id.clone();
-    let target = AgentRunTarget {
-        run_id: input.run_id,
-        agent_id: input.agent_id,
-    };
+    let materialized = companion_channel_service(repos)
+        .materialize_delivery_to_mailbox(&channel_intent, input.client_command_id)?;
     let delivery = product_input_delivery
-        .deliver(DeliverAgentRunProductInput {
-            target,
-            origin: AgentInputOrigin::Companion,
-            content: vec![agentdash_agent_runtime_contract::AgentInputContent::Text {
-                text: input.input_text,
-            }],
-            source: input.source,
-            client_command_id: input.client_command_id,
-        })
+        .deliver(materialized.input)
         .await
         .map_err(|error| crate::ApplicationError::Internal(error.to_string()))?;
     let input_handoff_id = Some(delivery.handoff_id);
+    let accepted_operation_id = delivery
+        .operation_receipt
+        .as_ref()
+        .map(|receipt| receipt.operation_id.to_string());
+    let duplicate = delivery
+        .operation_receipt
+        .as_ref()
+        .is_some_and(|receipt| receipt.duplicate);
     companion_channel_service(repos)
         .record_delivery_state(
             &ChannelOwner::LifecycleRun {
@@ -984,9 +977,8 @@ async fn deliver_companion_input_handoff_message(
                 message_id: channel_intent.message.id,
                 target: channel_intent.target.clone(),
                 status: ChannelDeliveryStatus::Materialized,
-                materialized_ref: Some(MaterializedDeliveryRef::AgentInput {
-                    handoff_id: delivery.handoff_id,
-                    operation_id: Some(delivery.operation_receipt.operation_id.to_string()),
+                materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
+                    message_id: delivery.mailbox_message_id,
                 }),
                 updated_at: Utc::now(),
             },
@@ -995,11 +987,15 @@ async fn deliver_companion_input_handoff_message(
 
     Ok(CompanionParentInputHandoffDeliveryResult {
         input_handoff_id,
-        accepted_operation_id: Some(delivery.operation_receipt.operation_id.to_string()),
+        accepted_operation_id,
         command_receipt_client_command_id: client_command_id,
         command_receipt_status: "accepted".to_string(),
-        command_receipt_duplicate: delivery.operation_receipt.duplicate,
-        outcome: "dispatched".to_string(),
+        command_receipt_duplicate: duplicate,
+        outcome: if delivery.queued {
+            "queued".to_string()
+        } else {
+            "dispatched".to_string()
+        },
     })
 }
 

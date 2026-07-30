@@ -37,10 +37,20 @@ import {
 import type { SessionChatCommandModel, SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
 import type { ImageAttachment } from "./composer/useImageAttachments";
-import { SessionStatusBar } from "../../agent-run-workspace/ui";
+import { MailboxMessageList, SessionStatusBar } from "../../agent-run-workspace/ui";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 import { SessionWorkspacePanelActionProvider } from "./SessionWorkspacePanelActionProvider";
 import { sha256OfBlob } from "../../../utils/sha256";
+import {
+  deleteAgentRunMailboxMessage,
+  fetchAgentRunMailbox,
+  fetchAgentRunMailboxMessageContent,
+  moveAgentRunMailboxMessage,
+  promoteAgentRunMailboxMessage,
+  resumeAgentRunMailbox,
+  submitAgentRunComposerInput,
+} from "../../../services/agentRunMailbox";
+import type { AgentRunMailboxView } from "../../../generated/agent-run-mailbox-contracts";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -297,6 +307,20 @@ export function SessionChatView({
   );
 
   const contextCoordinate = runtimeView?.observation.context ?? null;
+  const [mailboxView, setMailboxView] = useState<AgentRunMailboxView | null>(null);
+  const refreshMailbox = useCallback(async () => {
+    if (!agentRunTarget) {
+      setMailboxView(null);
+      return;
+    }
+    setMailboxView(await fetchAgentRunMailbox(agentRunTarget.runId, agentRunTarget.agentId));
+  }, [agentRunTarget]);
+  useEffect(() => {
+    const refresh = () => { void refreshMailbox().catch(() => undefined); };
+    refresh();
+    const timer = window.setInterval(refresh, 2_000);
+    return () => { window.clearInterval(timer); };
+  }, [refreshMailbox]);
   const rawEventsBelongToCurrentSession = useMemo(
     () =>
       rawEventsBelongToRuntimeStreamTarget({
@@ -358,6 +382,7 @@ export function SessionChatView({
   const executeRuntimeInput = useCallback(async (
     prompt: string,
     images: ImageAttachment[],
+    deliveryIntent?: string,
   ): Promise<void> => {
     if (!agentRunTarget) {
       throw new Error("Agent Runtime target 尚未建立");
@@ -375,12 +400,24 @@ export function SessionChatView({
         digest: await sha256OfBlob(image.file),
       });
     }
-    await executeRuntimeCommand({
+    const activeTurnId = runtimeView?.observation.execution.active_turn?.turn_id;
+    const explicitSteer = deliveryIntent === "steer";
+    if (explicitSteer && !activeTurnId) {
+      throw new Error("当前没有可 Steer 的 active turn");
+    }
+    await submitAgentRunComposerInput(agentRunTarget.runId, agentRunTarget.agentId, {
       client_command_id: globalThis.crypto?.randomUUID?.()
         ?? `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      command: { kind: "submit_input", content },
+      input: content,
+      delivery_intent: explicitSteer ? "steer" : "queue",
+      expected_turn_id: explicitSteer ? activeTurnId : undefined,
     });
-  }, [agentRunTarget, executeRuntimeCommand]);
+    await refreshMailbox();
+  }, [
+    agentRunTarget,
+    refreshMailbox,
+    runtimeView?.observation.execution.active_turn?.turn_id,
+  ]);
 
   const handleSubmit = useCallback(async (command: SessionChatCommandModel | undefined, deliveryIntent?: string) => {
     const promptText = richInputRef.current?.getValue() ?? "";
@@ -409,7 +446,7 @@ export function SessionChatView({
 
     try {
       if (agentRunTarget) {
-        await executeRuntimeInput(trimmed, images);
+        await executeRuntimeInput(trimmed, images, deliveryIntent);
       } else {
         await commandActionRef.current({
           command_id: command.command_id,
@@ -445,6 +482,136 @@ export function SessionChatView({
     executeRuntimeInput,
   ]);
 
+  const mailboxCommandId = useCallback(
+    () => globalThis.crypto?.randomUUID?.()
+      ?? `mailbox-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    [],
+  );
+  const runMailboxAction = useCallback(async (action: () => Promise<void>) => {
+    setSendError(null);
+    try {
+      await action();
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Mailbox 操作失败，请重试。");
+    }
+  }, []);
+  const handleMailboxDelete = useCallback(async (messageId: string) => {
+    if (!agentRunTarget) return;
+    await runMailboxAction(async () => {
+      await deleteAgentRunMailboxMessage(
+        agentRunTarget.runId,
+        agentRunTarget.agentId,
+        messageId,
+        { client_command_id: mailboxCommandId() },
+      );
+      await refreshMailbox();
+    });
+  }, [agentRunTarget, mailboxCommandId, refreshMailbox, runMailboxAction]);
+  const handleMailboxPromote = useCallback(async (messageId: string) => {
+    if (!agentRunTarget) return;
+    await runMailboxAction(async () => {
+      const expectedTurnId = runtimeView?.observation.execution.active_turn?.turn_id;
+      if (!expectedTurnId) throw new Error("当前没有可 Steer 的 active turn");
+      await promoteAgentRunMailboxMessage(
+        agentRunTarget.runId,
+        agentRunTarget.agentId,
+        messageId,
+        {
+          client_command_id: mailboxCommandId(),
+          expected_turn_id: expectedTurnId,
+        },
+      );
+      await refreshMailbox();
+    });
+  }, [
+    agentRunTarget,
+    mailboxCommandId,
+    refreshMailbox,
+    runMailboxAction,
+    runtimeView?.observation.execution.active_turn?.turn_id,
+  ]);
+  const handleMailboxResume = useCallback(async () => {
+    if (!agentRunTarget) return;
+    await runMailboxAction(async () => {
+      await resumeAgentRunMailbox(agentRunTarget.runId, agentRunTarget.agentId, {
+        client_command_id: mailboxCommandId(),
+      });
+      await refreshMailbox();
+    });
+  }, [agentRunTarget, mailboxCommandId, refreshMailbox, runMailboxAction]);
+  const handleMailboxMove = useCallback(async (
+    messageId: string,
+    afterMessageId: string | null,
+  ) => {
+    if (!agentRunTarget) return;
+    await runMailboxAction(async () => {
+      await moveAgentRunMailboxMessage(
+        agentRunTarget.runId,
+        agentRunTarget.agentId,
+        messageId,
+        {
+          client_command_id: mailboxCommandId(),
+          after_message_id: afterMessageId ?? undefined,
+        },
+      );
+      await refreshMailbox();
+    });
+  }, [agentRunTarget, mailboxCommandId, refreshMailbox, runMailboxAction]);
+  const handleMailboxRecall = useCallback(async (messageId: string) => {
+    if (!agentRunTarget) return;
+    await runMailboxAction(async () => {
+      const content = await fetchAgentRunMailboxMessageContent(
+        agentRunTarget.runId,
+        agentRunTarget.agentId,
+        messageId,
+      );
+      const input = Array.isArray(content.input) ? content.input : [];
+      const text = input
+        .filter((item): item is { kind: "text"; text: string } =>
+          Boolean(item)
+          && typeof item === "object"
+          && (item as { kind?: unknown }).kind === "text"
+          && typeof (item as { text?: unknown }).text === "string")
+        .map((item) => item.text)
+        .join("\n");
+      richInputRef.current?.setValue(text);
+      setInputValue(text);
+    });
+  }, [agentRunTarget, runMailboxAction]);
+  const mailboxModel = useMemo(() => mailboxView ? {
+    messages: mailboxView.messages,
+    waiting_items: waitingItems,
+    paused: mailboxView.state.paused,
+    user_attention: mailboxView.state.paused,
+    hide_system_steer_messages: mailboxView.state.hide_system_steer_messages,
+    can_resume: mailboxView.state.can_resume,
+    promoteAction: {
+      command_id: "mailbox:promote",
+      kind: "promote_mailbox_message",
+      enabled: Boolean(runtimeView?.observation.execution.active_turn),
+      requires_input: false,
+      executor_config_policy: "forbidden" as const,
+    },
+    deleteAction: {
+      command_id: "mailbox:delete",
+      kind: "delete_mailbox_message",
+      enabled: true,
+      requires_input: false,
+      executor_config_policy: "forbidden" as const,
+    },
+    resumeAction: {
+      command_id: "mailbox:resume",
+      kind: "resume_mailbox",
+      enabled: mailboxView.state.can_resume,
+      requires_input: false,
+      executor_config_policy: "forbidden" as const,
+    },
+  } : undefined, [
+    mailboxView,
+    runtimeView?.observation.execution.active_turn,
+    waitingItems,
+  ]);
+
   useEffect(() => {
     if (!initialSubmit || initialSubmitConsumedRef.current === initialSubmit.transitionId) return;
     const submitIntent = resolveSessionInitialSubmit({
@@ -462,12 +629,14 @@ export function SessionChatView({
       setSendError(null);
       setIsSending(true);
     });
-    const submission = agentRunTarget
-      ? executeRuntimeInput(
-          submitIntent.prompt.trim(),
-          submitIntent.imageAttachments ?? [],
-        )
-      : commandActionRef.current(submitIntent);
+    const submission = Promise.resolve().then(() =>
+      agentRunTarget
+        ? executeRuntimeInput(
+            submitIntent.prompt.trim(),
+            submitIntent.imageAttachments ?? [],
+          )
+        : commandActionRef.current(submitIntent),
+    );
     void submission.then(async () => {
       execConfig.recordUsage();
       clearInput();
@@ -701,6 +870,18 @@ export function SessionChatView({
           runId={statusBarRunId}
           agentId={statusBarAgentId}
           waitingItems={waitingItems}
+        />
+
+        <MailboxMessageList
+          messages={mailboxView?.messages ?? []}
+          mailbox={mailboxModel}
+          onPromote={(messageId) => { void handleMailboxPromote(messageId); }}
+          onDelete={(messageId) => { void handleMailboxDelete(messageId); }}
+          onResume={() => { void handleMailboxResume(); }}
+          onRecall={(messageId) => { void handleMailboxRecall(messageId); }}
+          onMove={(messageId, afterMessageId) => {
+            void handleMailboxMove(messageId, afterMessageId);
+          }}
         />
 
         <SessionChatComposer

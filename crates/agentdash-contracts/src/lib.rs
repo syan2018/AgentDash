@@ -1,5 +1,7 @@
 #[path = "agent/run_interaction.rs"]
 pub mod agent_run_interaction;
+#[path = "agent/run_mailbox.rs"]
+pub mod agent_run_mailbox;
 #[path = "agent/product_projection.rs"]
 pub mod agent_run_product_projection;
 #[path = "system/auth.rs"]

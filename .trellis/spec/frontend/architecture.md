@@ -12,9 +12,9 @@ Frontend以产品路由与generated contracts组织：Project/Story/Task/Lifecyc
   presentations直接交给同一个Session reducer增量归约；live presentation不写回authoritative conversation。
   canonical record再进入 `useSessionStream -> sessionStreamReducer -> SessionEntry ->
   toolCardRegistry`。target切换隔离旧state。
-- `AgentRuntimeConnection` 是同一 target 的唯一 Runtime 连接 owner。Feed、Composer 与
-  Interaction UI 读取同一 view；Workspace 只提供 Product shell、静态 command binding、
-  model/resource/waiting facts。
+- `AgentRuntimeConnection` 是同一 target 的唯一 Runtime 连接 owner，Feed 与 Interaction UI
+  读取该 view。Composer 同时读取 active turn evidence 与 AgentRun Mailbox projection：前者只为
+  显式 Steer 提供 stale fence，后者拥有 Queue/Pending/控制状态。
 - Workspace Module/Canvas tab以concrete presentation URI为identity；layout按AgentRun product key持久化。
 - VFS/resource surface来自current AgentFrame/Business Surface；Runtime binding只提供typed execution coordinate。
 - Canvas 用户可打开项直接来自 `AgentRunWorkspaceView.workspace_modules` 的 ready Canvas
@@ -27,7 +27,7 @@ Frontend以产品路由与generated contracts组织：Project/Story/Task/Lifecyc
 - errors保持typed code/diagnostic；stale command触发inspect refresh，不静默retry不同语义命令。
 - ProjectAgent Draft提交先调用target creation API，收到`run_id + agent_id`后立即导航；原始
   composer intent通过navigation transition交给目标页。目标页只在canonical history baseline与
-  live lane就绪后消费一次transition，并调用与follow-up相同的composer command。创建API不执行
+  live lane就绪后消费一次transition，并调用与 follow-up 相同的 Mailbox composer command。创建API不执行
   首条输入，Draft页不预测Agent source identity。
 
 ## Canonical Conversation Boundary
@@ -130,7 +130,7 @@ Draft composer
   -> create AgentRun target
   -> navigate(run_id, agent_id, pending composer intent)
   -> target history/live baseline ready
-  -> canonical composer input handoff
+  -> AgentRun Mailbox composer intake
   -> UserInputSubmitted / TurnStarted / partial output
 ```
 

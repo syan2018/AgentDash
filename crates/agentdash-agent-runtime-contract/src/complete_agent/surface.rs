@@ -72,6 +72,8 @@ pub enum AgentHookAction {
     RewriteResult,
     AddContext,
     EmitEffect,
+    ContinueTurn,
+    RefreshSurface,
 }
 
 #[derive(
@@ -161,6 +163,8 @@ pub enum AgentHookMutationKind {
 #[serde(rename_all = "snake_case")]
 pub enum AgentHookEffectKind {
     EmitEffect,
+    ContinueTurn,
+    RefreshSurface,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -278,6 +282,14 @@ impl AgentSurfaceSemanticFacet {
                         .effects
                         .contains_key(&AgentHookEffectKind::EmitEffect)
                         == actions.contains(&AgentHookAction::EmitEffect)
+                    && semantics
+                        .effects
+                        .contains_key(&AgentHookEffectKind::ContinueTurn)
+                        == actions.contains(&AgentHookAction::ContinueTurn)
+                    && semantics
+                        .effects
+                        .contains_key(&AgentHookEffectKind::RefreshSurface)
+                        == actions.contains(&AgentHookAction::RefreshSurface)
             }
             _ => false,
         }

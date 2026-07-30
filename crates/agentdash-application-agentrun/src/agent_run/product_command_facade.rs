@@ -6,7 +6,7 @@ use agentdash_agent_runtime_contract::{
     AgentEffectIdentity, AgentEffectInspectionState, AgentIdempotencyKey, AgentInput,
     AgentInputContent, AgentInteractionId, AgentInteractionResponse, AgentReadQuery,
     AgentReceiptState, AgentRuntimeOperationReceipt, AgentRuntimeOperationStatus,
-    AgentServiceError, AgentSnapshot, AgentTerminalOutcome, ResumeAgentCommand,
+    AgentServiceError, AgentSnapshot, AgentTerminalOutcome, AgentTurnId, ResumeAgentCommand,
 };
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,10 @@ pub enum AgentRunProductCommand {
     Resume,
     SubmitInput {
         content: Vec<AgentInputContent>,
+    },
+    Steer {
+        content: Vec<AgentInputContent>,
+        expected_turn_id: AgentTurnId,
     },
     Interrupt,
     RequestCompaction,
@@ -35,6 +39,14 @@ pub struct AgentRunProductCommandRequest {
     pub target: AgentRunTarget,
     pub client_command_id: String,
     pub command: AgentRunProductCommand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunProductCommandEvidence {
+    pub runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId,
+    pub source: agentdash_agent_runtime_contract::AgentSourceCoordinate,
+    pub binding_generation: agentdash_agent_runtime_contract::AgentBindingGeneration,
+    pub snapshot_revision: agentdash_agent_runtime_contract::AgentSnapshotRevision,
 }
 
 #[derive(Debug, Error)]
@@ -59,11 +71,11 @@ pub enum AgentRunProductCommandError {
     Agent(#[from] AgentServiceError),
 }
 
-/// Synchronous Product-to-Agent handoff.
+/// Executes one explicit concrete-Agent command chosen by the AgentRun Product.
 ///
-/// Product owns only the target association and the caller's stable client identity. The concrete
-/// Agent owns command admission, effect idempotency and the resulting execution history. No
-/// Product claim, mailbox delivery or Runtime operation state is persisted.
+/// AgentRun Mailbox owns durable input intake, queueing and delivery recovery. This facade owns
+/// only binding resolution plus stable concrete effect execution/inspection; the concrete Agent
+/// remains authoritative for command admission and execution history.
 pub struct AgentRunProductCommandFacade {
     bindings: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     agents: Arc<dyn AgentRunCompleteAgentResolverPort>,
@@ -210,8 +222,45 @@ impl AgentRunProductCommandFacade {
         }
     }
 
-    /// Recovery is the same synchronous handoff with the same stable identity. The concrete Agent
-    /// performs the only durable replay/inspection.
+    pub async fn delivery_evidence(
+        &self,
+        target: &AgentRunTarget,
+    ) -> Result<AgentRunProductCommandEvidence, AgentRunProductCommandError> {
+        let binding = self
+            .bindings
+            .load_product_binding(target)
+            .await
+            .map_err(AgentRunProductCommandError::Binding)?
+            .ok_or(AgentRunProductCommandError::TargetNotBound)?;
+        if &binding.target != target {
+            return Err(AgentRunProductCommandError::TargetMismatch);
+        }
+        let resolved = self
+            .agents
+            .resolve(&binding)
+            .await
+            .map_err(AgentRunProductCommandError::Unavailable)?;
+        let snapshot = resolved
+            .service
+            .read(AgentReadQuery {
+                source: binding.agent.source.clone(),
+                at_revision: None,
+            })
+            .await?;
+        if snapshot.source != binding.agent.source {
+            return Err(AgentRunProductCommandError::InvalidCommand(
+                "Agent read returned a different source".to_owned(),
+            ));
+        }
+        Ok(AgentRunProductCommandEvidence {
+            runtime_thread_id: binding.runtime_thread_id,
+            source: binding.agent.source,
+            binding_generation: resolved.binding_generation,
+            snapshot_revision: snapshot.observation.revision,
+        })
+    }
+
+    /// Recovery reuses the same concrete effect identity and inspects the concrete Agent authority.
     pub async fn replay_claimed(
         &self,
         target: &AgentRunTarget,
@@ -236,6 +285,7 @@ fn applied_product_command_receipt(
         (AgentRunProductCommand::Resume, AgentAppliedEffectOutcome::Resume { receipt })
         | (
             AgentRunProductCommand::SubmitInput { .. }
+            | AgentRunProductCommand::Steer { .. }
             | AgentRunProductCommand::Interrupt
             | AgentRunProductCommand::RequestCompaction
             | AgentRunProductCommand::ResolveInteraction { .. }
@@ -274,21 +324,31 @@ fn map_command(
 ) -> Result<AgentCommand, AgentRunProductCommandError> {
     Ok(match command {
         AgentRunProductCommand::SubmitInput { content } => {
-            let input = AgentInput { content };
-            if control_available(snapshot, AgentControlKind::Steer) {
-                AgentCommand::Steer {
-                    expected_turn_id: snapshot
-                        .observation
-                        .execution
-                        .active_turn
-                        .as_ref()
-                        .map(|turn| turn.turn_id.clone())
-                        .ok_or(AgentRunProductCommandError::ActiveTurnMissing)?,
-                    input,
-                }
-            } else {
-                ensure_control_available(snapshot, AgentControlKind::SubmitInput)?;
-                AgentCommand::SubmitInput { input }
+            ensure_control_available(snapshot, AgentControlKind::SubmitInput)?;
+            AgentCommand::SubmitInput {
+                input: AgentInput { content },
+            }
+        }
+        AgentRunProductCommand::Steer {
+            content,
+            expected_turn_id,
+        } => {
+            ensure_control_available(snapshot, AgentControlKind::Steer)?;
+            let active_turn_id = snapshot
+                .observation
+                .execution
+                .active_turn
+                .as_ref()
+                .map(|turn| turn.turn_id.clone())
+                .ok_or(AgentRunProductCommandError::ActiveTurnMissing)?;
+            if active_turn_id != expected_turn_id {
+                return Err(AgentRunProductCommandError::InvalidCommand(
+                    "expected turn does not match the active turn".to_owned(),
+                ));
+            }
+            AgentCommand::Steer {
+                expected_turn_id,
+                input: AgentInput { content },
             }
         }
         AgentRunProductCommand::Interrupt => {
@@ -442,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn submit_maps_to_owner_admitted_command_for_active_turn_kind() {
+    fn submit_and_steer_are_distinct_product_commands() {
         let input = AgentRunProductCommand::SubmitInput {
             content: vec![AgentInputContent::Text {
                 text: "continue".to_owned(),
@@ -452,10 +512,7 @@ mod tests {
             agentdash_agent_runtime_contract::AgentActiveTurnKind::Conversation,
             true,
         );
-        assert!(matches!(
-            map_command(input.clone(), &conversation).unwrap(),
-            AgentCommand::Steer { .. }
-        ));
+        assert!(map_command(input.clone(), &conversation).is_err());
 
         let compaction = snapshot_with_active_turn(
             agentdash_agent_runtime_contract::AgentActiveTurnKind::ContextCompaction,
@@ -464,6 +521,17 @@ mod tests {
         assert!(matches!(
             map_command(input, &compaction).unwrap(),
             AgentCommand::SubmitInput { .. }
+        ));
+
+        let steer = AgentRunProductCommand::Steer {
+            content: vec![AgentInputContent::Text {
+                text: "now".to_owned(),
+            }],
+            expected_turn_id: AgentTurnId::new("turn-1").unwrap(),
+        };
+        assert!(matches!(
+            map_command(steer, &conversation).unwrap(),
+            AgentCommand::Steer { .. }
         ));
     }
 

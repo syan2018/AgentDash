@@ -162,9 +162,9 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
                 Ok(CompanionEffectProgress::Applied(
                     CompanionFirstInputEvidence {
                         input_handoff_id: outcome.handoff_id,
-                        runtime_operation_id: Some(
-                            outcome.operation_receipt.operation_id.to_string(),
-                        ),
+                        runtime_operation_id: outcome
+                            .operation_receipt
+                            .map(|receipt| receipt.operation_id.to_string()),
                         submitted_by_runtime_protocol: false,
                     },
                 ))
@@ -312,9 +312,8 @@ impl CompanionContinuationEffectPort for ApplicationCompanionContinuationEffects
                     message_id: intent.message.id,
                     target: intent.target,
                     status: ChannelDeliveryStatus::Materialized,
-                    materialized_ref: Some(MaterializedDeliveryRef::AgentInput {
-                        handoff_id: first_input.input_handoff_id,
-                        operation_id: first_input.runtime_operation_id.clone(),
+                    materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
+                        message_id: first_input.input_handoff_id,
                     }),
                     updated_at: Utc::now(),
                 },

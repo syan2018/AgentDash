@@ -455,8 +455,14 @@ impl RoutineExecutor {
         let input_handoff_refs = RoutineInputHandoffRefs {
             handoff_id: result.handoff_id,
             client_command_id,
-            outcome: "dispatched".to_string(),
-            runtime_operation_id: Some(result.operation_receipt.operation_id.to_string()),
+            outcome: if result.queued {
+                "queued".to_string()
+            } else {
+                "dispatched".to_string()
+            },
+            runtime_operation_id: result
+                .operation_receipt
+                .map(|receipt| receipt.operation_id.to_string()),
         };
         let refs = execution
             .dispatch_refs

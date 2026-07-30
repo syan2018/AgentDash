@@ -27,11 +27,13 @@ function command(
   return {
     kind,
     command_id: commandId,
-    runtime_command: kind === "cancel"
+    runtime_command: kind === "submit_message"
+      ? undefined
+      : kind === "cancel"
       ? "interrupt"
       : kind === "compact_context"
         ? "request_compaction"
-        : "submit_input",
+        : undefined,
     shortcut: kind === "submit_message" ? "enter" : undefined,
     requires_input: kind === "submit_message",
     executor_config_policy: kind === "cancel" ? "forbidden" : "optional",
@@ -53,7 +55,7 @@ function resolvedModelConfig(): ConversationModelConfigView {
 }
 
 describe("AgentRun conversation command state", () => {
-  it("Workspace 只提供静态 Runtime command binding", () => {
+  it("Workspace 提供 Mailbox composer intent 与静态 Runtime control binding", () => {
     const state = buildAgentRunConversationCommandState({
       conversation: {
         commands: {
@@ -75,8 +77,8 @@ describe("AgentRun conversation command state", () => {
     expect(model.commands).toEqual(expect.arrayContaining([
       expect.objectContaining({
         command_id: "cmd-submit",
-        runtimeCommand: "submit_input",
-        enabled: false,
+        runtimeCommand: undefined,
+        enabled: true,
       }),
     ]));
     expect(model.cancelCommand).toEqual(expect.objectContaining({
@@ -120,6 +122,49 @@ describe("AgentRun conversation command state", () => {
     )).toEqual(expect.objectContaining({
       enabled: true,
       unavailable_reason: undefined,
+    }));
+  });
+
+  it("Queue 在 Runtime 暂不可 Submit/Steer 时仍保持可用", () => {
+    const state = projectAgentRunChatCommandState(
+      buildAgentRunConversationCommandState({
+        conversation: {
+          commands: {
+            ownership,
+            keyboard: { enter: "cmd-submit", ctrl_enter: "cmd-submit" },
+            commands: [command("submit_message", "cmd-submit")],
+          },
+          model_config: resolvedModelConfig(),
+        },
+        workspaceStateStatus: "ready",
+        workspaceStateError: null,
+      }),
+    );
+    const view = structuredClone(agentRuntimeTestFixtures.snapshots.started);
+    view.observation.command_availability.submit_input = {
+      status: "unavailable",
+      reason: "no_active_turn_required",
+      evidence: {
+        expected_snapshot_revision: view.observation.revision,
+        expected_turn_id: view.observation.execution.active_turn?.turn_id ?? null,
+      },
+    };
+    view.observation.command_availability.steer = {
+      status: "unavailable",
+      reason: "active_turn_not_steerable",
+      evidence: {
+        expected_snapshot_revision: view.observation.revision,
+        expected_turn_id: view.observation.execution.active_turn?.turn_id ?? null,
+      },
+    };
+
+    const projected = applyAgentRuntimeControlToChatCommandState(state, view);
+
+    expect(projected.commands.find(
+      (item) => item.command_id === "cmd-submit",
+    )).toEqual(expect.objectContaining({
+      enabled: true,
+      runtimeCommand: undefined,
     }));
   });
 

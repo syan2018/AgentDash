@@ -6,15 +6,18 @@ use agentdash_agent::AgentToolError;
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductRuntimeBindingRepository, AgentRunTerminalRegistry,
 };
+use agentdash_domain::agent_run_mailbox::{AgentRunMailboxMessage, AgentRunMailboxRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleGateRepository,
 };
+use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::sources::{
-    exec_item_from_terminal, gate_belongs_to_scope, gate_item_from_gate, terminal_belongs_to_scope,
+    exec_item_from_terminal, gate_belongs_to_scope, gate_item_from_gate, mailbox_belongs_to_scope,
+    mailbox_item_from_message, mailbox_message_is_wait_relevant, terminal_belongs_to_scope,
 };
 use super::types::{
     ResolvedWaitScope, WAIT_POLL_INTERVAL_MS, WAIT_TOOL_TIMEOUT_MS_DEFAULT,
@@ -29,6 +32,7 @@ pub struct WaitActivityRepositories {
     pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
     pub agent_run_runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
+    pub agent_run_mailbox_query: Arc<dyn WaitActivityMailboxQuery>,
 }
 
 #[derive(Clone)]
@@ -43,6 +47,7 @@ pub struct WaitActivityService {
     agent_frame_repo: Arc<dyn AgentFrameRepository>,
     agent_run_runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
     lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
+    agent_run_mailbox_query: Arc<dyn WaitActivityMailboxQuery>,
     terminal_registry: Arc<AgentRunTerminalRegistry>,
 }
 
@@ -57,6 +62,7 @@ impl WaitActivityService {
         agent_frame_repo: Arc<dyn AgentFrameRepository>,
         agent_run_runtime_binding_repo: Arc<dyn AgentRunProductRuntimeBindingRepository>,
         lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
+        agent_run_mailbox_query: Arc<dyn WaitActivityMailboxQuery>,
         terminal_registry: Arc<AgentRunTerminalRegistry>,
     ) -> Self {
         Self {
@@ -64,6 +70,7 @@ impl WaitActivityService {
             agent_frame_repo,
             agent_run_runtime_binding_repo,
             lifecycle_gate_repo,
+            agent_run_mailbox_query,
             terminal_registry,
         }
     }
@@ -77,6 +84,7 @@ impl WaitActivityService {
             agent_frame_repo: repositories.agent_frame_repo,
             agent_run_runtime_binding_repo: repositories.agent_run_runtime_binding_repo,
             lifecycle_gate_repo: repositories.lifecycle_gate_repo,
+            agent_run_mailbox_query: repositories.agent_run_mailbox_query,
             terminal_registry,
         }
     }
@@ -175,6 +183,8 @@ impl WaitActivityService {
             self.collect_scope_exec_items(scope, &filters, &mut items);
             self.collect_scope_gate_items(scope, &filters, &mut items)
                 .await?;
+            self.collect_scope_mailbox_items(scope, &filters, &mut items)
+                .await?;
         } else {
             for activity_ref in &explicit_refs {
                 self.collect_explicit_ref(scope, activity_ref, &filters, &mut items)
@@ -215,6 +225,20 @@ impl WaitActivityService {
             return Ok(());
         }
         if let Ok(uuid) = Uuid::parse_str(activity_ref) {
+            if accepts_kind(filters, "mailbox")
+                && let Some(message) = self
+                    .agent_run_mailbox_query
+                    .get_message(uuid)
+                    .await
+                    .map_err(domain_error("wait 查询 AgentRun Mailbox 失败"))?
+            {
+                if mailbox_belongs_to_scope(&message, scope)
+                    && mailbox_message_is_wait_relevant(&message)
+                {
+                    items.push(mailbox_item_from_message(&message));
+                }
+                return Ok(());
+            }
             if accepts_any_kind(filters, &["human", "subagent", "companion", "workflow"])
                 && let Some(gate) = self
                     .lifecycle_gate_repo
@@ -281,6 +305,32 @@ impl WaitActivityService {
         Ok(())
     }
 
+    async fn collect_scope_mailbox_items(
+        &self,
+        scope: &ResolvedWaitScope,
+        filters: &BTreeSet<String>,
+        items: &mut Vec<WaitActivityItem>,
+    ) -> Result<(), AgentToolError> {
+        if !accepts_kind(filters, "mailbox") {
+            return Ok(());
+        }
+        let (Some(run_id), Some(agent_id)) = (scope.run_id, scope.agent_id) else {
+            return Ok(());
+        };
+        let messages = self
+            .agent_run_mailbox_query
+            .list_messages(run_id, agent_id)
+            .await
+            .map_err(domain_error("wait 查询 AgentRun Mailbox 失败"))?;
+        items.extend(
+            messages
+                .into_iter()
+                .filter(mailbox_message_is_wait_relevant)
+                .map(|message| mailbox_item_from_message(&message)),
+        );
+        Ok(())
+    }
+
     pub async fn wait_for_lifecycle_gate_payload(
         &self,
         context: WaitToolContext,
@@ -325,6 +375,41 @@ impl WaitActivityService {
                 return Ok(None);
             }
         }
+    }
+}
+
+#[async_trait]
+pub trait WaitActivityMailboxQuery: Send + Sync {
+    async fn get_message(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<AgentRunMailboxMessage>, agentdash_domain::common::error::DomainError>;
+
+    async fn list_messages(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<Vec<AgentRunMailboxMessage>, agentdash_domain::common::error::DomainError>;
+}
+
+#[async_trait]
+impl<T> WaitActivityMailboxQuery for T
+where
+    T: AgentRunMailboxRepository + Send + Sync,
+{
+    async fn get_message(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<AgentRunMailboxMessage>, agentdash_domain::common::error::DomainError> {
+        AgentRunMailboxRepository::get_message(self, id).await
+    }
+
+    async fn list_messages(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<Vec<AgentRunMailboxMessage>, agentdash_domain::common::error::DomainError> {
+        AgentRunMailboxRepository::list_messages(self, run_id, agent_id).await
     }
 }
 

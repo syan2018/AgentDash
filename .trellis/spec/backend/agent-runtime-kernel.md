@@ -96,8 +96,9 @@ Runtime 可以保留平台中立的 `AgentRuntimeView`、operation receipt 与 c
 
 - command 输入由 Product target、association、client command identity 和 payload 构成。
   Runtime 解析当前 Host route，使用稳定 Agent effect identity 调用 concrete Agent。
-- Submit/Steer 的真实选择由 concrete Agent 当前 active turn 决定；Product 不根据缓存状态建立
-  pending branch。
+- AgentRun Mailbox 明确区分 Queue 与 Steer。Queue 在 idle 时执行 Submit，在 active 时保持
+  pending；Steer 必须携带匹配当前 active turn 的 `expected_turn_id`。Runtime 只执行 Product
+  已选择的具体命令，不替换语义。
 - command success 必须来自 concrete Agent receipt。Agent unavailable、unsupported、conflict
   或 provider failure 以 typed error 返回当前请求。
 - post-dispatch response unknown 使用同一 effect identity 调用 `inspect`。`Applied/Accepted`
@@ -113,8 +114,9 @@ Runtime 可以保留平台中立的 `AgentRuntimeView`、operation receipt 与 c
 - Product binding 是冷启动解析 Complete Agent 的最小完整输入。resolver 必须先用 binding 中的
   immutable execution profile 与 AgentFrame 重建当前 Host route，再原子返回 service 与
   binding generation；按裸 `service_instance_id` 直接查询进程内 catalog 无法恢复重启后的绑定。
-- 同步 Product command 响应透传 concrete Agent operation receipt 的真实状态。前端收到响应后
-  由 `AgentRuntimeConnection.refresh()` 收敛 authoritative view。
+- Mailbox intake 响应证明 Product 已 durable 接收 envelope；当本次请求内已完成 concrete Agent
+  admission 时可同时返回 operation receipt。前端分别刷新 Mailbox projection 与
+  `AgentRuntimeConnection`，两条投影各自从 owner fact 收敛。
 - authoritative history 中没有 assistant item 的 terminal turn 仍是完整轮次。前端保留该
   segment，并展示 `turn.error.message`；错误终态不因“没有可渲染文本”而被过滤。
 - `changes` 只有 concrete Agent 真正提供 ordered durable change tail 时才映射该 tail。
@@ -142,6 +144,8 @@ Runtime 可以保留平台中立的 `AgentRuntimeView`、operation receipt 与 c
 | association 指向不可用 service/source | typed unavailable；Product shell 不受影响 |
 | Host 重启且 binding 指向尚未 materialize 的 Dash service | 从完整 binding 重建 route 后读取同一 source |
 | client command id 为空或 payload 无效 | side effect 前 invalid request |
+| Queue 到达 active conversation turn | durable pending，等待 owner dispatcher 在 terminal 后提交新 Turn |
+| Steer 的 expected turn 与当前 active turn 不同 | typed stale，副作用前拒绝 |
 | 同 identity 不同 payload | concrete Agent typed idempotency conflict |
 | inspect = Applied/Accepted | 返回既有 receipt；不重复 side effect |
 | inspect = NotApplied | 执行同一 effect identity |
@@ -155,13 +159,14 @@ Runtime 可以保留平台中立的 `AgentRuntimeView`、operation receipt 与 c
 
 ## 5. Good / Base / Bad Cases
 
-- Good：Composer input 直接进入 Agent，返回 Agent receipt；同 client identity 重试命中同一
-  effect。
+- Good：Composer input 先由 AgentRun Mailbox durable accept；dispatcher 选择明确的
+  SubmitInput 或 Steer 后，通过本 facade 返回 Agent receipt，同 mailbox identity 重试命中同一
+  concrete effect。
 - Good：进程重启后首次 snapshot/live/command 都以持久 Product binding 恢复 Host route，读取
   concrete Agent 已保存的同一 source history。
 - Base：live delta 中断，UI 丢弃 partial lane，重新 read 后得到 Agent 已提交的完整 history。
-- Bad：先把 command 写进 Runtime outbox，再由 worker dispatch；这把同步 handoff 扩张成第二
-  workflow engine。
+- Bad：把 Mailbox 或 command outbox 放进通用 AgentRuntime，再由 Runtime worker决定
+  Queue/Steer；这会让 mechanism 层成为第二个 Product workflow engine。
 - Bad：List 比较 persisted projection revision 与 binding revision；派生缓存过期不应改变
   Product read 的合法性。
 

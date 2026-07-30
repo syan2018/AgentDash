@@ -1,4 +1,5 @@
 mod agent_repository;
+mod agent_run_mailbox_repository;
 mod agent_run_product_projection_repository;
 mod auth_session_repository;
 mod backend_execution_lease_repository;
@@ -146,6 +147,7 @@ fn database_constraint_message(
 
 pub use agent_repository::PostgresProjectAgentRepository;
 pub use agent_run_fork_graph_store::PostgresAgentRunForkGraphStore;
+pub use agent_run_mailbox_repository::PostgresAgentRunMailboxRepository;
 pub use agent_run_product_projection_repository::{
     PostgresAgentRunProductRuntimeBindingRepository, PostgresAgentRunTerminalProjectionStore,
     product_runtime_binding_digest,

@@ -6,7 +6,7 @@ use std::{
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentHookAction, AgentHookDecision,
-    AgentHookInvocation, AgentHostCallbackBinding, AgentHostCallbackError,
+    AgentHookInvocation, AgentHookOutcome, AgentHostCallbackBinding, AgentHostCallbackError,
     AgentHostCallbackErrorCode, AgentHostCallbacks, AgentProfileDigest, AgentServiceInstanceId,
     AgentSourceCoordinate, AgentSurfaceContributionPayload, AgentSurfaceDigest,
     AgentSurfaceRevision, AgentSurfaceRoute, AgentToolExecutionStream, AgentToolInvocation,
@@ -68,7 +68,7 @@ pub trait CompleteAgentHookHandler: Send + Sync {
     async fn invoke(
         &self,
         callback: ResolvedCompleteAgentHookCallback,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError>;
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError>;
 }
 
 pub trait AgentCallbackClock: Send + Sync {
@@ -255,7 +255,7 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
     async fn invoke_hook(
         &self,
         call: AgentHookInvocation,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError> {
         let (route, context) = self.route_and_context(&call.meta).await?;
         let semantic_deadline_ms = ensure_hook_is_bound(&route.bound_surface, &call)?;
         let budget = self.ensure_deadline(&route, Some(semantic_deadline_ms), &call.meta)?;
@@ -268,9 +268,9 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
         )
         .await
         {
-            Ok(result) => result.and_then(|decision| {
-                ensure_hook_decision_allowed(&call, &decision)?;
-                Ok(decision)
+            Ok(result) => result.and_then(|outcome| {
+                ensure_hook_outcome_allowed(&call, &outcome)?;
+                Ok(outcome)
             }),
             Err(_) => Err(callback_error(
                 AgentHostCallbackErrorCode::DeadlineExceeded,
@@ -406,26 +406,43 @@ fn ensure_hook_is_bound(
     Ok(deadline_ms)
 }
 
-fn ensure_hook_decision_allowed(
+fn ensure_hook_outcome_allowed(
     call: &AgentHookInvocation,
-    decision: &AgentHookDecision,
+    outcome: &AgentHookOutcome,
 ) -> Result<(), AgentHostCallbackError> {
-    let action = match decision {
-        AgentHookDecision::Allow => return Ok(()),
-        AgentHookDecision::Deny { .. } => AgentHookAction::AllowOrDeny,
-        AgentHookDecision::ReplaceInput { .. } => AgentHookAction::RewriteInput,
-        AgentHookDecision::ReplaceResult { .. } => AgentHookAction::RewriteResult,
-        AgentHookDecision::AddContext { .. } => AgentHookAction::AddContext,
-        AgentHookDecision::EmitEffect { .. } => AgentHookAction::EmitEffect,
-    };
-    if !call.allowed_actions.contains(&action) {
-        return Err(callback_error(
-            AgentHostCallbackErrorCode::Internal,
-            "hook handler returned a decision outside the bound semantic actions",
-            false,
-        ));
+    for decision in &outcome.decisions {
+        let action = match decision {
+            AgentHookDecision::Allow => continue,
+            AgentHookDecision::Deny { .. } => AgentHookAction::AllowOrDeny,
+            AgentHookDecision::ReplaceInput { .. } => AgentHookAction::RewriteInput,
+            AgentHookDecision::ReplaceResult { .. } => AgentHookAction::RewriteResult,
+            AgentHookDecision::AddContext { .. } => AgentHookAction::AddContext,
+            AgentHookDecision::EmitEffect { .. } => AgentHookAction::EmitEffect,
+        };
+        require_bound_hook_action(call, action)?;
+    }
+    if outcome.refresh_surface {
+        require_bound_hook_action(call, AgentHookAction::RefreshSurface)?;
+    }
+    if !outcome.continue_turn.is_empty() {
+        require_bound_hook_action(call, AgentHookAction::ContinueTurn)?;
     }
     Ok(())
+}
+
+fn require_bound_hook_action(
+    call: &AgentHookInvocation,
+    action: AgentHookAction,
+) -> Result<(), AgentHostCallbackError> {
+    if call.allowed_actions.contains(&action) {
+        Ok(())
+    } else {
+        Err(callback_error(
+            AgentHostCallbackErrorCode::Internal,
+            "hook handler returned an outcome outside the bound semantic actions",
+            false,
+        ))
+    }
 }
 
 fn callback_invariant_error(message: impl Into<String>) -> AgentHostCallbackError {

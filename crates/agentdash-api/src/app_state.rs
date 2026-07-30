@@ -58,6 +58,9 @@ use agentdash_application_agentrun::agent_run::{
     ProductAgentRunForkGraphAdapter, ProductAgentRunForkRuntimeAdapter,
     ProductAgentRunRuntimeSnapshotAdapter, ProductAgentRunRuntimeSurfaceUpdater,
     ProductCompanionFreshRuntimeAdapter, build_workflow_agent_call_dispatch,
+    mailbox::{
+        AgentRunMailboxService, AgentRunMailboxWorkerHandle, spawn_agent_run_mailbox_worker,
+    },
 };
 use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeProtocolInvoker};
 use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
@@ -188,6 +191,8 @@ pub struct ServiceSet {
     pub execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
     pub agent_run_product_runtime_bindings: Arc<PostgresAgentRunProductRuntimeBindingRepository>,
     pub agent_run_product_commands: Arc<AgentRunProductCommandFacade>,
+    pub agent_run_mailbox: Arc<AgentRunMailboxService>,
+    pub agent_run_mailbox_worker: AgentRunMailboxWorkerHandle,
     pub agent_run_product_launch: Arc<AgentRunProductLaunchService>,
     pub agent_run_product_protocol: Arc<AgentRunProductProtocolPorts>,
     pub agent_run_product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort>,
@@ -356,11 +361,15 @@ impl AppState {
             execution_authorities: execution_authorities.clone(),
         }));
         let shell_terminal_registry = Arc::new(ProcessShellTerminalRegistry::default());
+        let agent_run_mailbox_repository = Arc::new(
+            agentdash_infrastructure::PostgresAgentRunMailboxRepository::new(pool.clone()),
+        );
         let wait_activity_service = Arc::new(WaitActivityService::from_repositories(
             repos.lifecycle_agent_repo.clone(),
             repos.agent_frame_repo.clone(),
             runtime_product_bindings.clone(),
             repos.lifecycle_gate_repo.clone(),
+            agent_run_mailbox_repository.clone(),
             shell_terminal_registry.activity_registry(),
         ));
         let lifecycle_runtime_tool = Arc::new(DeferredProductRuntimeToolService::new(
@@ -454,6 +463,8 @@ impl AppState {
         let runtime_hook_handler = Arc::new(ProductCompleteAgentHookHandler::new(
             runtime_product_bindings.clone(),
             hook_provider.clone(),
+            pool.clone(),
+            agent_run_mailbox_repository.clone(),
         ));
 
         let host_incarnation_id = format!("agentdash-api-host-{}", uuid::Uuid::new_v4());
@@ -538,9 +549,15 @@ impl AppState {
             .map_err(anyhow::Error::msg)?,
         );
         let product_commands = product.commands.clone();
+        let agent_run_mailbox = Arc::new(AgentRunMailboxService::new(
+            agent_run_mailbox_repository,
+            product_commands.clone(),
+            product.gateway.clone(),
+        ));
+        let agent_run_mailbox_worker = spawn_agent_run_mailbox_worker(agent_run_mailbox.clone());
         let product_input_delivery: Arc<dyn AgentRunProductInputDeliveryPort> =
             Arc::new(AgentRunProductInputDeliveryService::new(
-                product_commands.clone(),
+                agent_run_mailbox.clone(),
                 product.gateway.clone(),
                 repos.lifecycle_agent_repo.clone(),
             ));
@@ -598,8 +615,9 @@ impl AppState {
                 frame_construction.clone(),
             )),
             Arc::new(ProcessCompanionFreshSagaRepository::default()),
-            Arc::new(ProductCompanionFreshRuntimeAdapter::with_product_launch(
+            Arc::new(ProductCompanionFreshRuntimeAdapter::new(
                 product_launch.clone(),
+                product_input_delivery.clone(),
             )),
             product_launch.clone(),
             Arc::new(ProductAgentRunRuntimeSnapshotAdapter::new(
@@ -874,6 +892,8 @@ impl AppState {
                 execution_authorities,
                 agent_run_product_runtime_bindings: product.runtime_bindings.clone(),
                 agent_run_product_commands: product_commands,
+                agent_run_mailbox,
+                agent_run_mailbox_worker,
                 agent_run_product_launch: product_launch,
                 agent_run_product_protocol,
                 agent_run_product_input_delivery: product_input_delivery,

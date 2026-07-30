@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/07-30-restore-agentrun-mailbox-steer-channel/prd.md", "reason": "逐条核对所有验收标准、范围和禁止的兼容方案。"}
+{"file": ".trellis/tasks/07-30-restore-agentrun-mailbox-steer-channel/design.md", "reason": "复核 authority、数据流、failure recovery与跨层不变量。"}
+{"file": ".trellis/tasks/07-30-restore-agentrun-mailbox-steer-channel/research/current-state.md", "reason": "核对旧链路断点均已关闭且未误恢复 RuntimeSession实现。"}
+{"file": ".trellis/tasks/07-30-restore-agentrun-mailbox-steer-channel/research/physical-recovery-manifest.md", "reason": "检查该恢复的完整文件已取回、仅参考文件未误接入production。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "覆盖 HTTP、workflow、routine、companion、hook auto-resume等全部入口。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "检查 Product无普通输入绕过Mailbox且Submit/Steer一义一命令。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "检查schema、lease、fencing、unknown recovery和migration readiness。"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "检查Steer/Core callback并发、turn fence与provenance。"}
+{"file": ".trellis/spec/backend/agent-runtime-hooks.md", "reason": "检查HookRun/Effect状态机、组合action与恢复。"}
+{"file": ".trellis/spec/backend/channel.md", "reason": "检查Companion确实通过Channel和Mailbox materialization。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查API、更新流、UI状态和command contract端到端一致。"}

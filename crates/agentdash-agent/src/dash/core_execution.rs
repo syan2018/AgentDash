@@ -411,6 +411,10 @@ pub trait DashToolCallbacks: Send + Sync {
     ) -> Result<DashToolResult, DashCoreError> {
         Ok(result)
     }
+
+    async fn turn_boundary(&self, _turn_id: &AgentTurnId) -> Result<Vec<String>, DashCoreError> {
+        Ok(Vec::new())
+    }
 }
 
 #[async_trait]

@@ -31,19 +31,20 @@ use agentdash_agent_runtime_contract::{
     AgentContextSnapshot, AgentContextToolUsage, AgentContextUsageAnalysis,
     AgentContextUsageCategory, AgentEffectIdentity, AgentEffectInspection,
     AgentEffectInspectionState, AgentForkCapability, AgentForkCutoffKind, AgentForkPoint,
-    AgentHookBlockingSemantics, AgentHookMutationKind, AgentHookPoint, AgentHookSemanticFacet,
-    AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbacks, AgentInput, AgentInputContent,
-    AgentInteractionRequest, AgentInteractionResolution, AgentInteractionSnapshot,
-    AgentInteractionStatus, AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveBatch,
-    AgentLiveBatchStream, AgentLiveStreamError, AgentModelInputRole, AgentModelInputToolCall,
-    AgentModelInputToolDefinition, AgentObservationQuery, AgentObservationState,
-    AgentPayloadDigest, AgentQueuedCompactionSnapshot, AgentReadQuery, AgentReceiptState,
-    AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode,
-    AgentServiceInstanceId, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
-    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
-    AgentSourceRevision, AgentSourceState, AgentSurfaceCapabilityFacet, AgentSurfaceProfile,
-    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot,
-    AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnObservation,
+    AgentHookBlockingSemantics, AgentHookEffectKind, AgentHookMutationKind, AgentHookPoint,
+    AgentHookSemanticFacet, AgentHookTiming, AgentHostCallbackBinding, AgentHostCallbacks,
+    AgentInput, AgentInputContent, AgentInteractionRequest, AgentInteractionResolution,
+    AgentInteractionSnapshot, AgentInteractionStatus, AgentLifecycleCapability,
+    AgentLifecycleStatus, AgentLiveBatch, AgentLiveBatchStream, AgentLiveStreamError,
+    AgentModelInputRole, AgentModelInputToolCall, AgentModelInputToolDefinition,
+    AgentObservationQuery, AgentObservationState, AgentPayloadDigest,
+    AgentQueuedCompactionSnapshot, AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId,
+    AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
+    AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource,
+    AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor, AgentSourceRevision,
+    AgentSourceState, AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute,
+    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot, AgentToolDelivery,
+    AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnObservation,
     AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
     AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
     AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
@@ -405,6 +406,43 @@ impl DashAgentCompleteService {
                                     SemanticFidelity::Exact,
                                 )]),
                                 effects: BTreeMap::new(),
+                            }),
+                            routes: BTreeSet::from([AgentSurfaceRoute::AgentNativeCallback]),
+                            fidelity: SemanticFidelity::Exact,
+                            configuration_boundary: AgentConfigurationBoundary::HotUpdate,
+                        },
+                        AgentSurfaceCapabilityFacet {
+                            semantics: AgentSurfaceSemanticFacet::Hook(AgentHookSemanticFacet {
+                                point: AgentHookPoint::AfterTurn,
+                                timing: AgentHookTiming::After,
+                                blocking: AgentHookBlockingSemantics::NonBlocking,
+                                mutations: BTreeMap::from([(
+                                    AgentHookMutationKind::AddContext,
+                                    SemanticFidelity::Exact,
+                                )]),
+                                effects: BTreeMap::from([
+                                    (AgentHookEffectKind::EmitEffect, SemanticFidelity::Exact),
+                                    (AgentHookEffectKind::ContinueTurn, SemanticFidelity::Exact),
+                                    (AgentHookEffectKind::RefreshSurface, SemanticFidelity::Exact),
+                                ]),
+                            }),
+                            routes: BTreeSet::from([AgentSurfaceRoute::AgentNativeCallback]),
+                            fidelity: SemanticFidelity::Exact,
+                            configuration_boundary: AgentConfigurationBoundary::HotUpdate,
+                        },
+                        AgentSurfaceCapabilityFacet {
+                            semantics: AgentSurfaceSemanticFacet::Hook(AgentHookSemanticFacet {
+                                point: AgentHookPoint::BeforeStop,
+                                timing: AgentHookTiming::Before,
+                                blocking: AgentHookBlockingSemantics::Blocking {
+                                    fidelity: SemanticFidelity::Exact,
+                                },
+                                mutations: BTreeMap::new(),
+                                effects: BTreeMap::from([
+                                    (AgentHookEffectKind::EmitEffect, SemanticFidelity::Exact),
+                                    (AgentHookEffectKind::ContinueTurn, SemanticFidelity::Exact),
+                                    (AgentHookEffectKind::RefreshSurface, SemanticFidelity::Exact),
+                                ]),
                             }),
                             routes: BTreeSet::from([AgentSurfaceRoute::AgentNativeCallback]),
                             fidelity: SemanticFidelity::Exact,
@@ -1205,7 +1243,20 @@ impl CompleteAgentService for DashAgentCompleteService {
             self.open_source(&command.source).await?;
             return Ok(receipt);
         }
-        let (service, metadata) = self.open_source(&command.source).await?;
+        let (service, _) = self.open_source(&command.source).await?;
+        let _writer = service.lock_repository_mutation().await;
+        if let Some(recorded) = self.store.load_effect(&command.effect_id).await? {
+            return recorded.apply_surface_receipt_for(
+                &command.source,
+                &command.command_id,
+                &request_fingerprint,
+            );
+        }
+        let metadata = self
+            .store
+            .load_source(&command.source)
+            .await?
+            .ok_or_else(|| conflict("Dash Agent source disappeared during surface apply"))?;
         let dash_surface =
             dash_surface_from_bound(&command.bound_surface, metadata.callback_surface.as_ref())?;
         let profile = Self::descriptor().profile.surface;
@@ -1328,7 +1379,20 @@ impl CompleteAgentService for DashAgentCompleteService {
             self.open_source(&command.source).await?;
             return Ok(receipt);
         }
-        let (service, metadata) = self.open_source(&command.source).await?;
+        let (service, _) = self.open_source(&command.source).await?;
+        let _writer = service.lock_repository_mutation().await;
+        if let Some(recorded) = self.store.load_effect(&command.effect_id).await? {
+            return recorded.command_receipt_for(
+                &command.source,
+                &command.command_id,
+                &request_fingerprint,
+            );
+        }
+        let metadata = self
+            .store
+            .load_source(&command.source)
+            .await?
+            .ok_or_else(|| conflict("Dash Agent source disappeared during surface revoke"))?;
         if metadata
             .applied_surface
             .as_ref()

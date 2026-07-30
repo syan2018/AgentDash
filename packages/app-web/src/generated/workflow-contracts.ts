@@ -97,7 +97,7 @@ export type ConversationCommandPlacement = "composer_primary" | "composer_second
 
 export type ConversationCommandSetView = { ownership: AgentRunOwnershipView, commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
 
-export type ConversationCommandView = { kind: ConversationCommandKind, command_id: string, runtime_command: AgentRuntimeCommandKind, shortcut?: string, requires_input: boolean, executor_config_policy: string, placement: Array<ConversationCommandPlacement>, };
+export type ConversationCommandView = { kind: ConversationCommandKind, command_id: string, runtime_command?: AgentRuntimeCommandKind, shortcut?: string, requires_input: boolean, executor_config_policy: string, placement: Array<ConversationCommandPlacement>, };
 
 export type ConversationDiagnosticView = { code: string, severity: ValidationSeverity, message: string, detail?: JsonValue, };
 

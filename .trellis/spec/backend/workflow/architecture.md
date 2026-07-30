@@ -14,7 +14,8 @@ Lifecycle run/agent/frame、source association 与 concrete operation coordinate
   状态从 concrete Agent observation得到。
 - AgentFrame 是 immutable Business Surface input；`AgentRunRuntimeBinding` 是产品到 Runtime 的唯一执行锚点。
 - node completion由 concrete Agent terminal snapshot/event驱动并幂等写入orchestration journal。
-- Gate/companion follow-up通过同步 Agent input handoff；Gate owner保存等待事实和下游receipt。
+- Gate/Companion follow-up保存自身等待事实，并以稳定source identity materialize AgentRun
+  Mailbox message；下游 evidence分别记录Mailbox message与concrete operation coordinate。
 - Workflow repository不读取Agent/Runtime内部表；跨边界查询使用facade/typed association ports。
 
 ## Validation
@@ -28,6 +29,6 @@ Lifecycle run/agent/frame、source association 与 concrete operation coordinate
 
 ## Tests Required
 
-- dispatch → Product input handoff → concrete operation evidence integration test。
+- dispatch → Channel/Product input delivery → Mailbox message → concrete operation evidence集成测试。
 - duplicate/late Agent terminal does not advance node twice。
 - workflow crates contain no Driver/vendor/legacy session repository dependency。

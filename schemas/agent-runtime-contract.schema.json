@@ -2240,7 +2240,9 @@
         "rewrite_input",
         "rewrite_result",
         "add_context",
-        "emit_effect"
+        "emit_effect",
+        "continue_turn",
+        "refresh_surface"
       ],
       "type": "string"
     },
@@ -2397,6 +2399,36 @@
       ],
       "type": "object"
     },
+    "AgentHookOutcome": {
+      "properties": {
+        "continue_turn": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentInputContent"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentHookDecision"
+          },
+          "type": "array"
+        },
+        "diagnostics": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "refresh_surface": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "AgentHookPoint": {
       "enum": [
         "before_turn",
@@ -2419,7 +2451,13 @@
         "effects": {
           "additionalProperties": false,
           "properties": {
+            "continue_turn": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
             "emit_effect": {
+              "$ref": "#/$defs/SemanticFidelity"
+            },
+            "refresh_surface": {
               "$ref": "#/$defs/SemanticFidelity"
             }
           },
@@ -3728,11 +3766,11 @@
         "fork_receipt": {
           "$ref": "#/$defs/ForkAgentReceipt"
         },
-        "hook_decision": {
-          "$ref": "#/$defs/AgentHookDecision"
-        },
         "hook_invocation": {
           "$ref": "#/$defs/AgentHookInvocation"
+        },
+        "hook_outcome": {
+          "$ref": "#/$defs/AgentHookOutcome"
         },
         "inspection": {
           "$ref": "#/$defs/AgentEffectInspection"
@@ -3809,7 +3847,7 @@
         "tool_result",
         "tool_execution_event",
         "hook_invocation",
-        "hook_decision",
+        "hook_outcome",
         "error"
       ],
       "type": "object"

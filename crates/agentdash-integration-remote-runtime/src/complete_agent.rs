@@ -9,7 +9,7 @@ use std::{
 use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentChange, AgentChangePage, AgentChangesQuery,
     AgentCommandEnvelope, AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot,
-    AgentEffectIdentity, AgentEffectInspection, AgentHookDecision, AgentHookInvocation,
+    AgentEffectIdentity, AgentEffectInspection, AgentHookInvocation, AgentHookOutcome,
     AgentHostCallbackError, AgentHostCallbackErrorCode, AgentHostCallbacks, AgentLiveBatch,
     AgentLiveBatchStream, AgentLiveStreamError, AgentReadQuery, AgentServiceDescriptor,
     AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshot,
@@ -1325,7 +1325,7 @@ impl AgentHostCallbacks for RuntimeWireAgentHostCallbackClient {
     async fn invoke_hook(
         &self,
         call: AgentHookInvocation,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError> {
         match self
             .invoke_hook_callback(RuntimeWireAgentHostCallbackRequest::Hook(call))
             .await?

@@ -156,6 +156,41 @@ pub enum AgentHookDecision {
     EmitEffect { effect: Value },
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentHookOutcome {
+    #[serde(default)]
+    pub decisions: Vec<AgentHookDecision>,
+    #[serde(default)]
+    pub refresh_surface: bool,
+    #[serde(default)]
+    pub continue_turn: Vec<crate::AgentInputContent>,
+    #[serde(default)]
+    pub diagnostics: Vec<String>,
+}
+
+impl AgentHookOutcome {
+    pub fn allow() -> Self {
+        Self {
+            decisions: Vec::new(),
+            refresh_surface: false,
+            continue_turn: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn from_decision(decision: AgentHookDecision) -> Self {
+        if decision == AgentHookDecision::Allow {
+            Self::allow()
+        } else {
+            Self {
+                decisions: vec![decision],
+                ..Self::allow()
+            }
+        }
+    }
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]
@@ -209,7 +244,7 @@ pub trait AgentHostCallbacks: Send + Sync {
     async fn invoke_hook(
         &self,
         call: AgentHookInvocation,
-    ) -> Result<AgentHookDecision, AgentHostCallbackError>;
+    ) -> Result<AgentHookOutcome, AgentHostCallbackError>;
 }
 
 /// Finite Host-to-Agent contract. A Complete Agent remains authoritative for its own history,

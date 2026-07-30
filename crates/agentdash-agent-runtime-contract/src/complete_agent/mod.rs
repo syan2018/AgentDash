@@ -63,7 +63,7 @@ pub struct AgentServiceApiSchema {
     pub tool_result: AgentToolResult,
     pub tool_execution_event: AgentToolExecutionEvent,
     pub hook_invocation: AgentHookInvocation,
-    pub hook_decision: AgentHookDecision,
+    pub hook_outcome: AgentHookOutcome,
     pub error: AgentServiceError,
 }
 
@@ -110,7 +110,7 @@ mod tests {
             "tool_result",
             "tool_execution_event",
             "hook_invocation",
-            "hook_decision",
+            "hook_outcome",
             "error",
         ] {
             assert!(properties.contains_key(family), "missing {family}");

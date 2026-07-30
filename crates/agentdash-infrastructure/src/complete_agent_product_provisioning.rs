@@ -1289,11 +1289,21 @@ fn hook_requirement(
     .filter(|(action, _)| actions.contains(action))
     .map(|(_, mutation)| (mutation, fidelity))
     .collect();
-    let effects = actions
-        .contains(&AgentHookAction::EmitEffect)
-        .then_some((AgentHookEffectKind::EmitEffect, fidelity))
-        .into_iter()
-        .collect();
+    let effects = [
+        (AgentHookAction::EmitEffect, AgentHookEffectKind::EmitEffect),
+        (
+            AgentHookAction::ContinueTurn,
+            AgentHookEffectKind::ContinueTurn,
+        ),
+        (
+            AgentHookAction::RefreshSurface,
+            AgentHookEffectKind::RefreshSurface,
+        ),
+    ]
+    .into_iter()
+    .filter(|(action, _)| actions.contains(action))
+    .map(|(_, effect)| (effect, fidelity))
+    .collect();
     let semantics = AgentHookSemanticFacet {
         point,
         timing,
@@ -1350,9 +1360,9 @@ fn hook_actions(source: &BTreeSet<HookAction>) -> Option<BTreeSet<AgentHookActio
             HookAction::RewriteInput => AgentHookAction::RewriteInput,
             HookAction::RewriteResult => AgentHookAction::RewriteResult,
             HookAction::EmitEffect => AgentHookAction::EmitEffect,
-            HookAction::RequestApproval | HookAction::ContinueTurn | HookAction::RefreshSurface => {
-                return None;
-            }
+            HookAction::ContinueTurn => AgentHookAction::ContinueTurn,
+            HookAction::RefreshSurface => AgentHookAction::RefreshSurface,
+            HookAction::RequestApproval => return None,
         });
     }
     Some(actions)

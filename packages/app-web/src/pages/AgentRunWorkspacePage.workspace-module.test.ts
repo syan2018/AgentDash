@@ -168,11 +168,13 @@ function command(kind: ConversationCommandView["kind"], commandId: string): Conv
   return {
     kind,
     command_id: commandId,
-    runtime_command: kind === "cancel"
+    runtime_command: kind === "submit_message"
+      ? undefined
+      : kind === "cancel"
       ? "interrupt"
       : kind === "compact_context"
         ? "request_compaction"
-        : "submit_input",
+        : undefined,
     requires_input: true,
     executor_config_policy: "required",
     placement: ["composer_primary"],
@@ -443,7 +445,7 @@ describe("AgentRun workspace conversation command authority", () => {
     expect(state.commands.keyboard.ctrl_enter).toBe("cmd-submit");
     expect(state.commands.commands.find(
       (item) => item.command_id === "cmd-submit",
-    )?.runtime_command).toBe("submit_input");
+    )?.runtime_command).toBeUndefined();
   });
 
   it("does not infer Runtime execution from Product shell status", () => {

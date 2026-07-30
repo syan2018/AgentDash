@@ -2,6 +2,9 @@ use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{AgentInputContent, AgentRuntimeOperationReceipt};
 use agentdash_domain::agent_input::{AgentInputOrigin, AgentInputSourceIdentity};
+use agentdash_domain::agent_run_mailbox::{
+    MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity,
+};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::workflow::LifecycleAgentRepository;
 use async_trait::async_trait;
@@ -11,8 +14,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::{
-    AgentRunProductCommand, AgentRunProductCommandFacade, AgentRunProductCommandRequest,
-    AgentRunProductProjectionQueryPort,
+    AgentRunProductCommand, AgentRunProductCommandRequest, AgentRunProductProjectionQueryPort,
 };
 
 #[derive(Debug, Clone)]
@@ -28,7 +30,9 @@ pub struct DeliverAgentRunProductInput {
 pub struct AgentRunProductInputDelivery {
     /// Deterministic identity retained by the owning Product workflow as input-handoff evidence.
     pub handoff_id: Uuid,
-    pub operation_receipt: AgentRuntimeOperationReceipt,
+    pub mailbox_message_id: Uuid,
+    pub operation_receipt: Option<AgentRuntimeOperationReceipt>,
+    pub queued: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -36,6 +40,20 @@ pub struct PreparedAgentRunProductInputDelivery {
     pub handoff_id: Uuid,
     pub command_request: AgentRunProductCommandRequest,
     pub steered: bool,
+    pub source: PreparedAgentRunProductInputSource,
+    pub origin: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PreparedAgentRunProductInputSource {
+    pub namespace: String,
+    pub kind: String,
+    pub source_ref: Option<String>,
+    pub correlation_ref: Option<String>,
+    pub actor: String,
+    pub route: Option<String>,
+    pub display_label_key: String,
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -84,25 +102,21 @@ pub trait AgentRunProductInputDeliveryPort: Send + Sync {
     ) -> Result<Uuid, AgentRunProductInputDeliveryError>;
 }
 
-/// Synchronous Product input handoff.
-///
-/// Product validates and maps the request, then immediately hands it to the concrete Agent through
-/// the command facade. Agent unavailability is returned to the caller; Product never accepts an
-/// offline queue or creates a background-delivery promise.
+/// AgentRun Product durable input intake.
 pub struct AgentRunProductInputDeliveryService {
-    commands: Arc<AgentRunProductCommandFacade>,
+    mailbox: Arc<super::mailbox::AgentRunMailboxService>,
     projection: Arc<dyn AgentRunProductProjectionQueryPort>,
     agents: Arc<dyn LifecycleAgentRepository>,
 }
 
 impl AgentRunProductInputDeliveryService {
     pub fn new(
-        commands: Arc<AgentRunProductCommandFacade>,
+        mailbox: Arc<super::mailbox::AgentRunMailboxService>,
         projection: Arc<dyn AgentRunProductProjectionQueryPort>,
         agents: Arc<dyn LifecycleAgentRepository>,
     ) -> Self {
         Self {
-            commands,
+            mailbox,
             projection,
             agents,
         }
@@ -146,8 +160,21 @@ impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
                     client_command_id: client_command_id.to_owned(),
                     command: AgentRunProductCommand::SubmitInput { content },
                 },
-                // The concrete Agent decides Submit versus Steer from its authoritative active turn.
+                // Generic producers always request normal Product input. The Mailbox owns
+                // active-turn observation and boundary scheduling; explicit Steer is a separate
+                // Composer/control intent.
                 steered: false,
+                source: PreparedAgentRunProductInputSource {
+                    namespace: command.source.namespace,
+                    kind: command.source.kind,
+                    source_ref: command.source.source_ref,
+                    correlation_ref: command.source.correlation_ref,
+                    actor: command.source.actor,
+                    route: command.source.route,
+                    display_label_key: command.source.display_label_key,
+                    metadata: command.source.metadata,
+                },
+                origin: command.origin.as_str().to_owned(),
             },
         ))
     }
@@ -157,17 +184,56 @@ impl AgentRunProductInputDeliveryPort for AgentRunProductInputDeliveryService {
         prepared: PreparedAgentRunProductInputDelivery,
     ) -> Result<AgentRunProductInputDelivery, AgentRunProductInputDeliveryError> {
         let target = prepared.command_request.target.clone();
-        let receipt = self
-            .commands
-            .execute(prepared.command_request)
+        let AgentRunProductCommand::SubmitInput { content } = prepared.command_request.command
+        else {
+            return Err(AgentRunProductInputDeliveryError::Command(
+                "Product input delivery prepared a non-input command".to_owned(),
+            ));
+        };
+        let outcome = self
+            .mailbox
+            .accept(super::mailbox::AgentRunMailboxIntakeCommand {
+                target: target.clone(),
+                content,
+                source: MailboxSourceIdentity {
+                    namespace: prepared.source.namespace,
+                    kind: prepared.source.kind,
+                    source_ref: prepared.source.source_ref,
+                    correlation_ref: prepared.source.correlation_ref,
+                    actor: prepared.source.actor,
+                    route: prepared.source.route,
+                    display_label_key: prepared.source.display_label_key,
+                    metadata: prepared.source.metadata,
+                },
+                origin: match prepared.origin.as_str() {
+                    "user" => MailboxMessageOrigin::User,
+                    "system" => MailboxMessageOrigin::System,
+                    "hook" => MailboxMessageOrigin::Hook,
+                    "companion" => MailboxMessageOrigin::Companion,
+                    "workflow" => MailboxMessageOrigin::Workflow,
+                    other => {
+                        return Err(AgentRunProductInputDeliveryError::Command(format!(
+                            "Product input origin is invalid: {other}"
+                        )));
+                    }
+                },
+                client_command_id: prepared.command_request.client_command_id,
+                delivery_intent: super::mailbox::AgentRunMailboxDeliveryIntent::Queue,
+                retain_payload: false,
+            })
             .await
             .map_err(|error| AgentRunProductInputDeliveryError::Command(error.to_string()))?;
         self.initialize_title(&target)
             .await
             .map_err(AgentRunProductInputDeliveryError::TitleInitialization)?;
         Ok(AgentRunProductInputDelivery {
-            handoff_id: prepared.handoff_id,
-            operation_receipt: receipt,
+            handoff_id: outcome.message.id,
+            mailbox_message_id: outcome.message.id,
+            queued: !matches!(
+                outcome.message.status,
+                MailboxMessageStatus::Dispatched | MailboxMessageStatus::Steered
+            ),
+            operation_receipt: outcome.operation_receipt,
         })
     }
 

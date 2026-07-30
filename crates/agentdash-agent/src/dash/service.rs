@@ -358,6 +358,10 @@ impl DashToolCallbacks for RoutableDashToolCallbacks {
             .unwrap_or(self.current().await);
         admitted.after_tool(turn_id, call, result).await
     }
+
+    async fn turn_boundary(&self, turn_id: &AgentTurnId) -> Result<Vec<String>, DashCoreError> {
+        self.current().await.turn_boundary(turn_id).await
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -411,6 +415,7 @@ pub trait DashAgentRepositoryStore: Send + Sync {
 #[derive(Clone)]
 pub struct DashAgentService {
     repository: Arc<dyn DashAgentRepository>,
+    repository_writer: Arc<tokio::sync::Mutex<()>>,
     execution: Arc<tokio::sync::RwLock<DashExecutionDependencies>>,
     tool_callbacks: Arc<RoutableDashToolCallbacks>,
     cancellation: Arc<tokio::sync::Mutex<Option<(AgentTurnId, DashCancellation)>>>,
@@ -665,9 +670,14 @@ impl DashExecutionCallbacks for DurableDashExecutionCallbacks {
         _round: u32,
         terminal_boundary: bool,
     ) -> Result<Vec<String>, DashCoreError> {
-        self.service
+        let mut messages = self
+            .service
             .drain_steering(turn_id, terminal_boundary)
-            .await
+            .await?;
+        if terminal_boundary {
+            messages.extend(self.service.tool_callbacks.turn_boundary(turn_id).await?);
+        }
+        Ok(messages)
     }
 }
 
@@ -759,6 +769,7 @@ impl DashAgentService {
         execution.tools = tool_callbacks.clone();
         Self {
             repository,
+            repository_writer: Arc::new(tokio::sync::Mutex::new(())),
             execution: Arc::new(tokio::sync::RwLock::new(execution)),
             tool_callbacks,
             cancellation: Arc::new(tokio::sync::Mutex::new(None)),
@@ -988,6 +999,7 @@ impl DashAgentService {
     }
 
     pub async fn apply_surface(&self, surface: DashSurface) -> Result<(), DashServiceError> {
+        let _writer = self.lock_repository_mutation().await;
         let (expected, mut replacement) = self.stage_surface_apply(surface).await?;
         let projections = replacement.take_pending_history_projections();
         let committed_history = replacement.store.history().clone();
@@ -1000,6 +1012,7 @@ impl DashAgentService {
     }
 
     pub async fn revoke_surface(&self, expected_revision: u64) -> Result<(), DashServiceError> {
+        let _writer = self.lock_repository_mutation().await;
         let (expected, mut replacement) = self.stage_surface_revoke(expected_revision).await?;
         let projections = replacement.take_pending_history_projections();
         let committed_history = replacement.store.history().clone();
@@ -1044,6 +1057,14 @@ impl DashAgentService {
             })?;
         }
         Ok((expected, replacement))
+    }
+
+    /// Serializes every repository mutation for this concrete Dash source.
+    ///
+    /// Complete-Agent adapters that need to atomically commit Dash repository state together with
+    /// their own effect metadata hold this guard from staging through the external atomic commit.
+    pub async fn lock_repository_mutation(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        self.repository_writer.clone().lock_owned().await
     }
 
     pub async fn stage_surface_revoke(
@@ -3043,6 +3064,7 @@ impl DashAgentService {
         &self,
         mutate: impl FnOnce(&mut DashAgentStore) -> Result<T, DashServiceError>,
     ) -> Result<(DashAgentStore, T), DashServiceError> {
+        let _writer = self.lock_repository_mutation().await;
         let expected = self.repository.load().await?;
         let mut replacement = expected.clone();
         let result = mutate(&mut replacement.store)?;
@@ -3060,6 +3082,7 @@ impl DashAgentService {
         &self,
         mutate: impl FnOnce(&mut DashAgentRepositoryState) -> Result<T, DashServiceError>,
     ) -> Result<(DashAgentRepositoryState, T), DashServiceError> {
+        let _writer = self.lock_repository_mutation().await;
         let expected = self.repository.load().await?;
         let mut replacement = expected.clone();
         let result = mutate(&mut replacement)?;

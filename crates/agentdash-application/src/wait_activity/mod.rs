@@ -5,7 +5,9 @@ mod sources;
 mod tests;
 mod types;
 
-pub use service::{WaitActivityDeps, WaitActivityRepositories, WaitActivityService};
+pub use service::{
+    WaitActivityDeps, WaitActivityMailboxQuery, WaitActivityRepositories, WaitActivityService,
+};
 pub use types::{
     WaitActivityItem, WaitActivityOwnerScope, WaitActivityRequest, WaitActivityResult,
     WaitToolContext,

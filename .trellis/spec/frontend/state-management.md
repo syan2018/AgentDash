@@ -7,8 +7,8 @@
   model configuration、waiting items与静态Runtime command binding，不保存execution、active turn或
   动态command availability。
 - `AgentRuntimeConnection`保存authoritative `AgentRuntimeView` baseline、当前update lane、
-  presentation overlay与连接状态。Feed、Composer与Interaction UI从同一个connection读取selectors，
-  因而history收缩与Workspace刷新不会形成第二条控制状态链。
+  presentation overlay与连接状态。Feed、Stop、显式Steer fence与Interaction UI读取该连接；
+  Composer Queue/Pending/controls读取独立AgentRun Mailbox projection。
 - `RuntimeProjectionController`按`run_id + agent_id`拥有context projection请求、取消、
   generation、required/committed coordinate fence和last committed recipe。Inspector只消费
   controller state；Runtime observation推进context coordinate时controller刷新，迟到响应不能结束
@@ -25,7 +25,8 @@
 
 ## Runtime Rules
 
-- command enabled只来自`AgentRuntimeView.command_availability`。
+- Runtime control enabled只来自`AgentRuntimeView.command_availability`。Mailbox Queue由
+  Product ownership/model requirement门禁；显式Steer额外要求当前active turn evidence。
 - target变化立即隔离旧view/update lane/resource surface；loading期间不泄漏前一target状态。
 - reconnect和lane gap先重新读取authoritative view，再归约当前连接的新lane；duplicate update不重复reduce，
   connection/source变化删除旧lane partial贡献。failed/cancelled/lost item按identity终结原entry，
@@ -37,9 +38,9 @@
   用 committed history替换该回合的ephemeral partial；请求在途期间继续到达的canonical live records
   按 `presentation_id` 叠加到新baseline，避免标题等terminal后事实被较早的snapshot响应覆盖；若期间
   又收到后续回合的`TurnCompleted`，连接层在当前请求后再读取一次，保证每个terminal都完成durable收敛。
-- 同target Workspace后台refresh只影响Product projection；Composer继续使用当前Runtime control
-  selector。只有target replace才隔离旧Runtime view，原因是取消/停止按钮必须持续对应同一个
-  Complete Agent observation。
+- 同 target Workspace 后台 refresh 只影响 Product workspace projection；Composer 的 Queue
+  与 Mailbox controls 读取 Mailbox projection，Stop/显式 Steer 的 expected turn 读取当前 Runtime
+  view。target replace 同时隔离两份 scoped state。
 - UI允许thread-level ContextFrame在视觉上把同一turn切成多个presentation section。Section的React
   identity由首个canonical display item identity派生，而不是只用turn id；authoritative收敛替换掉
   live section时会得到新的identity，旧DOM不会与新section并存。
@@ -54,8 +55,8 @@
 - canonical `item_completed` 中成功完成的 `task_write` 通过统一control-plane effect planner
   重新读取当前AgentRun的Task owner；进行中、失败及其他工具不触发。Task状态由owner read收敛，
   因而live reducer不保存optimistic Task副本。
-- LifecycleGate waiting items作为Product事实单独展示；Agent input handoff不进入持久队列model。
-  没有canonical endpoint的管理动作不进入model/intents。
+- LifecycleGate waiting items与Mailbox均作为Product事实展示。Mailbox model只消费generated
+  list/control contracts，所有可见管理动作都有对应AgentRun-scoped endpoint。
 
 必须测试target切换、stale view、live lane重建、availability、presentation URI与layout稳定性；
 命令式 presentation 还必须覆盖“历史request不打开”“live request先刷新current projection”
@@ -90,7 +91,7 @@ planAgentRunLiveEvent(event: BackboneEvent): {
 - canonical `TurnStarted`与`TurnCompleted`只进入AgentRuntimeConnection的presentation/control归约，
   不使Product Workspace失效。execution和command availability已随同一次Runtime update到达。
 - connection在`TurnCompleted`上读取Complete Agent authoritative view完成durable收敛。composer
-  command完成只清理本地输入状态，不触发Workspace reload。
+  intake完成后清理本地输入并刷新 Mailbox；Runtime history继续由 canonical update 收敛。
 - Workspace Module用户打开只改变tab layout；菜单已经来自current `workspace_modules`，打开动作不反向
   使同一Workspace失效。Canvas向Agent提交输入后的状态收敛仍沿canonical turn边界完成。
 - Canvas runtime load identity由`run_id + agent_id + project_id + canvas_mount_id`和显式
@@ -108,7 +109,8 @@ planAgentRunLiveEvent(event: BackboneEvent): {
 
 ### 5. Good / Base / Bad Cases
 
-- Good：执行开始后composer切换到停止语义，终止后直接恢复发送；打开的Canvas不进入loading。
+- Good：执行中空 composer 显示 Stop，有内容时 Enter 进入 Queue、Ctrl/Cmd+Enter 显式
+  Steer；终止后 dispatcher 自动消费下一条 Pending。
 - Base：标题或resource surface发生独立typed invalidation时Workspace正常重读，Canvas bridge坐标未变
   因而iframe保持。
 - Bad：command service、composer success、hook别名与terminal各自读取整个Workspace，使终止成为多次

@@ -965,7 +965,7 @@ impl ChannelDeliveryIntent {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChannelDeliveryTarget {
-    AgentInput { run_id: Uuid, agent_id: Uuid },
+    Mailbox { run_id: Uuid, agent_id: Uuid },
     LifecycleGate { gate_id: Uuid },
     ExternalBinding { binding_id: ChannelBindingId },
     Notification { user_id: String },
@@ -1014,20 +1014,10 @@ pub enum ChannelDeliveryStatus {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MaterializedDeliveryRef {
-    AgentInput {
-        handoff_id: Uuid,
-        operation_id: Option<String>,
-    },
-    LifecycleGate {
-        gate_id: Uuid,
-    },
-    PublishOutbox {
-        outbox_id: Uuid,
-    },
-    ProviderEvent {
-        provider: String,
-        event_ref: String,
-    },
+    MailboxMessage { message_id: Uuid },
+    LifecycleGate { gate_id: Uuid },
+    PublishOutbox { outbox_id: Uuid },
+    ProviderEvent { provider: String, event_ref: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1405,7 +1395,7 @@ mod tests {
         ChannelDeliveryState {
             delivery_id,
             message_id,
-            target: ChannelDeliveryTarget::AgentInput {
+            target: ChannelDeliveryTarget::Mailbox {
                 run_id: Uuid::new_v4(),
                 agent_id: Uuid::new_v4(),
             },

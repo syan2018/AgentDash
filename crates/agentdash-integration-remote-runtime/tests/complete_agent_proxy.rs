@@ -285,12 +285,12 @@ impl AgentHostCallbacks for RecordingCallbacks {
     async fn invoke_hook(
         &self,
         call: agentdash_agent_runtime_contract::AgentHookInvocation,
-    ) -> Result<agentdash_agent_runtime_contract::AgentHookDecision, AgentHostCallbackError> {
+    ) -> Result<agentdash_agent_runtime_contract::AgentHookOutcome, AgentHostCallbackError> {
         self.generations
             .lock()
             .await
             .push(call.meta.binding_generation);
-        Ok(agentdash_agent_runtime_contract::AgentHookDecision::Allow)
+        Ok(agentdash_agent_runtime_contract::AgentHookOutcome::allow())
     }
 }
 
@@ -346,8 +346,8 @@ impl AgentHostCallbacks for ReentrantCallbacks {
     async fn invoke_hook(
         &self,
         _: AgentHookInvocation,
-    ) -> Result<agentdash_agent_runtime_contract::AgentHookDecision, AgentHostCallbackError> {
-        Ok(agentdash_agent_runtime_contract::AgentHookDecision::Allow)
+    ) -> Result<agentdash_agent_runtime_contract::AgentHookOutcome, AgentHostCallbackError> {
+        Ok(agentdash_agent_runtime_contract::AgentHookOutcome::allow())
     }
 }
 
@@ -369,7 +369,7 @@ impl AgentHostCallbacks for BlockingCallbacks {
     async fn invoke_hook(
         &self,
         _: AgentHookInvocation,
-    ) -> Result<agentdash_agent_runtime_contract::AgentHookDecision, AgentHostCallbackError> {
+    ) -> Result<agentdash_agent_runtime_contract::AgentHookOutcome, AgentHostCallbackError> {
         self.invocations.fetch_add(1, Ordering::Relaxed);
         std::future::pending().await
     }

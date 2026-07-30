@@ -1,7 +1,7 @@
 use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentChange, AgentChangePage, AgentChangesQuery, AgentCommandEnvelope,
     AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot, AgentEffectIdentity,
-    AgentEffectInspection, AgentHookDecision, AgentHookInvocation, AgentHostCallbackError,
+    AgentEffectInspection, AgentHookInvocation, AgentHookOutcome, AgentHostCallbackError,
     AgentItemId, AgentLiveBatch, AgentReadQuery, AgentServiceDescriptor, AgentServiceError,
     AgentServiceInstanceId, AgentSnapshot, AgentSourceCoordinate, AgentToolExecutionEvent,
     AgentToolInvocation, AgentToolName, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface,
@@ -233,7 +233,7 @@ impl RuntimeWireAgentHostCallbackRequest {
 #[serde(tag = "callback", content = "result", rename_all = "snake_case")]
 pub enum RuntimeWireAgentHostCallbackResponse {
     Tool(Box<RuntimeWireAgentToolExecutionEvent>),
-    Hook(Result<Box<AgentHookDecision>, AgentHostCallbackError>),
+    Hook(Result<Box<AgentHookOutcome>, AgentHostCallbackError>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

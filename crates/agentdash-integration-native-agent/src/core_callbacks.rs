@@ -6,11 +6,11 @@ use agentdash_agent::dash::{
 };
 use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentEffectIdentity, AgentHookAction,
-    AgentHookDecision, AgentHookDefinitionId, AgentHookInvocation, AgentHookPoint, AgentHookTiming,
-    AgentHostCallbackMeta, AgentHostCallbacks, AgentIdempotencyKey, AgentItemId,
-    AgentSourceCoordinate, AgentSurfaceContributionPayload, AgentToolExecutionEvent,
-    AgentToolExecutionStream, AgentToolInvocation, AgentToolName, AgentToolResult, AgentTurnId,
-    BoundAgentSurface,
+    AgentHookDecision, AgentHookDefinitionId, AgentHookInvocation, AgentHookOutcome,
+    AgentHookPoint, AgentHookTiming, AgentHostCallbackMeta, AgentHostCallbacks,
+    AgentIdempotencyKey, AgentInputContent, AgentItemId, AgentSourceCoordinate,
+    AgentSurfaceContributionPayload, AgentToolExecutionEvent, AgentToolExecutionStream,
+    AgentToolInvocation, AgentToolName, AgentToolResult, AgentTurnId, BoundAgentSurface,
 };
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -110,7 +110,7 @@ impl DashAgentCoreToolCallbacks {
     fn callback_meta(
         &self,
         turn_id: &agentdash_agent::dash::AgentTurnId,
-        call_id: &str,
+        item_id: Option<&str>,
         effect_id: String,
         deadline_ms: Option<u64>,
     ) -> Result<AgentHostCallbackMeta, DashCoreError> {
@@ -119,7 +119,10 @@ impl DashAgentCoreToolCallbacks {
             binding_generation: self.binding_generation,
             source: self.source.clone(),
             turn_id: AgentTurnId::new(turn_id.0.clone()).map_err(callback_error)?,
-            item_id: Some(AgentItemId::new(call_id).map_err(callback_error)?),
+            item_id: item_id
+                .map(AgentItemId::new)
+                .transpose()
+                .map_err(callback_error)?,
             interaction_id: None,
             effect_id: AgentEffectIdentity::new(effect_id.clone()).map_err(callback_error)?,
             idempotency_key: AgentIdempotencyKey::new(effect_id).map_err(callback_error)?,
@@ -127,13 +130,13 @@ impl DashAgentCoreToolCallbacks {
         })
     }
 
-    async fn invoke_hook(
+    async fn invoke_tool_hook(
         &self,
         turn_id: &agentdash_agent::dash::AgentTurnId,
         call: &DashToolCall,
         binding: &DashHookBinding,
         input: serde_json::Value,
-    ) -> Result<AgentHookDecision, DashCoreError> {
+    ) -> Result<AgentHookOutcome, DashCoreError> {
         let point = match binding.point {
             AgentHookPoint::BeforeTool => "before",
             AgentHookPoint::AfterTool => "after",
@@ -143,7 +146,7 @@ impl DashAgentCoreToolCallbacks {
             .invoke_hook(AgentHookInvocation {
                 meta: self.callback_meta(
                     turn_id,
-                    &call.call_id,
+                    Some(&call.call_id),
                     format!(
                         "hook:{point}:{}:{}",
                         binding.definition_id.as_str(),
@@ -160,6 +163,41 @@ impl DashAgentCoreToolCallbacks {
             .await
             .map_err(callback_error)
     }
+
+    async fn invoke_boundary_hook(
+        &self,
+        turn_id: &agentdash_agent::dash::AgentTurnId,
+        binding: &DashHookBinding,
+    ) -> Result<AgentHookOutcome, DashCoreError> {
+        let point = match binding.point {
+            AgentHookPoint::AfterTurn => "after_turn",
+            AgentHookPoint::BeforeStop => "before_stop",
+            _ => "boundary",
+        };
+        self.callbacks
+            .invoke_hook(AgentHookInvocation {
+                meta: self.callback_meta(
+                    turn_id,
+                    None,
+                    format!(
+                        "hook:{point}:{}:{}",
+                        binding.definition_id.as_str(),
+                        turn_id.0
+                    ),
+                    Some(binding.deadline_ms),
+                )?,
+                definition_id: binding.definition_id.clone(),
+                point: binding.point,
+                timing: binding.timing,
+                allowed_actions: binding.actions.clone(),
+                input: json!({
+                    "turn_id": turn_id.0,
+                    "boundary": point,
+                }),
+            })
+            .await
+            .map_err(callback_error)
+    }
 }
 
 #[async_trait]
@@ -172,34 +210,41 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
         for hook in self.hooks.iter().filter(|hook| {
             hook.point == AgentHookPoint::BeforeTool && hook.timing == AgentHookTiming::Before
         }) {
-            let decision = self
-                .invoke_hook(
+            let outcome = self
+                .invoke_tool_hook(
                     turn_id,
                     &call,
                     hook,
                     json!({"tool": call.name, "arguments": call.arguments}),
                 )
                 .await?;
-            match decision {
-                AgentHookDecision::Allow => {}
-                AgentHookDecision::Deny { reason } => {
-                    return Ok(DashBeforeToolDecision::Deny {
-                        result: DashToolResult {
-                            call_id: call.call_id,
-                            content: vec![agentdash_agent::ContentPart::text(format!(
-                                "Tool call denied by hook: {reason}"
-                            ))],
-                            is_error: true,
-                            details: Some(json!({"code": "hook_denied", "message": reason})),
-                        },
-                    });
+            if outcome.refresh_surface || !outcome.continue_turn.is_empty() {
+                return Err(unsupported_hook_outcome(&outcome));
+            }
+            for decision in outcome.decisions {
+                match decision {
+                    AgentHookDecision::Allow => {}
+                    AgentHookDecision::Deny { reason } => {
+                        return Ok(DashBeforeToolDecision::Deny {
+                            result: DashToolResult {
+                                call_id: call.call_id,
+                                content: vec![agentdash_agent::ContentPart::text(format!(
+                                    "Tool call denied by hook: {reason}"
+                                ))],
+                                is_error: true,
+                                details: Some(json!({"code": "hook_denied", "message": reason})),
+                            },
+                        });
+                    }
+                    AgentHookDecision::ReplaceInput { input }
+                        if hook.actions.contains(&AgentHookAction::RewriteInput) =>
+                    {
+                        call.arguments = input.get("arguments").cloned().unwrap_or(input);
+                    }
+                    AgentHookDecision::EmitEffect { .. } | AgentHookDecision::AddContext { .. } => {
+                    }
+                    other => return Err(unsupported_hook_decision(other)),
                 }
-                AgentHookDecision::ReplaceInput { input }
-                    if hook.actions.contains(&AgentHookAction::RewriteInput) =>
-                {
-                    call.arguments = input.get("arguments").cloned().unwrap_or(input);
-                }
-                other => return Err(unsupported_hook_decision(other)),
             }
         }
         Ok(DashBeforeToolDecision::Invoke { call })
@@ -270,8 +315,8 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
         for hook in self.hooks.iter().filter(|hook| {
             hook.point == AgentHookPoint::AfterTool && hook.timing == AgentHookTiming::After
         }) {
-            let decision = self
-                .invoke_hook(
+            let outcome = self
+                .invoke_tool_hook(
                     turn_id,
                     call,
                     hook,
@@ -286,26 +331,67 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
                     }),
                 )
                 .await?;
-            match decision {
-                AgentHookDecision::Allow => {}
-                AgentHookDecision::ReplaceResult {
-                    result: replacement,
-                } if hook.actions.contains(&AgentHookAction::RewriteResult) => {
-                    if let Some(content) = replacement.get("content") {
-                        result.content = decode_content(content);
+            if outcome.refresh_surface || !outcome.continue_turn.is_empty() {
+                return Err(unsupported_hook_outcome(&outcome));
+            }
+            for decision in outcome.decisions {
+                match decision {
+                    AgentHookDecision::Allow => {}
+                    AgentHookDecision::ReplaceResult {
+                        result: replacement,
+                    } if hook.actions.contains(&AgentHookAction::RewriteResult) => {
+                        if let Some(content) = replacement.get("content") {
+                            result.content = decode_content(content);
+                        }
+                        result.is_error = replacement
+                            .get("is_error")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(result.is_error);
+                        if replacement.get("details").is_some() {
+                            result.details = replacement.get("details").cloned();
+                        }
                     }
-                    result.is_error = replacement
-                        .get("is_error")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(result.is_error);
-                    if replacement.get("details").is_some() {
-                        result.details = replacement.get("details").cloned();
+                    AgentHookDecision::EmitEffect { .. } | AgentHookDecision::AddContext { .. } => {
                     }
+                    other => return Err(unsupported_hook_decision(other)),
                 }
-                other => return Err(unsupported_hook_decision(other)),
             }
         }
         Ok(result)
+    }
+
+    async fn turn_boundary(
+        &self,
+        turn_id: &agentdash_agent::dash::AgentTurnId,
+    ) -> Result<Vec<String>, DashCoreError> {
+        let mut continuation = Vec::new();
+        for (point, timing) in [
+            (AgentHookPoint::AfterTurn, AgentHookTiming::After),
+            (AgentHookPoint::BeforeStop, AgentHookTiming::Before),
+        ] {
+            for hook in self
+                .hooks
+                .iter()
+                .filter(|hook| hook.point == point && hook.timing == timing)
+            {
+                let outcome = self.invoke_boundary_hook(turn_id, hook).await?;
+                for decision in outcome.decisions {
+                    match decision {
+                        AgentHookDecision::Allow | AgentHookDecision::EmitEffect { .. } => {}
+                        AgentHookDecision::Deny { reason } => continuation.push(reason),
+                        AgentHookDecision::AddContext { context } => {
+                            continuation.push(render_hook_value(&context))
+                        }
+                        other => return Err(unsupported_hook_decision(other)),
+                    }
+                }
+                continuation.extend(outcome.continue_turn.iter().map(render_hook_content));
+            }
+            if !continuation.is_empty() {
+                break;
+            }
+        }
+        Ok(continuation)
     }
 }
 
@@ -414,9 +500,39 @@ fn decode_content_part(value: &Value) -> Option<agentdash_agent::ContentPart> {
         })
 }
 
+fn render_hook_content(content: &AgentInputContent) -> String {
+    match content {
+        AgentInputContent::Text { text } => text.clone(),
+        AgentInputContent::Structured { schema, value } => {
+            format!("[{schema}]\n{}", render_hook_value(value))
+        }
+        AgentInputContent::Image {
+            media_type,
+            source,
+            digest,
+        } => format!("[hook image: media_type={media_type}, source={source}, digest={digest}]"),
+        AgentInputContent::Resource {
+            uri,
+            media_type,
+            digest,
+        } => format!("[hook resource: uri={uri}, media_type={media_type:?}, digest={digest:?}]"),
+    }
+}
+
+fn render_hook_value(value: &Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
 fn callback_error(error: impl std::fmt::Display) -> DashCoreError {
     DashCoreError::Tool {
         message: error.to_string(),
+        retryable: false,
+    }
+}
+
+fn unsupported_hook_outcome(outcome: &AgentHookOutcome) -> DashCoreError {
+    DashCoreError::Tool {
+        message: format!("host returned hook outcome at an unsupported boundary: {outcome:?}"),
         retryable: false,
     }
 }

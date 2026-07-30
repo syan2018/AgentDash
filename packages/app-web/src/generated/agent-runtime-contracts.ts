@@ -42,7 +42,7 @@ export type RuntimeU64 = string & { readonly __runtime_u64: "canonical_unsigned_
 /**
  * Schema root covering every public Complete Agent contract family.
  */
-export type AgentServiceApiSchema = { descriptor: AgentServiceDescriptor, create: CreateAgentCommand, resume: ResumeAgentCommand, fork: ForkAgentCommand, execute: AgentCommandEnvelope, receipt: AgentCommandReceipt, fork_receipt: ForkAgentReceipt, create_evidence: AgentCreateEvidence, read: AgentReadQuery, snapshot: AgentSnapshot, context_query: AgentContextQuery, context_snapshot: AgentContextSnapshot, execution_snapshot: AgentExecutionSnapshot, observe: AgentObservationQuery, observation: AgentSourceState, changes: AgentChangesQuery, change_page: AgentChangePage, live_batch: AgentLiveBatch, inspection: AgentEffectInspection, applied_effect_outcome: AgentAppliedEffectOutcome, desired_surface: AgentSurfaceSnapshot, surface_contribution_kind: AgentSurfaceContributionKind, offer: AgentRuntimeOffer, bound_surface: BoundAgentSurface, applied_surface: AppliedAgentSurface, apply_surface: ApplyBoundAgentSurface, revoke_surface: RevokeBoundAgentSurface, tool_invocation: AgentToolInvocation, tool_result: AgentToolResult, tool_execution_event: AgentToolExecutionEvent, hook_invocation: AgentHookInvocation, hook_decision: AgentHookDecision, error: AgentServiceError, };
+export type AgentServiceApiSchema = { descriptor: AgentServiceDescriptor, create: CreateAgentCommand, resume: ResumeAgentCommand, fork: ForkAgentCommand, execute: AgentCommandEnvelope, receipt: AgentCommandReceipt, fork_receipt: ForkAgentReceipt, create_evidence: AgentCreateEvidence, read: AgentReadQuery, snapshot: AgentSnapshot, context_query: AgentContextQuery, context_snapshot: AgentContextSnapshot, execution_snapshot: AgentExecutionSnapshot, observe: AgentObservationQuery, observation: AgentSourceState, changes: AgentChangesQuery, change_page: AgentChangePage, live_batch: AgentLiveBatch, inspection: AgentEffectInspection, applied_effect_outcome: AgentAppliedEffectOutcome, desired_surface: AgentSurfaceSnapshot, surface_contribution_kind: AgentSurfaceContributionKind, offer: AgentRuntimeOffer, bound_surface: BoundAgentSurface, applied_surface: AppliedAgentSurface, apply_surface: ApplyBoundAgentSurface, revoke_surface: RevokeBoundAgentSurface, tool_invocation: AgentToolInvocation, tool_result: AgentToolResult, tool_execution_event: AgentToolExecutionEvent, hook_invocation: AgentHookInvocation, hook_outcome: AgentHookOutcome, error: AgentServiceError, };
 
 /**
  * 工具 owner 声明的 canonical conversation presentation family。
@@ -168,7 +168,7 @@ export type AgentForkCutoffKind = "head" | "completed_turn" | "item" | "source_c
 
 export type AgentForkPoint = { "kind": "head" } | { "kind": "completed_turn", turn_id: AgentTurnId, } | { "kind": "item", item_id: AgentItemId, } | { "kind": "source_cursor", cursor: AgentSourceCursor, digest: AgentPayloadDigest, };
 
-export type AgentHookAction = "observe" | "allow_or_deny" | "rewrite_input" | "rewrite_result" | "add_context" | "emit_effect";
+export type AgentHookAction = "observe" | "allow_or_deny" | "rewrite_input" | "rewrite_result" | "add_context" | "emit_effect" | "continue_turn" | "refresh_surface";
 
 export type AgentHookBlockingSemantics = { "kind": "non_blocking" } | { "kind": "blocking", fidelity: SemanticFidelity, };
 
@@ -176,11 +176,13 @@ export type AgentHookDecision = { "kind": "allow" } | { "kind": "deny", reason: 
 
 export type AgentHookDefinitionId = string;
 
-export type AgentHookEffectKind = "emit_effect";
+export type AgentHookEffectKind = "emit_effect" | "continue_turn" | "refresh_surface";
 
 export type AgentHookInvocation = { meta: AgentHostCallbackMeta, definition_id: AgentHookDefinitionId, point: AgentHookPoint, timing: AgentHookTiming, allowed_actions: Array<AgentHookAction>, input: JsonValue, };
 
 export type AgentHookMutationKind = "rewrite_input" | "rewrite_result" | "add_context";
+
+export type AgentHookOutcome = { decisions: Array<AgentHookDecision>, refresh_surface: boolean, continue_turn: Array<AgentInputContent>, diagnostics: Array<string>, };
 
 export type AgentHookPoint = "before_turn" | "after_turn" | "before_provider_request" | "before_tool" | "after_tool" | "before_compaction" | "after_compaction" | "before_stop" | "after_item";
 

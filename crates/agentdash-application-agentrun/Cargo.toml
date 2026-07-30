@@ -22,6 +22,7 @@ serde_json = { workspace = true }
 sha2 = "0.10"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true }
 agentdash-diagnostics = { workspace = true }
 uuid = { workspace = true }
 

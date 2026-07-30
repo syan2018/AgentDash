@@ -186,11 +186,19 @@ async fn fork_submit_agent_run(
         })
         .await
         .map_err(product_input_delivery_error)?;
-    let duplicate = fork.replayed || delivery.operation_receipt.duplicate;
+    let duplicate = fork.replayed
+        || delivery
+            .operation_receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.duplicate);
     Ok(Json(AgentRunMessageCommandResponse {
         command_receipt: AgentRunCommandReceipt {
             client_command_id: body.client_command_id,
-            status: delivery.operation_receipt.status.as_str().to_owned(),
+            status: delivery
+                .operation_receipt
+                .as_ref()
+                .map(|receipt| receipt.status.as_str().to_owned())
+                .unwrap_or_else(|| "accepted".to_owned()),
             duplicate,
             message: None,
         },
@@ -758,9 +766,6 @@ async fn execute_agent_runtime_command(
     let command = match body.command {
         product_projection_contract::AgentRunProductRuntimeCommand::Resume => {
             AgentRunProductCommand::Resume
-        }
-        product_projection_contract::AgentRunProductRuntimeCommand::SubmitInput { content } => {
-            AgentRunProductCommand::SubmitInput { content }
         }
         product_projection_contract::AgentRunProductRuntimeCommand::Interrupt => {
             AgentRunProductCommand::Interrupt

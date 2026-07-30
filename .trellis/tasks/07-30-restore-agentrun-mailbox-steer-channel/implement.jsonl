@@ -1,0 +1,13 @@
+{"file": ".trellis/tasks/07-30-restore-agentrun-mailbox-steer-channel/prd.md", "reason": "实现范围、需求与可观察验收标准。"}
+{"file": ".trellis/tasks/07-30-restore-agentrun-mailbox-steer-channel/design.md", "reason": "Mailbox、Complete Agent、Hook、Channel、Dash writer与前端的目标边界。"}
+{"file": ".trellis/tasks/07-30-restore-agentrun-mailbox-steer-channel/research/current-state.md", "reason": "当前断点、删除时间线、参考 worktree和物理恢复矩阵。"}
+{"file": ".trellis/tasks/07-30-restore-agentrun-mailbox-steer-channel/research/physical-recovery-manifest.md", "reason": "第一阶段直接恢复、仅参考和后续定向接线的精确文件清单。"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "AgentRun Product facade与当前同步 handoff约束，需要按目标模型收敛。"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "Complete Agent command/read/inspect/live authority与控制矩阵。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "AgentRuntime、Mailbox、Hook durable state和migration边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "Native Steer、callback、terminal fence与权威历史。"}
+{"file": ".trellis/spec/backend/agent-runtime-hooks.md", "reason": "canonical HookRun、HookEffect、lease、recovery与failure policy。"}
+{"file": ".trellis/spec/backend/hooks/architecture.md", "reason": "Hook同步决策、Agent-visible delivery和Mailbox边界。"}
+{"file": ".trellis/spec/backend/channel.md", "reason": "Channel admission、delivery materialization与Mailbox port。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Submit/Steer、Mailbox projection、command availability和前后端契约。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "生成类型、AgentRun view与前端状态归属。"}

@@ -1,6 +1,10 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use agentdash_agent_runtime_contract::AgentInputContent;
+use agentdash_application_agentrun::agent_run::DeliverAgentRunProductInput;
+use agentdash_domain::agent_input::AgentInputOrigin;
+use agentdash_domain::agent_run_target::AgentRunTarget;
 use agentdash_domain::channel::{
     Channel, ChannelAddress, ChannelBinding, ChannelBindingId, ChannelBindingStatus,
     ChannelCapabilityRef, ChannelDeliveryIntent, ChannelDeliveryState, ChannelDeliveryTarget,
@@ -127,6 +131,12 @@ pub struct ProviderNeutralPublishIntent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_thread_ref: Option<String>,
     pub message: ChannelMessage,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChannelMailboxMaterializationCommand {
+    pub delivery_id: Uuid,
+    pub input: DeliverAgentRunProductInput,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -504,6 +514,62 @@ impl ChannelService {
         })
     }
 
+    pub fn materialize_delivery_to_mailbox(
+        &self,
+        intent: &ChannelDeliveryIntent,
+        client_command_id: String,
+    ) -> Result<ChannelMailboxMaterializationCommand, ApplicationError> {
+        let (run_id, agent_id) = match intent.target {
+            ChannelDeliveryTarget::Mailbox { run_id, agent_id } => (run_id, agent_id),
+            _ => {
+                return Err(ApplicationError::BadRequest(format!(
+                    "channel delivery {} target is not mailbox",
+                    intent.id
+                )));
+            }
+        };
+        let mut content = Vec::new();
+        if let Some(text) = intent
+            .message
+            .payload
+            .text
+            .as_ref()
+            .filter(|text| !text.trim().is_empty())
+        {
+            content.push(AgentInputContent::Text { text: text.clone() });
+        }
+        if let Some(value) = &intent.message.payload.data {
+            content.push(AgentInputContent::Structured {
+                schema: format!("agentdash.channel/{}", intent.message.payload.kind),
+                value: value.clone(),
+            });
+        }
+        if content.is_empty() {
+            return Err(ApplicationError::BadRequest(format!(
+                "channel delivery {} contains no mailbox content",
+                intent.id
+            )));
+        }
+        let origin = match intent.message.address.namespace.as_str() {
+            "companion" => AgentInputOrigin::Companion,
+            "workflow" => AgentInputOrigin::Workflow,
+            "core" => AgentInputOrigin::User,
+            _ => AgentInputOrigin::System,
+        };
+        Ok(ChannelMailboxMaterializationCommand {
+            delivery_id: intent.id,
+            input: DeliverAgentRunProductInput {
+                target: AgentRunTarget { run_id, agent_id },
+                content,
+                source: agentdash_domain::channel::channel_address_to_agent_input_source(
+                    &intent.message.address,
+                ),
+                origin,
+                client_command_id,
+            },
+        })
+    }
+
     pub fn materialize_delivery_to_gate(
         &self,
         intent: &ChannelDeliveryIntent,
@@ -578,7 +644,7 @@ fn participant_to_delivery_target(
     match participant.participant_ref {
         ChannelParticipantRef::AgentRun { run_id, agent_id }
         | ChannelParticipantRef::LifecycleAgent { run_id, agent_id } => {
-            Some(ChannelDeliveryTarget::AgentInput { run_id, agent_id })
+            Some(ChannelDeliveryTarget::Mailbox { run_id, agent_id })
         }
         ChannelParticipantRef::User { user_id } | ChannelParticipantRef::Human { user_id } => {
             Some(ChannelDeliveryTarget::Notification { user_id })
@@ -721,7 +787,7 @@ mod tests {
         assert_eq!(intents.len(), 1);
         assert!(matches!(
             intents[0].target,
-            ChannelDeliveryTarget::AgentInput { .. }
+            ChannelDeliveryTarget::Mailbox { .. }
         ));
         let registry = service.load_registry(&owner).await.expect("load registry");
         assert!(registry.channels[0].delivery_state.is_empty());

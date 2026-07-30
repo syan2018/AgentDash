@@ -743,7 +743,8 @@ export function SessionChatComposer({
       ?? commandState.modelConfig.message
       ?? commandState.helperText;
   const helperText = submitCommand?.enabled
-    ? commandState.helperText ?? `Enter 提交 · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
+    ? commandState.helperText
+      ?? `${isActionRunning ? "Enter 排队 · Ctrl/Cmd+Enter Steer" : "Enter 提交"} · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
     : actionReason ?? "当前 AgentRun 只能查看。";
 
   return (
@@ -884,6 +885,7 @@ export function SessionChatComposer({
               isSending={isSending}
               isCancelling={isCancelling}
               cancelDisabled={cancelDisabled}
+              hasContent={hasContent}
               submitCommand={sendDisabled ? undefined : submitCommand}
               onSubmit={onCommandAction}
               onCancel={onCancelAction}

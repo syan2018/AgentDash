@@ -86,11 +86,15 @@ coordinate 的 effect 可以按 `effect_id` 保存 Agent-owned receipt。Runtime
   broadcast。Runtime process restart 通过 Product association 与 Agent `read/inspect` 重建。
 - Complete Agent Host 只在内存中保存 attachment、target、binding、generation、callback route
   与 availability。Host process restart 重新 materialize、attach、apply surface 和 bind。
-- Product input 在当前请求内同步 handoff。Product 不保存 pending input、claim、mailbox、
-  background retry 或 handoff receipt ledger；真正接收输入的 Agent 保存 effect receipt。
-- LifecycleGate、Routine、Channel 或 Workflow 可以保存自己的未决业务状态和下游 handoff
-  coordinate，因为它们拥有独立 Product 生命周期。其 JSONB receipt 只能引用
-  `handoff_id/operation_id`，不能复制 Agent command/history。
+- AgentRun Product 持久化输入 Mailbox envelope、owner dispatcher lease、claim、排序、暂停状态
+  与 intake receipt，原因是用户、Channel、Companion、Routine 和 Hook 的交付承诺必须在进程重启后
+  仍可恢复。concrete Agent 仍独占实际 command/effect receipt 与 authoritative history。
+- Mailbox 以 `run_id + agent_id` 为 owner，以 runtime thread、source coordinate、binding
+  generation 与 snapshot revision 作为投递证据；这些证据用于 stale fencing，不复制 concrete
+  Agent 的 conversation 或 command history。
+- LifecycleGate、Routine、Channel 或 Workflow 保存自己的未决业务状态，并以稳定 source identity
+  materialize 同一个 Mailbox message。上游状态引用 mailbox message/Agent operation coordinate，
+  使跨 owner 重放可以分别证明“Product 已接收”和“Agent 已接纳”。
 - Workspace/Terminal 等 Product presentation store 只有在表达独立 Product effect 时持久化。
   写入方向固定为 Agent observation → Product effect；这些 store 不回写 Agent execution，
   不参与 command、list、workspace 或 delete 的正确性 gate。
@@ -116,13 +120,13 @@ coordinate 的 effect 可以按 `effect_id` 保存 Agent-owned receipt。Runtime
 | LifecycleAgent 不存在 | binding/frame 写入失败；不创建悬空局部事实 |
 | 同一 LifecycleAgent 已有不同 association | typed conflict；不双写 |
 | `runtime_binding` target/frame/profile digest 非法 | repository decode/commit 失败 |
-| Agent source 不可用 | Product shell 仍可读；Agent presentation 返回 typed unavailable |
+| Agent source 不可用 | Product shell 与 Mailbox envelope 仍可读；dispatcher 保留可恢复状态 |
 | Runtime/Host process restart | 内存状态为空；从 Product association + Agent source 重建 |
 | callback route 不属于当前 Host incarnation | typed unknown/stale route；不查询数据库恢复旧 route |
 | 相同 Agent effect identity 重试 | Agent `inspect/execute` 返回原 receipt 或 typed conflict |
 | presentation cache/store 缺失 | 重新从 Product/Agent owner 读取；不阻断业务命令 |
 | schema readiness 发现 Runtime/Host/Callback revision table | readiness 失败并列出残留 schema |
-| owner-local handoff receipt 缺少下游 identity | owner 自己保持 pending/failed；不得推断 Agent 已接收 |
+| Mailbox intake receipt 缺少 concrete Agent receipt | 保持 queued/consuming/unknown；用同一 effect identity inspect |
 
 ## 5. Good / Base / Bad Cases
 
@@ -134,22 +138,22 @@ coordinate 的 effect 可以按 `effect_id` 保存 Agent-owned receipt。Runtime
   read 直接组合 Agent snapshot。
 - Bad：把 Agent operation、surface、source revision 再写进 Runtime/Product 表，然后在 List
   时比较 currentness。该比较只检测副本漂移，不能证明 Agent 事实。
-- Bad：为同步 input handoff 建 pending row/outbox/receipt，再由 worker 投递。这样 Product
-  在 Agent 接收前制造了离线可靠投递承诺。
+- Good：AgentRun Mailbox把跨进程输入交付承诺保存为独立claimable rows；concrete Agent receipt
+  仍由Agent owner保存，两个生命周期通过稳定effect identity关联。
 
 ## 6. Tests Required
 
-- PostgreSQL migration 测试断言 `lifecycle_agents.frames/runtime_binding` 存在，
-  `agent_frames`、Product binding 全局表、Runtime/Host/Callback revision 表及 mailbox/command
-  ledger 不存在。
+- PostgreSQL migration测试断言`lifecycle_agents.frames/runtime_binding`与
+  `agent_run_mailbox_messages/states/dispatcher_leases/receipts`存在，并保持Runtime/Host无持久
+  projection/revision表。
 - LifecycleAgent repository 测试覆盖 frame exact/latest/history、binding commit/replay/conflict、
   runtime-thread unique lookup 与 owner deletion。
 - Dash repository 测试覆盖 source document restart、fork/compaction/history read、effect
   inspection，以及不存在关系镜像双写。
 - Product list/workspace/delete 测试在 Agent resolve/read 失败时仍返回 Product shell。
 - Host restart 测试使用全新 Host 实例，从 Product association 与 Agent receipt 重建 route。
-- input handoff 测试断言成功一定包含 concrete operation receipt；Agent unavailable 直接返回
-  typed error，数据库中不产生 pending delivery。
+- Mailbox测试断言intake成功一定包含stable message identity；本次已投递时附带concrete
+  operation receipt，Agent unavailable时保留可恢复envelope。
 - migration history guard、schema readiness、负向源码搜索与 `git diff --check` 必须通过。
 
 ## 7. Wrong vs Correct

@@ -794,8 +794,15 @@ async fn submit_interaction_agent_input(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     Ok(Json(CanvasAgentSubmitResponseDto {
         handoff_id: delivery.handoff_id.to_string(),
-        status: delivery.operation_receipt.status.as_str().to_owned(),
-        duplicate: delivery.operation_receipt.duplicate,
+        status: delivery
+            .operation_receipt
+            .as_ref()
+            .map(|receipt| receipt.status.as_str().to_owned())
+            .unwrap_or_else(|| "accepted".to_owned()),
+        duplicate: delivery
+            .operation_receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.duplicate),
     }))
 }
 

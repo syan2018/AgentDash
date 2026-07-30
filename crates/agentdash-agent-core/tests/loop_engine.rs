@@ -5,7 +5,8 @@ use std::{
 
 use agentdash_agent_core::{
     CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput, CoreMessage, CoreProvider,
-    CoreTokenUsage, CoreTool, CoreToolCall, CoreToolCallbacks, CoreToolResult, FinishReason,
+    CoreTokenUsage, CoreTool, CoreToolCall, CoreToolCallbacks, CoreToolExecutionEvent,
+    CoreToolExecutionSequence, CoreToolExecutionStream, CoreToolResult, FinishReason,
     ProviderEvent, ProviderEventStream, ProviderRequest, run_agent_loop,
 };
 use async_trait::async_trait;
@@ -33,16 +34,35 @@ struct ToolRecorder {
 
 #[async_trait]
 impl CoreToolCallbacks for ToolRecorder {
-    async fn invoke(&self, call: CoreToolCall) -> Result<CoreToolResult, CoreError> {
+    async fn invoke(
+        &self,
+        call: CoreToolCall,
+    ) -> Result<Box<dyn CoreToolExecutionStream>, CoreError> {
         self.calls.lock().unwrap().push(call.clone());
-        Ok(CoreToolResult {
+        let progress = CoreToolResult {
+            call_id: call.call_id.clone(),
+            content: vec![agentdash_agent_core::CoreToolContent::Text {
+                text: "tool-progress".into(),
+            }],
+            is_error: false,
+            details: Some(json!({"phase": "running"})),
+        };
+        let result = CoreToolResult {
             call_id: call.call_id,
             content: vec![agentdash_agent_core::CoreToolContent::Text {
                 text: "tool-result".into(),
             }],
             is_error: false,
             details: None,
-        })
+        };
+        Ok(Box::new(CoreToolExecutionSequence::new([
+            CoreToolExecutionEvent::Started,
+            CoreToolExecutionEvent::Progress {
+                update_index: 1,
+                update: progress,
+            },
+            CoreToolExecutionEvent::Completed { result },
+        ])))
     }
 }
 
@@ -134,6 +154,32 @@ async fn provider_tool_loop_has_only_explicit_state() {
             .iter()
             .any(|message| message.tool_call_id.as_deref() == Some("call-1"))
     );
+    let tool_lifecycle = callbacks
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                CoreEvent::ToolCallStarted { .. }
+                    | CoreEvent::ToolCallProgress { .. }
+                    | CoreEvent::ToolCallCompleted { .. }
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        tool_lifecycle.as_slice(),
+        [
+            CoreEvent::ToolCallStarted { .. },
+            CoreEvent::ToolCallProgress {
+                update_index: 1,
+                ..
+            },
+            CoreEvent::ToolCallCompleted { .. }
+        ]
+    ));
 }
 
 #[tokio::test]

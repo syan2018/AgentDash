@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    AgentContextAuthority, AgentContextFidelity, AgentContextQuery, AgentLiveEvent, AgentReadQuery,
+    AgentContextAuthority, AgentContextFidelity, AgentContextQuery, AgentLiveBatch, AgentReadQuery,
     AgentRuntimeContextProjection, AgentRuntimeContextRequirement, AgentRuntimeUpdate,
     AgentRuntimeView, AgentServiceError, AgentSnapshotRevision, AgentSourceCoordinate,
     CompleteAgentService, RuntimeThreadId,
@@ -114,30 +114,31 @@ impl AgentRuntimeObservation {
         })
     }
 
-    pub async fn reconcile_live(
+    pub fn project_live(
         &self,
-        event: AgentLiveEvent,
+        batch: AgentLiveBatch,
     ) -> Result<AgentRuntimeUpdate, AgentRuntimeObservationError> {
-        if event.source != self.source {
+        if batch.source != self.source {
             return Err(AgentRuntimeObservationError::LiveSourceMismatch);
         }
-        let view = self.read_view().await?;
         Ok(AgentRuntimeUpdate {
-            lane_sequence: event.sequence.0,
-            observation: view.observation,
-            presentations: vec![event.record],
+            lane_sequence: batch.sequence.0,
+            state: batch.state,
+            presentations: batch.presentations,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use agentdash_agent_runtime_contract::{
         AgentChangePage, AgentChangesQuery, AgentCommandEnvelope, AgentCommandReceipt,
         AgentContextCoordinate, AgentContextRecipe, AgentContextSnapshot, AgentEffectIdentity,
         AgentEffectInspection, AgentPayloadDigest, AgentServiceDescriptor, AgentSnapshot,
         AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand,
-        ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
+        ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface, RuntimeU64,
     };
     use async_trait::async_trait;
 
@@ -145,6 +146,7 @@ mod tests {
 
     struct ContextService {
         snapshot: AgentContextSnapshot,
+        reads: Arc<AtomicUsize>,
     }
 
     #[async_trait]
@@ -182,6 +184,7 @@ mod tests {
         }
 
         async fn read(&self, _query: AgentReadQuery) -> Result<AgentSnapshot, AgentServiceError> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
             unreachable!()
         }
 
@@ -236,7 +239,10 @@ mod tests {
         AgentRuntimeObservation::new(
             RuntimeThreadId::new("thread-1").expect("thread"),
             source,
-            Arc::new(ContextService { snapshot }),
+            Arc::new(ContextService {
+                snapshot,
+                reads: Arc::new(AtomicUsize::new(0)),
+            }),
         )
     }
 
@@ -311,5 +317,40 @@ mod tests {
             .expect("newer authoritative recipe");
 
         assert_eq!(projection.recipe.coordinate, actual);
+    }
+
+    #[test]
+    fn projecting_one_hundred_live_batches_never_reads_authority() {
+        let source = AgentSourceCoordinate::new("source-live").expect("source");
+        let reads = Arc::new(AtomicUsize::new(0));
+        let service = Arc::new(ContextService {
+            snapshot: AgentContextSnapshot {
+                source: source.clone(),
+                recipe: AgentContextRecipe {
+                    coordinate: coordinate(1, "sha256:context-1"),
+                    contributions: Vec::new(),
+                },
+            },
+            reads: reads.clone(),
+        });
+        let observation = AgentRuntimeObservation::new(
+            RuntimeThreadId::new("thread-live").expect("thread"),
+            source.clone(),
+            service,
+        );
+
+        for sequence in 1..=100 {
+            let update = observation
+                .project_live(AgentLiveBatch {
+                    source: source.clone(),
+                    sequence: RuntimeU64(sequence),
+                    state: None,
+                    presentations: Vec::new(),
+                })
+                .expect("live batch");
+            assert_eq!(update.lane_sequence, sequence);
+        }
+
+        assert_eq!(reads.load(Ordering::Relaxed), 0);
     }
 }

@@ -9,7 +9,7 @@ use agentdash_agent_runtime_contract::{
     AgentHookInvocation, AgentHostCallbackBinding, AgentHostCallbackError,
     AgentHostCallbackErrorCode, AgentHostCallbacks, AgentProfileDigest, AgentServiceInstanceId,
     AgentSourceCoordinate, AgentSurfaceContributionPayload, AgentSurfaceDigest,
-    AgentSurfaceRevision, AgentSurfaceRoute, AgentToolInvocation, AgentToolResult,
+    AgentSurfaceRevision, AgentSurfaceRoute, AgentToolExecutionStream, AgentToolInvocation,
     BoundAgentSurface,
 };
 use async_trait::async_trait;
@@ -56,7 +56,7 @@ pub trait CompleteAgentToolHandler: Send + Sync {
     async fn invoke(
         &self,
         callback: ResolvedCompleteAgentToolCallback,
-    ) -> Result<AgentToolResult, AgentHostCallbackError>;
+    ) -> Result<Box<dyn AgentToolExecutionStream>, AgentHostCallbackError>;
 }
 
 /// Actual Hook owner boundary.
@@ -224,12 +224,13 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
     async fn invoke_tool(
         &self,
         call: AgentToolInvocation,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+    ) -> Result<Box<dyn AgentToolExecutionStream>, AgentHostCallbackError> {
         let (route, context) = self.route_and_context(&call.meta).await?;
         ensure_tool_is_bound(&route.bound_surface, &call)?;
         let budget = self.ensure_deadline(&route, None, &call.meta)?;
-        match tokio::time::timeout(
-            budget,
+        let deadline = tokio::time::Instant::now() + budget;
+        match tokio::time::timeout_at(
+            deadline,
             self.tool_handler.invoke(ResolvedCompleteAgentToolCallback {
                 context,
                 invocation: call,
@@ -237,7 +238,12 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
         )
         .await
         {
-            Ok(result) => result,
+            Ok(result) => result.map(|stream| {
+                Box::new(DeadlineAgentToolExecutionStream {
+                    inner: stream,
+                    deadline,
+                }) as Box<dyn AgentToolExecutionStream>
+            }),
             Err(_) => Err(callback_error(
                 AgentHostCallbackErrorCode::DeadlineExceeded,
                 "callback handler crossed its absolute deadline",
@@ -266,6 +272,30 @@ impl AgentHostCallbacks for CompleteAgentCallbackBroker {
                 ensure_hook_decision_allowed(&call, &decision)?;
                 Ok(decision)
             }),
+            Err(_) => Err(callback_error(
+                AgentHostCallbackErrorCode::DeadlineExceeded,
+                "callback handler crossed its absolute deadline",
+                false,
+            )),
+        }
+    }
+}
+
+struct DeadlineAgentToolExecutionStream {
+    inner: Box<dyn AgentToolExecutionStream>,
+    deadline: tokio::time::Instant,
+}
+
+#[async_trait]
+impl AgentToolExecutionStream for DeadlineAgentToolExecutionStream {
+    async fn next(
+        &mut self,
+    ) -> Result<
+        Option<agentdash_agent_runtime_contract::AgentToolExecutionEvent>,
+        AgentHostCallbackError,
+    > {
+        match tokio::time::timeout_at(self.deadline, self.inner.next()).await {
+            Ok(result) => result,
             Err(_) => Err(callback_error(
                 AgentHostCallbackErrorCode::DeadlineExceeded,
                 "callback handler crossed its absolute deadline",

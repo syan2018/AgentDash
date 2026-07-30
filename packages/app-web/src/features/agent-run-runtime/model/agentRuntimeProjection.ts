@@ -3,30 +3,24 @@ import type {
   AgentRuntimeView,
 } from "../../../generated/agent-runtime-codecs";
 
-/** Applies one Runtime-owned control/presentation observation to the rebuildable view. */
+/**
+ * Applies only owner-published control state to the authoritative view.
+ *
+ * Live presentations belong to the process-local lane and are folded by the Session reducer;
+ * they are deliberately not accumulated into the authoritative conversation.
+ */
 export function applyAgentRuntimeUpdate(
   view: AgentRuntimeView,
   update: AgentRuntimeUpdate,
 ): AgentRuntimeView {
-  const conversation = [...view.observation.conversation];
-  for (const record of [
-    ...update.observation.conversation,
-    ...update.presentations,
-  ]) {
-    const existingIndex = conversation.findIndex(
-      (candidate) => candidate.presentation_id === record.presentation_id,
-    );
-    if (existingIndex >= 0) {
-      conversation[existingIndex] = record;
-    } else {
-      conversation.push(record);
-    }
+  if (!update.state || update.state.revision < view.observation.revision) {
+    return view;
   }
   return {
     ...view,
     observation: {
-      ...update.observation,
-      conversation,
+      ...update.state,
+      conversation: view.observation.conversation,
     },
   };
 }

@@ -50,6 +50,15 @@ pub trait CompleteAgentService {
 }
 ```
 
+```rust
+pub trait AgentHostCallbacks {
+    async fn invoke_tool(
+        &self,
+        call: AgentToolInvocation,
+    ) -> Result<Box<dyn AgentToolExecutionStream>, AgentHostCallbackError>;
+}
+```
+
 ## 3. Contracts
 
 - Integration 贡献稳定 definition/factory/configuration；Host materialize 后验证 descriptor 与
@@ -75,6 +84,12 @@ pub trait CompleteAgentService {
   effect ledger。回包未知时由 concrete Agent `inspect(effect_id)` 收敛。
 - callback route、deadline 与 generation 在 Host 内存校验。真实 Tool/Hook handler 使用
   invocation idempotency key 保存或重放自己的副作用 receipt。
+- Tool callback 只有 typed stream 入口。生命周期严格为
+  `Started -> Progress(update_index=1..n) -> Completed`；即使工具没有过程输出，也必须立即发布
+  `Started`，再发布唯一 `Completed`。Host/Remote 不得先收集 terminal result 再伪装成 stream。
+- callback handler 拒绝、校验失败、取消、EOF、超时、背压或协议错误时，消费边界负责补齐尚未出现的
+  `Started`，并收敛成唯一 failed `Completed`。terminal 后的重复或迟到事件只被吸收，不能再次改变
+  item 状态。
 - optional Complete Agent 的 program、credential 或 materialization 不可用，只让对应
   selection 缺席并产生诊断；核心 AppState 与其他 Agent contribution 继续启动。
 - definition 冲突、descriptor/verification 不一致、surface contract 破坏等平台完整性错误继续
@@ -95,6 +110,8 @@ pub trait CompleteAgentService {
 | surface rebind expected generation 过期 | stale generation |
 | surface rebind 后旧回合在 deadline 内回调 | 解析旧 route/binding，并按旧 applied surface 授权 |
 | callback route 未注册或 generation/source 不匹配 | typed reject；handler 零调用 |
+| Tool progress 跳号、乱序或 terminal 重复 | 当前 callback 收敛为唯一 protocol failure terminal |
+| Tool stream 在 terminal 前 EOF/超时/断连 | `Started` 后唯一 failed terminal，active item 不残留 |
 | Host restart 后收到旧 callback | unknown route |
 | Agent effect 回包未知 | 使用同一 effect identity inspect；不写 Host ledger |
 | remote connection epoch 断开 | retire attachment；旧 frame/ack 永久 fence |
@@ -115,7 +132,8 @@ pub trait CompleteAgentService {
   callback、Lost 后统一清理和 stale generation。
 - restart 测试构造全新 Host，证明无需数据库即可从 association + Agent service 重建。
 - callback 测试覆盖 current route、unknown route、stale generation、source mismatch、deadline
-  与 handler idempotent replay。
+  与 handler idempotent replay；Tool callback 还覆盖连续 progress、零 progress、EOF、超时、
+  乱序、跳号和唯一 terminal。
 - bootstrap composition 测试覆盖 optional materialization 失败隔离和 integrity failure fail-fast。
 - Remote/Wire 测试覆盖新 connection epoch、旧 frame 零 replay 与 callback route 映射。
 

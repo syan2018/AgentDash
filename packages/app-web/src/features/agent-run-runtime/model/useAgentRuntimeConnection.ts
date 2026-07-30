@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   AgentRuntimeOperationReceipt,
+  AgentRuntimeUpdate,
   AgentRuntimeView,
 } from "../../../generated/agent-runtime-codecs";
 import type {
@@ -11,12 +12,16 @@ import type {
 import {
   connectAgentRuntimeConnection,
   type AgentRuntimeConnection,
+  type AgentRuntimeResetReason,
 } from "./agentRuntimeConnection";
 import type { AgentRuntimeConnectionLifecycle } from "./agentRuntimeUpdateTransport";
 
 export interface UseAgentRuntimeConnectionOptions {
   agentRunTarget: AgentRunRuntimeTarget | null;
   enabled: boolean;
+  onBaseline?: (view: AgentRuntimeView) => void;
+  onUpdate?: (update: AgentRuntimeUpdate) => void;
+  onReset?: (reason: AgentRuntimeResetReason) => void;
 }
 
 export interface UseAgentRuntimeConnectionResult {
@@ -37,6 +42,9 @@ export interface UseAgentRuntimeConnectionResult {
 export function useAgentRuntimeConnection({
   agentRunTarget,
   enabled,
+  onBaseline,
+  onUpdate,
+  onReset,
 }: UseAgentRuntimeConnectionOptions): UseAgentRuntimeConnectionResult {
   const [view, setView] = useState<AgentRuntimeView | null>(null);
   const [baselinePresentationIds, setBaselinePresentationIds] = useState<ReadonlySet<string>>(
@@ -48,6 +56,14 @@ export function useAgentRuntimeConnection({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const connectionRef = useRef<AgentRuntimeConnection | null>(null);
+  const onBaselineRef = useRef(onBaseline);
+  const onUpdateRef = useRef(onUpdate);
+  const onResetRef = useRef(onReset);
+  useEffect(() => {
+    onBaselineRef.current = onBaseline;
+    onUpdateRef.current = onUpdate;
+    onResetRef.current = onReset;
+  }, [onBaseline, onReset, onUpdate]);
 
   const close = useCallback(() => {
     connectionRef.current?.close();
@@ -79,7 +95,10 @@ export function useAgentRuntimeConnection({
           `${agentRunTarget.runId}:${agentRunTarget.agentId}`,
         );
         setIsLoading(false);
+        onBaselineRef.current?.(loaded);
       },
+      onUpdate: (update) => onUpdateRef.current?.(update),
+      onReset: (reason) => onResetRef.current?.(reason),
       onView: (projected) => {
         setView(projected);
       },

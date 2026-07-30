@@ -90,6 +90,7 @@ struct RecordedObservation {
 #[derive(Default)]
 struct ObservationState {
     retained: VecDeque<RecordedObservation>,
+    dropped_through_by_source: BTreeMap<String, u64>,
     disconnected: bool,
 }
 
@@ -105,6 +106,7 @@ pub struct CodexProcessTransport {
     next_observation_sequence: AtomicU64,
     pending: Mutex<BTreeMap<i64, PendingResponse>>,
     observations: RwLock<ObservationState>,
+    observation_notify: tokio::sync::Notify,
 }
 
 impl CodexProcessTransport {
@@ -161,6 +163,7 @@ impl CodexProcessTransport {
             next_observation_sequence: AtomicU64::new(1),
             pending: Mutex::new(BTreeMap::new()),
             observations: RwLock::new(ObservationState::default()),
+            observation_notify: tokio::sync::Notify::new(),
         });
         let pump = Arc::downgrade(&transport);
         tokio::spawn(async move {
@@ -264,12 +267,23 @@ impl CodexProcessTransport {
             observation,
         });
         while state.retained.len() > OBSERVATION_RETENTION {
-            state.retained.pop_front();
+            if let Some(dropped) = state.retained.pop_front() {
+                state
+                    .dropped_through_by_source
+                    .entry(dropped.source_thread_id)
+                    .and_modify(|sequence| {
+                        *sequence = (*sequence).max(dropped.observation.sequence())
+                    })
+                    .or_insert_with(|| dropped.observation.sequence());
+            }
         }
+        drop(state);
+        self.observation_notify.notify_waiters();
     }
 
     async fn disconnect(&self, error: CodexCompleteAgentTransportError) {
         self.observations.write().await.disconnected = true;
+        self.observation_notify.notify_waiters();
         let pending = std::mem::take(&mut *self.pending.lock().await);
         for (_, response) in pending {
             let _ = response.send(Err(error.clone()));
@@ -358,12 +372,11 @@ impl CodexAppServerTransport for CodexProcessTransport {
             ));
         }
         let after = after_sequence.unwrap_or(0);
-        let first_retained = state
-            .retained
-            .front()
-            .map(|entry| entry.observation.sequence())
-            .unwrap_or(after.saturating_add(1));
-        let gap = after_sequence.is_some() && after.saturating_add(1) < first_retained;
+        let gap = after_sequence.is_some()
+            && state
+                .dropped_through_by_source
+                .get(source_thread_id)
+                .is_some_and(|dropped_through| after < *dropped_through);
         let observations = state
             .retained
             .iter()
@@ -379,6 +392,41 @@ impl CodexAppServerTransport for CodexProcessTransport {
             next_sequence,
             gap,
         })
+    }
+
+    async fn live_observation_boundary(
+        &self,
+        _source_thread_id: &str,
+    ) -> Result<u64, CodexCompleteAgentTransportError> {
+        let state = self.observations.read().await;
+        if state.disconnected {
+            return Err(CodexCompleteAgentTransportError::unavailable(
+                "Codex App Server observation stream is disconnected",
+                true,
+            ));
+        }
+        Ok(self
+            .next_observation_sequence
+            .load(Ordering::Acquire)
+            .saturating_sub(1))
+    }
+
+    async fn wait_for_observations(
+        &self,
+        source_thread_id: &str,
+        after_sequence: u64,
+        limit: u32,
+    ) -> Result<CodexAppServerObservationPage, CodexCompleteAgentTransportError> {
+        loop {
+            let notified = self.observation_notify.notified();
+            let page = self
+                .observations(source_thread_id, Some(after_sequence), limit)
+                .await?;
+            if page.gap || !page.observations.is_empty() {
+                return Ok(page);
+            }
+            notified.await;
+        }
     }
 }
 
@@ -634,6 +682,42 @@ mod tests {
         assert_eq!(
             source_thread_id(&json!({ "turn": { "id": "turn-1" } })),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn retained_tail_gap_is_scoped_to_the_source_that_lost_observations() {
+        let (transport, _lines, _writer) = fixture();
+        let observation = |sequence, source: &str| {
+            CodexAppServerObservation::notification(
+                sequence,
+                "thread/name/updated",
+                json!({"threadId": source, "threadName": format!("name-{sequence}")}),
+            )
+            .expect("typed notification")
+        };
+        transport
+            .record_observation(observation(1, "thread-dropped"))
+            .await;
+        for sequence in 2..=(OBSERVATION_RETENTION as u64 + 1) {
+            transport
+                .record_observation(observation(sequence, "thread-retained"))
+                .await;
+        }
+
+        assert!(
+            transport
+                .observations("thread-dropped", Some(0), 1)
+                .await
+                .expect("dropped source page")
+                .gap
+        );
+        assert!(
+            !transport
+                .observations("thread-retained", Some(0), 1)
+                .await
+                .expect("retained source page")
+                .gap
         );
     }
 

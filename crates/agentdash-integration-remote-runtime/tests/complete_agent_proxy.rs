@@ -12,19 +12,22 @@ use agentdash_agent_runtime_contract::{
     AgentCommandMeta, AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState,
     AgentHookAction, AgentHookDefinitionId, AgentHookInvocation, AgentHookPoint, AgentHookTiming,
     AgentHostCallbackBinding, AgentHostCallbackError, AgentHostCallbackMeta, AgentHostCallbacks,
-    AgentIdempotencyKey, AgentInput, AgentInputContent, AgentLifecycleStatus, AgentProfileDigest,
-    AgentReadQuery, AgentReceiptState, AgentServiceError, AgentServiceErrorCode,
-    AgentServiceInstanceId, AgentSourceCoordinate, AgentSourceCursor, AgentSurfaceDigest,
-    AgentSurfaceRevision, AgentSurfaceRoute, AgentToolInvocation, AgentToolName, AgentToolResult,
-    AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceReceipt,
-    ApplyBoundAgentSurface, BoundAgentSurface, CompleteAgentService,
+    AgentIdempotencyKey, AgentInput, AgentInputContent, AgentLifecycleStatus, AgentLiveBatch,
+    AgentLiveBatchStream, AgentProfileDigest, AgentReadQuery, AgentReceiptState, AgentServiceError,
+    AgentServiceErrorCode, AgentServiceInstanceId, AgentSourceCoordinate, AgentSourceCursor,
+    AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute, AgentToolExecutionEvent,
+    AgentToolExecutionSequence, AgentToolExecutionStream, AgentToolInvocation, AgentToolName,
+    AgentToolResult, AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface,
+    AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, BoundAgentSurface, CompleteAgentService,
+    RuntimeU64,
 };
 use agentdash_agent_runtime_wire::{
     RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAgentBindingTarget,
     RuntimeWireAgentChangeNotification, RuntimeWireAgentHostCallbackRequest,
     RuntimeWireAgentHostCallbackResponse, RuntimeWireAgentServiceRequest,
-    RuntimeWireAgentServiceResponse, RuntimeWireEnvelope, RuntimeWireFrame, RuntimeWireFrameId,
-    RuntimeWireNotification, RuntimeWireRequest, RuntimeWireResponse,
+    RuntimeWireAgentServiceResponse, RuntimeWireAgentToolExecutionEvent, RuntimeWireEnvelope,
+    RuntimeWireFrame, RuntimeWireFrameId, RuntimeWireNotification, RuntimeWireRequest,
+    RuntimeWireResponse,
 };
 use agentdash_integration_remote_runtime::{
     RemoteCompleteAgentRegistration, RemoteCompleteAgentService, RemoteRuntimeTransportError,
@@ -33,6 +36,72 @@ use agentdash_integration_remote_runtime::{
 use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::{Mutex, mpsc};
+
+async fn terminal_tool_result(mut stream: Box<dyn AgentToolExecutionStream>) -> AgentToolResult {
+    tool_lifecycle(&mut stream).await.1
+}
+
+async fn tool_lifecycle(
+    stream: &mut Box<dyn AgentToolExecutionStream>,
+) -> (Vec<String>, AgentToolResult) {
+    let mut lifecycle = Vec::new();
+    loop {
+        match stream.next().await.expect("tool event") {
+            Some(AgentToolExecutionEvent::Started) => lifecycle.push("started".to_owned()),
+            Some(AgentToolExecutionEvent::Progress { update_index, .. }) => {
+                lifecycle.push(format!("progress:{update_index}"));
+            }
+            Some(AgentToolExecutionEvent::Completed { result }) => {
+                lifecycle.push("completed".to_owned());
+                return (lifecycle, result);
+            }
+            None => panic!("tool stream ended before terminal"),
+        }
+    }
+}
+
+fn wire_tool_terminal_code(frame: &RuntimeWireEnvelope, expected_code: &str) -> bool {
+    matches!(
+        &frame.frame,
+        RuntimeWireFrame::Response {
+            response: RuntimeWireResponse::AgentHostCallback(
+                RuntimeWireAgentHostCallbackResponse::Tool(event)
+            ),
+            ..
+        } if matches!(
+            &event.event,
+            AgentToolExecutionEvent::Completed {
+                result: AgentToolResult::Failed { code, .. }
+            } if code == expected_code
+        )
+    )
+}
+
+fn tool_callback_response(
+    frame_id: u64,
+    request_frame_id: RuntimeWireFrameId,
+    call: &AgentToolInvocation,
+    event: AgentToolExecutionEvent,
+) -> RuntimeWireEnvelope {
+    RuntimeWireEnvelope {
+        protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+        frame_id: RuntimeWireFrameId(frame_id),
+        critical: true,
+        frame: RuntimeWireFrame::Response {
+            request_frame_id,
+            response: RuntimeWireResponse::AgentHostCallback(
+                RuntimeWireAgentHostCallbackResponse::Tool(Box::new(
+                    RuntimeWireAgentToolExecutionEvent {
+                        effect_id: call.meta.effect_id.clone(),
+                        item_id: call.meta.item_id.clone(),
+                        tool: call.tool.clone(),
+                        event,
+                    },
+                )),
+            ),
+        },
+    }
+}
 
 struct LoopbackPlacement {
     sent: Mutex<Vec<RuntimeWireEnvelope>>,
@@ -194,14 +263,23 @@ impl AgentHostCallbacks for RecordingCallbacks {
     async fn invoke_tool(
         &self,
         call: AgentToolInvocation,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+    ) -> Result<Box<dyn AgentToolExecutionStream>, AgentHostCallbackError> {
         self.generations
             .lock()
             .await
             .push(call.meta.binding_generation);
-        Ok(AgentToolResult::Completed {
-            output: json!({"ok": true}),
-        })
+        Ok(Box::new(AgentToolExecutionSequence::new([
+            AgentToolExecutionEvent::Started,
+            AgentToolExecutionEvent::Progress {
+                update_index: 1,
+                output: json!({"phase": "running"}),
+            },
+            AgentToolExecutionEvent::Completed {
+                result: AgentToolResult::Completed {
+                    output: json!({"ok": true}),
+                },
+            },
+        ])))
     }
 
     async fn invoke_hook(
@@ -236,10 +314,11 @@ impl AgentHostCallbacks for ReentrantCallbacks {
     async fn invoke_tool(
         &self,
         call: AgentToolInvocation,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+    ) -> Result<Box<dyn AgentToolExecutionStream>, AgentHostCallbackError> {
         self.tools.lock().await.push(call.tool.as_str().to_owned());
         if call.tool.as_str() == "endpoint-tool" {
-            self.nested
+            let nested = self
+                .nested
                 .get()
                 .expect("nested callback client")
                 .invoke_tool(AgentToolInvocation {
@@ -255,10 +334,13 @@ impl AgentHostCallbacks for ReentrantCallbacks {
                     arguments: json!({"nested": true}),
                 })
                 .await?;
+            let _ = terminal_tool_result(nested).await;
         }
-        Ok(AgentToolResult::Completed {
-            output: json!({"ok": true}),
-        })
+        Ok(AgentToolExecutionSequence::completed(
+            AgentToolResult::Completed {
+                output: json!({"ok": true}),
+            },
+        ))
     }
 
     async fn invoke_hook(
@@ -279,7 +361,7 @@ impl AgentHostCallbacks for BlockingCallbacks {
     async fn invoke_tool(
         &self,
         _: AgentToolInvocation,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+    ) -> Result<Box<dyn AgentToolExecutionStream>, AgentHostCallbackError> {
         self.invocations.fetch_add(1, Ordering::Relaxed);
         std::future::pending().await
     }
@@ -386,7 +468,9 @@ struct EndpointTracerService {
     callbacks: OnceLock<Arc<dyn AgentHostCallbacks>>,
     executions: AtomicU64,
     callback_results: Mutex<Vec<AgentToolResult>>,
+    callback_lifecycles: Mutex<Vec<Vec<String>>>,
     inspection: Mutex<Option<AgentEffectInspection>>,
+    live: Mutex<Option<tokio::sync::broadcast::Sender<AgentLiveBatch>>>,
 }
 
 impl EndpointTracerService {
@@ -403,6 +487,11 @@ impl EndpointTracerService {
             "unused tracer operation",
             false,
         )
+    }
+
+    async fn publish_live(&self, batch: AgentLiveBatch) {
+        let sender = self.live.lock().await.clone().expect("live subscription");
+        sender.send(batch).expect("live receiver");
     }
 }
 
@@ -462,21 +551,28 @@ impl CompleteAgentService for EndpointTracerService {
             callbacks.invoke_tool(tool.clone()),
             callbacks.invoke_tool(tool)
         );
-        let first = first.map_err(|error| {
+        let mut first = first.map_err(|error| {
             AgentServiceError::new(
                 AgentServiceErrorCode::Unavailable,
                 error.to_string(),
                 error.retryable,
             )
         })?;
-        let replay = replay.map_err(|error| {
+        let mut replay = replay.map_err(|error| {
             AgentServiceError::new(
                 AgentServiceErrorCode::Unavailable,
                 error.to_string(),
                 error.retryable,
             )
         })?;
+        let (first, replay) = tokio::join!(tool_lifecycle(&mut first), tool_lifecycle(&mut replay));
+        let (first_lifecycle, first) = first;
+        let (replay_lifecycle, replay) = replay;
         assert_eq!(first, replay, "endpoint must replay the callback result");
+        self.callback_lifecycles
+            .lock()
+            .await
+            .extend([first_lifecycle, replay_lifecycle]);
         self.callback_results.lock().await.push(first);
 
         callbacks
@@ -548,6 +644,19 @@ impl CompleteAgentService for EndpointTracerService {
         })
     }
 
+    async fn live_batches(
+        &self,
+        _: AgentSourceCoordinate,
+    ) -> Result<Box<dyn AgentLiveBatchStream>, AgentServiceError> {
+        let mut live = self.live.lock().await;
+        let sender = live
+            .get_or_insert_with(|| tokio::sync::broadcast::channel(16).0)
+            .clone();
+        Ok(Box::new(TestLiveBatchStream {
+            receiver: sender.subscribe(),
+        }))
+    }
+
     async fn inspect(
         &self,
         effect_id: AgentEffectIdentity,
@@ -584,6 +693,24 @@ impl CompleteAgentService for EndpointTracerService {
     }
 }
 
+struct TestLiveBatchStream {
+    receiver: tokio::sync::broadcast::Receiver<AgentLiveBatch>,
+}
+
+#[async_trait]
+impl AgentLiveBatchStream for TestLiveBatchStream {
+    async fn next(
+        &mut self,
+    ) -> Result<Option<AgentLiveBatch>, agentdash_agent_runtime_contract::AgentLiveStreamError>
+    {
+        self.receiver.recv().await.map(Some).map_err(|error| {
+            agentdash_agent_runtime_contract::AgentLiveStreamError::Unavailable {
+                message: error.to_string(),
+            }
+        })
+    }
+}
+
 fn endpoint_tracer() -> (
     Arc<EndpointTracerService>,
     Arc<RuntimeWireAgentServiceEndpoint>,
@@ -612,6 +739,26 @@ fn endpoint_tracer_with_callbacks(
     let proxy =
         RemoteCompleteAgentService::new(endpoint.target(), endpoint.clone(), host_callbacks);
     (source_service, endpoint, proxy)
+}
+
+#[tokio::test]
+async fn remote_live_batches_subscribe_to_the_concrete_endpoint_lane() {
+    let (source_service, _endpoint, _callbacks, proxy) = endpoint_tracer();
+    let source = AgentSourceCoordinate::new("thread-live").expect("source");
+    let mut live = proxy.live_batches(source.clone()).await.expect("subscribe");
+    let expected = AgentLiveBatch {
+        source,
+        sequence: RuntimeU64(1),
+        state: None,
+        presentations: Vec::new(),
+    };
+    source_service.publish_live(expected.clone()).await;
+    let actual = tokio::time::timeout(std::time::Duration::from_secs(1), live.next())
+        .await
+        .expect("live deadline")
+        .expect("live result")
+        .expect("live batch");
+    assert_eq!(actual, expected);
 }
 
 #[tokio::test]
@@ -670,6 +817,22 @@ async fn real_endpoint_round_trips_tool_hook_and_replays_duplicate_callback_resu
     assert_eq!(source_service.executions.load(Ordering::Relaxed), 1);
     assert_eq!(source_service.callback_results.lock().await.len(), 1);
     assert_eq!(
+        source_service.callback_lifecycles.lock().await.as_slice(),
+        &[
+            vec![
+                "started".to_owned(),
+                "progress:1".to_owned(),
+                "completed".to_owned(),
+            ],
+            vec![
+                "started".to_owned(),
+                "progress:1".to_owned(),
+                "completed".to_owned(),
+            ],
+        ],
+        "primary and same-effect replay must observe the same ordered tool stream"
+    );
+    assert_eq!(
         host_callbacks.generations.lock().await.as_slice(),
         &[AgentBindingGeneration(3), AgentBindingGeneration(3)],
         "duplicate tool callback must reuse the endpoint result while hook remains a distinct request"
@@ -694,11 +857,11 @@ async fn real_endpoint_round_trips_tool_hook_and_replays_duplicate_callback_resu
             arguments: json!({}),
         })
         .await
-        .expect_err("stale source generation");
-    assert_eq!(
-        stale.code,
-        agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::StaleBindingGeneration
-    );
+        .expect("stale callback still returns a closed lifecycle");
+    assert!(matches!(
+        terminal_tool_result(stale).await,
+        AgentToolResult::Failed { code, .. } if code == "stale_binding_generation"
+    ));
     assert_eq!(host_callbacks.generations.lock().await.len(), 2);
 }
 
@@ -725,7 +888,7 @@ async fn callback_effects_are_reentrant_and_different_effects_do_not_share_an_aw
 }
 
 #[tokio::test]
-async fn source_callback_deadline_clears_pending_and_replays_typed_timeout() {
+async fn source_callback_deadline_closes_the_typed_tool_lifecycle() {
     let source_service = Arc::new(EndpointTracerService::default());
     let endpoint = Arc::new(RuntimeWireAgentServiceEndpoint::new(
         target().service_instance_id,
@@ -740,14 +903,14 @@ async fn source_callback_deadline_clears_pending_and_replays_typed_timeout() {
         "deadline-tool",
     );
 
-    let error = callbacks
+    let stream = callbacks
         .invoke_tool(call.clone())
         .await
-        .expect_err("missing callback response must time out");
-    assert_eq!(
-        error.code,
-        agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::DeadlineExceeded
-    );
+        .expect("callback request stream");
+    assert!(matches!(
+        terminal_tool_result(stream).await,
+        AgentToolResult::Failed { code, .. } if code == "tool_callback_deadline_exceeded"
+    ));
     let outbound = endpoint.receive().await.expect("one callback request");
     assert!(matches!(
         outbound,
@@ -762,17 +925,215 @@ async fn source_callback_deadline_clears_pending_and_replays_typed_timeout() {
     let replay = callbacks
         .invoke_tool(call)
         .await
-        .expect_err("deadline result is stable by effect");
-    assert_eq!(
-        replay.code,
-        agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::DeadlineExceeded
-    );
+        .expect("expired callback still returns a closed lifecycle");
+    assert!(matches!(
+        terminal_tool_result(replay).await,
+        AgentToolResult::Failed { code, .. } if code == "tool_callback_deadline_exceeded"
+    ));
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(20), endpoint.receive())
             .await
             .is_err(),
         "settled timeout must not emit a duplicate callback request"
     );
+}
+
+#[tokio::test]
+async fn source_callback_progress_gap_closes_with_one_protocol_terminal() {
+    let endpoint = Arc::new(RuntimeWireAgentServiceEndpoint::new(
+        target().service_instance_id,
+        AgentBindingGeneration(9),
+        Arc::new(EndpointTracerService::default()),
+    ));
+    let call = tool_invocation("source-gap-effect", 9, deadline_after_ms(1_000), "gap-tool");
+    let mut stream = endpoint
+        .host_callbacks()
+        .invoke_tool(call.clone())
+        .await
+        .expect("tool stream");
+    let RuntimeWirePlacementEvent::Frame(request) =
+        endpoint.receive().await.expect("callback request")
+    else {
+        panic!("expected callback request");
+    };
+    endpoint
+        .send(tool_callback_response(
+            1,
+            request.frame_id,
+            &call,
+            AgentToolExecutionEvent::Started,
+        ))
+        .await
+        .expect("started response");
+    endpoint
+        .send(tool_callback_response(
+            2,
+            request.frame_id,
+            &call,
+            AgentToolExecutionEvent::Progress {
+                update_index: 2,
+                output: json!({"phase": "gap"}),
+            },
+        ))
+        .await
+        .expect("gap response");
+
+    assert!(matches!(
+        stream.next().await.unwrap(),
+        Some(AgentToolExecutionEvent::Started)
+    ));
+    assert!(matches!(
+        stream.next().await.unwrap(),
+        Some(AgentToolExecutionEvent::Completed {
+            result: AgentToolResult::Failed { code, .. }
+        }) if code == "tool_callback_protocol_violation"
+    ));
+    assert!(stream.next().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn source_callback_terminal_before_started_is_normalized_to_a_closed_lifecycle() {
+    let endpoint = Arc::new(RuntimeWireAgentServiceEndpoint::new(
+        target().service_instance_id,
+        AgentBindingGeneration(9),
+        Arc::new(EndpointTracerService::default()),
+    ));
+    let call = tool_invocation(
+        "source-prestart-terminal-effect",
+        9,
+        deadline_after_ms(1_000),
+        "prestart-terminal-tool",
+    );
+    let mut stream = endpoint
+        .host_callbacks()
+        .invoke_tool(call.clone())
+        .await
+        .expect("tool stream");
+    let RuntimeWirePlacementEvent::Frame(request) =
+        endpoint.receive().await.expect("callback request")
+    else {
+        panic!("expected callback request");
+    };
+    endpoint
+        .send(tool_callback_response(
+            1,
+            request.frame_id,
+            &call,
+            AgentToolExecutionEvent::Completed {
+                result: AgentToolResult::Completed {
+                    output: json!({"unexpected": true}),
+                },
+            },
+        ))
+        .await
+        .expect("pre-start terminal response");
+
+    assert!(matches!(
+        stream.next().await.unwrap(),
+        Some(AgentToolExecutionEvent::Started)
+    ));
+    assert!(matches!(
+        stream.next().await.unwrap(),
+        Some(AgentToolExecutionEvent::Completed {
+            result: AgentToolResult::Failed { code, .. }
+        }) if code == "tool_callback_protocol_violation"
+    ));
+    assert!(stream.next().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn source_callback_duplicate_terminal_is_absorbed_after_the_first_terminal() {
+    let endpoint = Arc::new(RuntimeWireAgentServiceEndpoint::new(
+        target().service_instance_id,
+        AgentBindingGeneration(9),
+        Arc::new(EndpointTracerService::default()),
+    ));
+    let call = tool_invocation(
+        "source-terminal-effect",
+        9,
+        deadline_after_ms(1_000),
+        "terminal-tool",
+    );
+    let mut stream = endpoint
+        .host_callbacks()
+        .invoke_tool(call.clone())
+        .await
+        .expect("tool stream");
+    let RuntimeWirePlacementEvent::Frame(request) =
+        endpoint.receive().await.expect("callback request")
+    else {
+        panic!("expected callback request");
+    };
+    endpoint
+        .send(tool_callback_response(
+            1,
+            request.frame_id,
+            &call,
+            AgentToolExecutionEvent::Started,
+        ))
+        .await
+        .expect("started response");
+    let completed = AgentToolExecutionEvent::Completed {
+        result: AgentToolResult::Completed {
+            output: json!({"ok": true}),
+        },
+    };
+    endpoint
+        .send(tool_callback_response(
+            2,
+            request.frame_id,
+            &call,
+            completed.clone(),
+        ))
+        .await
+        .expect("terminal response");
+    endpoint
+        .send(tool_callback_response(
+            3,
+            request.frame_id,
+            &call,
+            completed,
+        ))
+        .await
+        .expect("duplicate terminal is fenced");
+
+    assert!(matches!(
+        stream.next().await.unwrap(),
+        Some(AgentToolExecutionEvent::Started)
+    ));
+    assert!(matches!(
+        stream.next().await.unwrap(),
+        Some(AgentToolExecutionEvent::Completed {
+            result: AgentToolResult::Completed { .. }
+        })
+    ));
+    assert!(stream.next().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn source_callback_disconnect_before_started_becomes_one_failed_terminal() {
+    let endpoint = Arc::new(RuntimeWireAgentServiceEndpoint::new(
+        target().service_instance_id,
+        AgentBindingGeneration(9),
+        Arc::new(EndpointTracerService::default()),
+    ));
+    let call = tool_invocation(
+        "source-disconnect-effect",
+        9,
+        deadline_after_ms(1_000),
+        "disconnect-tool",
+    );
+    let stream = endpoint
+        .host_callbacks()
+        .invoke_tool(call)
+        .await
+        .expect("tool stream");
+    endpoint.disconnect_outbound().await;
+
+    assert!(matches!(
+        terminal_tool_result(stream).await,
+        AgentToolResult::Failed { code, .. } if code == "tool_callback_transport_lost"
+    ));
 }
 
 #[tokio::test]
@@ -803,16 +1164,7 @@ async fn proxy_deadline_and_effect_ledger_prevent_duplicate_host_side_effects() 
     wait_until(|| {
         placement.sent.try_lock().is_ok_and(|sent| {
             sent.iter()
-                .filter(|frame| matches!(
-                    &frame.frame,
-                    RuntimeWireFrame::Response {
-                        response: RuntimeWireResponse::AgentHostCallback(
-                            RuntimeWireAgentHostCallbackResponse::Tool(Err(error))
-                        ),
-                        ..
-                    } if error.code
-                        == agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::DeadlineExceeded
-                ))
+                .filter(|frame| wire_tool_terminal_code(frame, "tool_callback_deadline_exceeded"))
                 .count()
                 >= 2
         })
@@ -829,16 +1181,7 @@ async fn proxy_deadline_and_effect_ledger_prevent_duplicate_host_side_effects() 
     wait_until(|| {
         placement.sent.try_lock().is_ok_and(|sent| {
             sent.iter()
-                .filter(|frame| matches!(
-                    &frame.frame,
-                    RuntimeWireFrame::Response {
-                        response: RuntimeWireResponse::AgentHostCallback(
-                            RuntimeWireAgentHostCallbackResponse::Tool(Err(error))
-                        ),
-                        ..
-                    } if error.code
-                        == agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::DeadlineExceeded
-                ))
+                .filter(|frame| wire_tool_terminal_code(frame, "tool_callback_deadline_exceeded"))
                 .count()
                 >= 3
         })
@@ -863,16 +1206,8 @@ async fn proxy_deadline_and_effect_ledger_prevent_duplicate_host_side_effects() 
     );
     wait_until(|| {
         placement.sent.try_lock().is_ok_and(|sent| {
-            sent.iter().any(|frame| matches!(
-                &frame.frame,
-                RuntimeWireFrame::Response {
-                    response: RuntimeWireResponse::AgentHostCallback(
-                        RuntimeWireAgentHostCallbackResponse::Tool(Err(error))
-                    ),
-                    ..
-                } if error.code
-                    == agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::DuplicateConflict
-            ))
+            sent.iter()
+                .any(|frame| wire_tool_terminal_code(frame, "tool_callback_duplicate_conflict"))
         })
     })
     .await;
@@ -1201,7 +1536,7 @@ async fn reverse_callback_rewrites_source_generation_and_preserves_request_corre
         RuntimeWireFrame::Response {
             request_frame_id: RuntimeWireFrameId(2),
             response: RuntimeWireResponse::AgentHostCallback(
-                RuntimeWireAgentHostCallbackResponse::Tool(Ok(_))
+                RuntimeWireAgentHostCallbackResponse::Tool(_)
             ),
         }
     )));

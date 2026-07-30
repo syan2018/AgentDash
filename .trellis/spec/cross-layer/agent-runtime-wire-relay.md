@@ -32,14 +32,36 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 
 `RuntimeWireCommandHandler`维护per-stream negotiation、sequence、ack与outbound pump；`RuntimeWireDriverEndpoint`只终结既有`AgentRuntimeDriver`。Relay message直接承载typed `RuntimeWireEnvelope`。
 
+当前协议 revision 为 8。reverse Tool callback 的一次 request 可以对应多个
+`RuntimeWireAgentHostCallbackResponse::Tool`；每个响应都携带 request frame correlation，以及
+`effect_id`、`item_id`、`tool` 和 typed `AgentToolExecutionEvent`。
+
+Complete Agent live lane使用`RuntimeWireAgentServiceRequest::SubscribeLive`建立source-scoped
+订阅；后续`RuntimeWireAgentLiveBatchNotification`无损承载`AgentLiveBatch`，或以typed
+`Lagged / Protocol / Unavailable`结束该订阅。Remote proxy必须先建立本地receiver再发送订阅请求，
+原因是endpoint可以在订阅响应到达前发布首个batch。
+
 ## 3. Contracts
 
 - Runtime Wire保留真实service definition/instance、binding、driver generation、profile digest与transport provenance。Relay是placement transport，不能生成或覆盖Agent service identity。
 - Runtime Wire remote placement provenance包含`HostIncarnationId`。Cloud从当前Backend inventory offer原样投影该identity到proxy instance与open request；Local只接受当前进程incarnation，使旧连接的相同instance/generation无法在Host重启后恢复。
 - Open negotiation固定protocol revision、transport profile/digest与max-in-flight。双方不满足revision/profile要求时必须在dispatch前typed reject。
 - 每个方向使用严格递增sequence与累计ack。Duplicate frame幂等确认；sequence gap拒绝；超过协商in-flight上限产生backpressure，不丢帧或无限缓冲。
+- Agent service response、change、live batch与reverse callback共享同一方向的frame-id分配和有序
+  发送屏障；并发producer不能先分配较小frame-id、后于较大frame-id进入transport queue。
 - Transport是持久双向`send/receive` stream，不是有限request/response exchange。Remote driver使用独立receive pump和frame-id correlation；dispatch receipt返回后的异步DriverEvent必须继续经Arc event sink送达。
 - 同一Remote dispatch的DriverEvent notification与最终Response进入同一个ordered inbound queue。Response只有在此前events完成canonical sink后才能解除Host dispatch/lease；HostPort callback使用独立可重入correlation路径，不能被该顺序屏障阻塞。
+- Remote Tool callback 保留完整
+  `Started -> Progress(update_index=1..n) -> Completed`序列，不把 terminal result 适配成单响应。
+  相同 effect + 相同 request 的并发或后续重放必须复用完整已结算序列；相同 effect + 不同 request
+  收敛为 typed duplicate conflict terminal，不能再次调用工具 owner。
+- Tool callback 的 effect、item、tool 与 request frame 构成显式 correlation。接收端校验 started、
+  progress 连续性和唯一 terminal；乱序、跳号、重复 started、EOF、断连或 deadline 都收敛为一次
+  failed terminal，pending correlation 随 terminal 或 transport loss 释放。
+- Remote Complete Agent对每个source只建立一个上游live subscription，并向同proxy内的观察者广播。
+  source、batch sequence、可选owner state与presentations必须保持原样；上游lag/protocol/unavailable
+  作为typed live error关闭当前lane。placement断线同时终结pending service response与全部live
+  receiver，原因是旧generation的process-local lane不能跨重连续接。
 - 同provenance重连按ack cursor清理已确认帧并有序replay未确认帧；provenance任何坐标不同都不能复用stream。一次真实disconnect只产生一次placement loss/binding lost输入。
 - Backend断连按`registry.unregister -> placement Disconnected -> remote driver BindingLost -> acknowledge_disconnect -> inventory.withdraw`收敛。`unregister`必须等待disconnect acknowledgment后返回，因为offer撤销会改变driver可达性；ack是BindingLost处理完成的屏障，不是“事件已入队”的确认。
 - Remote disconnect先向authoritative sink提交一次BindingLost，再关闭pending response correlation；反向顺序会让pending failure与sink各自产生Lost。
@@ -70,6 +92,13 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 | receipt返回后driver发送terminal/event | receive pump继续转发，不丢失 |
 | dispatch response越过前序DriverEvent | response保持pending，直到前序event sink完成 |
 | EOF/断线 | exactly-once BindingLost/Lost输入，不报Completed |
+| reverse Tool callback 在 terminal 前 EOF/断线 | callback item 收敛为唯一 transport-lost failed terminal |
+| reverse Tool callback progress 跳号/乱序 | callback item 收敛为唯一 protocol failed terminal |
+| live subscription响应前到达首个batch | receiver已建立并保留该batch |
+| Complete Agent live source不匹配 | typed protocol error，关闭该source lane |
+| placement在live terminal前断线 | 当前live receiver收到typed unavailable，不无限等待 |
+| 相同 effect + 相同 Tool request 重放 | 重放完整 settled lifecycle，不重复执行 owner |
+| 相同 effect + 不同 Tool request | typed duplicate conflict terminal；owner 零额外调用 |
 | Disconnected已入队但remote driver尚未处理 | Relay等待`acknowledge_disconnect`，不得先撤销offer |
 | Local resolver找不到Host driver/generation | typed error，无legacy fallback |
 | Local endpoint收到Agent Runtime request | typed unsupported，禁止第二Runtime |
@@ -94,6 +123,10 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 - Remote driver测试覆盖response correlation、多个in-flight request、receipt后delayed event、EOF Lost、generation fence及全部receipt字段。
 - Remote driver测试注入terminal sink失败并重放同terminal，断言已提交terminal幂等、未提交terminal可重试且active operation不被提前遗忘。
 - Ordered inbound测试阻塞event sink并断言dispatch response仍pending，释放event后response完成；HostPort callback roundtrip必须同时证明可重入无死锁。
+- reverse Tool callback loopback 覆盖多帧 progress、零 progress、并发同 effect replay、结算后 replay、
+  progress gap、重复 terminal、deadline 与 terminal 前 disconnect。
+- Complete Agent live loopback覆盖订阅响应前首batch、source/sequence/state/presentation保真、lag、
+  protocol error与placement断线；并发response/change/live producer测试证明frame-id入队顺序严格递增。
 - Local handler loopback覆盖open -> describe/dispatch -> response -> delayed event -> ack，duplicate ack-only与invalid generation。
 - 验证endpoint拒绝Agent Runtime request，handler无resolver时无fallback。
 - Contract/Wire generation与round-trip测试证明typed envelope没有Value中转，并覆盖nested

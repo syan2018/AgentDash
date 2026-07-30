@@ -176,6 +176,10 @@ fn codec_roots() -> &'static [CodecRoot] {
             function_stem: "AgentRuntimeUpdate",
         },
         CodecRoot {
+            type_name: "AgentRuntimeStreamFrame",
+            function_stem: "AgentRuntimeStreamFrame",
+        },
+        CodecRoot {
             type_name: "AgentRuntimeContextProjection",
             function_stem: "AgentRuntimeContextProjection",
         },
@@ -223,6 +227,7 @@ fn required_runtime_type_names() -> BTreeSet<String> {
         "AgentRuntimeProjectionSchema",
         "AgentRuntimeView",
         "AgentRuntimeUpdate",
+        "AgentRuntimeStreamFrame",
         "AgentRuntimeSourceBindingEvidence",
         "AgentInteractionRequest",
         "AgentInteractionStatus",

@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
 use agentdash_agent::dash::{
-    DashBeforeToolDecision, DashCoreError, DashToolCall, DashToolCallbacks, DashToolResult,
+    DashBeforeToolDecision, DashCoreError, DashToolCall, DashToolCallbacks, DashToolExecutionEvent,
+    DashToolExecutionStream, DashToolResult,
 };
 use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentEffectIdentity, AgentHookAction,
     AgentHookDecision, AgentHookDefinitionId, AgentHookInvocation, AgentHookPoint, AgentHookTiming,
     AgentHostCallbackMeta, AgentHostCallbacks, AgentIdempotencyKey, AgentItemId,
-    AgentSourceCoordinate, AgentSurfaceContributionPayload, AgentToolInvocation, AgentToolName,
-    AgentToolResult, AgentTurnId, BoundAgentSurface,
+    AgentSourceCoordinate, AgentSurfaceContributionPayload, AgentToolExecutionEvent,
+    AgentToolExecutionStream, AgentToolInvocation, AgentToolName, AgentToolResult, AgentTurnId,
+    BoundAgentSurface,
 };
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -207,7 +209,7 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
         &self,
         turn_id: &agentdash_agent::dash::AgentTurnId,
         call: DashToolCall,
-    ) -> Result<DashToolResult, DashCoreError> {
+    ) -> Result<Box<dyn DashToolExecutionStream>, DashCoreError> {
         let item_id =
             AgentItemId::new(call.call_id.clone()).map_err(|error| DashCoreError::Tool {
                 message: error.to_string(),
@@ -245,7 +247,7 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
             })?,
             arguments: call.arguments,
         };
-        let result = self
+        let stream = self
             .callbacks
             .invoke_tool(invocation)
             .await
@@ -253,18 +255,10 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
                 message: error.to_string(),
                 retryable: false,
             })?;
-        match result {
-            AgentToolResult::Completed { output } => {
-                Ok(completed_tool_result(call.call_id, output))
-            }
-            AgentToolResult::Rejected { code, message }
-            | AgentToolResult::Failed { code, message } => Ok(DashToolResult {
-                call_id: call.call_id,
-                content: vec![agentdash_agent::ContentPart::text(message.clone())],
-                is_error: true,
-                details: Some(serde_json::json!({"code": code, "message": message})),
-            }),
-        }
+        Ok(Box::new(DashHostToolExecutionStream {
+            inner: stream,
+            call_id: call.call_id,
+        }))
     }
 
     async fn after_tool(
@@ -312,6 +306,52 @@ impl DashToolCallbacks for DashAgentCoreToolCallbacks {
             }
         }
         Ok(result)
+    }
+}
+
+struct DashHostToolExecutionStream {
+    inner: Box<dyn AgentToolExecutionStream>,
+    call_id: String,
+}
+
+#[async_trait]
+impl DashToolExecutionStream for DashHostToolExecutionStream {
+    async fn next(&mut self) -> Result<Option<DashToolExecutionEvent>, DashCoreError> {
+        self.inner
+            .next()
+            .await
+            .map(|event| {
+                event.map(|event| match event {
+                    AgentToolExecutionEvent::Started => DashToolExecutionEvent::Started,
+                    AgentToolExecutionEvent::Progress {
+                        update_index,
+                        output,
+                    } => DashToolExecutionEvent::Progress {
+                        update_index,
+                        update: completed_tool_result(self.call_id.clone(), output),
+                    },
+                    AgentToolExecutionEvent::Completed { result } => {
+                        DashToolExecutionEvent::Completed {
+                            result: host_tool_result(self.call_id.clone(), result),
+                        }
+                    }
+                })
+            })
+            .map_err(callback_error)
+    }
+}
+
+fn host_tool_result(call_id: String, result: AgentToolResult) -> DashToolResult {
+    match result {
+        AgentToolResult::Completed { output } => completed_tool_result(call_id, output),
+        AgentToolResult::Rejected { code, message } | AgentToolResult::Failed { code, message } => {
+            DashToolResult {
+                call_id,
+                content: vec![agentdash_agent::ContentPart::text(message.clone())],
+                is_error: true,
+                details: Some(serde_json::json!({"code": code, "message": message})),
+            }
+        }
     }
 }
 

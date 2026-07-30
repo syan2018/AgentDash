@@ -172,7 +172,7 @@ impl DashToolCallbacks for NoTools {
         &self,
         _: &AgentTurnId,
         _: DashToolCall,
-    ) -> Result<DashToolResult, DashCoreError> {
+    ) -> Result<Box<dyn agentdash_agent::dash::DashToolExecutionStream>, DashCoreError> {
         Err(DashCoreError::Tool {
             message: "provider fails before requesting a tool".into(),
             retryable: false,
@@ -312,18 +312,20 @@ impl DashToolCallbacks for BlockingToolCallbacks {
         &self,
         _: &AgentTurnId,
         call: DashToolCall,
-    ) -> Result<DashToolResult, DashCoreError> {
+    ) -> Result<Box<dyn agentdash_agent::dash::DashToolExecutionStream>, DashCoreError> {
         self.calls.lock().await.push(call.call_id.clone());
         if call.call_id == "create-canvas" {
             self.entered.notify_one();
             self.release.notified().await;
         }
-        Ok(DashToolResult {
-            call_id: call.call_id,
-            content: vec![agentdash_agent::ContentPart::text("ok")],
-            is_error: false,
-            details: None,
-        })
+        Ok(agentdash_agent::dash::DashToolExecutionSequence::completed(
+            DashToolResult {
+                call_id: call.call_id,
+                content: vec![agentdash_agent::ContentPart::text("ok")],
+                is_error: false,
+                details: None,
+            },
+        ))
     }
 }
 
@@ -338,14 +340,16 @@ impl DashToolCallbacks for RecordingToolCallbacks {
         &self,
         _: &AgentTurnId,
         call: DashToolCall,
-    ) -> Result<DashToolResult, DashCoreError> {
+    ) -> Result<Box<dyn agentdash_agent::dash::DashToolExecutionStream>, DashCoreError> {
         self.calls.lock().await.push(call.call_id.clone());
-        Ok(DashToolResult {
-            call_id: call.call_id,
-            content: vec![agentdash_agent::ContentPart::text("ok")],
-            is_error: false,
-            details: None,
-        })
+        Ok(agentdash_agent::dash::DashToolExecutionSequence::completed(
+            DashToolResult {
+                call_id: call.call_id,
+                content: vec![agentdash_agent::ContentPart::text("ok")],
+                is_error: false,
+                details: None,
+            },
+        ))
     }
 }
 

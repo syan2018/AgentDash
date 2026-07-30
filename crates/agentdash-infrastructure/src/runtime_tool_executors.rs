@@ -6,7 +6,7 @@ use std::{
 use agentdash_agent_runtime::{
     RuntimeTaskExecutionScope, RuntimeTaskGrantedOperation, RuntimeToolAuthorizationPolicy,
     RuntimeToolDefinition, RuntimeToolEffect, RuntimeToolExecutor, RuntimeToolInvocation,
-    RuntimeToolPermission, RuntimeToolProvenance, RuntimeToolResourceGrant,
+    RuntimeToolPermission, RuntimeToolProvenance, RuntimeToolResourceGrant, RuntimeToolUpdateSink,
     RuntimeVfsGrantedOperation, RuntimeVfsPathGrant, ToolProtocolProjector,
 };
 use agentdash_agent_runtime_contract::{AgentToolName, AgentToolResult};
@@ -18,6 +18,7 @@ use agentdash_application_ports::product_runtime_tool::{
     ProductRuntimeToolContext, ProductRuntimeToolKind, ProductRuntimeToolOutcome,
     ProductRuntimeToolRequest, ProductRuntimeToolService, ProductRuntimeToolTarget,
 };
+use agentdash_application_vfs::runtime_tool_execution::VfsToolUpdateSink;
 use agentdash_application_vfs::{
     AppliedVfsRuntimeToolService, AppliedVfsToolKind, AppliedVfsToolMount, AppliedVfsToolOperation,
     AppliedVfsToolOutcome, AppliedVfsToolOwner, AppliedVfsToolPathScope, AppliedVfsToolRequest,
@@ -338,7 +339,15 @@ macro_rules! vfs_executor {
             }
 
             async fn execute(&self, invocation: RuntimeToolInvocation) -> AgentToolResult {
-                execute_vfs(self.service.as_ref(), $kind, invocation).await
+                execute_vfs(self.service.as_ref(), $kind, invocation, None).await
+            }
+
+            async fn execute_with_updates(
+                &self,
+                invocation: RuntimeToolInvocation,
+                updates: Option<RuntimeToolUpdateSink>,
+            ) -> AgentToolResult {
+                execute_vfs(self.service.as_ref(), $kind, invocation, updates).await
             }
         }
     };
@@ -474,6 +483,7 @@ async fn execute_vfs(
     service: &AppliedVfsRuntimeToolService,
     kind: AppliedVfsToolKind,
     invocation: RuntimeToolInvocation,
+    updates: Option<RuntimeToolUpdateSink>,
 ) -> AgentToolResult {
     let RuntimeToolResourceGrant::Vfs(grant) = invocation.grant.resources else {
         return rejected(
@@ -524,18 +534,29 @@ async fn execute_vfs(
             })
             .collect(),
     };
+    let vfs_updates = updates.map(|updates| {
+        Arc::new(move |result| {
+            if let Ok(output) = serde_json::to_value(result) {
+                updates(output);
+            }
+        }) as VfsToolUpdateSink
+    });
     match service
-        .execute(AppliedVfsToolRequest {
-            kind,
-            arguments: invocation.arguments,
-            surface,
-            owner: AppliedVfsToolOwner {
-                run_id,
-                agent_id,
-                runtime_thread_id: invocation.context.runtime_thread_id.to_string(),
-                invocation_id: invocation.context.invocation_id,
+        .execute_with_controls(
+            AppliedVfsToolRequest {
+                kind,
+                arguments: invocation.arguments,
+                surface,
+                owner: AppliedVfsToolOwner {
+                    run_id,
+                    agent_id,
+                    runtime_thread_id: invocation.context.runtime_thread_id.to_string(),
+                    invocation_id: invocation.context.invocation_id,
+                },
             },
-        })
+            tokio_util::sync::CancellationToken::new(),
+            vfs_updates,
+        )
         .await
     {
         AppliedVfsToolOutcome::Completed { output } => AgentToolResult::Completed { output },

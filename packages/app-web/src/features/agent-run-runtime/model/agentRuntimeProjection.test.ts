@@ -31,7 +31,7 @@ function record(
 }
 
 describe("Agent Runtime projection", () => {
-  it("连续 update 保留当前 lane 已归约的流式增量", () => {
+  it("ephemeral presentation 不会累积进 authoritative conversation", () => {
     const firstDelta = record("assistant-delta-1", {
       type: "agent_message_delta",
       payload: {
@@ -54,9 +54,8 @@ describe("Agent Runtime projection", () => {
       agentRuntimeTestFixtures.snapshots.completed,
       {
         lane_sequence: 1n,
-        observation: {
+        state: {
           ...agentRuntimeTestFixtures.snapshots.started.observation,
-          conversation: [],
         },
         presentations: [firstDelta],
       },
@@ -64,18 +63,16 @@ describe("Agent Runtime projection", () => {
 
     const secondView = applyAgentRuntimeUpdate(firstView, {
       lane_sequence: 2n,
-      observation: {
+      state: {
         ...agentRuntimeTestFixtures.snapshots.started.observation,
         revision: agentRuntimeTestFixtures.snapshots.started.observation.revision + 1n,
-        conversation: [],
       },
       presentations: [secondDelta],
     });
 
-    expect(secondView.observation.conversation).toEqual([
-      firstDelta,
-      secondDelta,
-    ]);
+    expect(secondView.observation.conversation).toEqual(
+      agentRuntimeTestFixtures.snapshots.completed.observation.conversation,
+    );
   });
 
   it("连续 update 不丢失 file edit patch 过程记录", () => {
@@ -99,9 +96,8 @@ describe("Agent Runtime projection", () => {
       agentRuntimeTestFixtures.snapshots.completed,
       {
         lane_sequence: 1n,
-        observation: {
+        state: {
           ...agentRuntimeTestFixtures.snapshots.started.observation,
-          conversation: [],
         },
         presentations: [firstPatch],
       },
@@ -109,21 +105,19 @@ describe("Agent Runtime projection", () => {
 
     const secondView = applyAgentRuntimeUpdate(firstView, {
       lane_sequence: 2n,
-      observation: {
+      state: {
         ...agentRuntimeTestFixtures.snapshots.started.observation,
         revision: agentRuntimeTestFixtures.snapshots.started.observation.revision + 1n,
-        conversation: [],
       },
       presentations: [secondPatch],
     });
 
-    expect(secondView.observation.conversation).toEqual([
-      firstPatch,
-      secondPatch,
-    ]);
+    expect(secondView.observation.conversation).toEqual(
+      agentRuntimeTestFixtures.snapshots.completed.observation.conversation,
+    );
   });
 
-  it("从 Runtime update 原样接收控制状态并合并 presentation", () => {
+  it("从 Runtime update 原样接收控制状态但不混入 presentation", () => {
     const nameRecord = record("thread-name", {
       type: "thread_name_updated",
       payload: {
@@ -135,7 +129,7 @@ describe("Agent Runtime projection", () => {
       agentRuntimeTestFixtures.snapshots.completed,
       {
         lane_sequence: 3n,
-        observation: {
+        state: {
           ...agentRuntimeTestFixtures.snapshots.started.observation,
           revision: 9n,
           thread_name: {
@@ -147,7 +141,6 @@ describe("Agent Runtime projection", () => {
               observed_at_ms: 1000n,
             },
           },
-          conversation: [],
         },
         presentations: [nameRecord],
       },
@@ -155,6 +148,6 @@ describe("Agent Runtime projection", () => {
 
     expect(updated.observation.thread_name?.thread_name).toBe("权威命名");
     expect(updated.observation.execution.active_turn).not.toBeNull();
-    expect(updated.observation.conversation).toContainEqual(nameRecord);
+    expect(updated.observation.conversation).not.toContainEqual(nameRecord);
   });
 });

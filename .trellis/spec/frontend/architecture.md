@@ -5,10 +5,11 @@ Frontend以产品路由与generated contracts组织：Project/Story/Task/Lifecyc
 ## Invariants
 
 - API client只使用generated Rust contracts；不手写Runtime/vendor DTO。
-- AgentRun execution 与 command availability只来自 `AgentRuntimeView/AgentRuntimeUpdate`，不从
+- AgentRun execution 与 command availability只来自 `AgentRuntimeView` 或
+  `AgentRuntimeStreamFrame::Update.state`，不从
   产品status、Backbone、conversation record或executor kind推导。
-- `AgentRuntimeConnection` 按 `AgentRuntimeView.conversation` baseline 与 update presentations
-  消费同一 canonical schema；只以 `presentation_id` 合并，不建立第二份turn/item store。
+- `AgentRuntimeConnection` 以`AgentRuntimeView.observation.conversation`建立baseline，并把update
+  presentations直接交给同一个Session reducer增量归约；live presentation不写回authoritative conversation。
   canonical record再进入 `useSessionStream -> sessionStreamReducer -> SessionEntry ->
   toolCardRegistry`。target切换隔离旧state。
 - `AgentRuntimeConnection` 是同一 target 的唯一 Runtime 连接 owner。Feed、Composer 与
@@ -38,38 +39,55 @@ Frontend以产品路由与generated contracts组织：Project/Story/Task/Lifecyc
 ### 2. Signatures
 
 ```ts
-type AgentRuntimeUpdate = {
-  lane_sequence: RuntimeU64;
-  view_revision: RuntimeProjectionRevision;
-  execution: AgentRuntimeExecutionView;
-  command_availability: AgentRuntimeCommandAvailabilityMap;
-  interactions: AgentRuntimeInteraction[];
-  presentations: CanonicalConversationRecord[];
-};
+type AgentRuntimeStreamFrame =
+  | { kind: "baseline"; connection_epoch: RuntimeU64; view: AgentRuntimeView }
+  | {
+      kind: "update";
+      connection_epoch: RuntimeU64;
+      lane_sequence: RuntimeU64;
+      state: AgentObservationState | null;
+      presentations: CanonicalConversationRecord[];
+    }
+  | {
+      kind: "reset_required";
+      connection_epoch: RuntimeU64;
+      reason: AgentRuntimeResetReason;
+      last_sequence: RuntimeU64 | null;
+    };
 ```
 
 ### 3. Contracts
 
-- transport只接收generated `AgentRuntimeUpdate`形态。
-- `AgentRuntimeView.conversation`是渲染输入；update只按 presentation identity
-  覆盖/追加canonical record。
-- execution、active turn、command availability与interactions由每条 update 直接替换，不从
+- transport只接收 generated `AgentRuntimeStreamFrame`。每个 connection epoch 先接收一次
+  `Baseline`，再接收有序 `Update`；`ResetRequired`结束当前 live lane。
+- `AgentRuntimeView.observation.conversation`只在baseline replacement时完整重建；普通update只归约本batch records。
+- execution、active turn、command availability与interactions只在update携带owner state时替换，不从
   presentation event type推导。
+- 显式 refresh 与 live lane 并行时，connection暂存 refresh期间已经交付的ordered updates。
+  refresh baseline返回后先replacement，再以durable presentation identity与state revision重放baseline
+  尚未确认的部分；ephemeral presentation始终属于live overlay。新stream baseline使用generation
+  fence使旧refresh失效；reset同时丢弃失效lane的
+  overlay。原因是authoritative read与process-local update回答不同时间问题，较旧read不能覆盖读取
+  期间已经观察到的事实。
 - `AgentDashThreadItem.type`直接决定消息、reasoning或tool/resource card。
-- `TurnCompleted`触发reload，以Complete Agent durable history替换ephemeral overlay；reload期间到达的
-  后续canonical records继续fold到新baseline；期间再次出现`TurnCompleted`时排队下一次reload，
-  因此网络响应顺序和连续回合都不会创建第二套会话事实。
+- durable terminal batch携带同一owner边界的idle state并直接收敛会话；正常terminal不触发例行reload。
+  只有显式refresh或lane失效才替换baseline。
+- 同turn terminal关闭已有message/reasoning streaming状态，并吸收迟到的ephemeral
+  message/reasoning/tool progress；新turn不受旧terminal identity影响。baseline replacement从
+  authoritative conversation重建terminal集合。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 行为 |
 | --- | --- |
 | live缺少canonical record | 拒绝并报告连接错误 |
+| live frame解析失败 | 报告target、connection epoch与最后成功lane sequence后重连 |
 | presentation id重复 | 覆盖同一record |
 | item completed | 终结该item，不终结turn |
 | update.execution=idle | receiving=false |
-| terminal snapshot请求期间收到后续live record | snapshot替换旧overlay后继续保留该record |
-| terminal snapshot请求期间下一回合也完成 | 当前收敛结束后再读取一次authoritative snapshot |
+| 显式refresh期间收到后续live record | baseline replacement后按原lane顺序保留未被baseline确认的record |
+| refresh期间收到新epoch baseline | 新stream baseline生效；旧refresh返回值被generation fence丢弃 |
+| reset期间存在refresh overlay | 丢弃失效lane overlay，等待新epoch baseline |
 
 ### 5. Good / Base / Bad Cases
 
@@ -101,7 +119,7 @@ React intent
   -> typed service
   -> AgentRun API/facade
   -> Runtime operation receipt
-  -> AgentRuntimeView / AgentRuntimeUpdate
+  -> AgentRuntimeView / AgentRuntimeStreamFrame
   -> view model
 ```
 

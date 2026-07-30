@@ -224,7 +224,7 @@ impl AppliedVfsRuntimeToolService {
                     self.identity.clone(),
                 )
                 .with_execution_state(self.patch_execution_state.clone())
-                .execute(request.arguments, cancel)
+                .execute(request.arguments, cancel, updates)
                 .await
             }
             AppliedVfsToolKind::ShellExec => {

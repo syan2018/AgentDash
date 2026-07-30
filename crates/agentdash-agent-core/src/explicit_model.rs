@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{collections::VecDeque, pin::Pin};
 
 use async_trait::async_trait;
 use futures::Stream;
@@ -114,6 +114,50 @@ pub struct CoreToolResult {
     pub details: Option<Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CoreToolExecutionEvent {
+    Started,
+    Progress {
+        update_index: u64,
+        update: CoreToolResult,
+    },
+    Completed {
+        result: CoreToolResult,
+    },
+}
+
+#[async_trait]
+pub trait CoreToolExecutionStream: Send {
+    async fn next(&mut self) -> Result<Option<CoreToolExecutionEvent>, CoreError>;
+}
+
+pub struct CoreToolExecutionSequence {
+    events: VecDeque<CoreToolExecutionEvent>,
+}
+
+impl CoreToolExecutionSequence {
+    pub fn new(events: impl IntoIterator<Item = CoreToolExecutionEvent>) -> Self {
+        Self {
+            events: events.into_iter().collect(),
+        }
+    }
+
+    pub fn completed(result: CoreToolResult) -> Box<dyn CoreToolExecutionStream> {
+        Box::new(Self::new([
+            CoreToolExecutionEvent::Started,
+            CoreToolExecutionEvent::Completed { result },
+        ]))
+    }
+}
+
+#[async_trait]
+impl CoreToolExecutionStream for CoreToolExecutionSequence {
+    async fn next(&mut self) -> Result<Option<CoreToolExecutionEvent>, CoreError> {
+        Ok(self.events.pop_front())
+    }
+}
+
 impl CoreToolResult {
     #[must_use]
     pub fn text(&self) -> String {
@@ -216,9 +260,15 @@ pub enum CoreEvent {
         round: u32,
         delta: String,
     },
-    ToolCallRequested {
+    ToolCallStarted {
         round: u32,
         call: CoreToolCall,
+    },
+    ToolCallProgress {
+        round: u32,
+        call: CoreToolCall,
+        update_index: u64,
+        update: CoreToolResult,
     },
     ToolCallCompleted {
         round: u32,
@@ -279,7 +329,10 @@ pub trait CoreToolCallbacks: Send + Sync {
         Ok(CoreBeforeToolDecision::Invoke { call })
     }
 
-    async fn invoke(&self, call: CoreToolCall) -> Result<CoreToolResult, CoreError>;
+    async fn invoke(
+        &self,
+        call: CoreToolCall,
+    ) -> Result<Box<dyn CoreToolExecutionStream>, CoreError>;
 
     async fn after_tool(
         &self,

@@ -20,6 +20,21 @@ use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::Mutex;
 
+async fn terminal_tool_result(mut stream: Box<dyn AgentToolExecutionStream>) -> AgentToolResult {
+    assert!(matches!(
+        stream.next().await.unwrap(),
+        Some(AgentToolExecutionEvent::Started)
+    ));
+    loop {
+        match stream.next().await.unwrap() {
+            Some(AgentToolExecutionEvent::Progress { .. }) => {}
+            Some(AgentToolExecutionEvent::Completed { result }) => return result,
+            Some(AgentToolExecutionEvent::Started) => panic!("duplicate tool start"),
+            None => panic!("tool stream ended before terminal"),
+        }
+    }
+}
+
 #[tokio::test]
 async fn route_is_process_local_and_restart_fences_old_callback() {
     let catalog = Arc::new(ProcessCompleteAgentLiveCatalog::new());
@@ -69,9 +84,10 @@ async fn route_is_process_local_and_restart_fences_old_callback() {
         Arc::new(FixedClock(100)),
     );
     let call = tool_call(&target, source.clone());
-    let result = AgentHostCallbacks::invoke_tool(&callbacks, call.clone())
+    let stream = AgentHostCallbacks::invoke_tool(&callbacks, call.clone())
         .await
         .unwrap();
+    let result = terminal_tool_result(stream).await;
     assert_eq!(
         result,
         AgentToolResult::Completed {
@@ -87,9 +103,10 @@ async fn route_is_process_local_and_restart_fences_old_callback() {
         restarted,
         Arc::new(FixedClock(100)),
     );
-    let error = AgentHostCallbacks::invoke_tool(&restarted_callbacks, call)
-        .await
-        .expect_err("old route must not survive Host restart");
+    let error = match AgentHostCallbacks::invoke_tool(&restarted_callbacks, call).await {
+        Ok(_) => panic!("old route must not survive Host restart"),
+        Err(error) => error,
+    };
     assert_eq!(error.code, AgentHostCallbackErrorCode::UnknownRoute);
 }
 
@@ -458,11 +475,13 @@ impl CompleteAgentToolHandler for CountingToolHandler {
     async fn invoke(
         &self,
         callback: ResolvedCompleteAgentToolCallback,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+    ) -> Result<Box<dyn AgentToolExecutionStream>, AgentHostCallbackError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(AgentToolResult::Completed {
-            output: callback.invocation.arguments,
-        })
+        Ok(AgentToolExecutionSequence::completed(
+            AgentToolResult::Completed {
+                output: callback.invocation.arguments,
+            },
+        ))
     }
 }
 

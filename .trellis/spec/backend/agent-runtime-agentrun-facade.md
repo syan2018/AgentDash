@@ -90,8 +90,11 @@ pub enum AgentRunProductRuntimeViewObservation {
   snapshot，但不得改变 Product shell 的成立条件。
 - conversation snapshot 每次来自 concrete Agent authoritative read。`waiting_items` 来自
   LifecycleGate 等 Product owner，和 Agent history在 response 组合，不合并为 mailbox。
-- live stream 直接订阅 concrete Agent source 的 process-local events。断线重连重新请求
-  conversation snapshot，不依赖 Runtime durable cursor。
+- live stream 直接订阅 concrete Agent source 的 process-local batches。每个浏览器connection
+  先订阅source，再读取conversation baseline并作为首帧发送；断线重连建立新epoch和新baseline，
+  因为process-local lane sequence只描述本次连接内的顺序。
+- Product live gateway只校验source并无损转发owner batch，不为每条presentation读取完整
+  authoritative snapshot；完整read只服务baseline、显式刷新和lane失效恢复。
 - AgentFrame history与 association保存在 LifecycleAgent owner-local JSONB；Dash/Codex history
   不进入 Product document。
 - binding digest只 attests Product association document 本身。它不包含 Host generation、

@@ -17,9 +17,9 @@ use agentdash_agent::dash::{
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, CanonicalConversationPresentation,
-    CanonicalConversationRecord, ItemCompletedNotification, ItemStartedNotification, PlatformEvent,
-    PresentationDurability, ProviderAttemptPhase, ProviderAttemptStatus, SourceInfo,
-    ToolProtocolProjector, TraceInfo,
+    CanonicalConversationRecord, ItemCompletedNotification, ItemStartedNotification,
+    ItemUpdatedNotification, PlatformEvent, PresentationDurability, ProviderAttemptPhase,
+    ProviderAttemptStatus, SourceInfo, ToolProtocolProjector, TraceInfo,
 };
 use agentdash_agent_runtime_contract::{
     AgentActiveTurnKind, AgentActiveTurnPhase, AgentActiveTurnSnapshot, AgentAppliedEffectOutcome,
@@ -33,20 +33,20 @@ use agentdash_agent_runtime_contract::{
     AgentHookPoint, AgentHookSemanticFacet, AgentHookTiming, AgentHostCallbackBinding,
     AgentHostCallbacks, AgentInput, AgentInputContent, AgentInteractionRequest,
     AgentInteractionResolution, AgentInteractionSnapshot, AgentInteractionStatus,
-    AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveEvent, AgentLiveEventStream,
-    AgentModelInputRole, AgentModelInputToolCall, AgentObservationQuery, AgentPayloadDigest,
-    AgentQueuedCompactionSnapshot, AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId,
-    AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
-    AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision, AgentSnapshotSource,
-    AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor, AgentSourceRevision,
-    AgentSourceState, AgentSurfaceCapabilityFacet, AgentSurfaceProfile, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentThreadNameSnapshot, AgentToolDelivery,
-    AgentToolSemanticFacet, AgentToolUpdateSemantics, AgentTurnObservation,
-    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
-    AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
-    AppliedInitialContextEvidence, ApplyBoundAgentSurface, BoundAgentSurface,
-    BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
-    ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
+    AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveBatch, AgentLiveBatchStream,
+    AgentLiveStreamError, AgentModelInputRole, AgentModelInputToolCall, AgentObservationQuery,
+    AgentObservationState, AgentPayloadDigest, AgentQueuedCompactionSnapshot, AgentReadQuery,
+    AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
+    AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshot, AgentSnapshotAuthority,
+    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
+    AgentSourceCursor, AgentSourceRevision, AgentSourceState, AgentSurfaceCapabilityFacet,
+    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
+    AgentThreadNameSnapshot, AgentToolDelivery, AgentToolSemanticFacet, AgentToolUpdateSemantics,
+    AgentTurnObservation, AppliedAgentCommandReceipt, AppliedAgentSurface,
+    AppliedAgentSurfaceContribution, AppliedAgentSurfaceReceipt, AppliedContributionStatus,
+    AppliedForkAgentReceipt, AppliedInitialContextEvidence, ApplyBoundAgentSurface,
+    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService, CreateAgentCommand,
+    ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage, InitialContextAppliedEvidence,
     InitialContextContributionKind, InitialContextDeliveryFidelity, InitialContextProfile,
     ResumeAgentCommand, RevokeBoundAgentSurface, RuntimeU64, SemanticFidelity,
 };
@@ -207,6 +207,59 @@ pub fn dash_complete_agent_observation(
                 })
             })
             .transpose()?,
+    })
+}
+
+fn dash_observation_state_from_projected_history(
+    history: &AgentHistory,
+    history_state: &AgentHistoryState,
+) -> Result<AgentObservationState, AgentServiceError> {
+    let context = dash_context_coordinate(
+        &agentdash_agent::dash::context_recipe_from_history_state(history, history_state)
+            .map_err(map_dash_error)?,
+    )?;
+    let revision = AgentSnapshotRevision(history_state.entry_count);
+    let lifecycle = if history_state.status == agentdash_agent::dash::SessionStatus::Closed {
+        AgentLifecycleStatus::Closed
+    } else {
+        AgentLifecycleStatus::Active
+    };
+    let execution = dash_execution_snapshot(history_state)?;
+    let command_availability = execution.command_availability(
+        lifecycle,
+        revision,
+        history_state
+            .interactions
+            .values()
+            .any(|interaction| !interaction.cancelled && interaction.response.is_none()),
+    );
+    let source_info = AgentSnapshotSource {
+        authority: AgentSnapshotAuthority::AgentAuthoritative,
+        source_revision: Some(
+            AgentSourceRevision::new(format!("history:{}", history.digest())).map_err(internal)?,
+        ),
+        fidelity: SemanticFidelity::Exact,
+        observed_at_ms: 0,
+    };
+    Ok(AgentObservationState {
+        revision,
+        context,
+        lifecycle,
+        execution,
+        command_availability,
+        interactions: history_state
+            .interactions
+            .iter()
+            .map(|(id, interaction)| interaction_snapshot(id, interaction))
+            .collect::<Result<Vec<_>, _>>()?,
+        thread_name: history_state
+            .thread_name
+            .clone()
+            .map(|thread_name| AgentThreadNameSnapshot {
+                thread_name: Some(thread_name),
+                source_info: source_info.clone(),
+            }),
+        source_info,
     })
 }
 
@@ -1087,10 +1140,10 @@ impl CompleteAgentService for DashAgentCompleteService {
         })
     }
 
-    async fn live_events(
+    async fn live_batches(
         &self,
         source: AgentSourceCoordinate,
-    ) -> Result<Box<dyn AgentLiveEventStream>, AgentServiceError> {
+    ) -> Result<Box<dyn AgentLiveBatchStream>, AgentServiceError> {
         self.open_source(&source).await?;
         let live_channel = self.live_channel_for_source(&source).await;
         Ok(Box::new(DashCompleteLiveEventStream {
@@ -1185,7 +1238,7 @@ impl CompleteAgentService for DashAgentCompleteService {
                 })
                 .collect(),
         };
-        let (expected_repository, replacement_repository) = service
+        let (expected_repository, mut replacement_repository) = service
             .stage_surface_apply(dash_surface)
             .await
             .map_err(map_dash_error)?;
@@ -1214,7 +1267,7 @@ impl CompleteAgentService for DashAgentCompleteService {
             },
             receipt: DashCompleteRecordedReceipt::ApplySurface(receipt.clone()),
         };
-        let previous_entry_count = expected_repository.history().entries().len();
+        let projections = replacement_repository.take_pending_history_projections();
         let committed_history = replacement_repository.history().clone();
         self.store
             .commit(DashCompleteAtomicCommit {
@@ -1231,7 +1284,7 @@ impl CompleteAgentService for DashAgentCompleteService {
             })
             .await?;
         service
-            .publish_committed_history_since(previous_entry_count, &committed_history)
+            .publish_committed_history(projections, &committed_history)
             .await;
         self.reconcile_live_surface_from_durable_metadata(&command.source, &service)
             .await?;
@@ -1271,7 +1324,7 @@ impl CompleteAgentService for DashAgentCompleteService {
                 false,
             ));
         }
-        let (expected_repository, replacement_repository) = service
+        let (expected_repository, mut replacement_repository) = service
             .stage_surface_revoke(command.expected_revision.0)
             .await
             .map_err(map_dash_error)?;
@@ -1296,7 +1349,7 @@ impl CompleteAgentService for DashAgentCompleteService {
             receipt.clone(),
             Some(AgentTerminalOutcome::Succeeded),
         );
-        let previous_entry_count = expected_repository.history().entries().len();
+        let projections = replacement_repository.take_pending_history_projections();
         let committed_history = replacement_repository.history().clone();
         self.store
             .commit(DashCompleteAtomicCommit {
@@ -1318,7 +1371,7 @@ impl CompleteAgentService for DashAgentCompleteService {
             })
             .await?;
         service
-            .publish_committed_history_since(previous_entry_count, &committed_history)
+            .publish_committed_history(projections, &committed_history)
             .await;
         self.reconcile_live_surface_from_durable_metadata(&command.source, &service)
             .await?;
@@ -2089,7 +2142,7 @@ const DASH_COMPLETE_LIVE_EVENT_CAPACITY: usize = 1024;
 
 #[derive(Clone)]
 struct DashCompleteLiveChannel {
-    sender: tokio::sync::broadcast::Sender<AgentLiveEvent>,
+    sender: tokio::sync::broadcast::Sender<AgentLiveBatch>,
     sequence: Arc<tokio::sync::Mutex<u64>>,
     tool_projectors: Arc<std::sync::RwLock<BTreeMap<String, ToolProtocolProjector>>>,
 }
@@ -2134,20 +2187,21 @@ impl DashCompleteLiveChannel {
     async fn publish(
         &self,
         source: &AgentSourceCoordinate,
+        state: Option<AgentObservationState>,
         records: impl IntoIterator<Item = CanonicalConversationRecord>,
     ) {
-        for record in records {
-            let sequence = {
-                let mut sequence = self.sequence.lock().await;
-                *sequence = sequence.saturating_add(1);
-                *sequence
-            };
-            let _ = self.sender.send(AgentLiveEvent {
-                source: source.clone(),
-                sequence: RuntimeU64(sequence),
-                record,
-            });
+        let presentations = records.into_iter().collect::<Vec<_>>();
+        if presentations.is_empty() && state.is_none() {
+            return;
         }
+        let mut sequence = self.sequence.lock().await;
+        *sequence = sequence.saturating_add(1);
+        let _ = self.sender.send(AgentLiveBatch {
+            source: source.clone(),
+            sequence: RuntimeU64(*sequence),
+            state,
+            presentations,
+        });
     }
 }
 
@@ -2166,11 +2220,8 @@ impl DashExecutionCallbacks for DashCompleteLiveCallbacks {
         else {
             return Ok(());
         };
-        let sequence = {
-            let mut sequence = self.live_channel.sequence.lock().await;
-            *sequence = sequence.saturating_add(1);
-            *sequence
-        };
+        let mut sequence = self.live_channel.sequence.lock().await;
+        *sequence = sequence.saturating_add(1);
         let turn_id = event.turn_id.0;
         let envelope = BackboneEnvelope::new(
             canonical_event,
@@ -2186,13 +2237,14 @@ impl DashExecutionCallbacks for DashCompleteLiveCallbacks {
             entry_index: None,
         });
         let record = CanonicalConversationRecord::new(
-            format!("live:{}:{sequence}", self.source.as_str()),
+            format!("live:{}:{}", self.source.as_str(), *sequence),
             CanonicalConversationPresentation::new(PresentationDurability::Ephemeral, envelope),
         );
-        let _ = self.live_channel.sender.send(AgentLiveEvent {
+        let _ = self.live_channel.sender.send(AgentLiveBatch {
             source: self.source.clone(),
-            sequence: RuntimeU64(sequence),
-            record,
+            sequence: RuntimeU64(*sequence),
+            state: None,
+            presentations: vec![record],
         });
         Ok(())
     }
@@ -2204,28 +2256,34 @@ impl DashHistoryCallbacks for DashCompleteLiveCallbacks {
         &self,
         commit: DashHistoryCommit,
     ) -> Result<(), agentdash_agent::dash::DashCoreError> {
-        let Some(first_sequence) = commit.entries.first().map(|entry| entry.sequence) else {
+        let Some(final_state) = commit.entries.last().map(|entry| entry.state.clone()) else {
             return Ok(());
         };
         let mut records = Vec::new();
-        let mut replay = AgentHistoryReplayer::new(&commit.history);
-        for entry in commit.history.entries() {
-            let previous_surface = replay.state().surface.clone();
-            let state = replay.apply(entry).map_err(live_callback_error)?;
-            if entry.sequence < first_sequence {
-                continue;
-            }
+        for projection in &commit.entries {
+            let projection_state = if matches!(
+                projection.entry.payload,
+                agentdash_agent::dash::HistoryPayload::ItemStarted { .. }
+            ) {
+                &final_state
+            } else {
+                &projection.state
+            };
             records.extend(
                 crate::canonical_projection::entry_records(
                     self.source.as_str(),
-                    entry,
-                    previous_surface.as_ref(),
-                    state,
+                    &projection.entry,
+                    projection.previous_surface.as_ref(),
+                    projection_state,
                 )
                 .map_err(live_callback_error)?,
             );
         }
-        self.live_channel.publish(&self.source, records).await;
+        let state = dash_observation_state_from_projected_history(&commit.history, &final_state)
+            .map_err(live_callback_error)?;
+        self.live_channel
+            .publish(&self.source, Some(state), records)
+            .await;
         Ok(())
     }
 }
@@ -2294,12 +2352,13 @@ fn canonical_live_event(
             }))
             .map_err(live_callback_error)?,
         ),
-        DashCoreEvent::ToolCallRequested { call, .. } => {
+        DashCoreEvent::ToolCallStarted { call, .. } => {
             let item = live_tool_item(
                 &execution.turn_id,
                 call,
                 live_channel.tool_projector(&call.name).as_ref(),
                 None,
+                true,
             )?;
             BackboneEvent::ItemStarted(ItemStartedNotification {
                 item,
@@ -2308,12 +2367,28 @@ fn canonical_live_event(
                 started_at_ms: 0,
             })
         }
+        DashCoreEvent::ToolCallProgress { call, update, .. } => {
+            let item = live_tool_item(
+                &execution.turn_id,
+                call,
+                live_channel.tool_projector(&call.name).as_ref(),
+                Some(update),
+                true,
+            )?;
+            BackboneEvent::ItemUpdated(ItemUpdatedNotification {
+                item,
+                thread_id: thread_id.to_owned(),
+                turn_id: turn_id.to_owned(),
+                updated_at_ms: 0,
+            })
+        }
         DashCoreEvent::ToolCallCompleted { call, result, .. } => {
             let item = live_tool_item(
                 &execution.turn_id,
                 call,
                 live_channel.tool_projector(&call.name).as_ref(),
                 Some(result),
+                false,
             )?;
             BackboneEvent::ItemCompleted(ItemCompletedNotification {
                 terminal: item.terminal_evidence().map_err(live_callback_error)?,
@@ -2332,6 +2407,7 @@ fn live_tool_item(
     call: &agentdash_agent::dash::DashToolCall,
     projector: Option<&ToolProtocolProjector>,
     result: Option<&agentdash_agent::dash::DashToolResult>,
+    in_progress: bool,
 ) -> Result<agentdash_agent_protocol::AgentDashThreadItem, agentdash_agent::dash::DashCoreError> {
     let item_id = agentdash_agent::dash::execution_tool_item_id(turn_id, &call.call_id);
     let projector = projector.ok_or_else(|| agentdash_agent::dash::DashCoreError::Callback {
@@ -2345,7 +2421,7 @@ fn live_tool_item(
         &call.name,
         call.arguments.clone(),
         projector,
-        result.is_none(),
+        in_progress,
         result.is_some_and(|result| result.is_error),
         result.map(|result| ToolPresentationResult {
             content: result.content.as_slice(),
@@ -2363,23 +2439,17 @@ fn live_callback_error(error: impl std::fmt::Display) -> agentdash_agent::dash::
 }
 
 struct DashCompleteLiveEventStream {
-    receiver: tokio::sync::broadcast::Receiver<AgentLiveEvent>,
+    receiver: tokio::sync::broadcast::Receiver<AgentLiveBatch>,
 }
 
 #[async_trait]
-impl AgentLiveEventStream for DashCompleteLiveEventStream {
-    async fn next(&mut self) -> Result<Option<AgentLiveEvent>, AgentServiceError> {
+impl AgentLiveBatchStream for DashCompleteLiveEventStream {
+    async fn next(&mut self) -> Result<Option<AgentLiveBatch>, AgentLiveStreamError> {
         match self.receiver.recv().await {
             Ok(event) => Ok(Some(event)),
             Err(tokio::sync::broadcast::error::RecvError::Closed) => Ok(None),
             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                Err(AgentServiceError::new(
-                    AgentServiceErrorCode::Unavailable,
-                    format!(
-                        "Dash live event stream lagged by {skipped}; reload authoritative snapshot"
-                    ),
-                    true,
-                ))
+                Err(AgentLiveStreamError::Lagged { skipped })
             }
         }
     }

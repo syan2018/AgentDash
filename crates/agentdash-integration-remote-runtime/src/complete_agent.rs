@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -10,19 +10,22 @@ use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentChange, AgentChangePage, AgentChangesQuery,
     AgentCommandEnvelope, AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot,
     AgentEffectIdentity, AgentEffectInspection, AgentHookDecision, AgentHookInvocation,
-    AgentHostCallbackError, AgentHostCallbackErrorCode, AgentHostCallbacks, AgentReadQuery,
-    AgentServiceDescriptor, AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId,
-    AgentSnapshot, AgentSourceCoordinate, AgentToolInvocation, AgentToolResult,
-    AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CompleteAgentService, CreateAgentCommand,
-    ForkAgentCommand, ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
+    AgentHostCallbackError, AgentHostCallbackErrorCode, AgentHostCallbacks, AgentLiveBatch,
+    AgentLiveBatchStream, AgentLiveStreamError, AgentReadQuery, AgentServiceDescriptor,
+    AgentServiceError, AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshot,
+    AgentSourceCoordinate, AgentToolExecutionEvent, AgentToolExecutionSequence,
+    AgentToolExecutionStream, AgentToolInvocation, AgentToolResult, AppliedAgentSurfaceReceipt,
+    ApplyBoundAgentSurface, CompleteAgentService, CreateAgentCommand, ForkAgentCommand,
+    ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
 };
 use agentdash_agent_runtime_wire::{
     RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireAck, RuntimeWireAgentBindingTarget,
     RuntimeWireAgentChangeNotification, RuntimeWireAgentHostCallbackRequest,
-    RuntimeWireAgentHostCallbackResponse, RuntimeWireAgentServiceDescribeRequest,
-    RuntimeWireAgentServiceRequest, RuntimeWireAgentServiceResponse, RuntimeWireEnvelope,
-    RuntimeWireFrame, RuntimeWireFrameId, RuntimeWireNotification, RuntimeWireRequest,
-    RuntimeWireResponse,
+    RuntimeWireAgentHostCallbackResponse, RuntimeWireAgentLiveBatchNotification,
+    RuntimeWireAgentLiveEvent, RuntimeWireAgentServiceDescribeRequest,
+    RuntimeWireAgentServiceRequest, RuntimeWireAgentServiceResponse,
+    RuntimeWireAgentToolExecutionEvent, RuntimeWireEnvelope, RuntimeWireFrame, RuntimeWireFrameId,
+    RuntimeWireNotification, RuntimeWireRequest, RuntimeWireResponse,
 };
 use async_trait::async_trait;
 use thiserror::Error;
@@ -66,6 +69,14 @@ pub struct RemoteCompleteAgentService {
     callback_generations: tokio::sync::Mutex<HashMap<AgentCallbackRouteId, AgentBindingGeneration>>,
     pushed_changes: tokio::sync::Mutex<HashMap<AgentSourceCoordinate, Vec<AgentChange>>>,
     pushed_gaps: tokio::sync::Mutex<HashSet<AgentSourceCoordinate>>,
+    live_channels: tokio::sync::Mutex<
+        HashMap<
+            AgentSourceCoordinate,
+            tokio::sync::broadcast::Sender<Result<AgentLiveBatch, AgentLiveStreamError>>,
+        >,
+    >,
+    outbound_order: tokio::sync::Mutex<()>,
+    causal_outbound_order: tokio::sync::Mutex<()>,
     last_inbound_frame_id: tokio::sync::Mutex<Option<RuntimeWireFrameId>>,
     connection_lost: AtomicBool,
 }
@@ -87,6 +98,9 @@ impl RemoteCompleteAgentService {
             callback_generations: tokio::sync::Mutex::new(HashMap::new()),
             pushed_changes: tokio::sync::Mutex::new(HashMap::new()),
             pushed_gaps: tokio::sync::Mutex::new(HashSet::new()),
+            live_channels: tokio::sync::Mutex::new(HashMap::new()),
+            outbound_order: tokio::sync::Mutex::new(()),
+            causal_outbound_order: tokio::sync::Mutex::new(()),
             last_inbound_frame_id: tokio::sync::Mutex::new(None),
             connection_lost: AtomicBool::new(false),
         });
@@ -182,14 +196,19 @@ impl RemoteCompleteAgentService {
                     let _ = pending.send(Ok(response));
                 }
             }
-            RuntimeWireFrame::Notification(notification) => {
-                let RuntimeWireNotification::AgentChange(notification) = *notification else {
+            RuntimeWireFrame::Notification(notification) => match *notification {
+                RuntimeWireNotification::AgentChange(notification) => {
+                    self.record_change(*notification).await?;
+                }
+                RuntimeWireNotification::AgentLiveBatch(notification) => {
+                    self.record_live_event(*notification).await?;
+                }
+                RuntimeWireNotification::Heartbeat { .. } => {
                     return Err(protocol(
                         "remote Complete Agent stream received a foreign notification",
                     ));
-                };
-                self.record_change(*notification).await?;
-            }
+                }
+            },
             RuntimeWireFrame::Request(request) => {
                 let RuntimeWireRequest::AgentHostCallback(callback) = *request else {
                     return Err(protocol(
@@ -198,15 +217,8 @@ impl RemoteCompleteAgentService {
                 };
                 let service = Arc::clone(self);
                 tokio::spawn(async move {
-                    let response = service.invoke_callback_idempotent(*callback).await;
                     if let Err(error) = service
-                        .send_frame(
-                            true,
-                            RuntimeWireFrame::Response {
-                                request_frame_id: inbound_frame_id,
-                                response: RuntimeWireResponse::AgentHostCallback(response),
-                            },
-                        )
+                        .serve_callback_idempotent(inbound_frame_id, *callback)
                         .await
                     {
                         service.fail_connection(error).await;
@@ -226,98 +238,140 @@ impl RemoteCompleteAgentService {
         Ok(())
     }
 
-    async fn invoke_callback_idempotent(
+    async fn serve_callback_idempotent(
         &self,
+        request_frame_id: RuntimeWireFrameId,
         callback: RuntimeWireAgentHostCallbackRequest,
-    ) -> RuntimeWireAgentHostCallbackResponse {
+    ) -> Result<(), AgentServiceError> {
         let effect_id = callback_effect_id(&callback);
-        let follower = {
+        let replay = {
             let mut effects = self.callback_effects.lock().await;
             match effects.get_mut(&effect_id) {
-                Some(ProxyCallbackEffectState::Settled { request, response }) => {
-                    return if request == &callback {
-                        response.clone()
+                Some(ProxyCallbackEffectState::Settled { request, responses }) => {
+                    Some(if request == &callback {
+                        responses.clone()
                     } else {
-                        callback_error_response(&callback, callback_duplicate_conflict())
-                    };
+                        callback_failure_responses(
+                            &callback,
+                            "tool_callback_duplicate_conflict",
+                            callback_duplicate_conflict(),
+                        )
+                    })
                 }
-                Some(ProxyCallbackEffectState::InFlight { request, waiters }) => {
+                Some(ProxyCallbackEffectState::InFlight {
+                    request,
+                    waiting_request_frame_ids,
+                }) => {
                     if request != &callback {
-                        return callback_error_response(&callback, callback_duplicate_conflict());
+                        Some(callback_failure_responses(
+                            &callback,
+                            "tool_callback_duplicate_conflict",
+                            callback_duplicate_conflict(),
+                        ))
+                    } else {
+                        waiting_request_frame_ids.push(request_frame_id);
+                        return Ok(());
                     }
-                    let (tx, rx) = tokio::sync::oneshot::channel();
-                    waiters.push(tx);
-                    Some(rx)
                 }
                 None => {
                     effects.insert(
                         effect_id.clone(),
                         ProxyCallbackEffectState::InFlight {
                             request: callback.clone(),
-                            waiters: Vec::new(),
+                            waiting_request_frame_ids: Vec::new(),
                         },
                     );
                     None
                 }
             }
         };
-        if let Some(follower) = follower {
-            return follower.await.unwrap_or_else(|_| {
-                callback_error_response(
-                    &callback,
-                    host_callback_error(
-                        AgentHostCallbackErrorCode::Unavailable,
-                        "shared Host callback result correlation was lost",
-                        true,
-                    ),
-                )
-            });
+        if let Some(responses) = replay {
+            return self
+                .replay_callback_responses(request_frame_id, &responses)
+                .await;
         }
 
-        let response = self.invoke_callback(callback.clone()).await;
-        let waiters = {
+        let responses = self
+            .execute_callback(request_frame_id, callback.clone())
+            .await?;
+        let waiting_request_frame_ids = {
             let mut effects = self.callback_effects.lock().await;
-            let waiters = match effects.remove(&effect_id) {
-                Some(ProxyCallbackEffectState::InFlight { waiters, .. }) => waiters,
+            let waiting_request_frame_ids = match effects.remove(&effect_id) {
+                Some(ProxyCallbackEffectState::InFlight {
+                    waiting_request_frame_ids,
+                    ..
+                }) => waiting_request_frame_ids,
                 _ => Vec::new(),
             };
             effects.insert(
                 effect_id,
                 ProxyCallbackEffectState::Settled {
                     request: callback,
-                    response: response.clone(),
+                    responses: responses.clone(),
                 },
             );
-            waiters
+            waiting_request_frame_ids
         };
-        for waiter in waiters {
-            let _ = waiter.send(response.clone());
+        for waiting_request_frame_id in waiting_request_frame_ids {
+            self.replay_callback_responses(waiting_request_frame_id, &responses)
+                .await?;
         }
-        response
+        Ok(())
     }
 
-    async fn invoke_callback(
+    async fn replay_callback_responses(
         &self,
+        request_frame_id: RuntimeWireFrameId,
+        responses: &[RuntimeWireAgentHostCallbackResponse],
+    ) -> Result<(), AgentServiceError> {
+        for response in responses {
+            self.send_callback_response(request_frame_id, response.clone())
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn send_callback_response(
+        &self,
+        request_frame_id: RuntimeWireFrameId,
+        response: RuntimeWireAgentHostCallbackResponse,
+    ) -> Result<(), AgentServiceError> {
+        self.send_frame(
+            true,
+            RuntimeWireFrame::Response {
+                request_frame_id,
+                response: RuntimeWireResponse::AgentHostCallback(response),
+            },
+        )
+        .await
+    }
+
+    async fn execute_callback(
+        &self,
+        request_frame_id: RuntimeWireFrameId,
         callback: RuntimeWireAgentHostCallbackRequest,
-    ) -> RuntimeWireAgentHostCallbackResponse {
+    ) -> Result<Vec<RuntimeWireAgentHostCallbackResponse>, AgentServiceError> {
         if callback.binding_generation() != self.target.binding_generation {
-            let error = agentdash_agent_runtime_contract::AgentHostCallbackError::new(
-                agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::StaleBindingGeneration,
+            let error = AgentHostCallbackError::new(
+                AgentHostCallbackErrorCode::StaleBindingGeneration,
                 "remote callback carries a stale source binding generation",
                 false,
             );
-            return match callback {
-                RuntimeWireAgentHostCallbackRequest::Tool(_) => {
-                    RuntimeWireAgentHostCallbackResponse::Tool(Err(error))
-                }
-                RuntimeWireAgentHostCallbackRequest::Hook(_) => {
-                    RuntimeWireAgentHostCallbackResponse::Hook(Err(error))
-                }
-            };
+            let responses =
+                callback_failure_responses(&callback, "stale_binding_generation", error);
+            self.replay_callback_responses(request_frame_id, &responses)
+                .await?;
+            return Ok(responses);
         }
         let deadline = match callback_deadline(&callback) {
-            Ok(deadline) => deadline,
-            Err(error) => return callback_error_response(&callback, error),
+            Ok(deadline) => tokio::time::Instant::now() + deadline,
+            Err(error) => {
+                let responses =
+                    callback_failure_responses(&callback, "tool_callback_deadline_exceeded", error);
+                self.replay_callback_responses(request_frame_id, &responses)
+                    .await?;
+                return Ok(responses);
+            }
         };
         let route_id = match &callback {
             RuntimeWireAgentHostCallbackRequest::Tool(invocation) => &invocation.meta.route_id,
@@ -330,33 +384,170 @@ impl RemoteCompleteAgentService {
             .get(route_id)
             .copied()
         else {
-            return callback_error_response(
-                &callback,
-                agentdash_agent_runtime_contract::AgentHostCallbackError::new(
-                    agentdash_agent_runtime_contract::AgentHostCallbackErrorCode::StaleBindingGeneration,
-                    "remote callback route has no exact local generation mapping",
-                    false,
-                ),
+            let error = AgentHostCallbackError::new(
+                AgentHostCallbackErrorCode::StaleBindingGeneration,
+                "remote callback route has no exact local generation mapping",
+                false,
             );
+            let responses =
+                callback_failure_responses(&callback, "stale_binding_generation", error);
+            self.replay_callback_responses(request_frame_id, &responses)
+                .await?;
+            return Ok(responses);
         };
         match callback {
             RuntimeWireAgentHostCallbackRequest::Tool(mut invocation) => {
                 invocation.meta.binding_generation = local_generation;
-                let result =
-                    tokio::time::timeout(deadline, self.callbacks.invoke_tool(invocation)).await;
-                RuntimeWireAgentHostCallbackResponse::Tool(match result {
-                    Ok(result) => result.map(Box::new),
-                    Err(_) => Err(callback_deadline_error()),
-                })
+                self.execute_tool_callback(request_frame_id, invocation, deadline)
+                    .await
             }
             RuntimeWireAgentHostCallbackRequest::Hook(mut invocation) => {
                 invocation.meta.binding_generation = local_generation;
                 let result =
-                    tokio::time::timeout(deadline, self.callbacks.invoke_hook(invocation)).await;
-                RuntimeWireAgentHostCallbackResponse::Hook(match result {
+                    tokio::time::timeout_at(deadline, self.callbacks.invoke_hook(invocation)).await;
+                let response = RuntimeWireAgentHostCallbackResponse::Hook(match result {
                     Ok(result) => result.map(Box::new),
                     Err(_) => Err(callback_deadline_error()),
-                })
+                });
+                self.send_callback_response(request_frame_id, response.clone())
+                    .await?;
+                Ok(vec![response])
+            }
+        }
+    }
+
+    async fn execute_tool_callback(
+        &self,
+        request_frame_id: RuntimeWireFrameId,
+        invocation: AgentToolInvocation,
+        deadline: tokio::time::Instant,
+    ) -> Result<Vec<RuntimeWireAgentHostCallbackResponse>, AgentServiceError> {
+        let mut stream =
+            match tokio::time::timeout_at(deadline, self.callbacks.invoke_tool(invocation.clone()))
+                .await
+            {
+                Ok(Ok(stream)) => stream,
+                Ok(Err(error)) => {
+                    let responses = tool_failure_responses(
+                        &invocation,
+                        "tool_callback_rejected",
+                        error.message,
+                    );
+                    self.replay_callback_responses(request_frame_id, &responses)
+                        .await?;
+                    return Ok(responses);
+                }
+                Err(_) => {
+                    let responses = tool_failure_responses(
+                        &invocation,
+                        "tool_callback_deadline_exceeded",
+                        "Complete Agent Host callback deadline exceeded",
+                    );
+                    self.replay_callback_responses(request_frame_id, &responses)
+                        .await?;
+                    return Ok(responses);
+                }
+            };
+
+        let mut responses = Vec::new();
+        let mut started = false;
+        let mut last_update_index = 0_u64;
+        loop {
+            let next = tokio::time::timeout_at(deadline, stream.next()).await;
+            let event = match next {
+                Ok(Ok(Some(AgentToolExecutionEvent::Started))) if !started => {
+                    started = true;
+                    AgentToolExecutionEvent::Started
+                }
+                Ok(Ok(Some(AgentToolExecutionEvent::Progress {
+                    update_index,
+                    output,
+                }))) if started && last_update_index.checked_add(1) == Some(update_index) => {
+                    last_update_index = update_index;
+                    AgentToolExecutionEvent::Progress {
+                        update_index,
+                        output,
+                    }
+                }
+                Ok(Ok(Some(AgentToolExecutionEvent::Completed { result }))) if started => {
+                    let response = tool_event_response(
+                        &invocation,
+                        AgentToolExecutionEvent::Completed { result },
+                    );
+                    self.send_callback_response(request_frame_id, response.clone())
+                        .await?;
+                    responses.push(response);
+                    return Ok(responses);
+                }
+                Ok(Ok(None)) => {
+                    if !started {
+                        let response =
+                            tool_event_response(&invocation, AgentToolExecutionEvent::Started);
+                        self.send_callback_response(request_frame_id, response.clone())
+                            .await?;
+                        responses.push(response);
+                    }
+                    AgentToolExecutionEvent::Completed {
+                        result: AgentToolResult::Failed {
+                            code: "tool_callback_transport_lost".to_owned(),
+                            message: "Host tool callback stream ended before a terminal event"
+                                .to_owned(),
+                        },
+                    }
+                }
+                Err(_) => {
+                    if !started {
+                        let response =
+                            tool_event_response(&invocation, AgentToolExecutionEvent::Started);
+                        self.send_callback_response(request_frame_id, response.clone())
+                            .await?;
+                        responses.push(response);
+                    }
+                    AgentToolExecutionEvent::Completed {
+                        result: AgentToolResult::Failed {
+                            code: "tool_callback_deadline_exceeded".to_owned(),
+                            message: "Host tool callback crossed its absolute deadline".to_owned(),
+                        },
+                    }
+                }
+                Ok(Err(error)) => {
+                    if !started {
+                        let response =
+                            tool_event_response(&invocation, AgentToolExecutionEvent::Started);
+                        self.send_callback_response(request_frame_id, response.clone())
+                            .await?;
+                        responses.push(response);
+                    }
+                    AgentToolExecutionEvent::Completed {
+                        result: AgentToolResult::Failed {
+                            code: "tool_callback_unavailable".to_owned(),
+                            message: error.message,
+                        },
+                    }
+                }
+                _ => {
+                    if !started {
+                        let response =
+                            tool_event_response(&invocation, AgentToolExecutionEvent::Started);
+                        self.send_callback_response(request_frame_id, response.clone())
+                            .await?;
+                        responses.push(response);
+                    }
+                    AgentToolExecutionEvent::Completed {
+                        result: AgentToolResult::Failed {
+                            code: "tool_callback_protocol_violation".to_owned(),
+                            message: "Host tool callback lifecycle is out of order".to_owned(),
+                        },
+                    }
+                }
+            };
+            let terminal = matches!(event, AgentToolExecutionEvent::Completed { .. });
+            let response = tool_event_response(&invocation, event);
+            self.send_callback_response(request_frame_id, response.clone())
+                .await?;
+            responses.push(response);
+            if terminal {
+                return Ok(responses);
             }
         }
     }
@@ -391,6 +582,36 @@ impl RemoteCompleteAgentService {
         Ok(())
     }
 
+    async fn record_live_event(
+        &self,
+        notification: RuntimeWireAgentLiveBatchNotification,
+    ) -> Result<(), AgentServiceError> {
+        if notification.target != self.target {
+            return Err(stale_generation(
+                "remote live batch carries a stale Complete Agent binding target",
+            ));
+        }
+        let (source, event) = match notification.event {
+            RuntimeWireAgentLiveEvent::Batch { batch } => {
+                let source = batch.source.clone();
+                (source, Ok(*batch))
+            }
+            RuntimeWireAgentLiveEvent::Lagged { source, skipped } => {
+                (source, Err(AgentLiveStreamError::Lagged { skipped }))
+            }
+            RuntimeWireAgentLiveEvent::Protocol { source, message } => {
+                (source, Err(AgentLiveStreamError::Protocol { message }))
+            }
+            RuntimeWireAgentLiveEvent::Unavailable { source, message } => {
+                (source, Err(AgentLiveStreamError::Unavailable { message }))
+            }
+        };
+        if let Some(sender) = self.live_channels.lock().await.get(&source) {
+            let _ = sender.send(event);
+        }
+        Ok(())
+    }
+
     async fn send_ack(&self, through: RuntimeWireFrameId) -> Result<(), AgentServiceError> {
         self.send_frame(
             false,
@@ -406,6 +627,10 @@ impl RemoteCompleteAgentService {
         critical: bool,
         frame: RuntimeWireFrame,
     ) -> Result<(), AgentServiceError> {
+        // Acknowledgements and callback responses are causally downstream of a frame the
+        // placement has already delivered. They use a separate ordered lane so a re-entrant
+        // callback can complete while its originating service request is still awaiting return.
+        let _causal_outbound_order = self.causal_outbound_order.lock().await;
         self.placement
             .send(RuntimeWireEnvelope {
                 protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
@@ -431,10 +656,13 @@ impl RemoteCompleteAgentService {
         request
             .validate_generation()
             .map_err(|error| stale_generation(error.to_string()))?;
+        let outbound_order = self.outbound_order.lock().await;
+        let mut pending = self.pending.lock().await;
         let frame_id =
             allocate_frame_id(&self.next_frame_id).map_err(frame_allocation_service_error)?;
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.pending.lock().await.insert(frame_id.0, tx);
+        pending.insert(frame_id.0, tx);
+        drop(pending);
         if let Err(error) = self
             .placement
             .send(RuntimeWireEnvelope {
@@ -452,6 +680,7 @@ impl RemoteCompleteAgentService {
             self.fail_connection(error.clone()).await;
             return Err(error);
         }
+        drop(outbound_order);
         rx.await
             .map_err(|_| unavailable("remote Complete Agent response correlation was lost", true))?
     }
@@ -463,6 +692,12 @@ impl RemoteCompleteAgentService {
         let pending = std::mem::take(&mut *self.pending.lock().await);
         for (_, sender) in pending {
             let _ = sender.send(Err(error.clone()));
+        }
+        let channels = std::mem::take(&mut *self.live_channels.lock().await);
+        for (source, sender) in channels {
+            let _ = sender.send(Err(AgentLiveStreamError::Unavailable {
+                message: format!("{}: {}", source.as_str(), error.message),
+            }));
         }
     }
 
@@ -774,6 +1009,37 @@ impl CompleteAgentService for RemoteCompleteAgentService {
         }
     }
 
+    async fn live_batches(
+        &self,
+        source: AgentSourceCoordinate,
+    ) -> Result<Box<dyn AgentLiveBatchStream>, AgentServiceError> {
+        let receiver = {
+            let mut channels = self.live_channels.lock().await;
+            channels
+                .entry(source.clone())
+                .or_insert_with(|| tokio::sync::broadcast::channel(1024).0)
+                .subscribe()
+        };
+        match self
+            .request(RuntimeWireAgentServiceRequest::SubscribeLive {
+                target: self.target.clone(),
+                source: source.clone(),
+            })
+            .await?
+        {
+            RuntimeWireAgentServiceResponse::SubscribeLive(result) => {
+                let subscribed = result.map(|value| *value)?;
+                if subscribed != source {
+                    return Err(protocol(
+                        "subscribe live received a mismatched source coordinate",
+                    ));
+                }
+            }
+            _ => return Err(protocol("subscribe live received a mismatched response")),
+        }
+        Ok(Box::new(RemoteAgentLiveBatchStream { receiver }))
+    }
+
     async fn inspect(
         &self,
         effect_id: AgentEffectIdentity,
@@ -869,31 +1135,40 @@ impl CompleteAgentService for RemoteCompleteAgentService {
     }
 }
 
-type PendingHostCallback = tokio::sync::oneshot::Sender<RuntimeWireAgentHostCallbackResponse>;
+struct RemoteAgentLiveBatchStream {
+    receiver: tokio::sync::broadcast::Receiver<Result<AgentLiveBatch, AgentLiveStreamError>>,
+}
 
-enum HostCallbackEffectState {
-    InFlight {
-        request: RuntimeWireAgentHostCallbackRequest,
-        waiters: Vec<
-            tokio::sync::oneshot::Sender<
-                Result<RuntimeWireAgentHostCallbackResponse, AgentHostCallbackError>,
-            >,
-        >,
-    },
-    Settled {
-        request: RuntimeWireAgentHostCallbackRequest,
-        result: Result<RuntimeWireAgentHostCallbackResponse, AgentHostCallbackError>,
-    },
+#[async_trait]
+impl AgentLiveBatchStream for RemoteAgentLiveBatchStream {
+    async fn next(&mut self) -> Result<Option<AgentLiveBatch>, AgentLiveStreamError> {
+        match self.receiver.recv().await {
+            Ok(event) => event.map(Some),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                Err(AgentLiveStreamError::Lagged { skipped })
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                Err(AgentLiveStreamError::Unavailable {
+                    message: "remote Complete Agent live lane closed".to_owned(),
+                })
+            }
+        }
+    }
+}
+
+enum PendingHostCallback {
+    Tool(tokio::sync::mpsc::UnboundedSender<RuntimeWireAgentToolExecutionEvent>),
+    Hook(tokio::sync::oneshot::Sender<RuntimeWireAgentHostCallbackResponse>),
 }
 
 enum ProxyCallbackEffectState {
     InFlight {
         request: RuntimeWireAgentHostCallbackRequest,
-        waiters: Vec<tokio::sync::oneshot::Sender<RuntimeWireAgentHostCallbackResponse>>,
+        waiting_request_frame_ids: Vec<RuntimeWireFrameId>,
     },
     Settled {
         request: RuntimeWireAgentHostCallbackRequest,
-        response: RuntimeWireAgentHostCallbackResponse,
+        responses: Vec<RuntimeWireAgentHostCallbackResponse>,
     },
 }
 
@@ -903,12 +1178,22 @@ pub struct RuntimeWireAgentHostCallbackClient {
     target: RuntimeWireAgentBindingTarget,
     next_frame_id: Arc<AtomicU64>,
     pending: Arc<tokio::sync::Mutex<HashMap<u64, PendingHostCallback>>>,
-    effects: Arc<tokio::sync::Mutex<HashMap<AgentEffectIdentity, HostCallbackEffectState>>>,
     outbound: Arc<tokio::sync::RwLock<tokio::sync::mpsc::UnboundedSender<RuntimeWireEnvelope>>>,
+    outbound_order: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl RuntimeWireAgentHostCallbackClient {
-    async fn invoke(
+    fn failed_tool_stream(
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Box<dyn AgentToolExecutionStream> {
+        AgentToolExecutionSequence::completed(AgentToolResult::Failed {
+            code: code.into(),
+            message: message.into(),
+        })
+    }
+
+    async fn invoke_hook_callback(
         &self,
         request: RuntimeWireAgentHostCallbackRequest,
     ) -> Result<RuntimeWireAgentHostCallbackResponse, AgentHostCallbackError> {
@@ -920,84 +1205,15 @@ impl RuntimeWireAgentHostCallbackClient {
             ));
         }
 
-        let effect_id = callback_effect_id(&request);
-        let follower = {
-            let mut effects = self.effects.lock().await;
-            match effects.get_mut(&effect_id) {
-                Some(HostCallbackEffectState::Settled {
-                    request: existing,
-                    result,
-                }) => {
-                    return if existing == &request {
-                        result.clone()
-                    } else {
-                        Err(callback_duplicate_conflict())
-                    };
-                }
-                Some(HostCallbackEffectState::InFlight {
-                    request: existing,
-                    waiters,
-                }) => {
-                    if existing != &request {
-                        return Err(callback_duplicate_conflict());
-                    }
-                    let (tx, rx) = tokio::sync::oneshot::channel();
-                    waiters.push(tx);
-                    Some(rx)
-                }
-                None => {
-                    effects.insert(
-                        effect_id.clone(),
-                        HostCallbackEffectState::InFlight {
-                            request: request.clone(),
-                            waiters: Vec::new(),
-                        },
-                    );
-                    None
-                }
-            }
-        };
-        if let Some(follower) = follower {
-            return follower.await.map_err(|_| {
-                host_callback_error(
-                    AgentHostCallbackErrorCode::Unavailable,
-                    "shared callback result correlation was lost",
-                    true,
-                )
-            })?;
-        }
-
-        let result = self.request(request.clone()).await;
-        let waiters = {
-            let mut effects = self.effects.lock().await;
-            let waiters = match effects.remove(&effect_id) {
-                Some(HostCallbackEffectState::InFlight { waiters, .. }) => waiters,
-                _ => Vec::new(),
-            };
-            effects.insert(
-                effect_id,
-                HostCallbackEffectState::Settled {
-                    request,
-                    result: result.clone(),
-                },
-            );
-            waiters
-        };
-        for waiter in waiters {
-            let _ = waiter.send(result.clone());
-        }
-        result
-    }
-
-    async fn request(
-        &self,
-        request: RuntimeWireAgentHostCallbackRequest,
-    ) -> Result<RuntimeWireAgentHostCallbackResponse, AgentHostCallbackError> {
         let deadline = callback_deadline(&request)?;
+        let _outbound_order = self.outbound_order.lock().await;
         let frame_id =
             allocate_frame_id(&self.next_frame_id).map_err(frame_allocation_callback_error)?;
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.pending.lock().await.insert(frame_id.0, tx);
+        self.pending
+            .lock()
+            .await
+            .insert(frame_id.0, PendingHostCallback::Hook(tx));
         if self
             .outbound
             .read()
@@ -1019,6 +1235,7 @@ impl RuntimeWireAgentHostCallbackClient {
                 true,
             ));
         }
+        drop(_outbound_order);
         match tokio::time::timeout(deadline, rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(host_callback_error(
@@ -1039,18 +1256,70 @@ impl AgentHostCallbacks for RuntimeWireAgentHostCallbackClient {
     async fn invoke_tool(
         &self,
         call: AgentToolInvocation,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
-        match self
-            .invoke(RuntimeWireAgentHostCallbackRequest::Tool(call))
-            .await?
-        {
-            RuntimeWireAgentHostCallbackResponse::Tool(result) => result.map(|value| *value),
-            RuntimeWireAgentHostCallbackResponse::Hook(_) => Err(host_callback_error(
-                AgentHostCallbackErrorCode::Internal,
-                "tool callback received a hook response",
-                false,
-            )),
+    ) -> Result<Box<dyn AgentToolExecutionStream>, AgentHostCallbackError> {
+        if call.meta.binding_generation != self.target.binding_generation {
+            return Ok(Self::failed_tool_stream(
+                "stale_binding_generation",
+                "source callback carries a stale endpoint binding generation",
+            ));
         }
+        let deadline =
+            match callback_deadline(&RuntimeWireAgentHostCallbackRequest::Tool(call.clone())) {
+                Ok(deadline) => tokio::time::Instant::now() + deadline,
+                Err(error) => {
+                    return Ok(Self::failed_tool_stream(
+                        "tool_callback_deadline_exceeded",
+                        error.message,
+                    ));
+                }
+            };
+        let _outbound_order = self.outbound_order.lock().await;
+        let frame_id = match allocate_frame_id(&self.next_frame_id) {
+            Ok(frame_id) => frame_id,
+            Err(error) => {
+                return Ok(Self::failed_tool_stream(
+                    "tool_callback_unavailable",
+                    error.to_string(),
+                ));
+            }
+        };
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        self.pending
+            .lock()
+            .await
+            .insert(frame_id.0, PendingHostCallback::Tool(tx));
+        if self
+            .outbound
+            .read()
+            .await
+            .send(RuntimeWireEnvelope {
+                protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                frame_id,
+                critical: true,
+                frame: RuntimeWireFrame::Request(Box::new(RuntimeWireRequest::AgentHostCallback(
+                    Box::new(RuntimeWireAgentHostCallbackRequest::Tool(call.clone())),
+                ))),
+            })
+            .is_err()
+        {
+            self.pending.lock().await.remove(&frame_id.0);
+            return Ok(Self::failed_tool_stream(
+                "tool_callback_unavailable",
+                "Complete Agent callback stream is closed",
+            ));
+        }
+        drop(_outbound_order);
+        Ok(Box::new(RuntimeWireToolExecutionStream {
+            call,
+            request_frame_id: frame_id,
+            receiver: rx,
+            pending: self.pending.clone(),
+            deadline,
+            started: false,
+            last_update_index: 0,
+            terminal: false,
+            queued: VecDeque::new(),
+        }))
     }
 
     async fn invoke_hook(
@@ -1058,7 +1327,7 @@ impl AgentHostCallbacks for RuntimeWireAgentHostCallbackClient {
         call: AgentHookInvocation,
     ) -> Result<AgentHookDecision, AgentHostCallbackError> {
         match self
-            .invoke(RuntimeWireAgentHostCallbackRequest::Hook(call))
+            .invoke_hook_callback(RuntimeWireAgentHostCallbackRequest::Hook(call))
             .await?
         {
             RuntimeWireAgentHostCallbackResponse::Hook(result) => result.map(|value| *value),
@@ -1068,6 +1337,128 @@ impl AgentHostCallbacks for RuntimeWireAgentHostCallbackClient {
                 false,
             )),
         }
+    }
+}
+
+struct RuntimeWireToolExecutionStream {
+    call: AgentToolInvocation,
+    request_frame_id: RuntimeWireFrameId,
+    receiver: tokio::sync::mpsc::UnboundedReceiver<RuntimeWireAgentToolExecutionEvent>,
+    pending: Arc<tokio::sync::Mutex<HashMap<u64, PendingHostCallback>>>,
+    deadline: tokio::time::Instant,
+    started: bool,
+    last_update_index: u64,
+    terminal: bool,
+    queued: VecDeque<AgentToolExecutionEvent>,
+}
+
+impl RuntimeWireToolExecutionStream {
+    fn fail(&mut self, code: &str, message: impl Into<String>) -> AgentToolExecutionEvent {
+        self.terminal = true;
+        AgentToolExecutionEvent::Completed {
+            result: AgentToolResult::Failed {
+                code: code.to_owned(),
+                message: message.into(),
+            },
+        }
+    }
+
+    fn validate(&mut self, frame: RuntimeWireAgentToolExecutionEvent) -> AgentToolExecutionEvent {
+        if frame.effect_id != self.call.meta.effect_id
+            || frame.item_id != self.call.meta.item_id
+            || frame.tool != self.call.tool
+        {
+            return self.fail(
+                "tool_callback_correlation_mismatch",
+                "Runtime Wire tool callback coordinates do not match the request",
+            );
+        }
+        match frame.event {
+            AgentToolExecutionEvent::Started if !self.started => {
+                self.started = true;
+                AgentToolExecutionEvent::Started
+            }
+            AgentToolExecutionEvent::Progress {
+                update_index,
+                output,
+            } if self.started && self.last_update_index.checked_add(1) == Some(update_index) => {
+                self.last_update_index = update_index;
+                AgentToolExecutionEvent::Progress {
+                    update_index,
+                    output,
+                }
+            }
+            AgentToolExecutionEvent::Completed { result } if self.started => {
+                self.terminal = true;
+                AgentToolExecutionEvent::Completed { result }
+            }
+            _ => self.fail(
+                "tool_callback_protocol_violation",
+                "Runtime Wire tool callback lifecycle is out of order",
+            ),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentToolExecutionStream for RuntimeWireToolExecutionStream {
+    async fn next(&mut self) -> Result<Option<AgentToolExecutionEvent>, AgentHostCallbackError> {
+        if let Some(event) = self.queued.pop_front() {
+            return Ok(Some(event));
+        }
+        if self.terminal {
+            return Ok(None);
+        }
+        let received = tokio::time::timeout_at(self.deadline, self.receiver.recv()).await;
+        let event = match received {
+            Ok(Some(frame)) => {
+                let event = self.validate(frame);
+                if self.terminal {
+                    self.pending.lock().await.remove(&self.request_frame_id.0);
+                }
+                if self.terminal && !self.started {
+                    self.started = true;
+                    self.queued.push_back(event);
+                    AgentToolExecutionEvent::Started
+                } else {
+                    event
+                }
+            }
+            Ok(None) => {
+                if !self.started {
+                    self.started = true;
+                    let terminal = self.fail(
+                        "tool_callback_transport_lost",
+                        "Runtime Wire tool callback ended before a terminal event",
+                    );
+                    self.queued.push_back(terminal);
+                    AgentToolExecutionEvent::Started
+                } else {
+                    self.fail(
+                        "tool_callback_transport_lost",
+                        "Runtime Wire tool callback ended before a terminal event",
+                    )
+                }
+            }
+            Err(_) => {
+                self.pending.lock().await.remove(&self.request_frame_id.0);
+                if !self.started {
+                    self.started = true;
+                    let terminal = self.fail(
+                        "tool_callback_deadline_exceeded",
+                        "Runtime Wire tool callback crossed its absolute deadline",
+                    );
+                    self.queued.push_back(terminal);
+                    AgentToolExecutionEvent::Started
+                } else {
+                    self.fail(
+                        "tool_callback_deadline_exceeded",
+                        "Runtime Wire tool callback crossed its absolute deadline",
+                    )
+                }
+            }
+        };
+        Ok(Some(event))
     }
 }
 
@@ -1084,11 +1475,11 @@ pub struct RuntimeWireAgentServiceEndpoint {
     service: Arc<dyn CompleteAgentService>,
     next_frame_id: Arc<AtomicU64>,
     pending_callbacks: Arc<tokio::sync::Mutex<HashMap<u64, PendingHostCallback>>>,
-    callback_effects:
-        Arc<tokio::sync::Mutex<HashMap<AgentEffectIdentity, HostCallbackEffectState>>>,
     published_changes: tokio::sync::Mutex<HashMap<AgentSourceCoordinate, PublishedChangeState>>,
+    live_subscriptions: Arc<tokio::sync::Mutex<HashSet<AgentSourceCoordinate>>>,
     outbound_tx: Arc<tokio::sync::RwLock<tokio::sync::mpsc::UnboundedSender<RuntimeWireEnvelope>>>,
     outbound_rx: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<RuntimeWireEnvelope>>,
+    outbound_order: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl RuntimeWireAgentServiceEndpoint {
@@ -1104,10 +1495,11 @@ impl RuntimeWireAgentServiceEndpoint {
             service,
             next_frame_id: Arc::new(AtomicU64::new(0)),
             pending_callbacks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            callback_effects: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             published_changes: tokio::sync::Mutex::new(HashMap::new()),
+            live_subscriptions: Arc::new(tokio::sync::Mutex::new(HashSet::new())),
             outbound_tx: Arc::new(tokio::sync::RwLock::new(outbound_tx)),
             outbound_rx: tokio::sync::Mutex::new(outbound_rx),
+            outbound_order: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -1116,8 +1508,8 @@ impl RuntimeWireAgentServiceEndpoint {
             target: self.target(),
             next_frame_id: self.next_frame_id.clone(),
             pending: self.pending_callbacks.clone(),
-            effects: self.callback_effects.clone(),
             outbound: self.outbound_tx.clone(),
+            outbound_order: self.outbound_order.clone(),
         })
     }
 
@@ -1130,14 +1522,110 @@ impl RuntimeWireAgentServiceEndpoint {
 
     /// Closes the current outbound stream so producers receive an explicit send failure.
     pub async fn disconnect_outbound(&self) {
+        let _outbound_order = self.outbound_order.lock().await;
         self.outbound_rx.lock().await.close();
+        self.pending_callbacks.lock().await.clear();
     }
 
     /// Installs a fresh outbound stream after transport reconnection.
     pub async fn reconnect_outbound(&self) {
+        let _outbound_order = self.outbound_order.lock().await;
         let (outbound_tx, outbound_rx) = tokio::sync::mpsc::unbounded_channel();
         *self.outbound_tx.write().await = outbound_tx;
         *self.outbound_rx.lock().await = outbound_rx;
+    }
+
+    async fn subscribe_live(
+        &self,
+        source: AgentSourceCoordinate,
+    ) -> Result<AgentSourceCoordinate, AgentServiceError> {
+        {
+            let mut subscriptions = self.live_subscriptions.lock().await;
+            if !subscriptions.insert(source.clone()) {
+                return Ok(source);
+            }
+        }
+        let mut stream = match self.service.live_batches(source.clone()).await {
+            Ok(stream) => stream,
+            Err(error) => {
+                self.live_subscriptions.lock().await.remove(&source);
+                return Err(error);
+            }
+        };
+        let target = self.target();
+        let outbound = self.outbound_tx.clone();
+        let next_frame_id = self.next_frame_id.clone();
+        let subscriptions = self.live_subscriptions.clone();
+        let outbound_order = self.outbound_order.clone();
+        let task_source = source.clone();
+        tokio::spawn(async move {
+            loop {
+                let event = match stream.next().await {
+                    Ok(Some(batch)) if batch.source == task_source => {
+                        RuntimeWireAgentLiveEvent::Batch {
+                            batch: Box::new(batch),
+                        }
+                    }
+                    Ok(Some(_)) => RuntimeWireAgentLiveEvent::Protocol {
+                        source: task_source.clone(),
+                        message: "Complete Agent live stream changed source coordinate".to_owned(),
+                    },
+                    Ok(None) => RuntimeWireAgentLiveEvent::Unavailable {
+                        source: task_source.clone(),
+                        message: "Complete Agent live stream closed".to_owned(),
+                    },
+                    Err(AgentLiveStreamError::Lagged { skipped }) => {
+                        RuntimeWireAgentLiveEvent::Lagged {
+                            source: task_source.clone(),
+                            skipped,
+                        }
+                    }
+                    Err(AgentLiveStreamError::Protocol { message }) => {
+                        RuntimeWireAgentLiveEvent::Protocol {
+                            source: task_source.clone(),
+                            message,
+                        }
+                    }
+                    Err(AgentLiveStreamError::Unavailable { message }) => {
+                        RuntimeWireAgentLiveEvent::Unavailable {
+                            source: task_source.clone(),
+                            message,
+                        }
+                    }
+                };
+                let terminal = !matches!(event, RuntimeWireAgentLiveEvent::Batch { .. });
+                let _outbound_order = outbound_order.lock().await;
+                let frame_id = match allocate_frame_id(&next_frame_id) {
+                    Ok(frame_id) => frame_id,
+                    Err(_) => break,
+                };
+                if outbound
+                    .read()
+                    .await
+                    .send(RuntimeWireEnvelope {
+                        protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                        frame_id,
+                        critical: true,
+                        frame: RuntimeWireFrame::Notification(Box::new(
+                            RuntimeWireNotification::AgentLiveBatch(Box::new(
+                                RuntimeWireAgentLiveBatchNotification {
+                                    target: target.clone(),
+                                    event,
+                                },
+                            )),
+                        )),
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                if terminal {
+                    break;
+                }
+            }
+            subscriptions.lock().await.remove(&task_source);
+        });
+        Ok(source)
     }
 
     /// Publishes one source-owned ordered change.
@@ -1185,6 +1673,7 @@ impl RuntimeWireAgentServiceEndpoint {
             }
         };
         let cursor = change.cursor.clone();
+        let _outbound_order = self.outbound_order.lock().await;
         let frame_id =
             allocate_frame_id(&self.next_frame_id).map_err(frame_allocation_service_error)?;
         self.outbound_tx
@@ -1208,22 +1697,6 @@ impl RuntimeWireAgentServiceEndpoint {
         state.last_sequence = Some(source_sequence);
         state.cursors.insert(cursor);
         Ok(())
-    }
-
-    fn response(
-        &self,
-        request_frame_id: RuntimeWireFrameId,
-        response: RuntimeWireAgentServiceResponse,
-    ) -> Result<RuntimeWireEnvelope, RuntimeWireFrameAllocationError> {
-        Ok(RuntimeWireEnvelope {
-            protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
-            frame_id: allocate_frame_id(&self.next_frame_id)?,
-            critical: true,
-            frame: RuntimeWireFrame::Response {
-                request_frame_id,
-                response: RuntimeWireResponse::AgentService(response),
-            },
-        })
     }
 
     fn validate_target(
@@ -1261,13 +1734,44 @@ impl RuntimeWirePlacement for RuntimeWireAgentServiceEndpoint {
                 request_frame_id,
                 response: RuntimeWireResponse::AgentHostCallback(response),
             } => {
-                if let Some(pending) = self
-                    .pending_callbacks
-                    .lock()
-                    .await
-                    .remove(&request_frame_id.0)
-                {
-                    let _ = pending.send(response);
+                let mut pending = self.pending_callbacks.lock().await;
+                match response {
+                    RuntimeWireAgentHostCallbackResponse::Tool(event) => {
+                        let terminal =
+                            matches!(event.event, AgentToolExecutionEvent::Completed { .. });
+                        let sender = match pending.get(&request_frame_id.0) {
+                            Some(PendingHostCallback::Tool(sender)) => sender.clone(),
+                            Some(PendingHostCallback::Hook(_)) => {
+                                return Err(RemoteRuntimeTransportError::Protocol {
+                                    reason:
+                                        "tool callback event used a hook callback correlation"
+                                            .to_owned(),
+                                    critical: true,
+                                });
+                            }
+                            None => return Ok(()),
+                        };
+                        if terminal {
+                            pending.remove(&request_frame_id.0);
+                        }
+                        let _ = sender.send(*event);
+                    }
+                    response @ RuntimeWireAgentHostCallbackResponse::Hook(_) => {
+                        match pending.remove(&request_frame_id.0) {
+                            Some(PendingHostCallback::Hook(sender)) => {
+                                let _ = sender.send(response);
+                            }
+                            Some(PendingHostCallback::Tool(_)) => {
+                                return Err(RemoteRuntimeTransportError::Protocol {
+                                    reason:
+                                        "hook callback response used a tool callback correlation"
+                                            .to_owned(),
+                                    critical: true,
+                                });
+                            }
+                            None => {}
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -1280,7 +1784,8 @@ impl RuntimeWirePlacement for RuntimeWireAgentServiceEndpoint {
                     });
                 };
                 let response = self.dispatch(*request).await;
-                let response = self.response(envelope.frame_id, response).map_err(|error| {
+                let _outbound_order = self.outbound_order.lock().await;
+                let frame_id = allocate_frame_id(&self.next_frame_id).map_err(|error| {
                     RemoteRuntimeTransportError::Protocol {
                         reason: error.to_string(),
                         critical: true,
@@ -1289,7 +1794,15 @@ impl RuntimeWirePlacement for RuntimeWireAgentServiceEndpoint {
                 self.outbound_tx
                     .read()
                     .await
-                    .send(response)
+                    .send(RuntimeWireEnvelope {
+                        protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                        frame_id,
+                        critical: true,
+                        frame: RuntimeWireFrame::Response {
+                            request_frame_id: envelope.frame_id,
+                            response: RuntimeWireResponse::AgentService(response),
+                        },
+                    })
                     .map_err(|_| RemoteRuntimeTransportError::Unavailable {
                         reason: "Complete Agent endpoint receiver is closed".to_owned(),
                         retryable: true,
@@ -1375,6 +1888,11 @@ impl RuntimeWireAgentServiceEndpoint {
             RuntimeWireAgentServiceRequest::Changes { query, .. } => {
                 RuntimeWireAgentServiceResponse::Changes(
                     self.service.changes(query).await.map(Box::new),
+                )
+            }
+            RuntimeWireAgentServiceRequest::SubscribeLive { source, .. } => {
+                RuntimeWireAgentServiceResponse::SubscribeLive(
+                    self.subscribe_live(source).await.map(Box::new),
                 )
             }
             RuntimeWireAgentServiceRequest::Inspect { effect_id, .. } => {
@@ -1496,6 +2014,9 @@ fn response_error(
         RuntimeWireAgentServiceRequest::Changes { .. } => {
             RuntimeWireAgentServiceResponse::Changes(Err(error))
         }
+        RuntimeWireAgentServiceRequest::SubscribeLive { .. } => {
+            RuntimeWireAgentServiceResponse::SubscribeLive(Err(error))
+        }
         RuntimeWireAgentServiceRequest::Inspect { .. } => {
             RuntimeWireAgentServiceResponse::Inspect(Err(error))
         }
@@ -1519,6 +2040,7 @@ fn response_succeeded(response: &RuntimeWireAgentServiceResponse) -> bool {
         RuntimeWireAgentServiceResponse::Read(result) => result.is_ok(),
         RuntimeWireAgentServiceResponse::Context(result) => result.is_ok(),
         RuntimeWireAgentServiceResponse::Changes(result) => result.is_ok(),
+        RuntimeWireAgentServiceResponse::SubscribeLive(result) => result.is_ok(),
         RuntimeWireAgentServiceResponse::Inspect(result) => result.is_ok(),
         RuntimeWireAgentServiceResponse::ApplySurface(result) => result.is_ok(),
     }
@@ -1578,18 +2100,50 @@ fn frame_allocation_callback_error(
     )
 }
 
-fn callback_error_response(
+fn callback_failure_responses(
     request: &RuntimeWireAgentHostCallbackRequest,
+    tool_code: &str,
     error: AgentHostCallbackError,
-) -> RuntimeWireAgentHostCallbackResponse {
+) -> Vec<RuntimeWireAgentHostCallbackResponse> {
     match request {
-        RuntimeWireAgentHostCallbackRequest::Tool(_) => {
-            RuntimeWireAgentHostCallbackResponse::Tool(Err(error))
+        RuntimeWireAgentHostCallbackRequest::Tool(invocation) => {
+            tool_failure_responses(invocation, tool_code, error.message)
         }
         RuntimeWireAgentHostCallbackRequest::Hook(_) => {
-            RuntimeWireAgentHostCallbackResponse::Hook(Err(error))
+            vec![RuntimeWireAgentHostCallbackResponse::Hook(Err(error))]
         }
     }
+}
+
+fn tool_failure_responses(
+    invocation: &AgentToolInvocation,
+    code: &str,
+    message: impl Into<String>,
+) -> Vec<RuntimeWireAgentHostCallbackResponse> {
+    vec![
+        tool_event_response(invocation, AgentToolExecutionEvent::Started),
+        tool_event_response(
+            invocation,
+            AgentToolExecutionEvent::Completed {
+                result: AgentToolResult::Failed {
+                    code: code.to_owned(),
+                    message: message.into(),
+                },
+            },
+        ),
+    ]
+}
+
+fn tool_event_response(
+    invocation: &AgentToolInvocation,
+    event: AgentToolExecutionEvent,
+) -> RuntimeWireAgentHostCallbackResponse {
+    RuntimeWireAgentHostCallbackResponse::Tool(Box::new(RuntimeWireAgentToolExecutionEvent {
+        effect_id: invocation.meta.effect_id.clone(),
+        item_id: invocation.meta.item_id.clone(),
+        tool: invocation.tool.clone(),
+        event,
+    }))
 }
 
 fn host_callback_error(

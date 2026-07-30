@@ -38,7 +38,7 @@ impl CompleteAgentService for DashAgentCompleteService {
     async fn read(...);
     async fn context(...);
     async fn changes(...);
-    async fn live_events(...);
+    async fn live_batches(...);
     async fn inspect(...);
     async fn apply_surface(...);
 }
@@ -212,12 +212,17 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - source service 打开时必须把真实 `DashExecutionCallbacks` 与 `DashHistoryCallbacks` 绑定到
   source-scoped Complete Agent live sink。未绑定 callback 是 composition error；当前没有
   subscriber 不是错误。
-- 成功 CAS 后，`DashHistoryCallbacks` 把本次提交的 exact history suffix 经 canonical projector
-  发布为 durable live record；外层原子事务只能在事务提交成功后发布。live 通知失败不改变已提交
+- 成功 CAS 后，`DashHistoryCallbacks` 把本次提交的 exact history suffix与从同一committed
+  history直接fold出的`AgentObservationState`发布为一个durable live batch；外层原子事务只能在事务提交成功后发布。live 通知失败不改变已提交
   history 的真值，消费者通过重新 `read` 恢复。
 - `DashExecutionCallbacks` 只发布 provider/Core 尚未提交的 ephemeral delta。它不补造
   `TurnStarted`、user input 或 terminal lifecycle。
-- `AgentLiveEvent.sequence` 只在当前 service process + source 内单调。broadcast lag 返回
+- `DurableDashExecutionCallbacks`在真实started/completed发生点提交tool history，并阻止这两个
+  Core事件继续进入ephemeral downstream；只有progress进入ephemeral live。canonical projector把
+  同一call identity收敛为`ItemStarted -> ItemUpdated* -> ItemCompleted`，其中history中的call/result
+  与执行中的progress都沿owner声明的protocol projector更新同一工具卡，terminal evidence只由
+  唯一Completed产生。
+- `AgentLiveBatch.sequence` 只在当前 service process + source 内单调。broadcast lag 返回
   retryable unavailable；消费者重新 `read`，不从 Runtime DB replay。
 - `InitialContextInstalled`、`SurfaceApplied` 与 `SurfaceRevoked` 必须从 Agent 实际保存的 native
   history 投影 `Platform(ContextFrameChanged)`；Product intent 或 repository metadata 不能直接
@@ -313,7 +318,8 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   消费同一已接纳frame。
 - Good：Dash Adapter先加入自身intrinsic instruction，再物化Product surface；Agent收到的基础行为
   规则和平台展示的Identity frame来自同一source-owned history entry。
-- Base：live subscriber掉线，Core继续执行并提交 history；新 subscriber先 read再订阅。
+- Base：live subscriber掉线，Core继续执行并提交 history；新浏览器connection先订阅source，
+  再读取authoritative baseline并排出订阅期间的batch。
 - Base：同一surface幂等重放不产生新的history entry，因此不产生重复ContextFrame。
 - Base：首回合在多轮工具执行后以Failed结束，但已保存Agent output；Dash仍生成会话标题，回合保持Failed。
 - Base：标题生成暂时失败，原回合terminal不变且source保持未命名；下一满足条件的terminal回合可以再次生成。

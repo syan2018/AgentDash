@@ -119,12 +119,17 @@ export class FetchNdjsonStream<TEvent> implements NdjsonStreamConnection {
     try {
       payload = JSON.parse(line);
     } catch (error) {
-      this.options.onError(normalizeError(error, this.options.parseErrorMessage));
-      return;
+      throw new Error(
+        `${this.options.parseErrorMessage}: ${
+          normalizeError(error, this.options.parseErrorMessage).message
+        }`,
+      );
     }
 
     const event = this.options.parsePayload(payload);
-    if (!event) return;
+    if (!event) {
+      throw new Error(this.options.parseErrorMessage);
+    }
 
     const cursor = this.options.readCursor(event);
     if (cursor !== null && cursor > this.sinceId) {

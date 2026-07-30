@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeOperationReceipt,
+  AgentRuntimeStreamFrame,
   AgentRuntimeUpdate,
   AgentRuntimeView,
 } from "../../../generated/agent-runtime-codecs";
@@ -17,9 +18,16 @@ import {
 } from "./agentRuntimeUpdateTransport";
 import { applyAgentRuntimeUpdate } from "./agentRuntimeProjection";
 
+export type AgentRuntimeResetReason = Extract<
+  AgentRuntimeStreamFrame,
+  { kind: "reset_required" }
+>["reason"];
+
 export interface AgentRuntimeConnectionObserver {
   onBaseline: (view: AgentRuntimeView) => void;
   onView: (view: AgentRuntimeView) => void;
+  onUpdate: (update: AgentRuntimeUpdate) => void;
+  onReset: (reason: AgentRuntimeResetReason) => void;
   onLifecycleChange: (lifecycle: AgentRuntimeConnectionLifecycle) => void;
   onError: (error: Error) => void;
 }
@@ -50,195 +58,232 @@ const PRODUCTION_DEPENDENCIES: AgentRuntimeConnectionDependencies = {
   createTransport: createAgentRuntimeUpdateTransport,
 };
 
-function normalizeError(error: unknown, message: string): Error {
-  return error instanceof Error ? error : new Error(message);
-}
-
-function hasTerminalPresentation(update: AgentRuntimeUpdate): boolean {
-  return update.presentations.some(
-    (record) => record.presentation.envelope.event.type === "turn_completed",
-  );
-}
-
-function overlayPendingPresentations(
-  view: AgentRuntimeView,
-  pending: ReadonlyMap<string, AgentRuntimeUpdate>,
-): AgentRuntimeView {
-  let projected = view;
-  for (const update of pending.values()) {
-    projected = applyAgentRuntimeUpdate(projected, {
-      ...update,
-      observation: projected.observation,
-    });
-  }
-  return projected;
-}
-
 export function connectAgentRuntimeConnection(
   agentRunTarget: AgentRunRuntimeTarget,
   observer: AgentRuntimeConnectionObserver,
   dependencies: AgentRuntimeConnectionDependencies = PRODUCTION_DEPENDENCIES,
 ): AgentRuntimeConnection {
+  interface RefreshAttempt {
+    readonly streamBaselineGeneration: number;
+    readonly updates: AgentRuntimeUpdate[];
+    invalidated: boolean;
+  }
+
   let closed = false;
   let transport: AgentRuntimeUpdateTransport | null = null;
   let currentView: AgentRuntimeView | null = null;
+  let baselineView: AgentRuntimeView | null = null;
   let refreshInFlight: Promise<void> | null = null;
-  let bufferedUpdates: AgentRuntimeUpdate[] = [];
-  const pendingDurableUpdates = new Map<string, AgentRuntimeUpdate>();
-  let terminalRefreshQueued = false;
-  let reconnectPending = false;
-  let recoveryBaselineRequested = false;
+  let refreshAttempt: RefreshAttempt | null = null;
+  let streamBaselineGeneration = 0;
+  let connectionEpoch: bigint | null = null;
+  let resetHandledEpoch: bigint | null = null;
+  let resetHandledBeforeBaseline = false;
   let lastLaneSequence: bigint | null = null;
+  let lastLifecycle: AgentRuntimeConnectionLifecycle | null = null;
+  let resolveReady: (() => void) | null = null;
+  const ready = new Promise<void>((resolve) => {
+    resolveReady = resolve;
+  });
 
-  const reportRefreshError = (error: unknown): void => {
-    if (!closed) {
-      observer.onError(
-        normalizeError(error, "Agent Runtime authoritative view 刷新失败"),
-      );
-    }
+  const emitLifecycle = (lifecycle: AgentRuntimeConnectionLifecycle): void => {
+    if (lastLifecycle === lifecycle) return;
+    lastLifecycle = lifecycle;
+    observer.onLifecycleChange(lifecycle);
   };
 
-  const rememberDurablePresentations = (update: AgentRuntimeUpdate): void => {
-    for (const record of update.presentations) {
-      if (record.presentation.durability === "durable") {
-        pendingDurableUpdates.set(record.presentation_id, {
-          ...update,
-          presentations: [record],
-        });
-      }
-    }
+  const reportTransportError = (error: Error): void => {
+    const target = `${agentRunTarget.runId}:${agentRunTarget.agentId}`;
+    const epoch = connectionEpoch?.toString() ?? "none";
+    const sequence = lastLaneSequence?.toString() ?? "none";
+    observer.onError(new Error(
+      `${error.message} [target=${target}, connection_epoch=${epoch}, last_sequence=${sequence}]`,
+      { cause: error },
+    ));
   };
 
-  const applyUpdate = (update: AgentRuntimeUpdate): void => {
-    if (!currentView) {
-      bufferedUpdates.push(update);
-      return;
+  const applyUpdate = (
+    update: AgentRuntimeUpdate,
+    preserveForRefresh = true,
+  ): void => {
+    if (!currentView) return;
+    if (
+      preserveForRefresh
+      && refreshAttempt
+      && !refreshAttempt.invalidated
+    ) {
+      refreshAttempt.updates.push(update);
     }
-    rememberDurablePresentations(update);
-    const projectedUpdate =
-      update.observation.revision < currentView.observation.revision
-      ? {
-          ...update,
-          observation: currentView.observation,
-        }
-      : update;
-    currentView = applyAgentRuntimeUpdate(currentView, projectedUpdate);
+    currentView = applyAgentRuntimeUpdate(currentView, update);
+    observer.onUpdate(update);
     observer.onView(currentView);
   };
 
-  const applyBufferedUpdates = (): void => {
-    if (closed || reconnectPending || refreshInFlight || !currentView) return;
-    const updates = bufferedUpdates;
-    bufferedUpdates = [];
-    for (const update of updates) {
-      applyUpdate(update);
+  const resetLiveLane = (reason: AgentRuntimeResetReason): void => {
+    if (connectionEpoch == null) {
+      if (resetHandledBeforeBaseline) return;
+      resetHandledBeforeBaseline = true;
+    } else {
+      if (resetHandledEpoch === connectionEpoch) return;
+      resetHandledEpoch = connectionEpoch;
     }
+    if (refreshAttempt) {
+      refreshAttempt.invalidated = true;
+      refreshAttempt.updates.length = 0;
+    }
+    lastLaneSequence = null;
+    currentView = baselineView;
+    if (currentView) observer.onView(currentView);
+    observer.onReset(reason);
   };
 
-  const refreshAuthoritativeView = (publishBaseline = false): Promise<void> => {
-    if (publishBaseline) recoveryBaselineRequested = true;
+  const refreshAuthoritativeView = (): Promise<void> => {
     if (refreshInFlight) return refreshInFlight;
+    const attempt: RefreshAttempt = {
+      streamBaselineGeneration,
+      updates: [],
+      invalidated: false,
+    };
+    refreshAttempt = attempt;
     refreshInFlight = dependencies
       .fetchView(agentRunTarget)
       .then((view) => {
-        if (closed) return;
-        const publishRecoveredBaseline = recoveryBaselineRequested;
-        recoveryBaselineRequested = false;
-        const baselinePresentationIds = new Set(
-          view.observation.conversation.map((record) => record.presentation_id),
-        );
-        for (const presentationId of baselinePresentationIds) {
-          pendingDurableUpdates.delete(presentationId);
+        if (
+          closed
+          || attempt.invalidated
+          || attempt.streamBaselineGeneration !== streamBaselineGeneration
+        ) {
+          return;
         }
-        currentView = overlayPendingPresentations(view, pendingDurableUpdates);
-        if (publishRecoveredBaseline) {
-          observer.onBaseline(currentView);
-        } else {
-          observer.onView(currentView);
+        if (refreshAttempt === attempt) {
+          refreshAttempt = null;
+        }
+        baselineView = view;
+        currentView = view;
+        observer.onBaseline(currentView);
+        const baselinePresentationIds = new Set(
+          currentView.observation.conversation.map(
+            (record) => record.presentation_id,
+          ),
+        );
+        for (const update of attempt.updates) {
+          const presentations = update.presentations.filter(
+            (record) =>
+              record.presentation.durability === "ephemeral"
+              || !baselinePresentationIds.has(record.presentation_id),
+          );
+          const stateAdvances =
+            update.state != null
+            && update.state.revision > currentView.observation.revision;
+          if (presentations.length === 0 && !stateAdvances) {
+            continue;
+          }
+          applyUpdate({ ...update, presentations }, false);
         }
       })
       .finally(() => {
-        refreshInFlight = null;
-        applyBufferedUpdates();
-        if (terminalRefreshQueued && !closed && !reconnectPending) {
-          terminalRefreshQueued = false;
-          void refreshAuthoritativeView(false).catch(reportRefreshError);
+        if (refreshAttempt === attempt) {
+          refreshAttempt = null;
         }
+        refreshInFlight = null;
       });
     return refreshInFlight;
+  };
+
+  const acceptBaseline = (
+    epoch: bigint,
+    view: AgentRuntimeView,
+  ): void => {
+    if (connectionEpoch === epoch) {
+      resetLiveLane("protocol_error");
+      return;
+    }
+    streamBaselineGeneration += 1;
+    if (refreshAttempt) {
+      refreshAttempt.invalidated = true;
+      refreshAttempt.updates.length = 0;
+    }
+    connectionEpoch = epoch;
+    resetHandledEpoch = null;
+    resetHandledBeforeBaseline = false;
+    lastLaneSequence = null;
+    baselineView = view;
+    currentView = view;
+    observer.onBaseline(view);
+    resolveReady?.();
+    resolveReady = null;
+  };
+
+  const acceptUpdate = (
+    frame: Extract<AgentRuntimeStreamFrame, { kind: "update" }>,
+  ): void => {
+    if (connectionEpoch == null || frame.connection_epoch !== connectionEpoch) {
+      resetLiveLane("protocol_error");
+      return;
+    }
+    if (resetHandledEpoch === connectionEpoch) return;
+    const previousLaneSequence = lastLaneSequence;
+    if (
+      previousLaneSequence != null
+      && frame.lane_sequence <= previousLaneSequence
+    ) {
+      return;
+    }
+    if (
+      previousLaneSequence != null
+      && frame.lane_sequence !== previousLaneSequence + 1n
+    ) {
+      resetLiveLane("sequence_gap");
+      return;
+    }
+    lastLaneSequence = frame.lane_sequence;
+    applyUpdate({
+      lane_sequence: frame.lane_sequence,
+      state: frame.state,
+      presentations: frame.presentations,
+    });
   };
 
   transport = dependencies.createTransport({
     agentRunTarget,
     onLifecycleChange: (lifecycle) => {
-      observer.onLifecycleChange(lifecycle);
+      emitLifecycle(lifecycle);
       if (lifecycle === "reconnecting") {
-        reconnectPending = true;
-        lastLaneSequence = null;
-        return;
-      }
-      if (lifecycle === "connected" && reconnectPending) {
-        reconnectPending = false;
-        terminalRefreshQueued = false;
-        void refreshAuthoritativeView(true).catch(reportRefreshError);
+        resetLiveLane("transport_disconnected");
       }
     },
-    onError: observer.onError,
-    onEvent: (update) => {
+    onError: reportTransportError,
+    onEvent: (frame) => {
       if (closed) return;
-      const previousLaneSequence = lastLaneSequence;
-      if (
-        previousLaneSequence != null
-        && update.lane_sequence <= previousLaneSequence
+      if (frame.kind === "baseline") {
+        acceptBaseline(frame.connection_epoch, frame.view);
+      } else if (frame.kind === "update") {
+        acceptUpdate(frame);
+      } else if (
+        connectionEpoch == null
+        || frame.connection_epoch === connectionEpoch
       ) {
-        return;
-      }
-      lastLaneSequence = update.lane_sequence;
-      if (
-        previousLaneSequence != null
-        && update.lane_sequence !== previousLaneSequence + 1n
-      ) {
-        bufferedUpdates.push(update);
-        void refreshAuthoritativeView(true).catch(reportRefreshError);
-        return;
-      }
-      if (refreshInFlight || reconnectPending || !currentView) {
-        bufferedUpdates.push(update);
-        if (hasTerminalPresentation(update)) terminalRefreshQueued = true;
-        return;
-      }
-      applyUpdate(update);
-      if (hasTerminalPresentation(update)) {
-        void refreshAuthoritativeView(false).catch(reportRefreshError);
+        resetLiveLane(frame.reason);
       }
     },
-  });
-
-  const ready = refreshAuthoritativeView(true).catch((error: unknown) => {
-    if (closed) return;
-    observer.onError(normalizeError(error, "Agent Runtime connection 建立失败"));
-    observer.onLifecycleChange("reconnecting");
   });
 
   return {
     ready,
-    refresh: () => refreshAuthoritativeView(false),
+    refresh: () => refreshAuthoritativeView(),
     execute: async (request) => {
       const receipt = await dependencies.executeCommand(agentRunTarget, request);
-      await refreshAuthoritativeView(false);
+      await refreshAuthoritativeView();
       return receipt;
     },
     close: () => {
       if (closed) return;
       closed = true;
-      terminalRefreshQueued = false;
-      reconnectPending = false;
-      recoveryBaselineRequested = false;
-      bufferedUpdates = [];
-      pendingDurableUpdates.clear();
+      resolveReady?.();
+      resolveReady = null;
       transport?.close();
       transport = null;
-      observer.onLifecycleChange("closed");
+      emitLifecycle("closed");
     },
   };
 }

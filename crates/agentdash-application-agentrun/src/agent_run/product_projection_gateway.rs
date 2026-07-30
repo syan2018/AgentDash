@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use agentdash_agent_runtime::{AgentRuntimeObservation, AgentRuntimeObservationError};
 use agentdash_agent_runtime_contract::{
-    AgentBindingGeneration, AgentLiveEventStream, AgentServiceError, CompleteAgentService,
+    AgentBindingGeneration, AgentLiveBatchStream, AgentLiveStreamError, AgentRuntimeResetReason,
+    AgentServiceError, AgentSourceCoordinate, CompleteAgentService, RuntimeU64,
 };
 use agentdash_agent_runtime_contract::{
     AgentRuntimeContextProjection, AgentRuntimeContextRequirement, AgentRuntimeUpdate,
@@ -27,30 +28,89 @@ pub struct AgentRunResolvedCompleteAgent {
 
 #[async_trait]
 pub trait AgentRuntimeUpdateStream: Send {
-    async fn next(&mut self) -> Result<Option<AgentRuntimeUpdate>, AgentRunProductProjectionError>;
+    async fn next(&mut self) -> Result<Option<AgentRuntimeUpdate>, AgentRuntimeStreamReset>;
+}
+
+pub struct AgentRuntimeUpdateSubscription {
+    pub source: AgentSourceCoordinate,
+    pub baseline: AgentRuntimeView,
+    pub updates: Box<dyn AgentRuntimeUpdateStream>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("Agent Runtime live lane requires reset: {reason:?}: {diagnostic}")]
+pub struct AgentRuntimeStreamReset {
+    pub reason: AgentRuntimeResetReason,
+    pub last_sequence: Option<RuntimeU64>,
+    pub diagnostic: String,
 }
 
 struct CompleteAgentRuntimeUpdateStream {
     observation: AgentRuntimeObservation,
-    live: Box<dyn AgentLiveEventStream>,
+    live: Box<dyn AgentLiveBatchStream>,
+    last_sequence: Option<u64>,
 }
 
 #[async_trait]
 impl AgentRuntimeUpdateStream for CompleteAgentRuntimeUpdateStream {
-    async fn next(&mut self) -> Result<Option<AgentRuntimeUpdate>, AgentRunProductProjectionError> {
-        let Some(event) = self
+    async fn next(&mut self) -> Result<Option<AgentRuntimeUpdate>, AgentRuntimeStreamReset> {
+        let Some(batch) = self
             .live
             .next()
             .await
-            .map_err(AgentRunProductProjectionError::Agent)?
+            .map_err(|error| live_stream_reset(error, self.last_sequence))?
         else {
             return Ok(None);
         };
-        self.observation
-            .reconcile_live(event)
-            .await
-            .map(Some)
-            .map_err(map_observation_error)
+        let sequence = batch.sequence.0;
+        if let Some(previous) = self.last_sequence
+            && previous.checked_add(1) != Some(sequence)
+        {
+            return Err(AgentRuntimeStreamReset {
+                reason: AgentRuntimeResetReason::SequenceGap,
+                last_sequence: self.last_sequence.map(RuntimeU64),
+                diagnostic: format!("expected lane sequence after {previous}, received {sequence}"),
+            });
+        }
+        let update =
+            self.observation
+                .project_live(batch)
+                .map_err(|error| AgentRuntimeStreamReset {
+                    reason: if matches!(error, AgentRuntimeObservationError::LiveSourceMismatch) {
+                        AgentRuntimeResetReason::SourceMismatch
+                    } else {
+                        AgentRuntimeResetReason::ProtocolError
+                    },
+                    last_sequence: self.last_sequence.map(RuntimeU64),
+                    diagnostic: error.to_string(),
+                })?;
+        self.last_sequence = Some(sequence);
+        Ok(Some(update))
+    }
+}
+
+fn live_stream_reset(
+    error: AgentLiveStreamError,
+    last_sequence: Option<u64>,
+) -> AgentRuntimeStreamReset {
+    let (reason, diagnostic) = match error {
+        AgentLiveStreamError::Lagged { skipped } => (
+            AgentRuntimeResetReason::Lagged,
+            format!("Complete Agent live subscriber lagged by {skipped} batches"),
+        ),
+        AgentLiveStreamError::Protocol { message } => (
+            AgentRuntimeResetReason::ProtocolError,
+            format!("Complete Agent live protocol error: {message}"),
+        ),
+        AgentLiveStreamError::Unavailable { message } => (
+            AgentRuntimeResetReason::TransportDisconnected,
+            format!("Complete Agent live stream unavailable: {message}"),
+        ),
+    };
+    AgentRuntimeStreamReset {
+        reason,
+        last_sequence: last_sequence.map(RuntimeU64),
+        diagnostic,
     }
 }
 
@@ -274,26 +334,37 @@ impl AgentRunProductProjectionGateway {
     pub async fn runtime_updates(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<Box<dyn AgentRuntimeUpdateStream>, AgentRunProductProjectionError> {
+    ) -> Result<AgentRuntimeUpdateSubscription, AgentRunProductProjectionError> {
         let binding = self.binding(target).await?;
+        let source = binding.agent.source.clone();
         let resolved = self
             .agents
             .resolve(&binding)
             .await
             .map_err(AgentRunProductProjectionError::Runtime)?;
+        let observation = AgentRuntimeObservation::new(
+            binding.runtime_thread_id,
+            source.clone(),
+            resolved.service.clone(),
+        );
         let live = resolved
             .service
-            .live_events(binding.agent.source.clone())
+            .live_batches(source.clone())
             .await
             .map_err(AgentRunProductProjectionError::Agent)?;
-        Ok(Box::new(CompleteAgentRuntimeUpdateStream {
-            observation: AgentRuntimeObservation::new(
-                binding.runtime_thread_id,
-                binding.agent.source,
-                resolved.service,
-            ),
-            live,
-        }))
+        let baseline = observation
+            .read_view()
+            .await
+            .map_err(map_observation_error)?;
+        Ok(AgentRuntimeUpdateSubscription {
+            source,
+            baseline,
+            updates: Box::new(CompleteAgentRuntimeUpdateStream {
+                observation,
+                live,
+                last_sequence: None,
+            }),
+        })
     }
 
     pub async fn terminal_snapshot(
@@ -372,7 +443,7 @@ pub trait AgentRunProductProjectionQueryPort: Send + Sync {
     async fn runtime_updates(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<Box<dyn AgentRuntimeUpdateStream>, AgentRunProductProjectionError>;
+    ) -> Result<AgentRuntimeUpdateSubscription, AgentRunProductProjectionError>;
     async fn terminal_snapshot(
         &self,
         target: &AgentRunTarget,
@@ -419,7 +490,7 @@ impl AgentRunProductProjectionQueryPort for AgentRunProductProjectionGateway {
     async fn runtime_updates(
         &self,
         target: &AgentRunTarget,
-    ) -> Result<Box<dyn AgentRuntimeUpdateStream>, AgentRunProductProjectionError> {
+    ) -> Result<AgentRuntimeUpdateSubscription, AgentRunProductProjectionError> {
         AgentRunProductProjectionGateway::runtime_updates(self, target).await
     }
 
@@ -535,5 +606,23 @@ mod product_runtime_binding_digest_tests {
                 .calculated_digest()
                 .expect("right digest")
         );
+    }
+}
+
+#[cfg(test)]
+mod runtime_stream_reset_tests {
+    use agentdash_agent_runtime_contract::{
+        AgentLiveStreamError, AgentRuntimeResetReason, RuntimeU64,
+    };
+
+    use super::live_stream_reset;
+
+    #[test]
+    fn lag_reset_preserves_skipped_count_and_last_sequence_for_diagnostics() {
+        let reset = live_stream_reset(AgentLiveStreamError::Lagged { skipped: 37 }, Some(11));
+
+        assert_eq!(reset.reason, AgentRuntimeResetReason::Lagged);
+        assert_eq!(reset.last_sequence, Some(RuntimeU64(11)));
+        assert!(reset.diagnostic.contains("37"));
     }
 }

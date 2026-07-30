@@ -190,6 +190,8 @@ pub struct RuntimeToolInvocation {
     pub grant: RuntimeToolAuthorizationGrant,
 }
 
+pub type RuntimeToolUpdateSink = Arc<dyn Fn(Value) + Send + Sync>;
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum RuntimeToolBrokerError {
     #[error("runtime tool catalog must contain at least one executor")]
@@ -227,6 +229,14 @@ pub trait RuntimeToolExecutor: Send + Sync {
     fn definition(&self) -> RuntimeToolDefinition;
 
     async fn execute(&self, invocation: RuntimeToolInvocation) -> AgentToolResult;
+
+    async fn execute_with_updates(
+        &self,
+        invocation: RuntimeToolInvocation,
+        _updates: Option<RuntimeToolUpdateSink>,
+    ) -> AgentToolResult {
+        self.execute(invocation).await
+    }
 }
 
 pub struct PlatformToolBroker {
@@ -332,6 +342,17 @@ impl PlatformToolBroker {
         tool: AgentToolName,
         arguments: Value,
     ) -> Result<AgentToolResult, RuntimeToolBrokerError> {
+        self.invoke_with_updates(context, tool, arguments, None)
+            .await
+    }
+
+    pub async fn invoke_with_updates(
+        &self,
+        context: RuntimeToolResolvedContext,
+        tool: AgentToolName,
+        arguments: Value,
+        updates: Option<RuntimeToolUpdateSink>,
+    ) -> Result<AgentToolResult, RuntimeToolBrokerError> {
         let scoped = self
             .runtime_executors
             .read()
@@ -366,12 +387,15 @@ impl PlatformToolBroker {
             });
         }
         Ok(executor
-            .execute(RuntimeToolInvocation {
-                context,
-                tool,
-                arguments,
-                grant,
-            })
+            .execute_with_updates(
+                RuntimeToolInvocation {
+                    context,
+                    tool,
+                    arguments,
+                    grant,
+                },
+                updates,
+            )
             .await)
     }
 }
@@ -491,6 +515,33 @@ mod tests {
         }
     }
 
+    struct ProgressMountsList;
+
+    #[async_trait]
+    impl RuntimeToolExecutor for ProgressMountsList {
+        fn definition(&self) -> RuntimeToolDefinition {
+            MountsList.definition()
+        }
+
+        async fn execute(&self, _: RuntimeToolInvocation) -> AgentToolResult {
+            AgentToolResult::Completed {
+                output: serde_json::json!({"mounts": ["main"]}),
+            }
+        }
+
+        async fn execute_with_updates(
+            &self,
+            invocation: RuntimeToolInvocation,
+            updates: Option<RuntimeToolUpdateSink>,
+        ) -> AgentToolResult {
+            if let Some(updates) = updates {
+                updates(serde_json::json!({"phase": "resolving"}));
+                updates(serde_json::json!({"phase": "reading"}));
+            }
+            self.execute(invocation).await
+        }
+    }
+
     #[tokio::test]
     async fn required_vfs_tool_executes_through_final_broker() {
         let broker =
@@ -509,6 +560,37 @@ mod tests {
                 output: serde_json::json!({"mounts": ["main"]})
             }
         );
+    }
+
+    #[tokio::test]
+    async fn broker_preserves_executor_progress_before_terminal_result() {
+        let broker =
+            PlatformToolBroker::new([Arc::new(ProgressMountsList) as Arc<_>], Arc::new(Allow))
+                .unwrap();
+        let updates = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = {
+            let updates = updates.clone();
+            Arc::new(move |update| updates.lock().unwrap().push(update)) as RuntimeToolUpdateSink
+        };
+
+        let result = broker
+            .invoke_with_updates(
+                resolved_context(),
+                AgentToolName::new("mounts_list").unwrap(),
+                serde_json::json!({}),
+                Some(sink),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *updates.lock().unwrap(),
+            vec![
+                serde_json::json!({"phase": "resolving"}),
+                serde_json::json!({"phase": "reading"}),
+            ]
+        );
+        assert!(matches!(result, AgentToolResult::Completed { .. }));
     }
 
     #[tokio::test]

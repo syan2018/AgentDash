@@ -23,10 +23,11 @@ pub struct AgentSnapshot {
     // surface / initial context evidence omitted
 }
 
-pub struct AgentLiveEvent {
+pub struct AgentLiveBatch {
     pub source: AgentSourceCoordinate,
     pub sequence: AgentServiceU64,
-    pub record: CanonicalConversationRecord,
+    pub state: Option<AgentObservationState>,
+    pub presentations: Vec<CanonicalConversationRecord>,
 }
 ```
 
@@ -36,14 +37,21 @@ GET /agent-runs/{run_id}/agents/{agent_id}/runtime/updates
 ```
 
 ```ts
-type AgentRuntimeUpdate = {
-  lane_sequence: RuntimeU64;
-  view_revision: RuntimeProjectionRevision;
-  execution: AgentRuntimeExecutionView;
-  command_availability: AgentRuntimeCommandAvailabilityMap;
-  interactions: AgentRuntimeInteraction[];
-  presentations: CanonicalConversationRecord[];
-};
+type AgentRuntimeStreamFrame =
+  | { kind: "baseline"; connection_epoch: RuntimeU64; view: AgentRuntimeView }
+  | {
+      kind: "update";
+      connection_epoch: RuntimeU64;
+      lane_sequence: RuntimeU64;
+      state: AgentObservationState | null;
+      presentations: CanonicalConversationRecord[];
+    }
+  | {
+      kind: "reset_required";
+      connection_epoch: RuntimeU64;
+      reason: AgentRuntimeResetReason;
+      last_sequence: RuntimeU64 | null;
+    };
 ```
 
 ## 3. Contracts
@@ -56,7 +64,7 @@ type AgentRuntimeUpdate = {
 - input live顺序是 durable `UserInputSubmitted` → durable `TurnStarted` → ephemeral output →
   durable terminal。snapshot与durable live必须调用同一个canonical projector，不能在execute
   返回后由Product或前端补造用户消息。
-- `AgentLiveEvent` 只包含 source、source-local sequence 与 canonical record。transport 不接受
+- `AgentLiveBatch` 只包含source-local sequence、可选owner state与有序canonical records。transport 不接受
   provider round、`payload.kind`、独立 `turn_id/item_id` 等平行 telemetry 形态。
 - `presentation_id` 是同一 presentation 在 baseline/live 合并时的稳定 identity；收到相同 id 时
   替换记录，收到新 id 时追加。不得派生 `agent-turn:`、`agent-item:` 或 renderer-local tool id。
@@ -65,10 +73,13 @@ type AgentRuntimeUpdate = {
   已提交的实时记录仍能驱动当前观察者。
 - `TurnStarted`/`TurnCompleted` 是 conversation presentation 的 turn 边界；第一个
   message/tool/item 输出不结束展示轮次。浏览器的执行控制只读取同一
-  `AgentRuntimeView/AgentRuntimeUpdate.execution`，不扫描这些 records。
+  `AgentRuntimeView.observation.execution`或`AgentRuntimeStreamFrame::Update.state.execution`，
+  不扫描这些 records。
 - `ItemStarted`/`ItemUpdated`/`ItemCompleted` 的 `AgentDashThreadItem` discriminant 决定 UI 形态。
   `agentMessage` 与 `reasoning` 进入消息卡，其余 item 进入对应工具/资源卡；未知 discriminant 是
   协议错误，不降级为“TOOL 未知”。
+- 工具过程事件以同一item id形成`ItemStarted -> ItemUpdated* -> ItemCompleted`。update index从1
+  连续递增；`ItemUpdated`保持in-progress，只有唯一`ItemCompleted`携带terminal evidence。
 - canonical item lifecycle固定为`started -> updated* -> completed(terminal)`。
   `ItemUpdated`只精化过程内容；`ItemCompletedNotification.terminal`明确携带
   `succeeded | failed | lost | cancelled`，其中completed表示生命周期闭合，不等同于成功。
@@ -151,8 +162,9 @@ type AgentRuntimeUpdate = {
   items。
 - Complete Agent integration test 覆盖 source-scoped live canonical records，且 live lane 不持久化
   为第二份 tail。
-- Runtime以下的 Complete Agent transport test 断言 `{source,sequence,record}`；浏览器 transport
-  test 断言 `AgentRuntimeUpdate` 通过且旧 `AgentLiveEvent` 被拒绝。
+- Runtime以下的 Complete Agent transport test 断言 `{source,sequence,state,presentations}`；
+  浏览器transport test断言每个epoch只接收`Baseline -> Update* -> ResetRequired?`，并拒绝旧的
+  无frame update与单record event。
 - frontend projection test 断言相同 `presentation_id` 替换、新 id 追加。
 - frontend hydration测试断言初始durable records属于baseline，而同一连接追加的durable record属于live；
   浏览器tracer断言展示面板早于`TurnCompleted`打开，重载后不重放命令。

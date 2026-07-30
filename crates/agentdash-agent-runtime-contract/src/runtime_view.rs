@@ -4,7 +4,10 @@ use ts_rs::TS;
 
 use agentdash_agent_protocol::CanonicalConversationRecord;
 
-use crate::{AgentObservation, AgentSnapshotRevision, RuntimeSourceRef, RuntimeThreadId};
+use crate::{
+    AgentObservation, AgentObservationState, AgentSnapshotRevision, RuntimeSourceRef,
+    RuntimeThreadId, RuntimeU64,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -99,8 +102,9 @@ impl AgentRuntimeView {
     }
 }
 
-/// Live Runtime lane update. The authoritative observation is always replaced atomically; the
-/// triggering presentation remains separate so clients can bridge a durable-record/read race.
+/// Live Runtime lane update. State is present only when the source owner publishes a state
+/// transition at the same boundary as these presentations. Ephemeral updates never trigger an
+/// authoritative read.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRuntimeUpdate {
@@ -108,9 +112,56 @@ pub struct AgentRuntimeUpdate {
     #[schemars(with = "crate::wire_u64::RuntimeU64")]
     #[ts(type = "RuntimeU64")]
     pub lane_sequence: u64,
-    pub observation: AgentObservation,
+    pub state: Option<AgentObservationState>,
     #[ts(type = "Array<CanonicalConversationRecord>")]
     pub presentations: Vec<CanonicalConversationRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRuntimeResetReason {
+    Lagged,
+    SequenceGap,
+    SourceMismatch,
+    ProtocolError,
+    BindingReplaced,
+    TransportDisconnected,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
+pub enum AgentRuntimeStreamFrame {
+    Baseline {
+        #[serde(with = "crate::wire_u64")]
+        #[schemars(with = "crate::wire_u64::RuntimeU64")]
+        #[ts(type = "RuntimeU64")]
+        connection_epoch: u64,
+        view: AgentRuntimeView,
+    },
+    Update {
+        #[serde(with = "crate::wire_u64")]
+        #[schemars(with = "crate::wire_u64::RuntimeU64")]
+        #[ts(type = "RuntimeU64")]
+        connection_epoch: u64,
+        #[serde(with = "crate::wire_u64")]
+        #[schemars(with = "crate::wire_u64::RuntimeU64")]
+        #[ts(type = "RuntimeU64")]
+        lane_sequence: u64,
+        state: Option<AgentObservationState>,
+        #[ts(type = "Array<CanonicalConversationRecord>")]
+        presentations: Vec<CanonicalConversationRecord>,
+    },
+    ResetRequired {
+        #[serde(with = "crate::wire_u64")]
+        #[schemars(with = "crate::wire_u64::RuntimeU64")]
+        #[ts(type = "RuntimeU64")]
+        connection_epoch: u64,
+        reason: AgentRuntimeResetReason,
+        #[serde(default)]
+        #[ts(type = "RuntimeU64 | null")]
+        last_sequence: Option<RuntimeU64>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -118,6 +169,7 @@ pub struct AgentRuntimeUpdate {
 pub struct AgentRuntimeProjectionSchema {
     pub view: AgentRuntimeView,
     pub update: AgentRuntimeUpdate,
+    pub stream_frame: AgentRuntimeStreamFrame,
 }
 
 #[cfg(test)]
@@ -174,14 +226,52 @@ mod tests {
     }
 
     #[test]
-    fn update_round_trips_the_same_observation_shape() {
+    fn update_round_trips_without_an_authoritative_conversation() {
         let update = AgentRuntimeUpdate {
             lane_sequence: u64::MAX,
-            observation: observation(6),
+            state: Some(observation(6).state()),
             presentations: Vec::new(),
         };
         let encoded = serde_json::to_value(&update).expect("serialize");
+        assert!(encoded.get("observation").is_none());
+        assert!(
+            encoded
+                .get("state")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|state| !state.contains_key("conversation"))
+        );
         let decoded: AgentRuntimeUpdate = serde_json::from_value(encoded).expect("deserialize");
         assert_eq!(decoded, update);
+    }
+
+    #[test]
+    fn stream_frames_round_trip_full_u64_coordinates() {
+        let frames = [
+            AgentRuntimeStreamFrame::Baseline {
+                connection_epoch: u64::MAX,
+                view: AgentRuntimeView {
+                    thread_id: RuntimeThreadId::new("runtime-thread").expect("thread"),
+                    observation: observation(1),
+                },
+            },
+            AgentRuntimeStreamFrame::Update {
+                connection_epoch: u64::MAX,
+                lane_sequence: u64::MAX,
+                state: None,
+                presentations: Vec::new(),
+            },
+            AgentRuntimeStreamFrame::ResetRequired {
+                connection_epoch: u64::MAX,
+                reason: AgentRuntimeResetReason::Lagged,
+                last_sequence: Some(RuntimeU64(u64::MAX)),
+            },
+        ];
+
+        for frame in frames {
+            let encoded = serde_json::to_value(&frame).expect("serialize frame");
+            let decoded: AgentRuntimeStreamFrame =
+                serde_json::from_value(encoded).expect("deserialize frame");
+            assert_eq!(decoded, frame);
+        }
     }
 }

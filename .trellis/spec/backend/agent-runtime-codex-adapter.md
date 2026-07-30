@@ -29,6 +29,13 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
     async fn inspect(&self, request: DriverInspectRequest)
         -> Result<DriverInspectResult, DriverError>;
 }
+
+impl CompleteAgentService for CodexCompleteAgentService {
+    async fn live_batches(
+        &self,
+        source: AgentSourceCoordinate,
+    ) -> Result<Box<dyn AgentLiveBatchStream>, AgentServiceError>;
+}
 ```
 
 Codex Rust protocol、npm package与Integration protocol revision必须使用同一个已审计版本；当前基线为`0.144.1 / revision 144`。Adapter所有vendor DTO、进程与artifact细节封装在`agentdash-integration-codex`或workspace protocol codegen工具；其它production crate只消费generated AgentDash-owned类型。
@@ -41,6 +48,21 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 - bind/start presentation 从 `/thread/name` 读取同一标准事件：string 生成 `Some(raw)`，
   显式 null 生成 `None`，字段缺失不生成事实。bind 与 live 共用同一 reducer，原因是冷恢复
   和运行中更新必须得到相同 projection 与校验结果。
+- Complete Agent live observation按source只建立一个上游process pump，再以broadcast fan-out给
+  所有subscriber；同一vendor occurrence只能fold一次，多个浏览器必须观察到相同batch sequence、
+  owner state与presentations。原因是subscription数量不是Agent状态转移，不能重复推进revision。
+- vendor observation sequence属于App Server进程全局坐标，不能直接充当source live lane sequence。
+  source pump按实际发布的batch连续分配`AgentLiveBatch.sequence`；未映射presentation或属于其他
+  source的原始序号不会制造假gap。
+- process transport以“登记Notify waiter → 检查source retained tail → await”的顺序阻塞等待，并按
+  source记录retention淘汰边界。由此观察到其他thread的全局序号跳跃或淘汰不会误报当前source lag，
+  真实当前source淘汰则返回typed `Lagged`；process断连唤醒waiter并返回typed `Unavailable`。
+- `turn/started`、`turn/completed`、thread name与interaction notification在source pump中直接fold
+  owner `AgentObservationState`，正常terminal batch立即携带`active_turn = null`。构造live batch
+  不调用`thread/read`。
+- `thread/read`发起时记录已fold的raw observation boundary；RPC在途期间若pump推进了owner state，
+  read结果保留较新的execution/thread name/lifecycle/interaction，再建立更高baseline revision。
+  原因是RPC响应与stdout notification是两个并发时间点，较旧read不能覆盖其间已观察的owner事实。
 
 - Codex通过Integration contribution/factory进入Driver Host；Application/Executor不硬编码构造Codex connector。旧`codex_bridge`不能与新adapter并存。
 - Codex App Server进程必须通过当前操作系统可直接执行的npm入口启动：Windows使用
@@ -88,6 +110,11 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 | terminal presentation sink失败 | 不提前遗忘active operation；BindingLost收敛或保留duplicate terminal重试能力 |
 | sink返回`Terminalized` | 清理turn/interaction/waiter并停止pump；不补第二份`BindingLost` |
 | live `thread/name/updated`携带string/null/blank | string/null逐字段进入标准事件；blank也原样进入并由Runtime typed拒绝 |
+| 两个subscriber订阅同一source | 共用一个process pump；收到相同batch且owner revision只推进一次 |
+| source原始observation序号为7、9 | live batch序号连续为1、2，不报sequence gap |
+| 其他source retained observation被淘汰 | 当前source不报gap |
+| `thread/read` RPC在途期间收到turn started | baseline保留新的active turn，不被旧idle响应覆盖 |
+| live terminal到达 | 同batch包含durable TurnCompleted与`active_turn = null` |
 | bind/start `/thread/name`字段缺失 | 不生成名称事实；显式`null`必须生成标准clear事件 |
 | VendorStream dynamic tool | Codex presentation start/completed各一次，Broker internal lifecycle各一次，不生成第二张card |
 | native compact notification | Opaque observation，不推进managed head |
@@ -113,6 +140,9 @@ Runtime reducer；字段缺失只表示vendor没有提供该事实，不能被ad
 - Mapping覆盖start/resume/fork、turn/item全部terminal、source coordinates、typed inspect与error message。
 - Thread name mapping覆盖live与bind/start两条入口的string、显式null、字段缺失和原始blank，
   断言owned notification逐字段保真且只有缺失字段不生成事实。
+- Complete Agent live测试覆盖双subscriber single-fold、全局raw序号跳跃到连续source batch序号、
+  source-scoped retention gap、disconnect waiter、turn start/terminal state与阻塞中的
+  `thread/read`不覆盖较新live owner state。
 - Input/context测试覆盖`text_elements`、image/local-image detail的absent/null/enum、Skill/Mention、Structured、instruction channels、workspace roots、sandbox与Resume/Fork完整参数。
 - Dynamic tool测试覆盖Broker coordinates、image output、denied/completed/interaction-required和unsupported cancellation。
 - production tracer覆盖dynamic tool -> active SurfaceAdopt/ContextFrame -> 同ID tool terminal -> final assistant -> idle full rebind，并断言全程single presentation producer。

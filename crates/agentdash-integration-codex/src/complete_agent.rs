@@ -13,18 +13,20 @@ use agentdash_agent_runtime_contract::{
     AgentEffectIdentity, AgentEffectInspection, AgentEffectInspectionState, AgentForkCapability,
     AgentForkCutoffKind, AgentForkPoint, AgentInput, AgentInputContent, AgentInteractionId,
     AgentInteractionRequest, AgentInteractionSnapshot, AgentInteractionStatus, AgentItemId,
-    AgentLifecycleCapability, AgentLifecycleStatus, AgentPayloadDigest, AgentProfileDigest,
-    AgentReadQuery, AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor,
-    AgentServiceError, AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority,
-    AgentSnapshotRevision, AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate,
-    AgentSourceCursor, AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload,
-    AgentSurfaceProfile, AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome,
-    AgentTurnId, AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
+    AgentLifecycleCapability, AgentLifecycleStatus, AgentLiveBatch, AgentLiveBatchStream,
+    AgentLiveStreamError, AgentPayloadDigest, AgentProfileDigest, AgentReadQuery,
+    AgentReceiptState, AgentServiceDefinitionId, AgentServiceDescriptor, AgentServiceError,
+    AgentServiceErrorCode, AgentSnapshot, AgentSnapshotAuthority, AgentSnapshotRevision,
+    AgentSnapshotSource, AgentSourceChangeLevel, AgentSourceCoordinate, AgentSourceCursor,
+    AgentSurfaceCapabilityFacet, AgentSurfaceContributionPayload, AgentSurfaceProfile,
+    AgentSurfaceRoute, AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentTurnId,
+    AppliedAgentCommandReceipt, AppliedAgentSurface, AppliedAgentSurfaceContribution,
     AppliedAgentSurfaceReceipt, AppliedContributionStatus, AppliedForkAgentReceipt,
     AppliedInitialContextEvidence, ApplyBoundAgentSurface, CompleteAgentService,
     CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, InitialAgentContextPackage,
     InitialContextAppliedEvidence, InitialContextContributionKind, InitialContextDeliveryFidelity,
-    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
+    InitialContextProfile, ResumeAgentCommand, RevokeBoundAgentSurface, RuntimeU64,
+    SemanticFidelity,
 };
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -305,6 +307,30 @@ pub trait CodexAppServerTransport: Send + Sync {
         after_sequence: Option<u64>,
         limit: u32,
     ) -> Result<CodexAppServerObservationPage, CodexCompleteAgentTransportError>;
+
+    async fn live_observation_boundary(
+        &self,
+        _source_thread_id: &str,
+    ) -> Result<u64, CodexCompleteAgentTransportError> {
+        Ok(0)
+    }
+
+    async fn wait_for_observations(
+        &self,
+        source_thread_id: &str,
+        after_sequence: u64,
+        limit: u32,
+    ) -> Result<CodexAppServerObservationPage, CodexCompleteAgentTransportError> {
+        loop {
+            let page = self
+                .observations(source_thread_id, Some(after_sequence), limit)
+                .await?;
+            if page.gap || !page.observations.is_empty() {
+                return Ok(page);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -340,10 +366,12 @@ impl CodexCompleteAgentConfig {
 #[derive(Debug, Clone)]
 struct CodexSourceState {
     revision: u64,
+    last_folded_observation_sequence: u64,
     lifecycle: AgentLifecycleStatus,
     applied_surface: Option<AppliedAgentSurface>,
     initial_context: Option<AppliedInitialContextEvidence>,
     pending_interactions: BTreeMap<AgentInteractionId, PendingInteraction>,
+    observation: Option<agentdash_agent_runtime_contract::AgentObservationState>,
 }
 
 #[derive(Debug, Clone)]
@@ -387,7 +415,15 @@ struct CodexCompleteAgentState {
 pub struct CodexCompleteAgentService {
     config: CodexCompleteAgentConfig,
     transport: Arc<dyn CodexAppServerTransport>,
-    state: RwLock<CodexCompleteAgentState>,
+    state: Arc<RwLock<CodexCompleteAgentState>>,
+    live_lanes: Arc<
+        tokio::sync::Mutex<
+            BTreeMap<
+                AgentSourceCoordinate,
+                tokio::sync::broadcast::Sender<Result<AgentLiveBatch, AgentLiveStreamError>>,
+            >,
+        >,
+    >,
 }
 
 impl CodexCompleteAgentService {
@@ -399,7 +435,8 @@ impl CodexCompleteAgentService {
         Ok(Self {
             config,
             transport,
-            state: RwLock::new(CodexCompleteAgentState::default()),
+            state: Arc::new(RwLock::new(CodexCompleteAgentState::default())),
+            live_lanes: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
         })
     }
 
@@ -648,10 +685,12 @@ impl CodexCompleteAgentService {
             .entry(source.clone())
             .or_insert(CodexSourceState {
                 revision: 0,
+                last_folded_observation_sequence: 0,
                 lifecycle: AgentLifecycleStatus::Active,
                 applied_surface: None,
                 initial_context: None,
                 pending_interactions: BTreeMap::new(),
+                observation: None,
             });
         source.revision += 1;
         AgentSnapshotRevision(source.revision)
@@ -734,10 +773,12 @@ impl CompleteAgentService for CodexCompleteAgentService {
             source.clone(),
             CodexSourceState {
                 revision: 1,
+                last_folded_observation_sequence: 0,
                 lifecycle: AgentLifecycleStatus::Active,
                 applied_surface: None,
                 initial_context: initial_context.clone(),
                 pending_interactions: BTreeMap::new(),
+                observation: None,
             },
         );
         state.effects.insert(
@@ -978,6 +1019,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
             child.clone(),
             CodexSourceState {
                 revision: 1,
+                last_folded_observation_sequence: 0,
                 lifecycle: AgentLifecycleStatus::Active,
                 applied_surface: parent_state
                     .as_ref()
@@ -986,6 +1028,7 @@ impl CompleteAgentService for CodexCompleteAgentService {
                     .as_ref()
                     .and_then(|state| state.initial_context.clone()),
                 pending_interactions: BTreeMap::new(),
+                observation: None,
             },
         );
         let receipt = ForkAgentReceipt {
@@ -1206,6 +1249,13 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 false,
             ));
         }
+        let folded_sequence_at_request = self
+            .state
+            .read()
+            .await
+            .sources
+            .get(&query.source)
+            .map_or(0, |source| source.last_folded_observation_sequence);
         let result = self
             .transport
             .request(
@@ -1227,11 +1277,17 @@ impl CompleteAgentService for CodexCompleteAgentService {
             .entry(query.source.clone())
             .or_insert(CodexSourceState {
                 revision: 0,
+                last_folded_observation_sequence: 0,
                 lifecycle: AgentLifecycleStatus::Active,
                 applied_surface: None,
                 initial_context: None,
                 pending_interactions: BTreeMap::new(),
+                observation: None,
             });
+        let newer_live_state = (source.last_folded_observation_sequence
+            > folded_sequence_at_request)
+            .then(|| source.observation.clone())
+            .flatten();
         source.revision += 1;
         let interactions = source
             .pending_interactions
@@ -1247,11 +1303,14 @@ impl CompleteAgentService for CodexCompleteAgentService {
                 },
             )?;
         let observed_at_ms = now_ms();
-        let active_turn = response_active_turn(&result, observed_at_ms)?;
-        let execution = agentdash_agent_runtime_contract::AgentExecutionSnapshot {
-            active_turn,
-            queued_compaction: None,
-            last_compaction_outcome: None,
+        let execution = if let Some(live_state) = newer_live_state.as_ref() {
+            live_state.execution.clone()
+        } else {
+            agentdash_agent_runtime_contract::AgentExecutionSnapshot {
+                active_turn: response_active_turn(&result, observed_at_ms)?,
+                queued_compaction: None,
+                last_compaction_outcome: None,
+            }
         };
         let command_availability = execution.command_availability(
             source.lifecycle,
@@ -1262,33 +1321,39 @@ impl CompleteAgentService for CodexCompleteAgentService {
         let context = codex_context_snapshot(&query.source, revision)?
             .coordinate()
             .clone();
+        let observation = agentdash_agent_runtime_contract::AgentObservation {
+            revision,
+            context,
+            lifecycle: source.lifecycle,
+            execution,
+            command_availability,
+            interactions,
+            thread_name: newer_live_state
+                .and_then(|state| state.thread_name)
+                .or(Some(
+                    agentdash_agent_runtime_contract::AgentThreadNameSnapshot {
+                        thread_name,
+                        source_info: AgentSnapshotSource {
+                            authority: AgentSnapshotAuthority::AgentAuthoritative,
+                            source_revision: None,
+                            fidelity: SemanticFidelity::Exact,
+                            observed_at_ms,
+                        },
+                    },
+                )),
+            source_info: AgentSnapshotSource {
+                authority: AgentSnapshotAuthority::AgentObserved,
+                // App Server does not expose a stable durable snapshot/context revision.
+                source_revision: None,
+                fidelity: SemanticFidelity::Observed,
+                observed_at_ms,
+            },
+            conversation: conversation_history,
+        };
+        source.observation = Some(observation.state());
         Ok(AgentSnapshot {
             source: query.source,
-            observation: agentdash_agent_runtime_contract::AgentObservation {
-                revision,
-                context,
-                lifecycle: source.lifecycle,
-                execution,
-                command_availability,
-                interactions,
-                thread_name: Some(agentdash_agent_runtime_contract::AgentThreadNameSnapshot {
-                    thread_name,
-                    source_info: AgentSnapshotSource {
-                        authority: AgentSnapshotAuthority::AgentAuthoritative,
-                        source_revision: None,
-                        fidelity: SemanticFidelity::Exact,
-                        observed_at_ms,
-                    },
-                }),
-                source_info: AgentSnapshotSource {
-                    authority: AgentSnapshotAuthority::AgentObserved,
-                    // App Server does not expose a stable durable snapshot/context revision.
-                    source_revision: None,
-                    fidelity: SemanticFidelity::Observed,
-                    observed_at_ms,
-                },
-                conversation: conversation_history,
-            },
+            observation,
             applied_surface: source.applied_surface.clone(),
             initial_context: source.initial_context.clone(),
         })
@@ -1352,6 +1417,35 @@ impl CompleteAgentService for CodexCompleteAgentService {
             next: page.next_sequence.map(source_cursor).transpose()?,
             gap: false,
         })
+    }
+
+    async fn live_batches(
+        &self,
+        source: AgentSourceCoordinate,
+    ) -> Result<Box<dyn AgentLiveBatchStream>, AgentServiceError> {
+        let mut lanes = self.live_lanes.lock().await;
+        if let Some(sender) = lanes.get(&source) {
+            return Ok(Box::new(CodexAgentLiveBatchStream {
+                receiver: sender.subscribe(),
+            }));
+        }
+        let after_sequence = self
+            .transport
+            .live_observation_boundary(source.as_str())
+            .await
+            .map_err(|error| map_transport_error(&error))?;
+        let (sender, receiver) = tokio::sync::broadcast::channel(256);
+        lanes.insert(source.clone(), sender.clone());
+        drop(lanes);
+        tokio::spawn(run_codex_live_pump(
+            source,
+            self.transport.clone(),
+            self.state.clone(),
+            self.live_lanes.clone(),
+            sender,
+            after_sequence,
+        ));
+        Ok(Box::new(CodexAgentLiveBatchStream { receiver }))
     }
 
     async fn inspect(
@@ -1653,48 +1747,288 @@ impl CodexCompleteAgentService {
         source: &AgentSourceCoordinate,
         observation: CodexAppServerObservation,
     ) -> Result<AgentChangePayload, AgentServiceError> {
-        let sequence = observation.sequence;
-        match observation.kind {
-            CodexTypedObservation::ServerRequest {
+        map_codex_observation(&self.state, source, observation).await
+    }
+}
+
+async fn map_codex_observation(
+    state: &RwLock<CodexCompleteAgentState>,
+    source: &AgentSourceCoordinate,
+    observation: CodexAppServerObservation,
+) -> Result<AgentChangePayload, AgentServiceError> {
+    let sequence = observation.sequence;
+    match observation.kind {
+        CodexTypedObservation::ServerRequest {
+            request_id,
+            request,
+        } => {
+            let interaction = map_server_request(sequence, &request_id, *request)?;
+            let pending = PendingInteraction {
                 request_id,
-                request,
-            } => {
-                let interaction = map_server_request(sequence, &request_id, *request)?;
-                let pending = PendingInteraction {
-                    request_id,
-                    interaction: interaction.clone(),
-                };
-                let mut state = self.state.write().await;
-                let source_state =
-                    state
-                        .sources
-                        .entry(source.clone())
-                        .or_insert(CodexSourceState {
-                            revision: 0,
-                            lifecycle: AgentLifecycleStatus::Active,
-                            applied_surface: None,
-                            initial_context: None,
-                            pending_interactions: BTreeMap::new(),
-                        });
-                source_state
-                    .pending_interactions
-                    .insert(interaction.id.clone(), pending);
-                source_state.revision += 1;
-                Ok(AgentChangePayload::InteractionChanged { interaction })
+                interaction: interaction.clone(),
+            };
+            let mut state = state.write().await;
+            let source_state = state
+                .sources
+                .entry(source.clone())
+                .or_insert(CodexSourceState {
+                    revision: 0,
+                    last_folded_observation_sequence: 0,
+                    lifecycle: AgentLifecycleStatus::Active,
+                    applied_surface: None,
+                    initial_context: None,
+                    pending_interactions: BTreeMap::new(),
+                    observation: None,
+                });
+            if sequence <= source_state.last_folded_observation_sequence {
+                return Ok(AgentChangePayload::InteractionChanged { interaction });
             }
-            CodexTypedObservation::Notification(notification) => {
-                let presentation = crate::canonical_projection::notification_record(
-                    source.as_str(),
-                    sequence,
-                    &notification,
-                )
-                .map_err(internal_error)?
-                .into_iter()
-                .collect();
-                let state = map_notification(source, *notification)?;
-                Ok(AgentChangePayload::SourceObservation {
-                    state: state.map(Box::new),
+            source_state.last_folded_observation_sequence = sequence;
+            source_state
+                .pending_interactions
+                .insert(interaction.id.clone(), pending);
+            source_state.revision += 1;
+            if let Some(observation) = source_state.observation.as_mut() {
+                observation.revision = AgentSnapshotRevision(source_state.revision);
+                observation.context.snapshot_revision = observation.revision;
+                observation.interactions = source_state
+                    .pending_interactions
+                    .values()
+                    .map(|pending| pending.interaction.clone())
+                    .collect();
+                observation.command_availability = observation.execution.command_availability(
+                    observation.lifecycle,
+                    observation.revision,
+                    true,
+                );
+            }
+            Ok(AgentChangePayload::InteractionChanged { interaction })
+        }
+        CodexTypedObservation::Notification(notification) => {
+            let presentation = crate::canonical_projection::notification_record(
+                source.as_str(),
+                sequence,
+                &notification,
+            )
+            .map_err(internal_error)?
+            .into_iter()
+            .collect();
+            let state_change = map_notification(source, (*notification).clone())?;
+            fold_codex_notification_state(state, source, sequence, &notification).await?;
+            Ok(AgentChangePayload::SourceObservation {
+                state: state_change.map(Box::new),
+                presentation,
+            })
+        }
+    }
+}
+
+async fn fold_codex_notification_state(
+    state: &RwLock<CodexCompleteAgentState>,
+    source: &AgentSourceCoordinate,
+    sequence: u64,
+    notification: &ServerNotification,
+) -> Result<(), AgentServiceError> {
+    use crate::vendor_generated::codex_v2::server_notification::ServerNotification as Source;
+
+    let mut state = state.write().await;
+    let Some(source_state) = state.sources.get_mut(source) else {
+        return Ok(());
+    };
+    if sequence <= source_state.last_folded_observation_sequence {
+        return Ok(());
+    }
+    source_state.last_folded_observation_sequence = sequence;
+    let Some(observation) = source_state.observation.as_mut() else {
+        return Ok(());
+    };
+    let observed_at_ms = now_ms();
+    let changed = match notification {
+        Source::TurnStarted(notification) => {
+            require_notification_source(source, &notification.thread_id, "turn/started")?;
+            let item_json =
+                serde_json::to_value(&notification.turn.items).map_err(internal_error)?;
+            let is_compaction = item_json.as_array().is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("contextCompaction")
+                })
+            });
+            let started_at_ms = notification
+                .turn
+                .started_at
+                .flatten()
+                .and_then(|seconds| u64::try_from(seconds).ok())
+                .and_then(|seconds| seconds.checked_mul(1_000))
+                .unwrap_or(observed_at_ms);
+            observation.execution.active_turn = Some(AgentActiveTurnSnapshot {
+                turn_id: AgentTurnId::new(notification.turn.id.clone()).map_err(internal_error)?,
+                kind: if is_compaction {
+                    AgentActiveTurnKind::ContextCompaction
+                } else {
+                    AgentActiveTurnKind::Conversation
+                },
+                phase: AgentActiveTurnPhase::Running,
+                started_at_ms,
+                cancellable: true,
+            });
+            true
+        }
+        Source::TurnCompleted(notification) => {
+            require_notification_source(source, &notification.thread_id, "turn/completed")?;
+            let completed_turn =
+                AgentTurnId::new(notification.turn.id.clone()).map_err(internal_error)?;
+            if observation
+                .execution
+                .active_turn
+                .as_ref()
+                .is_some_and(|active| active.turn_id != completed_turn)
+            {
+                return Err(protocol_violation(
+                    "turn/completed does not match the active Codex turn",
+                ));
+            }
+            observation.execution.active_turn = None;
+            true
+        }
+        Source::ThreadArchived(notification) => {
+            require_notification_source(source, &notification.thread_id, "thread/archived")?;
+            source_state.lifecycle = AgentLifecycleStatus::Closed;
+            observation.lifecycle = AgentLifecycleStatus::Closed;
+            true
+        }
+        Source::ThreadNameUpdated(notification) => {
+            require_notification_source(source, &notification.thread_id, "thread/name/updated")?;
+            observation.thread_name =
+                Some(agentdash_agent_runtime_contract::AgentThreadNameSnapshot {
+                    thread_name: notification.thread_name.clone(),
+                    source_info: AgentSnapshotSource {
+                        authority: AgentSnapshotAuthority::AgentAuthoritative,
+                        source_revision: None,
+                        fidelity: SemanticFidelity::Exact,
+                        observed_at_ms,
+                    },
+                });
+            true
+        }
+        _ => false,
+    };
+    if changed {
+        source_state.revision = source_state.revision.saturating_add(1);
+        observation.revision = AgentSnapshotRevision(source_state.revision);
+        observation.context.snapshot_revision = observation.revision;
+        observation.source_info.observed_at_ms = observed_at_ms;
+        observation.command_availability = observation.execution.command_availability(
+            observation.lifecycle,
+            observation.revision,
+            !source_state.pending_interactions.is_empty(),
+        );
+    }
+    Ok(())
+}
+
+type CodexLiveSender = tokio::sync::broadcast::Sender<Result<AgentLiveBatch, AgentLiveStreamError>>;
+type CodexLiveLanes = Arc<tokio::sync::Mutex<BTreeMap<AgentSourceCoordinate, CodexLiveSender>>>;
+
+async fn run_codex_live_pump(
+    source: AgentSourceCoordinate,
+    transport: Arc<dyn CodexAppServerTransport>,
+    state: Arc<RwLock<CodexCompleteAgentState>>,
+    live_lanes: CodexLiveLanes,
+    sender: CodexLiveSender,
+    mut after_sequence: u64,
+) {
+    let mut next_batch_sequence = 0_u64;
+    let terminal = 'pump: loop {
+        let page = match transport
+            .wait_for_observations(source.as_str(), after_sequence, 128)
+            .await
+        {
+            Ok(page) => page,
+            Err(error) => {
+                break AgentLiveStreamError::Unavailable {
+                    message: error.message,
+                };
+            }
+        };
+        if page.gap {
+            break AgentLiveStreamError::Lagged { skipped: 1 };
+        }
+        for observation in page.observations {
+            let sequence = observation.sequence();
+            let payload = match map_codex_observation(&state, &source, observation).await {
+                Ok(payload) => payload,
+                Err(error) => {
+                    break 'pump AgentLiveStreamError::Protocol {
+                        message: error.message,
+                    };
+                }
+            };
+            let presentations = match payload {
+                AgentChangePayload::SourceObservation {
+                    state,
                     presentation,
+                } => {
+                    if state.as_deref().is_some_and(|state| {
+                        matches!(state, AgentChangePayload::SnapshotInvalidated { .. })
+                    }) {
+                        break 'pump AgentLiveStreamError::Protocol {
+                            message:
+                                "Codex live observation requires authoritative snapshot reconciliation"
+                                    .to_owned(),
+                        };
+                    }
+                    presentation
+                }
+                AgentChangePayload::SnapshotInvalidated { reason } => {
+                    break 'pump AgentLiveStreamError::Protocol { message: reason };
+                }
+                _ => Vec::new(),
+            };
+            let observation_state = state
+                .read()
+                .await
+                .sources
+                .get(&source)
+                .and_then(|source| source.observation.clone());
+            after_sequence = sequence;
+            if !presentations.is_empty() || observation_state.is_some() {
+                next_batch_sequence = match next_batch_sequence.checked_add(1) {
+                    Some(sequence) => sequence,
+                    None => {
+                        break 'pump AgentLiveStreamError::Protocol {
+                            message: "Codex live batch sequence exhausted".to_owned(),
+                        };
+                    }
+                };
+                let _ = sender.send(Ok(AgentLiveBatch {
+                    source: source.clone(),
+                    sequence: RuntimeU64(next_batch_sequence),
+                    state: observation_state,
+                    presentations,
+                }));
+            }
+        }
+        after_sequence = page.next_sequence.unwrap_or(after_sequence);
+    };
+    live_lanes.lock().await.remove(&source);
+    let _ = sender.send(Err(terminal));
+}
+
+struct CodexAgentLiveBatchStream {
+    receiver: tokio::sync::broadcast::Receiver<Result<AgentLiveBatch, AgentLiveStreamError>>,
+}
+
+#[async_trait]
+impl AgentLiveBatchStream for CodexAgentLiveBatchStream {
+    async fn next(&mut self) -> Result<Option<AgentLiveBatch>, AgentLiveStreamError> {
+        match self.receiver.recv().await {
+            Ok(event) => event.map(Some),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                Err(AgentLiveStreamError::Lagged { skipped })
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                Err(AgentLiveStreamError::Unavailable {
+                    message: "Codex live observation lane closed".to_owned(),
                 })
             }
         }

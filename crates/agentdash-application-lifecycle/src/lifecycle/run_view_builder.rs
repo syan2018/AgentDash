@@ -663,7 +663,7 @@ mod tests {
             &self,
             _target: &AgentRunTarget,
         ) -> Result<
-            Box<dyn agentdash_application_agentrun::agent_run::AgentRuntimeUpdateStream>,
+            agentdash_application_agentrun::agent_run::AgentRuntimeUpdateSubscription,
             AgentRunProductProjectionError,
         > {
             Err(AgentRunProductProjectionError::Runtime("unused".into()))

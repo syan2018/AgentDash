@@ -44,9 +44,24 @@ useEffect(() => { connect(); return disconnect; }, [sessionId, endpoint, connect
 ### NDJSON Update 契约
 
 `/agent-runs/{run_id}/agents/{agent_id}/runtime/updates`逐行输出generated
-`AgentRuntimeUpdate`。validator在transport边界校验`lane_sequence`、`view_revision`、execution、
-command availability、interactions与presentations；解析失败不得进入connection state。
-`lane_sequence`只在当前连接内排序，断线后必须读取`/runtime/view`，不能把它当durable cursor续传。
+`AgentRuntimeStreamFrame`。每个connection epoch先收到`Baseline`，再收到有序`Update`；
+`ResetRequired`显式结束当前live lane。服务端先建立source订阅再读取baseline，原因是这样可以
+覆盖read期间发生的ephemeral事件，同时由presentation identity吸收baseline与buffered durable
+batch的重叠。
+
+transport边界校验frame discriminant、connection epoch、`lane_sequence`、可选owner state与
+presentations。解析失败进入transport重连；connection在同一epoch只清理一次ephemeral lane并
+等待新连接的`Baseline`，原因是并发snapshot recovery会建立多个互相竞争的事实时间点。
+connection向上报告parse/transport error时附带target、当前connection epoch与最后成功
+`lane_sequence`，使浏览器侧协议失败可以定位到具体lane边界。
+`lane_sequence`只在当前connection epoch内排序；`/runtime/view`继续服务命令后的显式收敛。
+
+显式refresh开始后，connection记录这次read期间已经到达的ordered updates。read返回时先用
+authoritative view替换baseline，再以durable presentation identity与state revision重放baseline尚未
+确认的部分；ephemeral presentation始终作为live overlay保留，已被baseline包含的durable
+presentation不重复交付。stream `Baseline`递增generation并使
+更早的refresh返回值失效，`ResetRequired`使当前overlay失效。这样command后的read可以收敛
+authority，同时不会覆盖read窗口内已经观察到的ephemeral或刚提交durable事实。
 
 ---
 
@@ -83,10 +98,12 @@ discriminant，原因是 presentation intent 与 projection invalidation 具有�
 
 ### History Hydrate 与 Live 副作用边界
 
-`useSessionStream`暴露的canonical records用于重建feed、turn segment与审计卡片。
-AgentRuntimeConnection在初次连接、重连和lane gap恢复时登记baseline presentation identities；
-Session页面只把不属于baseline且尚未消费的`presentation_id`交给AgentRun planner。数组下标只服务
-当前render投影，不承担跨快照副作用cursor。
+`useSessionStream`在`Baseline`到达时用durable conversation重建feed、turn segment与审计卡片，
+普通`Update`只归约当前batch。AgentRuntimeConnection在初次连接、重连和lane reset恢复时登记
+baseline presentation identities；Session页面只把不属于baseline且尚未消费的
+`presentation_id`交给AgentRun planner。reset时从最后一次baseline重建可见state并等待新epoch
+baseline，原因是ephemeral lane不可从authority恢复。数组下标只服务当前render投影，不承担
+跨快照副作用cursor。
 
 `WorkspaceModulePresentationRequested` 携带完整 `presentation_uri`。live executor 必须先刷新 AgentRun workspace，再用
 `module_id + view_key + renderer_kind + presentation_uri` 精确匹配当前 ready
@@ -96,10 +113,13 @@ presentation target mapper；renderer kind 只参与 registry target 选择，�
 事件链。命令式打开必须把当前 AgentRun workspace key 一并提交给 tab store，使 workspace
 scope 与 tab mutation 原子完成。
 
-`turn_started`、`turn_completed`与interaction presentations只负责展示。每个
-`AgentRuntimeUpdate`已携带同一次Complete Agent authoritative read得到的execution、interaction与
-command availability，Composer直接归约这些字段。terminal presentation只要求connection执行
-authoritative view convergence，不触发Workspace刷新。
+`turn_started`、`turn_completed`与interaction presentations只负责展示。只有owner在真实状态
+转移点发布的`AgentRuntimeStreamFrame::Update.state`可以更新execution、interaction与command availability。
+provider waiting不能创建active turn；terminal是同turn吸收态。正常terminal batch不触发
+authoritative read或Workspace刷新。terminal到达时关闭同turn现有message/reasoning的streaming
+展示；之后同turn迟到的ephemeral message delta、reasoning delta与tool progress只推进lane消费
+游标，不再修改投影。新turn使用自己的identity继续正常归约，baseline replacement则从authority
+重新建立terminal集合。
 
 ### Terminal Platform Event Projection
 

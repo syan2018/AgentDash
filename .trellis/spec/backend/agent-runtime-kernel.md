@@ -23,10 +23,10 @@ pub trait CompleteAgentService {
         query: AgentReadQuery,
     ) -> Result<AgentSnapshot, AgentServiceError>;
 
-    async fn live_events(
+    async fn live_batches(
         &self,
         source: AgentSourceCoordinate,
-    ) -> Result<Box<dyn AgentLiveEventStream>, AgentServiceError>;
+    ) -> Result<Box<dyn AgentLiveBatchStream>, AgentServiceError>;
 
     async fn inspect(
         &self,
@@ -54,10 +54,11 @@ pub struct AgentRuntimeView {
 ```
 
 ```rust
-pub struct AgentLiveEvent {
+pub struct AgentLiveBatch {
     pub source: AgentSourceCoordinate,
     pub sequence: AgentServiceU64,
-    pub record: CanonicalConversationRecord,
+    pub state: Option<AgentObservationState>,
+    pub presentations: Vec<CanonicalConversationRecord>,
 }
 ```
 
@@ -87,8 +88,8 @@ interface AgentRuntimeConnection {
 Runtime 可以保留平台中立的 `AgentRuntimeView`、operation receipt 与 command DTO，原因是
 它们是 API/adapter contract；它们不因此成为数据库事实。
 
-`AgentObservation` 是 snapshot、live reconcile、context coordinate 与 Product Runtime wrapper
-共享的唯一观测值。`AgentSnapshot`只增加source/surface/initial-context证据，
+`AgentObservation` 是 authoritative snapshot、context coordinate 与 Product Runtime wrapper
+共享的完整观测值；`AgentObservationState`是同一值剔除conversation后的轻量状态。`AgentSnapshot`只增加source/surface/initial-context证据，
 `AgentRuntimeView`只增加Product thread identity；wrapper不复制或重命名内部事实。
 
 ## 3. Contracts
@@ -118,10 +119,13 @@ Runtime 可以保留平台中立的 `AgentRuntimeView`、operation receipt 与 c
   segment，并展示 `turn.error.message`；错误终态不因“没有可渲染文本”而被过滤。
 - `changes` 只有 concrete Agent 真正提供 ordered durable change tail 时才映射该 tail。
   Snapshot-only Agent 通过重复 `read` 恢复，不由 Runtime 伪造 durable cursor。
-- Complete Agent live event 是 connection/process-local `CanonicalConversationRecord`。Runtime
-  对 Application/UI 输出 `AgentRuntimeUpdate`，同一条 update 同时携带最新 execution、command
-  availability、interactions 与 presentation records。`lane_sequence` 只用于当前连接排序；
+- Complete Agent live batch是connection/process-local owner observation。Runtime只校验source并
+  无损转发batch中的可选轻量state与presentation；live路径不得调用`CompleteAgentService::read`，
+  也不得携带完整conversation。`lane_sequence` 只用于当前连接排序；
   gap、Lagged、断连后丢弃 partial lane并重新读取 Agent view。
+- Agent tool执行合同是严格有序的`Started -> Progress(update_index=1..n) -> Completed`。
+  Core只在真正进入callback执行后发布started；deny、校验失败、取消、stream error/EOF和正常结果
+  都必须收敛为唯一terminal，不能让item停留在in-progress。
 - Runtime 不持久化 operation、projection、journal、change、outbox、source identity map、
   availability revision 或 surface snapshot。
 - Runtime 不比较 Product revision 与 derived Runtime projection revision。并发 gate 使用真实

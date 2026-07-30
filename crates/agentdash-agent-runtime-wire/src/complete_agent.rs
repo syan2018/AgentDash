@@ -2,10 +2,11 @@ use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentChange, AgentChangePage, AgentChangesQuery, AgentCommandEnvelope,
     AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot, AgentEffectIdentity,
     AgentEffectInspection, AgentHookDecision, AgentHookInvocation, AgentHostCallbackError,
-    AgentReadQuery, AgentServiceDescriptor, AgentServiceError, AgentServiceInstanceId,
-    AgentSnapshot, AgentSourceCoordinate, AgentToolInvocation, AgentToolResult,
-    AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand,
-    ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
+    AgentItemId, AgentLiveBatch, AgentReadQuery, AgentServiceDescriptor, AgentServiceError,
+    AgentServiceInstanceId, AgentSnapshot, AgentSourceCoordinate, AgentToolExecutionEvent,
+    AgentToolInvocation, AgentToolName, AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface,
+    CreateAgentCommand, ForkAgentCommand, ForkAgentReceipt, ResumeAgentCommand,
+    RevokeBoundAgentSurface,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,7 @@ pub struct RuntimeWireCompleteAgentSchema {
     pub request: RuntimeWireAgentServiceRequest,
     pub response: RuntimeWireAgentServiceResponse,
     pub change: RuntimeWireAgentChangeNotification,
+    pub live_batch: RuntimeWireAgentLiveBatchNotification,
     pub callback_request: RuntimeWireAgentHostCallbackRequest,
     pub callback_response: RuntimeWireAgentHostCallbackResponse,
 }
@@ -76,6 +78,10 @@ pub enum RuntimeWireAgentServiceRequest {
         target: RuntimeWireAgentBindingTarget,
         query: AgentChangesQuery,
     },
+    SubscribeLive {
+        target: RuntimeWireAgentBindingTarget,
+        source: AgentSourceCoordinate,
+    },
     Inspect {
         target: RuntimeWireAgentBindingTarget,
         effect_id: AgentEffectIdentity,
@@ -101,6 +107,7 @@ impl RuntimeWireAgentServiceRequest {
             | Self::Read { .. }
             | Self::Context { .. }
             | Self::Changes { .. }
+            | Self::SubscribeLive { .. }
             | Self::Inspect { .. } => return Ok(()),
             Self::Create { target, command } => (target, command.meta.binding_generation),
             Self::Resume { target, command } => (target, command.meta.binding_generation),
@@ -130,6 +137,7 @@ impl RuntimeWireAgentServiceRequest {
             | Self::Read { target, .. }
             | Self::Context { target, .. }
             | Self::Changes { target, .. }
+            | Self::SubscribeLive { target, .. }
             | Self::Inspect { target, .. }
             | Self::ApplySurface { target, .. }
             | Self::RevokeSurface { target, .. } => Some(target),
@@ -156,6 +164,7 @@ pub enum RuntimeWireAgentServiceResponse {
     Read(Result<Box<AgentSnapshot>, AgentServiceError>),
     Context(Result<Box<AgentContextSnapshot>, AgentServiceError>),
     Changes(Result<Box<AgentChangePage>, AgentServiceError>),
+    SubscribeLive(Result<Box<AgentSourceCoordinate>, AgentServiceError>),
     Inspect(Result<Box<AgentEffectInspection>, AgentServiceError>),
     ApplySurface(Result<Box<AppliedAgentSurfaceReceipt>, AgentServiceError>),
     RevokeSurface(Result<Box<AgentCommandReceipt>, AgentServiceError>),
@@ -172,6 +181,36 @@ pub struct RuntimeWireAgentChangeNotification {
     pub target: RuntimeWireAgentBindingTarget,
     pub source: AgentSourceCoordinate,
     pub change: AgentChange,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeWireAgentLiveBatchNotification {
+    pub target: RuntimeWireAgentBindingTarget,
+    pub event: RuntimeWireAgentLiveEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuntimeWireAgentLiveEvent {
+    Batch {
+        batch: Box<AgentLiveBatch>,
+    },
+    Lagged {
+        source: AgentSourceCoordinate,
+        #[serde(with = "agentdash_agent_runtime_contract::wire_u64")]
+        #[schemars(with = "agentdash_agent_runtime_contract::wire_u64::RuntimeU64")]
+        #[ts(type = "RuntimeU64")]
+        skipped: u64,
+    },
+    Protocol {
+        source: AgentSourceCoordinate,
+        message: String,
+    },
+    Unavailable {
+        source: AgentSourceCoordinate,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -193,8 +232,17 @@ impl RuntimeWireAgentHostCallbackRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "callback", content = "result", rename_all = "snake_case")]
 pub enum RuntimeWireAgentHostCallbackResponse {
-    Tool(Result<Box<AgentToolResult>, AgentHostCallbackError>),
+    Tool(Box<RuntimeWireAgentToolExecutionEvent>),
     Hook(Result<Box<AgentHookDecision>, AgentHostCallbackError>),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeWireAgentToolExecutionEvent {
+    pub effect_id: AgentEffectIdentity,
+    pub item_id: Option<AgentItemId>,
+    pub tool: AgentToolName,
+    pub event: AgentToolExecutionEvent,
 }
 
 #[cfg(test)]
@@ -289,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn every_closed_applied_outcome_round_trips_on_revision_seven() {
+    fn every_closed_applied_outcome_round_trips_on_revision_eight() {
         let command_id = id("command-inspect", AgentCommandId::new);
         let effect_id = id("effect-inspect", AgentEffectIdentity::new);
         let source = id("source-parent", AgentSourceCoordinate::new);

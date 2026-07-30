@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     CoreBeforeToolDecision, CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput,
     CoreMessage, CoreOutput, CoreProvider, CoreTokenUsage, CoreToolCall, CoreToolCallbacks,
-    FinishReason, ProviderEvent, ProviderRequest,
+    CoreToolExecutionEvent, CoreToolResult, FinishReason, ProviderEvent, ProviderRequest,
 };
 
 pub async fn run_agent_loop(
@@ -60,12 +60,6 @@ pub async fn run_agent_loop(
                         .await?;
                 }
                 ProviderEvent::ToolCall { call } => {
-                    callbacks
-                        .emit(CoreEvent::ToolCallRequested {
-                            round,
-                            call: call.clone(),
-                        })
-                        .await?;
                     tool_calls.push(call);
                 }
                 ProviderEvent::Completed {
@@ -113,24 +107,61 @@ pub async fn run_agent_loop(
                     tool_calls.clone(),
                 ));
                 for call in tool_calls {
-                    ensure_not_cancelled(&cancel)?;
                     let decision = tokio::select! {
-                        _ = cancel.cancelled() => return Err(CoreError::Cancelled),
-                        decision = tools.before_tool(call.clone()) => decision?,
+                        _ = cancel.cancelled() => {
+                            close_cancelled_tool(round, &call, callbacks).await?;
+                            return Err(CoreError::Cancelled);
+                        },
+                        decision = tools.before_tool(call.clone()) => match decision {
+                            Ok(decision) => decision,
+                            Err(error) => CoreBeforeToolDecision::Deny {
+                                result: failed_tool_result(
+                                    &call,
+                                    "before_tool_failed",
+                                    &error.to_string(),
+                                ),
+                            },
+                        },
                     };
                     let (effective_call, result) = match decision {
                         CoreBeforeToolDecision::Invoke { call } => {
+                            let result =
+                                consume_tool_execution(round, &call, tools, callbacks, &cancel)
+                                    .await?;
                             let result = tokio::select! {
-                                _ = cancel.cancelled() => return Err(CoreError::Cancelled),
-                                result = tools.invoke(call.clone()) => result?,
-                            };
-                            let result = tokio::select! {
-                                _ = cancel.cancelled() => return Err(CoreError::Cancelled),
-                                result = tools.after_tool(&call, result) => result?,
+                                _ = cancel.cancelled() => {
+                                    let cancelled = failed_tool_result(
+                                        &call,
+                                        "tool_cancelled",
+                                        "tool execution was cancelled",
+                                    );
+                                    callbacks.emit(CoreEvent::ToolCallCompleted {
+                                        round,
+                                        call: call.clone(),
+                                        result: cancelled,
+                                    }).await?;
+                                    return Err(CoreError::Cancelled);
+                                },
+                                result = tools.after_tool(&call, result) => match result {
+                                    Ok(result) => result,
+                                    Err(error) => failed_tool_result(
+                                        &call,
+                                        "after_tool_failed",
+                                        &error.to_string(),
+                                    ),
+                                },
                             };
                             (call, result)
                         }
-                        CoreBeforeToolDecision::Deny { result } => (call, result),
+                        CoreBeforeToolDecision::Deny { result } => {
+                            callbacks
+                                .emit(CoreEvent::ToolCallStarted {
+                                    round,
+                                    call: call.clone(),
+                                })
+                                .await?;
+                            (call, result)
+                        }
                     };
                     callbacks
                         .emit(CoreEvent::ToolCallCompleted {
@@ -156,6 +187,155 @@ pub async fn run_agent_loop(
             message: "provider round counter overflowed".to_owned(),
             retryable: false,
         })?;
+    }
+}
+
+async fn consume_tool_execution(
+    round: u32,
+    call: &CoreToolCall,
+    tools: &dyn CoreToolCallbacks,
+    callbacks: &dyn CoreCallbacks,
+    cancel: &CancellationToken,
+) -> Result<CoreToolResult, CoreError> {
+    let mut stream = match tools.invoke(call.clone()).await {
+        Ok(stream) => stream,
+        Err(error) => {
+            callbacks
+                .emit(CoreEvent::ToolCallStarted {
+                    round,
+                    call: call.clone(),
+                })
+                .await?;
+            return Ok(failed_tool_result(
+                call,
+                "tool_invocation_failed",
+                &error.to_string(),
+            ));
+        }
+    };
+    let mut started = false;
+    let mut last_update_index = 0_u64;
+    loop {
+        let event = tokio::select! {
+            _ = cancel.cancelled() => {
+                if !started {
+                    callbacks.emit(CoreEvent::ToolCallStarted {
+                        round,
+                        call: call.clone(),
+                    }).await?;
+                }
+                return Ok(failed_tool_result(
+                    call,
+                    "tool_cancelled",
+                    "tool execution was cancelled",
+                ));
+            },
+            event = stream.next() => event,
+        };
+        match event {
+            Ok(Some(CoreToolExecutionEvent::Started)) if !started => {
+                started = true;
+                callbacks
+                    .emit(CoreEvent::ToolCallStarted {
+                        round,
+                        call: call.clone(),
+                    })
+                    .await?;
+            }
+            Ok(Some(CoreToolExecutionEvent::Progress {
+                update_index,
+                update,
+            })) if started && last_update_index.checked_add(1) == Some(update_index) => {
+                last_update_index = update_index;
+                callbacks
+                    .emit(CoreEvent::ToolCallProgress {
+                        round,
+                        call: call.clone(),
+                        update_index,
+                        update,
+                    })
+                    .await?;
+            }
+            Ok(Some(CoreToolExecutionEvent::Completed { result })) if started => {
+                return Ok(result);
+            }
+            Ok(Some(_)) => {
+                if !started {
+                    callbacks
+                        .emit(CoreEvent::ToolCallStarted {
+                            round,
+                            call: call.clone(),
+                        })
+                        .await?;
+                }
+                return Ok(failed_tool_result(
+                    call,
+                    "tool_stream_protocol_error",
+                    "tool execution stream violated started/progress/completed ordering",
+                ));
+            }
+            Ok(None) => {
+                if !started {
+                    callbacks
+                        .emit(CoreEvent::ToolCallStarted {
+                            round,
+                            call: call.clone(),
+                        })
+                        .await?;
+                }
+                return Ok(failed_tool_result(
+                    call,
+                    "tool_stream_lost",
+                    "tool execution stream ended before a terminal result",
+                ));
+            }
+            Err(error) => {
+                if !started {
+                    callbacks
+                        .emit(CoreEvent::ToolCallStarted {
+                            round,
+                            call: call.clone(),
+                        })
+                        .await?;
+                }
+                return Ok(failed_tool_result(
+                    call,
+                    "tool_stream_failed",
+                    &error.to_string(),
+                ));
+            }
+        }
+    }
+}
+
+async fn close_cancelled_tool(
+    round: u32,
+    call: &CoreToolCall,
+    callbacks: &dyn CoreCallbacks,
+) -> Result<(), CoreError> {
+    callbacks
+        .emit(CoreEvent::ToolCallStarted {
+            round,
+            call: call.clone(),
+        })
+        .await?;
+    callbacks
+        .emit(CoreEvent::ToolCallCompleted {
+            round,
+            call: call.clone(),
+            result: failed_tool_result(call, "tool_cancelled", "tool execution was cancelled"),
+        })
+        .await
+}
+
+fn failed_tool_result(call: &CoreToolCall, code: &str, message: &str) -> CoreToolResult {
+    CoreToolResult {
+        call_id: call.call_id.clone(),
+        content: vec![crate::CoreToolContent::Text {
+            text: message.to_owned(),
+        }],
+        is_error: true,
+        details: Some(serde_json::json!({"code": code, "message": message})),
     }
 }
 

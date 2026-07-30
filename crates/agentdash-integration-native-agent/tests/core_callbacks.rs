@@ -4,7 +4,8 @@ use std::{
 };
 
 use agentdash_agent::dash::{
-    DashBeforeToolDecision, DashToolCall, DashToolCallbacks, DashToolResult,
+    DashBeforeToolDecision, DashToolCall, DashToolCallbacks, DashToolExecutionEvent,
+    DashToolExecutionStream, DashToolResult,
 };
 use agentdash_agent_runtime_contract::{
     AgentBindingGeneration, AgentCallbackRouteId, AgentHookAction, AgentHookDecision,
@@ -16,6 +17,21 @@ use agentdash_agent_runtime_contract::{
 };
 use agentdash_integration_native_agent::DashAgentCoreToolCallbacks;
 use async_trait::async_trait;
+
+async fn collect_terminal_result(mut stream: Box<dyn DashToolExecutionStream>) -> DashToolResult {
+    assert!(matches!(
+        stream.next().await.unwrap().unwrap(),
+        DashToolExecutionEvent::Started
+    ));
+    loop {
+        match stream.next().await.unwrap() {
+            Some(DashToolExecutionEvent::Progress { .. }) => {}
+            Some(DashToolExecutionEvent::Completed { result }) => return result,
+            Some(DashToolExecutionEvent::Started) => panic!("duplicate tool start"),
+            None => panic!("tool stream ended before completion"),
+        }
+    }
+}
 
 #[derive(Default)]
 struct RecordingCallbacks {
@@ -30,16 +46,23 @@ impl AgentHostCallbacks for RecordingCallbacks {
     async fn invoke_tool(
         &self,
         call: AgentToolInvocation,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+    ) -> Result<
+        Box<dyn agentdash_agent_runtime_contract::AgentToolExecutionStream>,
+        AgentHostCallbackError,
+    > {
         self.tools.lock().unwrap().push(call);
-        Ok(AgentToolResult::Completed {
-            output: self
-                .tool_output
-                .lock()
-                .unwrap()
-                .clone()
-                .unwrap_or_else(|| serde_json::json!({"value": 7})),
-        })
+        Ok(
+            agentdash_agent_runtime_contract::AgentToolExecutionSequence::completed(
+                AgentToolResult::Completed {
+                    output: self
+                        .tool_output
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .unwrap_or_else(|| serde_json::json!({"value": 7})),
+                },
+            ),
+        )
     }
 
     async fn invoke_hook(
@@ -85,7 +108,7 @@ async fn completed_vfs_result_preserves_typed_text_instead_of_serializing_the_en
         },
     );
 
-    let result = callbacks
+    let stream = callbacks
         .invoke(
             &agentdash_agent::dash::AgentTurnId::new("turn-read-result"),
             DashToolCall {
@@ -96,6 +119,7 @@ async fn completed_vfs_result_preserves_typed_text_instead_of_serializing_the_en
         )
         .await
         .unwrap();
+    let result = collect_terminal_result(stream).await;
 
     assert_eq!(
         result.text(),
@@ -264,7 +288,10 @@ impl AgentHostCallbacks for RejectingHookCallbacks {
     async fn invoke_tool(
         &self,
         _: AgentToolInvocation,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+    ) -> Result<
+        Box<dyn agentdash_agent_runtime_contract::AgentToolExecutionStream>,
+        AgentHostCallbackError,
+    > {
         unreachable!("hook rejection happens before tool invocation")
     }
 
@@ -326,7 +353,7 @@ async fn core_tool_calls_only_cross_the_typed_host_callback_route() {
         9_000,
     );
 
-    let result = callbacks
+    let stream = callbacks
         .invoke(
             &agentdash_agent::dash::AgentTurnId::new("turn-1"),
             DashToolCall {
@@ -337,6 +364,7 @@ async fn core_tool_calls_only_cross_the_typed_host_callback_route() {
         )
         .await
         .unwrap();
+    let result = collect_terminal_result(stream).await;
 
     assert!(!result.is_error);
     let calls = host.tools.lock().unwrap();

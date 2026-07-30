@@ -2914,23 +2914,36 @@
       ],
       "type": "string"
     },
-    "AgentLiveEvent": {
+    "AgentLiveBatch": {
       "description": "Process-local, source-scoped observation of an in-flight Agent execution.\n\nThis event is presentation data, not Agent history. `sequence` is only ordered within the\ncurrent Complete Agent service process and may reset after restart. Consumers recover any gap\nby reading the authoritative Agent snapshot.",
       "properties": {
-        "record": {
-          "$ref": "#/$defs/CanonicalConversationRecord"
+        "presentations": {
+          "items": {
+            "$ref": "#/$defs/CanonicalConversationRecord"
+          },
+          "type": "array"
         },
         "sequence": {
           "$ref": "#/$defs/RuntimeU64"
         },
         "source": {
           "type": "string"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentObservationState"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "source",
         "sequence",
-        "record"
+        "presentations"
       ],
       "type": "object"
     },
@@ -3070,6 +3083,78 @@
       },
       "required": [
         "source"
+      ],
+      "type": "object"
+    },
+    "AgentObservationState": {
+      "properties": {
+        "command_availability": {
+          "additionalProperties": false,
+          "properties": {
+            "close": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "fork": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "interrupt": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "request_compaction": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "resolve_interaction": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "steer": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "submit_input": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            }
+          },
+          "type": "object"
+        },
+        "context": {
+          "$ref": "#/$defs/AgentContextCoordinate"
+        },
+        "execution": {
+          "$ref": "#/$defs/AgentExecutionSnapshot"
+        },
+        "interactions": {
+          "items": {
+            "$ref": "#/$defs/AgentInteractionSnapshot"
+          },
+          "type": "array"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/AgentLifecycleStatus"
+        },
+        "revision": {
+          "$ref": "#/$defs/AgentSnapshotRevision"
+        },
+        "source_info": {
+          "$ref": "#/$defs/AgentSnapshotSource"
+        },
+        "thread_name": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentThreadNameSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "revision",
+        "context",
+        "lifecycle",
+        "execution",
+        "command_availability",
+        "interactions",
+        "source_info"
       ],
       "type": "object"
     },
@@ -3272,6 +3357,9 @@
     "AgentRuntimeProjectionSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
+        "stream_frame": {
+          "$ref": "#/$defs/AgentRuntimeStreamFrame"
+        },
         "update": {
           "$ref": "#/$defs/AgentRuntimeUpdate"
         },
@@ -3281,30 +3369,140 @@
       },
       "required": [
         "view",
-        "update"
+        "update",
+        "stream_frame"
       ],
       "title": "AgentRuntimeProjectionSchema",
       "type": "object"
     },
+    "AgentRuntimeResetReason": {
+      "enum": [
+        "lagged",
+        "sequence_gap",
+        "source_mismatch",
+        "protocol_error",
+        "binding_replaced",
+        "transport_disconnected"
+      ],
+      "type": "string"
+    },
+    "AgentRuntimeStreamFrame": {
+      "oneOf": [
+        {
+          "properties": {
+            "connection_epoch": {
+              "$ref": "#/$defs/RuntimeU64"
+            },
+            "kind": {
+              "const": "baseline",
+              "type": "string"
+            },
+            "view": {
+              "$ref": "#/$defs/AgentRuntimeView"
+            }
+          },
+          "required": [
+            "kind",
+            "connection_epoch",
+            "view"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "connection_epoch": {
+              "$ref": "#/$defs/RuntimeU64"
+            },
+            "kind": {
+              "const": "update",
+              "type": "string"
+            },
+            "lane_sequence": {
+              "$ref": "#/$defs/RuntimeU64"
+            },
+            "presentations": {
+              "items": {
+                "$ref": "#/$defs/CanonicalConversationRecord"
+              },
+              "type": "array"
+            },
+            "state": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentObservationState"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "connection_epoch",
+            "lane_sequence",
+            "presentations"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "connection_epoch": {
+              "$ref": "#/$defs/RuntimeU64"
+            },
+            "kind": {
+              "const": "reset_required",
+              "type": "string"
+            },
+            "last_sequence": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuntimeU64"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "reason": {
+              "$ref": "#/$defs/AgentRuntimeResetReason"
+            }
+          },
+          "required": [
+            "kind",
+            "connection_epoch",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "AgentRuntimeUpdate": {
-      "description": "Live Runtime lane update. The authoritative observation is always replaced atomically; the\ntriggering presentation remains separate so clients can bridge a durable-record/read race.",
+      "description": "Live Runtime lane update. State is present only when the source owner publishes a state\ntransition at the same boundary as these presentations. Ephemeral updates never trigger an\nauthoritative read.",
       "properties": {
         "lane_sequence": {
           "$ref": "#/$defs/RuntimeU64"
-        },
-        "observation": {
-          "$ref": "#/$defs/AgentObservation"
         },
         "presentations": {
           "items": {
             "$ref": "#/$defs/CanonicalConversationRecord"
           },
           "type": "array"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentObservationState"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "lane_sequence",
-        "observation",
         "presentations"
       ],
       "type": "object"
@@ -3388,8 +3586,8 @@
         "inspection": {
           "$ref": "#/$defs/AgentEffectInspection"
         },
-        "live_event": {
-          "$ref": "#/$defs/AgentLiveEvent"
+        "live_batch": {
+          "$ref": "#/$defs/AgentLiveBatch"
         },
         "observation": {
           "$ref": "#/$defs/AgentSourceState"
@@ -3418,6 +3616,9 @@
         "surface_contribution_kind": {
           "$ref": "#/$defs/AgentSurfaceContributionKind"
         },
+        "tool_execution_event": {
+          "$ref": "#/$defs/AgentToolExecutionEvent"
+        },
         "tool_invocation": {
           "$ref": "#/$defs/AgentToolInvocation"
         },
@@ -3443,7 +3644,7 @@
         "observation",
         "changes",
         "change_page",
-        "live_event",
+        "live_batch",
         "inspection",
         "applied_effect_outcome",
         "desired_surface",
@@ -3455,6 +3656,7 @@
         "revoke_surface",
         "tool_invocation",
         "tool_result",
+        "tool_execution_event",
         "hook_invocation",
         "hook_decision",
         "error"
@@ -4120,6 +4322,56 @@
         "agent_native_registry"
       ],
       "type": "string"
+    },
+    "AgentToolExecutionEvent": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "started",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "progress",
+              "type": "string"
+            },
+            "output": true,
+            "update_index": {
+              "$ref": "#/$defs/RuntimeU64"
+            }
+          },
+          "required": [
+            "kind",
+            "update_index",
+            "output"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "completed",
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/$defs/AgentToolResult"
+            }
+          },
+          "required": [
+            "kind",
+            "result"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "AgentToolInvocation": {
       "properties": {

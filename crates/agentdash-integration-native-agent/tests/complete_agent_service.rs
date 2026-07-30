@@ -13,7 +13,7 @@ use agentdash_agent::dash::{
     DashConversationNamer, DashConversationNamingRequest, DashCoreError, DashExecutionCallbacks,
     DashExecutionDependencies, DashExecutionEvent, DashFinishReason, DashProvider,
     DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashServiceError,
-    DashToolCall, DashToolCallbacks, DashToolResult, HistoryPayload, NoopDashConversationNamer,
+    DashToolCall, DashToolCallbacks, HistoryPayload, NoopDashConversationNamer,
     NoopDashHistoryCallbacks,
 };
 use agentdash_agent_protocol::{
@@ -35,11 +35,11 @@ use agentdash_agent_runtime_contract::{
     AgentPayloadDigest, AgentProfileDigest, AgentReadQuery, AgentReceiptState, AgentServiceError,
     AgentServiceErrorCode, AgentServiceInstanceId, AgentSnapshotRevision, AgentSourceCoordinate,
     AgentSurfaceContributionPayload, AgentSurfaceDigest, AgentSurfaceRevision, AgentSurfaceRoute,
-    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolInvocation,
-    AgentToolName, AgentToolProvenance, AgentToolResult, AgentToolSemanticFacet,
-    AgentToolUpdateSemantics, ApplyBoundAgentSurface, BoundAgentSurface,
-    BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind, ContextProvenance,
-    CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
+    AgentSurfaceSemanticFacet, AgentTerminalOutcome, AgentToolDelivery, AgentToolExecutionEvent,
+    AgentToolExecutionSequence, AgentToolInvocation, AgentToolName, AgentToolProvenance,
+    AgentToolResult, AgentToolSemanticFacet, AgentToolUpdateSemantics, ApplyBoundAgentSurface,
+    BoundAgentSurface, BoundAgentSurfaceContribution, CompleteAgentService, ContextAuthorityKind,
+    ContextProvenance, CreateAgentCommand, ForkAgentCommand, InitialAgentContextPackage,
     InitialContextAppliedEvidence, InitialContextContribution, InitialContextDeliveryFidelity,
     InitialContextMode, ResumeAgentCommand, RevokeBoundAgentSurface, SemanticFidelity,
 };
@@ -401,7 +401,7 @@ impl DashToolCallbacks for FixtureTools {
         &self,
         _: &DashTurnId,
         _: DashToolCall,
-    ) -> Result<DashToolResult, DashCoreError> {
+    ) -> Result<Box<dyn agentdash_agent::dash::DashToolExecutionStream>, DashCoreError> {
         Err(DashCoreError::Tool {
             message: "fixture provider does not call tools".into(),
             retryable: false,
@@ -425,10 +425,56 @@ impl AgentHostCallbacks for FixtureHostCallbacks {
     async fn invoke_tool(
         &self,
         _: AgentToolInvocation,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
-        Ok(AgentToolResult::Completed {
-            output: serde_json::json!({"ok": true}),
-        })
+    ) -> Result<
+        Box<dyn agentdash_agent_runtime_contract::AgentToolExecutionStream>,
+        AgentHostCallbackError,
+    > {
+        Ok(AgentToolExecutionSequence::completed(
+            AgentToolResult::Completed {
+                output: serde_json::json!({"ok": true}),
+            },
+        ))
+    }
+
+    async fn invoke_hook(
+        &self,
+        _: AgentHookInvocation,
+    ) -> Result<AgentHookDecision, AgentHostCallbackError> {
+        Ok(AgentHookDecision::Allow)
+    }
+}
+
+struct ProgressHostCallbacks;
+
+#[async_trait]
+impl AgentHostCallbacks for ProgressHostCallbacks {
+    async fn invoke_tool(
+        &self,
+        _: AgentToolInvocation,
+    ) -> Result<
+        Box<dyn agentdash_agent_runtime_contract::AgentToolExecutionStream>,
+        AgentHostCallbackError,
+    > {
+        Ok(Box::new(AgentToolExecutionSequence::new([
+            AgentToolExecutionEvent::Started,
+            AgentToolExecutionEvent::Progress {
+                update_index: 1,
+                output: serde_json::json!({
+                    "content": [{"type": "text", "text": "partial"}],
+                    "is_error": false,
+                    "details": {"kind": "fs_read"}
+                }),
+            },
+            AgentToolExecutionEvent::Completed {
+                result: AgentToolResult::Completed {
+                    output: serde_json::json!({
+                        "content": [{"type": "text", "text": "terminal"}],
+                        "is_error": false,
+                        "details": {"kind": "fs_read"}
+                    }),
+                },
+            },
+        ])))
     }
 
     async fn invoke_hook(
@@ -532,14 +578,19 @@ impl AgentHostCallbacks for SurfaceGenerationHostCallbacks {
     async fn invoke_tool(
         &self,
         call: AgentToolInvocation,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+    ) -> Result<
+        Box<dyn agentdash_agent_runtime_contract::AgentToolExecutionStream>,
+        AgentHostCallbackError,
+    > {
         self.generations
             .lock()
             .unwrap()
             .push(call.meta.binding_generation);
-        Ok(AgentToolResult::Completed {
-            output: serde_json::json!({"ok": true}),
-        })
+        Ok(AgentToolExecutionSequence::completed(
+            AgentToolResult::Completed {
+                output: serde_json::json!({"ok": true}),
+            },
+        ))
     }
 
     async fn invoke_hook(
@@ -563,12 +614,17 @@ impl AgentHostCallbacks for HookExecutionCallbacks {
     async fn invoke_tool(
         &self,
         call: AgentToolInvocation,
-    ) -> Result<AgentToolResult, AgentHostCallbackError> {
+    ) -> Result<
+        Box<dyn agentdash_agent_runtime_contract::AgentToolExecutionStream>,
+        AgentHostCallbackError,
+    > {
         self.tools.fetch_add(1, Ordering::SeqCst);
         self.tool_arguments.lock().unwrap().push(call.arguments);
-        Ok(AgentToolResult::Completed {
-            output: serde_json::json!({"content": "original-result"}),
-        })
+        Ok(AgentToolExecutionSequence::completed(
+            AgentToolResult::Completed {
+                output: serde_json::json!({"content": "original-result"}),
+            },
+        ))
     }
 
     async fn invoke_hook(
@@ -1599,7 +1655,7 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         .await
         .unwrap();
 
-    let mut live = service.live_events(source.clone()).await.unwrap();
+    let mut live = service.live_batches(source.clone()).await.unwrap();
     service
         .apply_surface(ApplyBoundAgentSurface {
             command_id: AgentCommandId::new("command-context-surface-2").unwrap(),
@@ -1666,7 +1722,7 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         .unwrap()
         .expect("live stream remains open");
     assert!(matches!(
-        &revision_two_live.record.presentation.envelope.event,
+        &revision_two_live.presentations[0].presentation.envelope.event,
         BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
             if changed.frame.kind == ContextFrameKind::CapabilityStateDelta
                 && changed.frame.delivery_metadata.cache_revision.as_deref() == Some("2")
@@ -2688,6 +2744,138 @@ fn generation_surface(revision: u64) -> BoundAgentSurface {
                 .unwrap(),
         }],
     }
+}
+
+#[tokio::test]
+async fn native_tool_progress_projects_one_canonical_item_lifecycle() {
+    let provider = Arc::new(HookRoundProvider {
+        calls: AtomicUsize::new(0),
+        requests: Mutex::new(Vec::new()),
+    });
+    let service = DashAgentCompleteService::with_host_callbacks(
+        DashExecutionDependencies {
+            provider,
+            tools: Arc::new(FixtureTools),
+            callbacks: Arc::new(FixtureCallbacks),
+            history_callbacks: Arc::new(NoopDashHistoryCallbacks),
+            compactor: Arc::new(FixtureCompactor),
+            conversation_namer: Arc::new(NoopDashConversationNamer),
+        },
+        Arc::new(ProgressHostCallbacks),
+        Arc::new(RecordingCompleteStore::default()),
+    );
+    let source = create_source(&service, "dash-tool-progress").await;
+    service
+        .apply_surface(ApplyBoundAgentSurface {
+            command_id: AgentCommandId::new("tool-progress-apply").unwrap(),
+            effect_id: AgentEffectIdentity::new("tool-progress-effect-apply").unwrap(),
+            idempotency_key: AgentIdempotencyKey::new("tool-progress-idem-apply").unwrap(),
+            source: source.clone(),
+            bound_surface: generation_surface(1),
+            callbacks: AgentHostCallbackBinding {
+                route_id: AgentCallbackRouteId::new("tool-progress-route").unwrap(),
+                binding_generation: AgentBindingGeneration(1),
+                delivery: AgentSurfaceRoute::AgentNativeCallback,
+                default_deadline_ms: 5_000,
+            },
+        })
+        .await
+        .unwrap();
+    let mut live = service.live_batches(source.clone()).await.unwrap();
+    let request = submit_envelope(source, "tool-progress-input", "tool-progress-effect-input");
+    execute_and_wait(&service, request).await;
+
+    let mut lifecycle = Vec::new();
+    for _ in 0..50 {
+        let Ok(result) = tokio::time::timeout(Duration::from_millis(100), live.next()).await else {
+            continue;
+        };
+        let Ok(Some(batch)) = result else {
+            continue;
+        };
+        for record in batch.presentations {
+            let durability = record.presentation.durability;
+            let stage = match record.presentation.envelope.event {
+                BackboneEvent::ItemStarted(notification)
+                    if matches!(
+                        notification.item,
+                        agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                            agentdash_agent_protocol::AgentDashNativeThreadItem::FsRead {
+                                ref id,
+                                status: codex::DynamicToolCallStatus::InProgress,
+                                ..
+                            }
+                        ) if id.contains("hook-call-1")
+                    ) =>
+                {
+                    Some(("started", durability))
+                }
+                BackboneEvent::ItemUpdated(notification)
+                    if matches!(
+                        notification.item,
+                        agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                            agentdash_agent_protocol::AgentDashNativeThreadItem::FsRead {
+                                ref id,
+                                status: codex::DynamicToolCallStatus::InProgress,
+                                ..
+                            }
+                        ) if id.contains("hook-call-1")
+                    ) =>
+                {
+                    Some(("progress", durability))
+                }
+                BackboneEvent::ItemCompleted(notification)
+                    if matches!(
+                        notification.item,
+                        agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                            agentdash_agent_protocol::AgentDashNativeThreadItem::FsRead {
+                                ref id,
+                                status: codex::DynamicToolCallStatus::Completed,
+                                ..
+                            }
+                        ) if id.contains("hook-call-1")
+                    ) =>
+                {
+                    Some(("completed", durability))
+                }
+                _ => None,
+            };
+            if let Some(stage) = stage {
+                lifecycle.push(stage);
+            }
+        }
+        if lifecycle
+            .last()
+            .is_some_and(|(stage, _)| *stage == "completed")
+        {
+            break;
+        }
+    }
+
+    assert_eq!(
+        lifecycle,
+        vec![
+            ("started", PresentationDurability::Durable),
+            ("progress", PresentationDurability::Durable),
+            ("progress", PresentationDurability::Ephemeral),
+            ("progress", PresentationDurability::Durable),
+            ("completed", PresentationDurability::Durable),
+        ]
+    );
+    assert_eq!(
+        lifecycle
+            .iter()
+            .filter(|(stage, _)| *stage == "started")
+            .count(),
+        1
+    );
+    assert_eq!(
+        lifecycle
+            .iter()
+            .filter(|(stage, _)| *stage == "completed")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -4002,43 +4190,42 @@ async fn concurrent_duplicate_submit_returns_the_same_accepted_receipt() {
 async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persisting_a_tail() {
     let service = service();
     let source = create_source(&service, "dash-live-events").await;
-    let mut live_events = service.live_events(source.clone()).await.unwrap();
+    let mut live_events = service.live_batches(source.clone()).await.unwrap();
 
     let request = submit_envelope(source.clone(), "live-input", "live-effect");
     let receipt = service.execute(request.clone()).await.unwrap();
     assert_eq!(receipt.state, AgentReceiptState::Accepted);
 
-    let accepted_input = tokio::time::timeout(Duration::from_secs(1), live_events.next())
+    let accepted = tokio::time::timeout(Duration::from_secs(1), live_events.next())
         .await
         .expect("accepted user input should be published immediately")
         .expect("live event stream should remain available")
         .expect("live event stream should remain open");
-    assert_eq!(accepted_input.source, source);
-    assert_eq!(
-        accepted_input.record.presentation.durability,
-        PresentationDurability::Durable
+    assert_eq!(accepted.source, source);
+    assert!(accepted.state.as_ref().is_some_and(|state| {
+        state
+            .execution
+            .active_turn
+            .as_ref()
+            .is_some_and(|turn| turn.turn_id.as_str() == "turn:live-input")
+    }));
+    assert_eq!(accepted.presentations.len(), 2);
+    assert!(
+        accepted
+            .presentations
+            .iter()
+            .all(|record| { record.presentation.durability == PresentationDurability::Durable })
     );
     assert!(matches!(
-        accepted_input.record.presentation.envelope.event,
+        accepted.presentations[0].presentation.envelope.event,
         BackboneEvent::UserInputSubmitted(_)
     ));
-
-    let turn_started = tokio::time::timeout(Duration::from_secs(1), live_events.next())
-        .await
-        .expect("durable turn start should follow accepted input")
-        .expect("live event stream should remain available")
-        .expect("live event stream should remain open");
-    assert_eq!(turn_started.source, source);
-    assert_eq!(
-        turn_started.record.presentation.durability,
-        PresentationDurability::Durable
-    );
     assert!(matches!(
-        turn_started.record.presentation.envelope.event,
+        accepted.presentations[1].presentation.envelope.event,
         BackboneEvent::TurnStarted(_)
     ));
 
-    let mut previous_sequence = turn_started.sequence.0;
+    let mut previous_sequence = accepted.sequence.0;
     let (text_delta, live_item_id) = loop {
         let event = tokio::time::timeout(Duration::from_secs(1), live_events.next())
             .await
@@ -4048,8 +4235,13 @@ async fn dash_complete_agent_streams_source_scoped_live_deltas_without_persistin
         assert_eq!(event.source, source);
         assert!(event.sequence.0 > previous_sequence);
         previous_sequence = event.sequence.0;
-        if let BackboneEvent::AgentMessageDelta(delta) = event.record.presentation.envelope.event {
-            break (delta.delta, delta.item_id);
+        if let Some((delta, item_id)) = event.presentations.into_iter().find_map(|record| {
+            match record.presentation.envelope.event {
+                BackboneEvent::AgentMessageDelta(delta) => Some((delta.delta, delta.item_id)),
+                _ => None,
+            }
+        }) {
+            break (delta, item_id);
         }
     };
     assert_eq!(text_delta, "fixture answer");
@@ -4123,7 +4315,7 @@ async fn provider_waiting_before_first_delta_is_published_as_live_thinking_state
         started: started.clone(),
     })));
     let source = create_source(&service, "dash-provider-waiting").await;
-    let mut live_events = service.live_events(source.clone()).await.unwrap();
+    let mut live_events = service.live_batches(source.clone()).await.unwrap();
     let execute_service = service.clone();
     let execute_source = source.clone();
     let execution = tokio::spawn(async move {
@@ -4144,17 +4336,22 @@ async fn provider_waiting_before_first_delta_is_published_as_live_thinking_state
             .expect("provider waiting event should arrive")
             .expect("live event stream should remain available")
             .expect("live event stream should remain open");
-        let value = serde_json::to_value(&event.record.presentation.envelope.event).unwrap();
-        if value.pointer("/type").and_then(serde_json::Value::as_str) == Some("platform")
-            && value
-                .pointer("/payload/kind")
-                .and_then(serde_json::Value::as_str)
-                == Some("provider_attempt_status")
-        {
-            waiting_status = value
-                .pointer("/payload/data/phase")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned);
+        for record in event.presentations {
+            let value = serde_json::to_value(&record.presentation.envelope.event).unwrap();
+            if value.pointer("/type").and_then(serde_json::Value::as_str) == Some("platform")
+                && value
+                    .pointer("/payload/kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("provider_attempt_status")
+            {
+                waiting_status = value
+                    .pointer("/payload/data/phase")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+                break;
+            }
+        }
+        if waiting_status.is_some() {
             break;
         }
     }

@@ -2923,6 +2923,39 @@
       ],
       "type": "string"
     },
+    "AgentLiveBatch": {
+      "description": "Process-local, source-scoped observation of an in-flight Agent execution.\n\nThis event is presentation data, not Agent history. `sequence` is only ordered within the\ncurrent Complete Agent service process and may reset after restart. Consumers recover any gap\nby reading the authoritative Agent snapshot.",
+      "properties": {
+        "presentations": {
+          "items": {
+            "$ref": "#/$defs/CanonicalConversationRecord"
+          },
+          "type": "array"
+        },
+        "sequence": {
+          "$ref": "#/$defs/RuntimeU64"
+        },
+        "source": {
+          "type": "string"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentObservationState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "sequence",
+        "presentations"
+      ],
+      "type": "object"
+    },
     "AgentMessageDeltaNotification": {
       "description": "`AgentMessageDeltaNotification`\n\n<details><summary>JSON schema</summary>\n\n```json\n{\n \"title\": \"AgentMessageDeltaNotification\",\n \"type\": \"object\",\n \"required\": [\n   \"delta\",\n   \"itemId\",\n   \"threadId\",\n   \"turnId\"\n ],\n \"properties\": {\n   \"delta\": {\n     \"type\": \"string\"\n   },\n   \"itemId\": {\n     \"type\": \"string\"\n   },\n   \"threadId\": {\n     \"type\": \"string\"\n   },\n   \"turnId\": {\n     \"type\": \"string\"\n   }\n },\n \"$schema\": \"http://json-schema.org/draft-07/schema#\"\n}\n```\n</details>",
       "properties": {
@@ -3048,6 +3081,78 @@
         "interactions",
         "source_info",
         "conversation"
+      ],
+      "type": "object"
+    },
+    "AgentObservationState": {
+      "properties": {
+        "command_availability": {
+          "additionalProperties": false,
+          "properties": {
+            "close": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "fork": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "interrupt": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "request_compaction": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "resolve_interaction": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "steer": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            },
+            "submit_input": {
+              "$ref": "#/$defs/AgentControlAvailability"
+            }
+          },
+          "type": "object"
+        },
+        "context": {
+          "$ref": "#/$defs/AgentContextCoordinate"
+        },
+        "execution": {
+          "$ref": "#/$defs/AgentExecutionSnapshot"
+        },
+        "interactions": {
+          "items": {
+            "$ref": "#/$defs/AgentInteractionSnapshot"
+          },
+          "type": "array"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/AgentLifecycleStatus"
+        },
+        "revision": {
+          "$ref": "#/$defs/AgentSnapshotRevision"
+        },
+        "source_info": {
+          "$ref": "#/$defs/AgentSnapshotSource"
+        },
+        "thread_name": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentThreadNameSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "revision",
+        "context",
+        "lifecycle",
+        "execution",
+        "command_availability",
+        "interactions",
+        "source_info"
       ],
       "type": "object"
     },
@@ -3696,6 +3801,56 @@
         "agent_native_registry"
       ],
       "type": "string"
+    },
+    "AgentToolExecutionEvent": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "started",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "progress",
+              "type": "string"
+            },
+            "output": true,
+            "update_index": {
+              "$ref": "#/$defs/RuntimeU64"
+            }
+          },
+          "required": [
+            "kind",
+            "update_index",
+            "output"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "completed",
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/$defs/AgentToolResult"
+            }
+          },
+          "required": [
+            "kind",
+            "result"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "AgentToolInvocation": {
       "properties": {
@@ -9212,32 +9367,6 @@
         }
       ]
     },
-    "Result_of_AgentToolResult_or_AgentHostCallbackError": {
-      "oneOf": [
-        {
-          "properties": {
-            "Ok": {
-              "$ref": "#/$defs/AgentToolResult"
-            }
-          },
-          "required": [
-            "Ok"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "Err": {
-              "$ref": "#/$defs/AgentHostCallbackError"
-            }
-          },
-          "required": [
-            "Err"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "Result_of_AppliedAgentSurfaceReceipt_or_AgentServiceError": {
       "oneOf": [
         {
@@ -9270,6 +9399,32 @@
           "properties": {
             "Ok": {
               "$ref": "#/$defs/ForkAgentReceipt"
+            }
+          },
+          "required": [
+            "Ok"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "Err": {
+              "$ref": "#/$defs/AgentServiceError"
+            }
+          },
+          "required": [
+            "Err"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Result_of_string_or_AgentServiceError": {
+      "oneOf": [
+        {
+          "properties": {
+            "Ok": {
+              "type": "string"
             }
           },
           "required": [
@@ -9760,7 +9915,7 @@
               "type": "string"
             },
             "result": {
-              "$ref": "#/$defs/Result_of_AgentToolResult_or_AgentHostCallbackError"
+              "$ref": "#/$defs/RuntimeWireAgentToolExecutionEvent"
             }
           },
           "required": [
@@ -9782,6 +9937,101 @@
           "required": [
             "callback",
             "result"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RuntimeWireAgentLiveBatchNotification": {
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/RuntimeWireAgentLiveEvent"
+        },
+        "target": {
+          "$ref": "#/$defs/RuntimeWireAgentBindingTarget"
+        }
+      },
+      "required": [
+        "target",
+        "event"
+      ],
+      "type": "object"
+    },
+    "RuntimeWireAgentLiveEvent": {
+      "oneOf": [
+        {
+          "properties": {
+            "batch": {
+              "$ref": "#/$defs/AgentLiveBatch"
+            },
+            "kind": {
+              "const": "batch",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "batch"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "lagged",
+              "type": "string"
+            },
+            "skipped": {
+              "$ref": "#/$defs/RuntimeU64"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "skipped"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "protocol",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "message"
           ],
           "type": "object"
         }
@@ -10015,6 +10265,34 @@
         {
           "properties": {
             "operation": {
+              "const": "subscribe_live",
+              "type": "string"
+            },
+            "request": {
+              "properties": {
+                "source": {
+                  "type": "string"
+                },
+                "target": {
+                  "$ref": "#/$defs/RuntimeWireAgentBindingTarget"
+                }
+              },
+              "required": [
+                "target",
+                "source"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "operation",
+            "request"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "operation": {
               "const": "inspect",
               "type": "string"
             },
@@ -10231,6 +10509,22 @@
         {
           "properties": {
             "operation": {
+              "const": "subscribe_live",
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/$defs/Result_of_string_or_AgentServiceError"
+            }
+          },
+          "required": [
+            "operation",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "operation": {
               "const": "inspect",
               "type": "string"
             },
@@ -10277,6 +10571,31 @@
           "type": "object"
         }
       ]
+    },
+    "RuntimeWireAgentToolExecutionEvent": {
+      "properties": {
+        "effect_id": {
+          "type": "string"
+        },
+        "event": {
+          "$ref": "#/$defs/AgentToolExecutionEvent"
+        },
+        "item_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tool": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "effect_id",
+        "tool",
+        "event"
+      ],
+      "type": "object"
     },
     "RuntimeWireFrame": {
       "oneOf": [
@@ -10371,6 +10690,22 @@
             },
             "payload": {
               "$ref": "#/$defs/RuntimeWireAgentChangeNotification"
+            }
+          },
+          "required": [
+            "kind",
+            "payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "agent_live_batch",
+              "type": "string"
+            },
+            "payload": {
+              "$ref": "#/$defs/RuntimeWireAgentLiveBatchNotification"
             }
           },
           "required": [

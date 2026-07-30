@@ -11,6 +11,7 @@ function event(
   eventSeq: number,
   notification: BackboneEvent,
   ephemeral: boolean,
+  turnId = "turn-1",
 ): SessionEventEnvelope {
   return {
     session_id: "session-1",
@@ -18,7 +19,7 @@ function event(
     occurred_at_ms: eventSeq,
     committed_at_ms: ephemeral ? null : eventSeq,
     session_update_type: notification.type,
-    turn_id: "turn-1",
+    turn_id: turnId,
     entry_index: null,
     tool_call_id: "patch-1",
     notification: {
@@ -29,7 +30,7 @@ function event(
         connectorType: "codex",
         executorId: null,
       },
-      trace: { turnId: "turn-1", entryIndex: null },
+      trace: { turnId, entryIndex: null },
       observedAt: "2026-07-24T00:00:00Z",
     },
     ephemeral,
@@ -339,5 +340,141 @@ describe("session stream tool progress", () => {
       },
     });
     expect(state.entries[0]?.itemLifecycle).toEqual({ phase: "progress" });
+  });
+});
+
+describe("terminal turn absorption", () => {
+  it("ignores late message, reasoning and tool progress while allowing a new turn", () => {
+    const toolStarted = event(
+      1,
+      {
+        type: "item_started",
+        payload: {
+          threadId: "session-1",
+          turnId: "turn-1",
+          startedAtMs: 1,
+          item: {
+            type: "fileChange",
+            id: "patch-1",
+            changes: [],
+            status: "inProgress",
+          },
+        },
+      },
+      false,
+    );
+    const message = event(
+      1,
+      {
+        type: "agent_message_delta",
+        payload: {
+          threadId: "session-1",
+          turnId: "turn-1",
+          itemId: "message-1",
+          delta: "before terminal",
+        },
+      },
+      true,
+    );
+    const terminal = event(
+      2,
+      {
+        type: "turn_completed",
+        payload: {
+          threadId: "session-1",
+          turn: {
+            id: "turn-1",
+            items: [],
+            itemsView: "full",
+            status: "completed",
+            error: null,
+          },
+        },
+      },
+      false,
+    );
+
+    let state = reduceStreamState(
+      createInitialStreamState([]),
+      [toolStarted, message, terminal],
+    );
+    expect(state.entries.every((entry) => entry.isStreaming !== true)).toBe(true);
+    const terminalEntries = state.entries;
+
+    state = reduceStreamState(state, [
+      event(
+        2,
+        {
+          type: "agent_message_delta",
+          payload: {
+            threadId: "session-1",
+            turnId: "turn-1",
+            itemId: "message-1",
+            delta: " late message",
+          },
+        },
+        true,
+      ),
+      event(
+        3,
+        {
+          type: "reasoning_text_delta",
+          payload: {
+            threadId: "session-1",
+            turnId: "turn-1",
+            itemId: "reasoning-1",
+            contentIndex: 0,
+            delta: "late reasoning",
+          },
+        },
+        true,
+      ),
+      event(
+        4,
+        {
+          type: "file_change_patch_updated",
+          payload: {
+            threadId: "session-1",
+            turnId: "turn-1",
+            itemId: "patch-1",
+            changes: [
+              {
+                path: "src/main.ts",
+                kind: { type: "update", move_path: null },
+                diff: "@@ -1 +1 @@\n-old\n+late",
+              },
+            ],
+          },
+        },
+        true,
+      ),
+    ]);
+
+    expect(state.entries).toEqual(terminalEntries);
+    expect(state.lastEphemeralSeq).toBe(4);
+
+    state = reduceStreamState(state, [
+      event(
+        5,
+        {
+          type: "agent_message_delta",
+          payload: {
+            threadId: "session-1",
+            turnId: "turn-2",
+            itemId: "message-2",
+            delta: "new turn",
+          },
+        },
+        true,
+        "turn-2",
+      ),
+    ]);
+
+    expect(state.entries).toHaveLength(3);
+    expect(state.entries.at(-1)).toMatchObject({
+      turnId: "turn-2",
+      accumulatedText: "new turn",
+      isStreaming: true,
+    });
   });
 });

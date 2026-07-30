@@ -11,10 +11,11 @@ import type { CanonicalConversationRecord, ContextFrame, TurnStatus } from "./ba
 export type AgentRuntimeView = { thread_id: RuntimeThreadId, observation: AgentObservation, };
 
 /**
- * Live Runtime lane update. The authoritative observation is always replaced atomically; the
- * triggering presentation remains separate so clients can bridge a durable-record/read race.
+ * Live Runtime lane update. State is present only when the source owner publishes a state
+ * transition at the same boundary as these presentations. Ephemeral updates never trigger an
+ * authoritative read.
  */
-export type AgentRuntimeUpdate = { lane_sequence: RuntimeU64, observation: AgentObservation, presentations: Array<CanonicalConversationRecord>, };
+export type AgentRuntimeUpdate = { lane_sequence: RuntimeU64, state: AgentObservationState | null, presentations: Array<CanonicalConversationRecord>, };
 
 /**
  * Process-local, source-scoped observation of an in-flight Agent execution.
@@ -23,7 +24,7 @@ export type AgentRuntimeUpdate = { lane_sequence: RuntimeU64, observation: Agent
  * current Complete Agent service process and may reset after restart. Consumers recover any gap
  * by reading the authoritative Agent snapshot.
  */
-export type AgentLiveEvent = { source: AgentSourceCoordinate, sequence: RuntimeU64, record: CanonicalConversationRecord, };
+export type AgentLiveBatch = { source: AgentSourceCoordinate, sequence: RuntimeU64, state: AgentObservationState | null, presentations: Array<CanonicalConversationRecord>, };
 
 /**
  * Product-owned evidence that a Runtime thread is bound to a source.
@@ -41,7 +42,7 @@ export type RuntimeU64 = string & { readonly __runtime_u64: "canonical_unsigned_
 /**
  * Schema root covering every public Complete Agent contract family.
  */
-export type AgentServiceApiSchema = { descriptor: AgentServiceDescriptor, create: CreateAgentCommand, resume: ResumeAgentCommand, fork: ForkAgentCommand, execute: AgentCommandEnvelope, receipt: AgentCommandReceipt, fork_receipt: ForkAgentReceipt, create_evidence: AgentCreateEvidence, read: AgentReadQuery, snapshot: AgentSnapshot, context_query: AgentContextQuery, context_snapshot: AgentContextSnapshot, execution_snapshot: AgentExecutionSnapshot, observe: AgentObservationQuery, observation: AgentSourceState, changes: AgentChangesQuery, change_page: AgentChangePage, live_event: AgentLiveEvent, inspection: AgentEffectInspection, applied_effect_outcome: AgentAppliedEffectOutcome, desired_surface: AgentSurfaceSnapshot, surface_contribution_kind: AgentSurfaceContributionKind, offer: AgentRuntimeOffer, bound_surface: BoundAgentSurface, applied_surface: AppliedAgentSurface, apply_surface: ApplyBoundAgentSurface, revoke_surface: RevokeBoundAgentSurface, tool_invocation: AgentToolInvocation, tool_result: AgentToolResult, hook_invocation: AgentHookInvocation, hook_decision: AgentHookDecision, error: AgentServiceError, };
+export type AgentServiceApiSchema = { descriptor: AgentServiceDescriptor, create: CreateAgentCommand, resume: ResumeAgentCommand, fork: ForkAgentCommand, execute: AgentCommandEnvelope, receipt: AgentCommandReceipt, fork_receipt: ForkAgentReceipt, create_evidence: AgentCreateEvidence, read: AgentReadQuery, snapshot: AgentSnapshot, context_query: AgentContextQuery, context_snapshot: AgentContextSnapshot, execution_snapshot: AgentExecutionSnapshot, observe: AgentObservationQuery, observation: AgentSourceState, changes: AgentChangesQuery, change_page: AgentChangePage, live_batch: AgentLiveBatch, inspection: AgentEffectInspection, applied_effect_outcome: AgentAppliedEffectOutcome, desired_surface: AgentSurfaceSnapshot, surface_contribution_kind: AgentSurfaceContributionKind, offer: AgentRuntimeOffer, bound_surface: BoundAgentSurface, applied_surface: AppliedAgentSurface, apply_surface: ApplyBoundAgentSurface, revoke_surface: RevokeBoundAgentSurface, tool_invocation: AgentToolInvocation, tool_result: AgentToolResult, tool_execution_event: AgentToolExecutionEvent, hook_invocation: AgentHookInvocation, hook_decision: AgentHookDecision, error: AgentServiceError, };
 
 /**
  * 工具 owner 声明的 canonical conversation presentation family。
@@ -225,6 +226,8 @@ export type AgentObservation = { revision: AgentSnapshotRevision, context: Agent
 
 export type AgentObservationQuery = { source: AgentSourceCoordinate, };
 
+export type AgentObservationState = { revision: AgentSnapshotRevision, context: AgentContextCoordinate, lifecycle: AgentLifecycleStatus, execution: AgentExecutionSnapshot, command_availability: { [key in AgentControlKind]?: AgentControlAvailability }, interactions: Array<AgentInteractionSnapshot>, thread_name: AgentThreadNameSnapshot | null, source_info: AgentSnapshotSource, };
+
 export type AgentPayloadDigest = string;
 
 export type AgentProfileDigest = string;
@@ -247,7 +250,11 @@ export type AgentRuntimeOperationReceipt = { operation_id: AgentEffectIdentity, 
 
 export type AgentRuntimeOperationStatus = "accepted" | "running" | "succeeded" | "failed" | "interrupted" | "lost";
 
-export type AgentRuntimeProjectionSchema = { view: AgentRuntimeView, update: AgentRuntimeUpdate, };
+export type AgentRuntimeProjectionSchema = { view: AgentRuntimeView, update: AgentRuntimeUpdate, stream_frame: AgentRuntimeStreamFrame, };
+
+export type AgentRuntimeResetReason = "lagged" | "sequence_gap" | "source_mismatch" | "protocol_error" | "binding_replaced" | "transport_disconnected";
+
+export type AgentRuntimeStreamFrame = { "kind": "baseline", connection_epoch: RuntimeU64, view: AgentRuntimeView, } | { "kind": "update", connection_epoch: RuntimeU64, lane_sequence: RuntimeU64, state: AgentObservationState | null, presentations: Array<CanonicalConversationRecord>, } | { "kind": "reset_required", connection_epoch: RuntimeU64, reason: AgentRuntimeResetReason, last_sequence: RuntimeU64 | null, };
 
 export type AgentServiceDefinitionId = string;
 
@@ -304,6 +311,8 @@ export type AgentTerminalOutcome = "succeeded" | "failed" | "interrupted" | "clo
 export type AgentThreadNameSnapshot = { thread_name: string | null, source_info: AgentSnapshotSource, };
 
 export type AgentToolDelivery = "prompt_declaration" | "runtime_broker_callback" | "agent_native_callback" | "agent_native_registry";
+
+export type AgentToolExecutionEvent = { "kind": "started" } | { "kind": "progress", update_index: RuntimeU64, output: JsonValue, } | { "kind": "completed", result: AgentToolResult, };
 
 export type AgentToolInvocation = { meta: AgentHostCallbackMeta, tool: AgentToolName, arguments: JsonValue, };
 

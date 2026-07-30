@@ -11,7 +11,8 @@ pub use core_execution::{
     DashFinishReason, DashMessage, DashMessageRole, DashProvider, DashProviderEvent,
     DashProviderEventStream, DashProviderRequest, DashProviderRoundMaterializer,
     DashProviderRoundSnapshots, DashToolCall, DashToolCallbacks, DashToolDefinition,
-    DashToolResult, execution_assistant_item_id, execution_tool_item_id,
+    DashToolExecutionEvent, DashToolExecutionSequence, DashToolExecutionStream, DashToolResult,
+    execution_assistant_item_id, execution_tool_item_id,
 };
 pub use history::{
     ActivityStatus, AgentHistory, AgentHistoryEntry, AgentHistoryReplayer, AgentHistoryState,
@@ -19,8 +20,9 @@ pub use history::{
     CompactionState, ContextDeliveryFidelity, ContextRevision, DashSurface, DashSurfaceInstruction,
     ForkCutoff, ForkLineage, HistoryContribution, HistoryEntryId, HistoryError, HistoryPayload,
     InitialContextContribution, InitialContextInstallation, InitialContextMode, InteractionId,
-    InteractionState, ItemDetails, ItemKind, ItemState, SessionStatus, ToolActivityResult,
-    TurnState, accepted_compaction_summary_frame, compaction_context_revision, fold_history,
+    InteractionState, ItemDetails, ItemKind, ItemState, ProjectedAgentHistoryEntry, SessionStatus,
+    ToolActivityResult, TurnState, accepted_compaction_summary_frame, compaction_context_revision,
+    fold_history,
 };
 pub use lifecycle::{
     CommandDependency, CommandId, CommandOutcome, CommandStatus, DashCommand, DashCommandKind,
@@ -33,7 +35,7 @@ pub use service::{
     DashContextRecipeMessage, DashConversationNamer, DashConversationNamingRequest,
     DashEffectInspection, DashExecutionDependencies, DashHistoryCallbacks, DashHistoryCommit,
     DashPublicCommand, DashReceiptState, DashServiceError, DashTerminalOutcome,
-    NoopDashConversationNamer, NoopDashHistoryCallbacks,
+    NoopDashConversationNamer, NoopDashHistoryCallbacks, context_recipe_from_history_state,
 };
 pub use store::{
     CommandSettlement, DashAgentChange, DashAgentCommit, DashAgentStore, DashChangeCursor,

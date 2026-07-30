@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { SessionDisplayEntry, SessionEventEnvelope } from "./types";
-import { createInitialStreamState, reduceStreamState } from "./sessionStreamReducer";
+import {
+  constrainStreamStateToActiveTurn,
+  createInitialStreamState,
+  reduceStreamState,
+} from "./sessionStreamReducer";
 import { mergeThinkingIntoDisplayItems, segmentByTurn } from "./useSessionFeed";
 
 function failedTurnEvent(): SessionEventEnvelope {
@@ -266,5 +270,34 @@ describe("provider waiting thinking state", () => {
 
     expect(completedState.providerWaitingSeqs.has("turn-1")).toBe(false);
     expect(mergeThinkingIntoDisplayItems([], completedState.providerWaitingSeqs)).toEqual([]);
+  });
+
+  it("does not reopen a terminal turn when an older waiting presentation arrives late", () => {
+    const terminal = failedTurnEvent();
+    const terminalState = reduceStreamState(
+      createInitialStreamState([]),
+      [terminal],
+    );
+    const lateWaitingState = reduceStreamState(
+      terminalState,
+      [providerStatusEvent("connected_waiting_first_delta", 3)],
+    );
+
+    expect(lateWaitingState.terminalTurnIds.has("turn-1")).toBe(true);
+    expect(lateWaitingState.providerWaitingSeqs.has("turn-1")).toBe(false);
+    expect(
+      mergeThinkingIntoDisplayItems([], lateWaitingState.providerWaitingSeqs),
+    ).toEqual([]);
+  });
+
+  it("authoritative idle state clears every transient waiting turn", () => {
+    const waitingState = reduceStreamState(
+      createInitialStreamState([]),
+      [providerStatusEvent("connected_waiting_first_delta", 1)],
+    );
+
+    const idleState = constrainStreamStateToActiveTurn(waitingState, null);
+
+    expect(idleState.providerWaitingSeqs.size).toBe(0);
   });
 });

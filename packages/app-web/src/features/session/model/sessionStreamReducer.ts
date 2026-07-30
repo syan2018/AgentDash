@@ -20,6 +20,7 @@ export interface SessionStreamState {
   rawEvents: SessionEventEnvelope[];
   tokenUsage: TokenUsageInfo | null;
   providerWaitingSeqs: ReadonlyMap<string, number>;
+  terminalTurnIds: ReadonlySet<string>;
   lastAppliedSeq: number;
   /**
    * 最近应用的 ephemeral 事件的 ephemeral_seq（承载于 event.event_seq）。
@@ -38,6 +39,7 @@ export function createInitialStreamState(initialEntries: SessionDisplayEntry[]):
     rawEvents: [],
     tokenUsage: null,
     providerWaitingSeqs: new Map(),
+    terminalTurnIds: new Set(),
     lastAppliedSeq,
     lastEphemeralSeq: 0,
   };
@@ -214,6 +216,24 @@ function isWillRetryErrorEvent(event: BackboneEvent): boolean {
   return event.type === "error" && event.payload.willRetry === true;
 }
 
+function isTurnProgressEvent(event: BackboneEvent): boolean {
+  switch (event.type) {
+    case "agent_message_delta":
+    case "reasoning_text_delta":
+    case "reasoning_summary_delta":
+    case "item_started":
+    case "item_updated":
+    case "item_completed":
+    case "command_output_delta":
+    case "file_change_delta":
+    case "file_change_patch_updated":
+    case "mcp_tool_call_progress":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function readStringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
@@ -266,6 +286,7 @@ export function extractTerminalTurnId(event: SessionEventEnvelope): string | nul
 
 function updateProviderWaitingSeqs(
   current: ReadonlyMap<string, number>,
+  terminalTurnIds: ReadonlySet<string>,
   event: SessionEventEnvelope,
 ): ReadonlyMap<string, number> {
   const terminalTurnId = extractTerminalTurnId(event);
@@ -278,6 +299,9 @@ function updateProviderWaitingSeqs(
 
   const status = extractProviderAttemptStatus(event);
   if (!status?.turnId) {
+    return current;
+  }
+  if (terminalTurnIds.has(status.turnId)) {
     return current;
   }
 
@@ -504,8 +528,16 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return prev;
   }
 
-  if (bbEvent.type === "turn_started" || bbEvent.type === "turn_completed") {
+  if (bbEvent.type === "turn_started") {
     return prev;
+  }
+
+  if (bbEvent.type === "turn_completed") {
+    return prev.map((entry) =>
+      entry.turnId === bbEvent.payload.turn.id && entry.isStreaming === true
+        ? { ...entry, isStreaming: false }
+        : entry
+    );
   }
 
   if (bbEvent.type === "turn_plan_updated") {
@@ -609,6 +641,7 @@ export function reduceStreamState(
   let rawEvents = prev.rawEvents;
   let tokenUsage = prev.tokenUsage;
   let providerWaitingSeqs = prev.providerWaitingSeqs;
+  let terminalTurnIds = prev.terminalTurnIds;
   let lastAppliedSeq = prev.lastAppliedSeq;
   let lastEphemeralSeq = prev.lastEphemeralSeq;
 
@@ -619,7 +652,20 @@ export function reduceStreamState(
       if (event.event_seq <= lastEphemeralSeq) {
         continue;
       }
-      providerWaitingSeqs = updateProviderWaitingSeqs(providerWaitingSeqs, event);
+      const turnId = eventTurnId(event);
+      if (
+        turnId
+        && terminalTurnIds.has(turnId)
+        && isTurnProgressEvent(event.notification.event)
+      ) {
+        lastEphemeralSeq = event.event_seq;
+        continue;
+      }
+      providerWaitingSeqs = updateProviderWaitingSeqs(
+        providerWaitingSeqs,
+        terminalTurnIds,
+        event,
+      );
       entries = applyEventToEntries(entries, event);
       lastEphemeralSeq = event.event_seq;
       continue;
@@ -630,7 +676,15 @@ export function reduceStreamState(
     }
 
     rawEvents = [...rawEvents, event];
-    providerWaitingSeqs = updateProviderWaitingSeqs(providerWaitingSeqs, event);
+    const terminalTurnId = extractTerminalTurnId(event);
+    if (terminalTurnId && !terminalTurnIds.has(terminalTurnId)) {
+      terminalTurnIds = new Set(terminalTurnIds).add(terminalTurnId);
+    }
+    providerWaitingSeqs = updateProviderWaitingSeqs(
+      providerWaitingSeqs,
+      terminalTurnIds,
+      event,
+    );
     entries = applyEventToEntries(entries, event);
     const usage = extractTokenUsageFromEvent(event.notification.event);
     if (usage) {
@@ -644,6 +698,7 @@ export function reduceStreamState(
     rawEvents,
     tokenUsage,
     providerWaitingSeqs,
+    terminalTurnIds,
     lastAppliedSeq,
     lastEphemeralSeq,
   };
@@ -661,6 +716,33 @@ export function resetEphemeralCursor(prev: SessionStreamState): SessionStreamSta
     return prev;
   }
   return { ...prev, providerWaitingSeqs: new Map(), lastEphemeralSeq: 0 };
+}
+
+/**
+ * Authoritative execution state gates transient provider telemetry. A waiting presentation can
+ * describe an active turn, but it cannot create or resurrect one.
+ */
+export function constrainStreamStateToActiveTurn(
+  prev: SessionStreamState,
+  activeTurnId: string | null,
+): SessionStreamState {
+  const waiting = activeTurnId == null
+    ? new Map<string, number>()
+    : new Map(
+        [...prev.providerWaitingSeqs].filter(
+          ([turnId]) =>
+            turnId === activeTurnId && !prev.terminalTurnIds.has(turnId),
+        ),
+      );
+  if (
+    waiting.size === prev.providerWaitingSeqs.size
+    && [...waiting].every(
+      ([turnId, sequence]) => prev.providerWaitingSeqs.get(turnId) === sequence,
+    )
+  ) {
+    return prev;
+  }
+  return { ...prev, providerWaitingSeqs: waiting };
 }
 
 export function shouldFlushStreamEventImmediately(event: SessionEventEnvelope): boolean {

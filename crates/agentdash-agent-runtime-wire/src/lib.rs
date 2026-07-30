@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 7;
+pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 8;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
@@ -66,6 +66,7 @@ pub enum RuntimeWireResponse {
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum RuntimeWireNotification {
     AgentChange(Box<RuntimeWireAgentChangeNotification>),
+    AgentLiveBatch(Box<RuntimeWireAgentLiveBatchNotification>),
     Heartbeat {
         last_received_frame_id: RuntimeWireFrameId,
     },
@@ -153,7 +154,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn revision_seven_is_the_only_accepted_revision() {
+    fn revision_eight_is_the_only_accepted_revision() {
         let bytes = serde_json::to_vec(&RuntimeWireEnvelope {
             protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
             frame_id: RuntimeWireFrameId(1),
@@ -174,7 +175,7 @@ mod tests {
             decode_frame(&serde_json::to_vec(&old).expect("encode old frame")),
             Err(RuntimeProtocolViolation::UnsupportedRevision {
                 received: 4,
-                supported: 7,
+                supported: 8,
             })
         );
     }
@@ -196,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn revision_seven_typescript_root_exports_lossless_decimal_frame_ids() {
+    fn revision_eight_typescript_root_exports_lossless_decimal_frame_ids() {
         let temp = tempfile::tempdir().expect("create TypeScript export directory");
         RuntimeWireEnvelope::export_all_to(temp.path()).expect("export Runtime Wire contracts");
         RuntimeWireU64::export_all_to(temp.path()).expect("export Wire u64");

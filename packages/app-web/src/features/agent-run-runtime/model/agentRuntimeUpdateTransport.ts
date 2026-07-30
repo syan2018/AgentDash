@@ -1,8 +1,8 @@
 import { buildApiPath } from "../../../api/origin";
 import { FetchNdjsonStream } from "../../../api/ndjsonStream";
 import {
-  decodeAgentRuntimeUpdate,
-  type AgentRuntimeUpdate,
+  decodeAgentRuntimeStreamFrame,
+  type AgentRuntimeStreamFrame,
 } from "../../../generated/agent-runtime-codecs";
 import {
   agentRunScopedPath,
@@ -17,7 +17,7 @@ export type AgentRuntimeConnectionLifecycle =
 
 export interface AgentRuntimeUpdateTransportOptions {
   agentRunTarget: AgentRunRuntimeTarget;
-  onEvent: (update: AgentRuntimeUpdate) => void;
+  onEvent: (frame: AgentRuntimeStreamFrame) => void;
   onLifecycleChange: (lifecycle: AgentRuntimeConnectionLifecycle) => void;
   onError: (error: Error) => void;
 }
@@ -26,9 +26,51 @@ export interface AgentRuntimeUpdateTransport {
   close: () => void;
 }
 
-export function parseAgentRuntimeUpdate(payload: unknown): AgentRuntimeUpdate | null {
+const RESET_REASONS = new Set([
+  "lagged",
+  "sequence_gap",
+  "source_mismatch",
+  "protocol_error",
+  "binding_replaced",
+  "transport_disconnected",
+]);
+
+export function parseAgentRuntimeStreamFrame(
+  payload: unknown,
+): AgentRuntimeStreamFrame | null {
   try {
-    return decodeAgentRuntimeUpdate(payload);
+    if (
+      typeof payload !== "object"
+      || payload == null
+      || !("kind" in payload)
+    ) {
+      return null;
+    }
+    const frame = decodeAgentRuntimeStreamFrame(payload);
+    if (frame.kind === "baseline") {
+      return typeof frame.connection_epoch === "bigint"
+          && typeof frame.view === "object"
+          && frame.view != null
+        ? frame
+        : null;
+    }
+    if (frame.kind === "update") {
+      return typeof frame.connection_epoch === "bigint"
+          && typeof frame.lane_sequence === "bigint"
+          && (frame.state == null || typeof frame.state === "object")
+          && Array.isArray(frame.presentations)
+        ? frame
+        : null;
+    }
+    if (frame.kind === "reset_required") {
+      return typeof frame.connection_epoch === "bigint"
+          && RESET_REASONS.has(frame.reason)
+          && (frame.last_sequence == null
+            || typeof frame.last_sequence === "bigint")
+        ? frame
+        : null;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -37,11 +79,11 @@ export function parseAgentRuntimeUpdate(payload: unknown): AgentRuntimeUpdate | 
 export function createAgentRuntimeUpdateTransport(
   options: AgentRuntimeUpdateTransportOptions,
 ): AgentRuntimeUpdateTransport {
-  return new FetchNdjsonStream<AgentRuntimeUpdate>({
+  return new FetchNdjsonStream<AgentRuntimeStreamFrame>({
     url: buildApiPath(
       agentRunScopedPath(options.agentRunTarget, "/runtime/updates"),
     ),
-    parsePayload: parseAgentRuntimeUpdate,
+    parsePayload: parseAgentRuntimeStreamFrame,
     readCursor: () => null,
     onEvent: options.onEvent,
     onLifecycleChange: options.onLifecycleChange,

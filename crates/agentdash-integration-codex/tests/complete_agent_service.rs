@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeSet, VecDeque},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use agentdash_agent_runtime_contract::{
@@ -34,6 +37,9 @@ struct RecordingTransport {
     responses_to_server: Mutex<Vec<(Value, Value)>>,
     server_response_results: Mutex<VecDeque<Result<(), CodexCompleteAgentTransportError>>>,
     notifications: Mutex<Vec<(String, Option<Value>)>>,
+    block_thread_read: AtomicBool,
+    thread_read_started: tokio::sync::Notify,
+    release_thread_read: tokio::sync::Notify,
 }
 
 impl RecordingTransport {
@@ -76,6 +82,11 @@ impl CodexAppServerTransport for RecordingTransport {
         params: Value,
     ) -> Result<Value, CodexCompleteAgentTransportError> {
         self.requests.lock().await.push((method.to_owned(), params));
+        if method == "thread/read" && self.block_thread_read.load(Ordering::Acquire) {
+            let released = self.release_thread_read.notified();
+            self.thread_read_started.notify_waiters();
+            released.await;
+        }
         let (expected, response) = self
             .responses
             .lock()
@@ -161,6 +172,239 @@ async fn service(transport: Arc<RecordingTransport>) -> Arc<dyn CompleteAgentSer
     .expect("registration");
     transport.requests.lock().await.clear();
     registration.service()
+}
+
+#[tokio::test]
+async fn codex_live_batches_subscribe_to_typed_process_observations() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = AgentSourceCoordinate::new("thread-parent").expect("source");
+    let mut live = service
+        .live_batches(source)
+        .await
+        .expect("live subscription");
+    transport
+        .observations
+        .lock()
+        .await
+        .push_back(CodexAppServerObservationPage {
+            observations: vec![
+                CodexAppServerObservation::notification(
+                    7,
+                    "thread/name/updated",
+                    json!({
+                        "threadId": "thread-parent",
+                        "threadName": "Live title"
+                    }),
+                )
+                .expect("typed notification"),
+            ],
+            next_sequence: Some(7),
+            gap: false,
+        });
+    let batch = tokio::time::timeout(std::time::Duration::from_secs(1), live.next())
+        .await
+        .expect("live deadline")
+        .expect("live result")
+        .expect("live batch");
+    assert_eq!(batch.sequence.0, 1);
+    assert_eq!(batch.presentations.len(), 1);
+}
+
+#[tokio::test]
+async fn codex_live_batches_share_one_source_pump_and_fold_each_observation_once() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport
+        .push_response(
+            "thread/read",
+            json!({"thread": {"id": "thread-parent", "turns": []}}),
+        )
+        .await;
+    let baseline = service
+        .read(AgentReadQuery {
+            source: source.clone(),
+            at_revision: None,
+        })
+        .await
+        .expect("baseline read");
+    let mut first = service
+        .live_batches(source.clone())
+        .await
+        .expect("first live subscription");
+    let mut second = service
+        .live_batches(source.clone())
+        .await
+        .expect("second live subscription");
+    transport
+        .observations
+        .lock()
+        .await
+        .push_back(CodexAppServerObservationPage {
+            observations: vec![
+                CodexAppServerObservation::notification(
+                    7,
+                    "turn/started",
+                    json!({
+                        "threadId": "thread-parent",
+                        "turn": {
+                            "id": "turn-live",
+                            "items": [],
+                            "status": "inProgress"
+                        }
+                    }),
+                )
+                .expect("turn started"),
+                CodexAppServerObservation::notification(
+                    9,
+                    "turn/completed",
+                    json!({
+                        "threadId": "thread-parent",
+                        "turn": {
+                            "id": "turn-live",
+                            "items": [],
+                            "status": "completed"
+                        }
+                    }),
+                )
+                .expect("turn completed"),
+            ],
+            next_sequence: Some(9),
+            gap: false,
+        });
+
+    let first_started = first.next().await.unwrap().expect("first started");
+    let second_started = second.next().await.unwrap().expect("second started");
+    assert_eq!(first_started, second_started);
+    assert_eq!(first_started.sequence.0, 1);
+    assert_eq!(
+        first_started
+            .state
+            .as_ref()
+            .and_then(|state| state.execution.active_turn.as_ref())
+            .map(|turn| turn.turn_id.as_str()),
+        Some("turn-live")
+    );
+    assert_eq!(
+        first_started.state.as_ref().map(|state| state.revision.0),
+        Some(baseline.observation.revision.0 + 1)
+    );
+
+    let first_completed = first.next().await.unwrap().expect("first completed");
+    let second_completed = second.next().await.unwrap().expect("second completed");
+    assert_eq!(first_completed, second_completed);
+    assert_eq!(first_completed.sequence.0, 2);
+    assert!(
+        first_completed
+            .state
+            .as_ref()
+            .is_some_and(|state| state.execution.active_turn.is_none())
+    );
+    assert_eq!(
+        first_completed.state.as_ref().map(|state| state.revision.0),
+        Some(baseline.observation.revision.0 + 2)
+    );
+    assert_eq!(
+        transport
+            .methods()
+            .await
+            .into_iter()
+            .filter(|method| method == "thread/read")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn thread_read_preserves_live_owner_state_folded_while_the_rpc_is_in_flight() {
+    let transport = Arc::new(RecordingTransport::default());
+    let service = service(transport.clone()).await;
+    let source = create_source(service.as_ref(), &transport).await;
+    transport
+        .push_response(
+            "thread/read",
+            json!({"thread": {"id": "thread-parent", "turns": []}}),
+        )
+        .await;
+    service
+        .read(AgentReadQuery {
+            source: source.clone(),
+            at_revision: None,
+        })
+        .await
+        .expect("baseline read");
+    let mut live = service
+        .live_batches(source.clone())
+        .await
+        .expect("live subscription");
+    transport
+        .push_response(
+            "thread/read",
+            json!({"thread": {"id": "thread-parent", "turns": []}}),
+        )
+        .await;
+    transport.block_thread_read.store(true, Ordering::Release);
+    let read_started = transport.thread_read_started.notified();
+    let read_service = service.clone();
+    let read_source = source.clone();
+    let pending_read = tokio::spawn(async move {
+        read_service
+            .read(AgentReadQuery {
+                source: read_source,
+                at_revision: None,
+            })
+            .await
+    });
+    read_started.await;
+    transport
+        .observations
+        .lock()
+        .await
+        .push_back(CodexAppServerObservationPage {
+            observations: vec![
+                CodexAppServerObservation::notification(
+                    11,
+                    "turn/started",
+                    json!({
+                        "threadId": "thread-parent",
+                        "turn": {
+                            "id": "turn-during-read",
+                            "items": [],
+                            "status": "inProgress"
+                        }
+                    }),
+                )
+                .expect("turn started"),
+            ],
+            next_sequence: Some(11),
+            gap: false,
+        });
+    let live_started = live.next().await.unwrap().expect("live started");
+    transport.release_thread_read.notify_waiters();
+    let snapshot = pending_read
+        .await
+        .expect("read task")
+        .expect("read snapshot");
+
+    assert_eq!(
+        live_started
+            .state
+            .as_ref()
+            .and_then(|state| state.execution.active_turn.as_ref())
+            .map(|turn| turn.turn_id.as_str()),
+        Some("turn-during-read")
+    );
+    assert_eq!(
+        snapshot
+            .observation
+            .execution
+            .active_turn
+            .as_ref()
+            .map(|turn| turn.turn_id.as_str()),
+        Some("turn-during-read")
+    );
+    assert!(snapshot.observation.revision > live_started.state.expect("live state").revision);
 }
 
 #[tokio::test]

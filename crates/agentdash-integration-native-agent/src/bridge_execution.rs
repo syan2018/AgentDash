@@ -9,7 +9,7 @@ use agentdash_agent::{
         DashConversationNamer, DashConversationNamingRequest, DashCoreError,
         DashExecutionCallbacks, DashExecutionDependencies, DashExecutionEvent, DashFinishReason,
         DashMessageRole, DashProvider, DashProviderEvent, DashProviderEventStream,
-        DashProviderRequest, DashServiceError, DashToolCall, DashToolCallbacks, DashToolResult,
+        DashProviderRequest, DashServiceError, DashToolCall, DashToolCallbacks,
         NoopDashHistoryCallbacks,
     },
 };
@@ -239,7 +239,7 @@ impl DashToolCallbacks for UnboundDashToolCallbacks {
         &self,
         _turn_id: &agentdash_agent::dash::AgentTurnId,
         _call: DashToolCall,
-    ) -> Result<DashToolResult, DashCoreError> {
+    ) -> Result<Box<dyn agentdash_agent::dash::DashToolExecutionStream>, DashCoreError> {
         Err(DashCoreError::Tool {
             message: "Dash Agent tool callbacks are not bound to an applied surface".to_owned(),
             retryable: false,

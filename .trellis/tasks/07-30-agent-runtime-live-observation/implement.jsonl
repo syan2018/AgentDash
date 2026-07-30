@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "Runtime snapshot、live、Lagged与恢复合同"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "Native owner history、execution callback与live发布合同"}
+{"file": ".trellis/spec/backend/agent-runtime-driver-host.md", "reason": "Host callback、generation与remote route边界"}
+{"file": ".trellis/spec/backend/agent-runtime-agentrun-facade.md", "reason": "Product facade的authoritative read/live职责"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "canonical presentation与item lifecycle合同"}
+{"file": ".trellis/spec/cross-layer/agent-runtime-wire-relay.md", "reason": "RuntimeWire顺序、backpressure与callback correlation"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "前端Runtime connection唯一owner与canonical边界"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Session stream、增量归约与hydration副作用边界"}
+{"file": ".trellis/tasks/07-30-agent-runtime-live-observation/research/current-chain-assessment.md", "reason": "当前回归链路、提交和测试盲区证据"}
+{"file": ".trellis/tasks/07-30-agent-runtime-live-observation/research/runtime-stream-contract-notes.md", "reason": "浏览器Runtime合同、现有漂移点和必须保留的验证面"}

@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust错误、DTO与检查规范"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "TypeScript、stream merge与测试规范"}
+{"file": ".trellis/spec/backend/agent-runtime-kernel.md", "reason": "核对snapshot/live恢复不变量"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "核对Native owner与live composition"}
+{"file": ".trellis/spec/backend/agent-runtime-codex-adapter.md", "reason": "核对Codex process observation到Complete Agent live batch的source sequence与owner state"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "核对canonical item生命周期"}
+{"file": ".trellis/spec/cross-layer/agent-runtime-wire-relay.md", "reason": "核对Wire顺序、gap和disconnect语义"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "核对前端控制态与presentation边界"}
+{"file": ".trellis/tasks/07-30-agent-runtime-live-observation/research/current-chain-assessment.md", "reason": "复核所有已确认根因均被验证覆盖"}
+{"file": ".trellis/tasks/07-30-agent-runtime-live-observation/research/runtime-stream-contract-notes.md", "reason": "核对浏览器Runtime合同与恢复验证面"}

@@ -2,7 +2,8 @@ use agentdash_agent::dash::{
     AgentHistory, AgentSessionId, AgentTurnId, BranchId, DashCancellation, DashCoreContext,
     DashCoreError, DashCoreTurn, DashExecutionCallbacks, DashExecutionEvent, DashFinishReason,
     DashProvider, DashProviderEvent, DashProviderEventStream, DashProviderRequest, DashToolCall,
-    DashToolCallbacks, DashToolResult, HistoryContribution, HistoryEntryId, HistoryPayload,
+    DashToolCallbacks, DashToolExecutionStream, HistoryContribution, HistoryEntryId,
+    HistoryPayload,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -37,7 +38,7 @@ impl DashToolCallbacks for NoTools {
         &self,
         _: &AgentTurnId,
         _: DashToolCall,
-    ) -> Result<DashToolResult, DashCoreError> {
+    ) -> Result<Box<dyn DashToolExecutionStream>, DashCoreError> {
         panic!("provider did not request tools")
     }
 }

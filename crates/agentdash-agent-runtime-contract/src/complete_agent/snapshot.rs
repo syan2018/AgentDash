@@ -310,6 +310,19 @@ impl AgentExecutionSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct AgentObservationState {
+    pub revision: AgentSnapshotRevision,
+    pub context: crate::AgentContextCoordinate,
+    pub lifecycle: AgentLifecycleStatus,
+    pub execution: AgentExecutionSnapshot,
+    pub command_availability: BTreeMap<AgentControlKind, AgentControlAvailability>,
+    pub interactions: Vec<AgentInteractionSnapshot>,
+    pub thread_name: Option<AgentThreadNameSnapshot>,
+    pub source_info: AgentSnapshotSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct AgentObservation {
     pub revision: AgentSnapshotRevision,
     pub context: crate::AgentContextCoordinate,
@@ -324,6 +337,30 @@ pub struct AgentObservation {
 }
 
 impl AgentObservation {
+    pub fn state(&self) -> AgentObservationState {
+        AgentObservationState {
+            revision: self.revision,
+            context: self.context.clone(),
+            lifecycle: self.lifecycle,
+            execution: self.execution.clone(),
+            command_availability: self.command_availability.clone(),
+            interactions: self.interactions.clone(),
+            thread_name: self.thread_name.clone(),
+            source_info: self.source_info.clone(),
+        }
+    }
+
+    pub fn replace_state(&mut self, state: AgentObservationState) {
+        self.revision = state.revision;
+        self.context = state.context;
+        self.lifecycle = state.lifecycle;
+        self.execution = state.execution;
+        self.command_availability = state.command_availability;
+        self.interactions = state.interactions;
+        self.thread_name = state.thread_name;
+        self.source_info = state.source_info;
+    }
+
     pub fn conversation(&self) -> agentdash_agent_protocol::CanonicalConversationView<'_> {
         agentdash_agent_protocol::CanonicalConversationView::new(&self.conversation)
     }

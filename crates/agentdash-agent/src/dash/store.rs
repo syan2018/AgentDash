@@ -4,7 +4,7 @@ use thiserror::Error;
 use super::{
     AgentHistory, AgentHistoryEntry, AgentHistoryReplayer, CommandId, CommandOutcome,
     CommandStatus, CompactionId, DashCommand, DashCommandKind, DashLifecycle, HistoryContribution,
-    HistoryEntryId, HistoryError, HistoryPayload, LifecycleError,
+    HistoryEntryId, HistoryError, HistoryPayload, LifecycleError, ProjectedAgentHistoryEntry,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +48,8 @@ pub struct DashAgentChange {
 pub struct DashAgentStore {
     history: AgentHistory,
     lifecycle: DashLifecycle,
+    #[serde(skip)]
+    pending_history_projections: Vec<ProjectedAgentHistoryEntry>,
 }
 
 impl DashAgentStore {
@@ -56,6 +58,7 @@ impl DashAgentStore {
         Ok(Self {
             history,
             lifecycle: DashLifecycle::default(),
+            pending_history_projections: Vec::new(),
         })
     }
 
@@ -65,6 +68,10 @@ impl DashAgentStore {
 
     pub fn lifecycle(&self) -> &DashLifecycle {
         &self.lifecycle
+    }
+
+    pub fn take_pending_history_projections(&mut self) -> Vec<ProjectedAgentHistoryEntry> {
+        std::mem::take(&mut self.pending_history_projections)
     }
 
     pub fn changes(&self) -> Result<Vec<DashAgentChange>, StoreError> {
@@ -321,7 +328,12 @@ impl DashAgentStore {
         for command in commit.enqueue_commands {
             staged.lifecycle.enqueue(command)?;
         }
-        let appended = staged.history.append_batch(commit.history)?;
+        let projections = staged.history.append_batch_projected(commit.history)?;
+        let appended = projections
+            .iter()
+            .map(|projection| projection.entry.clone())
+            .collect();
+        staged.pending_history_projections.extend(projections);
         *self = staged;
         Ok(appended)
     }

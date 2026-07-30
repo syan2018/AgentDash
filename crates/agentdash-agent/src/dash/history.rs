@@ -341,6 +341,13 @@ pub struct AgentHistoryEntry {
     pub payload: HistoryPayload,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectedAgentHistoryEntry {
+    pub entry: AgentHistoryEntry,
+    pub previous_surface: Option<DashSurface>,
+    pub state: AgentHistoryState,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ForkCutoff {
     Head,
@@ -411,6 +418,17 @@ impl AgentHistory {
         &mut self,
         contributions: Vec<HistoryContribution>,
     ) -> Result<Vec<AgentHistoryEntry>, HistoryError> {
+        Ok(self
+            .append_batch_projected(contributions)?
+            .into_iter()
+            .map(|projection| projection.entry)
+            .collect())
+    }
+
+    pub fn append_batch_projected(
+        &mut self,
+        contributions: Vec<HistoryContribution>,
+    ) -> Result<Vec<ProjectedAgentHistoryEntry>, HistoryError> {
         let mut staged = self.clone();
         let first_new = staged.entries.len();
         for contribution in contributions {
@@ -422,8 +440,19 @@ impl AgentHistory {
             };
             staged.entries.push(entry);
         }
-        fold_history(&staged)?;
-        let appended = staged.entries[first_new..].to_vec();
+        let mut replay = AgentHistoryReplayer::new(&staged);
+        let mut appended = Vec::with_capacity(staged.entries.len().saturating_sub(first_new));
+        for (index, entry) in staged.entries.iter().enumerate() {
+            let previous_surface = replay.state().surface.clone();
+            let state = replay.apply(entry)?.clone();
+            if index >= first_new {
+                appended.push(ProjectedAgentHistoryEntry {
+                    entry: entry.clone(),
+                    previous_surface,
+                    state,
+                });
+            }
+        }
         *self = staged;
         Ok(appended)
     }

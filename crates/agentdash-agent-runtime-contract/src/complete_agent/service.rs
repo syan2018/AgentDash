@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -12,7 +12,7 @@ use crate::{
     AgentCommandEnvelope, AgentCommandReceipt, AgentContextQuery, AgentContextSnapshot,
     AgentEffectIdentity, AgentEffectInspection, AgentHookAction, AgentHookDefinitionId,
     AgentHookPoint, AgentHookTiming, AgentIdempotencyKey, AgentInteractionId, AgentItemId,
-    AgentLiveEventStream, AgentObservationQuery, AgentReadQuery, AgentServiceDescriptor,
+    AgentLiveBatchStream, AgentObservationQuery, AgentReadQuery, AgentServiceDescriptor,
     AgentSnapshot, AgentSourceCoordinate, AgentSourceState, AgentToolName, AgentTurnId,
     AppliedAgentSurfaceReceipt, ApplyBoundAgentSurface, CreateAgentCommand, ForkAgentCommand,
     ForkAgentReceipt, ResumeAgentCommand, RevokeBoundAgentSurface,
@@ -88,6 +88,53 @@ pub enum AgentToolResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentToolExecutionEvent {
+    Started,
+    Progress {
+        #[serde(with = "crate::wire_u64")]
+        #[schemars(with = "crate::wire_u64::RuntimeU64")]
+        #[ts(type = "RuntimeU64")]
+        update_index: u64,
+        output: Value,
+    },
+    Completed {
+        result: AgentToolResult,
+    },
+}
+
+#[async_trait]
+pub trait AgentToolExecutionStream: Send {
+    async fn next(&mut self) -> Result<Option<AgentToolExecutionEvent>, AgentHostCallbackError>;
+}
+
+pub struct AgentToolExecutionSequence {
+    events: VecDeque<AgentToolExecutionEvent>,
+}
+
+impl AgentToolExecutionSequence {
+    pub fn new(events: impl IntoIterator<Item = AgentToolExecutionEvent>) -> Self {
+        Self {
+            events: events.into_iter().collect(),
+        }
+    }
+
+    pub fn completed(result: AgentToolResult) -> Box<dyn AgentToolExecutionStream> {
+        Box::new(Self::new([
+            AgentToolExecutionEvent::Started,
+            AgentToolExecutionEvent::Completed { result },
+        ]))
+    }
+}
+
+#[async_trait]
+impl AgentToolExecutionStream for AgentToolExecutionSequence {
+    async fn next(&mut self) -> Result<Option<AgentToolExecutionEvent>, AgentHostCallbackError> {
+        Ok(self.events.pop_front())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentHookInvocation {
     pub meta: AgentHostCallbackMeta,
@@ -157,7 +204,7 @@ pub trait AgentHostCallbacks: Send + Sync {
     async fn invoke_tool(
         &self,
         call: AgentToolInvocation,
-    ) -> Result<AgentToolResult, AgentHostCallbackError>;
+    ) -> Result<Box<dyn AgentToolExecutionStream>, AgentHostCallbackError>;
 
     async fn invoke_hook(
         &self,
@@ -219,10 +266,10 @@ pub trait CompleteAgentService: Send + Sync {
     async fn changes(&self, query: AgentChangesQuery)
     -> Result<AgentChangePage, AgentServiceError>;
 
-    async fn live_events(
+    async fn live_batches(
         &self,
         _source: AgentSourceCoordinate,
-    ) -> Result<Box<dyn AgentLiveEventStream>, AgentServiceError> {
+    ) -> Result<Box<dyn AgentLiveBatchStream>, AgentServiceError> {
         Err(AgentServiceError::new(
             AgentServiceErrorCode::Unsupported,
             "Complete Agent does not expose process-local live events",

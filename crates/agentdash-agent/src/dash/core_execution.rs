@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -7,8 +7,9 @@ use std::{
 use agentdash_agent_core::{
     CoreBeforeToolDecision, CoreCallbacks, CoreContext, CoreError, CoreEvent, CoreInput,
     CoreMessage, CoreOutput, CoreProvider, CoreRole, CoreTokenUsage, CoreTool, CoreToolCall,
-    CoreToolCallbacks, CoreToolContent, CoreToolResult, FinishReason, ProviderEvent,
-    ProviderEventStream, ProviderRequest, run_agent_loop,
+    CoreToolCallbacks, CoreToolContent, CoreToolExecutionEvent, CoreToolExecutionStream,
+    CoreToolResult, FinishReason, ProviderEvent, ProviderEventStream, ProviderRequest,
+    run_agent_loop,
 };
 use agentdash_agent_protocol::ToolProtocolProjector;
 use async_trait::async_trait;
@@ -88,6 +89,50 @@ pub struct DashToolResult {
     pub details: Option<Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DashToolExecutionEvent {
+    Started,
+    Progress {
+        update_index: u64,
+        update: DashToolResult,
+    },
+    Completed {
+        result: DashToolResult,
+    },
+}
+
+#[async_trait]
+pub trait DashToolExecutionStream: Send {
+    async fn next(&mut self) -> Result<Option<DashToolExecutionEvent>, DashCoreError>;
+}
+
+pub struct DashToolExecutionSequence {
+    events: VecDeque<DashToolExecutionEvent>,
+}
+
+impl DashToolExecutionSequence {
+    pub fn new(events: impl IntoIterator<Item = DashToolExecutionEvent>) -> Self {
+        Self {
+            events: events.into_iter().collect(),
+        }
+    }
+
+    pub fn completed(result: DashToolResult) -> Box<dyn DashToolExecutionStream> {
+        Box::new(Self::new([
+            DashToolExecutionEvent::Started,
+            DashToolExecutionEvent::Completed { result },
+        ]))
+    }
+}
+
+#[async_trait]
+impl DashToolExecutionStream for DashToolExecutionSequence {
+    async fn next(&mut self) -> Result<Option<DashToolExecutionEvent>, DashCoreError> {
+        Ok(self.events.pop_front())
+    }
+}
+
 impl DashToolResult {
     #[must_use]
     pub fn text(&self) -> String {
@@ -150,9 +195,15 @@ pub enum DashCoreEvent {
         round: u32,
         delta: String,
     },
-    ToolCallRequested {
+    ToolCallStarted {
         round: u32,
         call: DashToolCall,
+    },
+    ToolCallProgress {
+        round: u32,
+        call: DashToolCall,
+        update_index: u64,
+        update: DashToolResult,
     },
     ToolCallCompleted {
         round: u32,
@@ -325,7 +376,7 @@ pub trait DashToolCallbacks: Send + Sync {
         &self,
         turn_id: &AgentTurnId,
         call: DashToolCall,
-    ) -> Result<DashToolResult, DashCoreError>;
+    ) -> Result<Box<dyn DashToolExecutionStream>, DashCoreError>;
 
     async fn after_tool(
         &self,
@@ -646,8 +697,12 @@ impl CoreToolCallbacks for ToolAdapter<'_> {
             .map_err(core_error)
     }
 
-    async fn invoke(&self, call: CoreToolCall) -> Result<CoreToolResult, CoreError> {
-        self.inner
+    async fn invoke(
+        &self,
+        call: CoreToolCall,
+    ) -> Result<Box<dyn CoreToolExecutionStream>, CoreError> {
+        let stream = self
+            .inner
             .invoke(
                 &self.turn_id,
                 DashToolCall {
@@ -657,13 +712,8 @@ impl CoreToolCallbacks for ToolAdapter<'_> {
                 },
             )
             .await
-            .map(|result| CoreToolResult {
-                call_id: result.call_id,
-                content: result.content.into_iter().map(core_tool_content).collect(),
-                is_error: result.is_error,
-                details: result.details,
-            })
-            .map_err(core_error)
+            .map_err(core_error)?;
+        Ok(Box::new(CoreToolStreamAdapter { inner: stream }))
     }
 
     async fn after_tool(
@@ -694,6 +744,46 @@ impl CoreToolCallbacks for ToolAdapter<'_> {
                 details: result.details,
             })
             .map_err(core_error)
+    }
+}
+
+struct CoreToolStreamAdapter {
+    inner: Box<dyn DashToolExecutionStream>,
+}
+
+#[async_trait]
+impl CoreToolExecutionStream for CoreToolStreamAdapter {
+    async fn next(&mut self) -> Result<Option<CoreToolExecutionEvent>, CoreError> {
+        self.inner
+            .next()
+            .await
+            .map(|event| {
+                event.map(|event| match event {
+                    DashToolExecutionEvent::Started => CoreToolExecutionEvent::Started,
+                    DashToolExecutionEvent::Progress {
+                        update_index,
+                        update,
+                    } => CoreToolExecutionEvent::Progress {
+                        update_index,
+                        update: core_tool_result(update),
+                    },
+                    DashToolExecutionEvent::Completed { result } => {
+                        CoreToolExecutionEvent::Completed {
+                            result: core_tool_result(result),
+                        }
+                    }
+                })
+            })
+            .map_err(core_error)
+    }
+}
+
+fn core_tool_result(result: DashToolResult) -> CoreToolResult {
+    CoreToolResult {
+        call_id: result.call_id,
+        content: result.content.into_iter().map(core_tool_content).collect(),
+        is_error: result.is_error,
+        details: result.details,
     }
 }
 
@@ -824,12 +914,32 @@ fn dash_event(event: CoreEvent) -> DashCoreEvent {
         CoreEvent::ReasoningDelta { round, delta } => {
             DashCoreEvent::ReasoningDelta { round, delta }
         }
-        CoreEvent::ToolCallRequested { round, call } => DashCoreEvent::ToolCallRequested {
+        CoreEvent::ToolCallStarted { round, call } => DashCoreEvent::ToolCallStarted {
             round,
             call: DashToolCall {
                 call_id: call.call_id,
                 name: call.name,
                 arguments: call.arguments,
+            },
+        },
+        CoreEvent::ToolCallProgress {
+            round,
+            call,
+            update_index,
+            update,
+        } => DashCoreEvent::ToolCallProgress {
+            round,
+            call: DashToolCall {
+                call_id: call.call_id,
+                name: call.name,
+                arguments: call.arguments,
+            },
+            update_index,
+            update: DashToolResult {
+                call_id: update.call_id,
+                content: update.content.into_iter().map(dash_tool_content).collect(),
+                is_error: update.is_error,
+                details: update.details,
             },
         },
         CoreEvent::ToolCallCompleted {

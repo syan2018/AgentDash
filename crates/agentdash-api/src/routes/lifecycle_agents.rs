@@ -1,9 +1,12 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use agentdash_agent_runtime_contract::{
     AgentContextAuthority, AgentContextCoordinate, AgentContextFidelity, AgentPayloadDigest,
-    AgentRuntimeContextProjection, AgentRuntimeContextRequirement, AgentServiceErrorCode,
-    AgentSnapshotRevision,
+    AgentRuntimeContextProjection, AgentRuntimeContextRequirement, AgentRuntimeResetReason,
+    AgentRuntimeStreamFrame, AgentServiceErrorCode, AgentSnapshotRevision, RuntimeU64,
 };
 use agentdash_application::agent_run_list::{
     AgentRunListChildModel, ProjectAgentRunListInput, ProjectAgentRunListQuery,
@@ -24,6 +27,7 @@ use agentdash_contracts::agent_run_interaction::{
 use agentdash_contracts::agent_run_product_projection as product_projection_contract;
 use agentdash_contracts::session::SessionMessageRefDto;
 use agentdash_contracts::workflow::{AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto};
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::agent_run_target::AgentRunTarget;
 use axum::{
     Json,
@@ -43,6 +47,7 @@ use crate::{
 
 const DEFAULT_PRODUCT_CHANGE_PAGE_LIMIT: usize = 256;
 const MAX_PRODUCT_CHANGE_PAGE_LIMIT: usize = 256;
+static NEXT_AGENT_RUNTIME_CONNECTION_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Deserialize)]
 pub struct ProductProjectionChangesQuery {
@@ -613,28 +618,115 @@ async fn get_agent_runtime_updates(
         ProjectPermission::Use,
     )
     .await?;
-    let mut updates = state
+    let subscription = state
         .services
         .agent_run_product_projection
         .runtime_updates(&target)
         .await
         .map_err(agent_run_product_projection_error)?;
+    let connection_epoch = NEXT_AGENT_RUNTIME_CONNECTION_EPOCH.fetch_add(1, Ordering::Relaxed);
+    let source = subscription.source;
+    let baseline = subscription.baseline;
+    let mut updates = subscription.updates;
     let stream = async_stream::stream! {
-        // Flush the transport immediately so browser/dev proxies expose the connected state
-        // before the first Agent event. Empty NDJSON lines carry no domain fact.
-        yield Ok::<Bytes, std::convert::Infallible>(Bytes::from_static(b"\n"));
+        let mut last_sequence = None;
+        let baseline_frame = AgentRuntimeStreamFrame::Baseline {
+            connection_epoch,
+            view: baseline,
+        };
+        match serde_json::to_vec(&baseline_frame) {
+            Ok(mut raw) => {
+                raw.push(b'\n');
+                yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(raw));
+            }
+            Err(error) => {
+                diag!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    run_id = %run_id,
+                    agent_id = %agent_id,
+                    source = ?source,
+                    connection_epoch,
+                    error = %error,
+                    "failed to serialize Agent Runtime baseline"
+                );
+                let reset = AgentRuntimeStreamFrame::ResetRequired {
+                    connection_epoch,
+                    reason: AgentRuntimeResetReason::ProtocolError,
+                    last_sequence: None,
+                };
+                if let Ok(mut raw) = serde_json::to_vec(&reset) {
+                    raw.push(b'\n');
+                    yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(raw));
+                }
+                return;
+            }
+        }
         loop {
             match updates.next().await {
                 Ok(Some(update)) => {
-                    match serde_json::to_vec(&update) {
-                    Ok(mut raw) => {
+                    let frame = AgentRuntimeStreamFrame::Update {
+                        connection_epoch,
+                        lane_sequence: update.lane_sequence,
+                        state: update.state,
+                        presentations: update.presentations,
+                    };
+                    match serde_json::to_vec(&frame) {
+                        Ok(mut raw) => {
+                            last_sequence = Some(RuntimeU64(update.lane_sequence));
+                            raw.push(b'\n');
+                            yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(raw));
+                        }
+                        Err(error) => {
+                            diag!(
+                                Warn,
+                                Subsystem::AgentRun,
+                                run_id = %run_id,
+                                agent_id = %agent_id,
+                                source = ?source,
+                                connection_epoch,
+                                last_sequence = ?last_sequence,
+                                error = %error,
+                                "failed to serialize Agent Runtime update"
+                            );
+                            let reset = AgentRuntimeStreamFrame::ResetRequired {
+                                connection_epoch,
+                                reason: AgentRuntimeResetReason::ProtocolError,
+                                last_sequence,
+                            };
+                            if let Ok(mut raw) = serde_json::to_vec(&reset) {
+                                raw.push(b'\n');
+                                yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(raw));
+                            }
+                            break;
+                        },
+                    }
+                }
+                Ok(None) => break,
+                Err(reset) => {
+                    diag!(
+                        Warn,
+                        Subsystem::AgentRun,
+                        run_id = %run_id,
+                        agent_id = %agent_id,
+                        source = ?source,
+                        connection_epoch,
+                        reason = ?reset.reason,
+                        last_sequence = ?reset.last_sequence,
+                        diagnostic = %reset.diagnostic,
+                        "Agent Runtime update stream requires authoritative reset"
+                    );
+                    let frame = AgentRuntimeStreamFrame::ResetRequired {
+                        connection_epoch,
+                        reason: reset.reason,
+                        last_sequence: reset.last_sequence,
+                    };
+                    if let Ok(mut raw) = serde_json::to_vec(&frame) {
                         raw.push(b'\n');
                         yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(raw));
                     }
-                    Err(_) => break,
-                    }
+                    break;
                 }
-                Ok(None) | Err(_) => break,
             }
         }
     };

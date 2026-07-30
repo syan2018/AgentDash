@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::inline_persistence::InlineContentOverlay;
 use crate::mutation_queue::MutationQueue;
 use crate::runtime_tool_execution::{
-    VfsToolContent, VfsToolExecutionError, VfsToolExecutionResult,
+    VfsToolContent, VfsToolExecutionError, VfsToolExecutionResult, VfsToolUpdateSink,
 };
 use crate::service::VfsService;
 use crate::tools::common::SharedRuntimeVfs;
@@ -117,6 +117,7 @@ impl FsApplyPatchExecutor {
         &self,
         args: serde_json::Value,
         cancel: CancellationToken,
+        updates: Option<VfsToolUpdateSink>,
     ) -> Result<VfsToolExecutionResult, VfsToolExecutionError> {
         let params: FsApplyPatchParams = serde_json::from_value(args).map_err(|error| {
             VfsToolExecutionError::InvalidArguments(format!("invalid arguments: {error}"))
@@ -128,6 +129,17 @@ impl FsApplyPatchExecutor {
             .map_err(VfsToolExecutionError::ExecutionFailed)?;
         let single_mount = single_mount_patch_target(&params.patch)
             .map_err(VfsToolExecutionError::ExecutionFailed)?;
+        if let Some(updates) = &updates {
+            updates(VfsToolExecutionResult {
+                content: vec![VfsToolContent::text("Applying proposed patch.")],
+                is_error: false,
+                details: Some(serde_json::json!({
+                    "changes": apply_patch_protocol_changes(&params.patch).unwrap_or_default(),
+                    "errors": [],
+                    "phase": "applying",
+                })),
+            });
+        }
         let result = tokio::select! {
             _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
             result = self.execution_state.mutation_queue.with_locks(
@@ -142,10 +154,11 @@ impl FsApplyPatchExecutor {
                             self.overlay.as_ref().map(|arc| arc.as_ref()),
                             self.identity.as_ref(),
                         ).await?;
+                        let qualify = |path: String| format!("{mount_id}://{path}");
                         Ok(crate::MultiMountPatchResult {
-                            added: result.added,
-                            modified: result.modified,
-                            deleted: result.deleted,
+                            added: result.added.into_iter().map(qualify).collect(),
+                            modified: result.modified.into_iter().map(qualify).collect(),
+                            deleted: result.deleted.into_iter().map(qualify).collect(),
                             errors: Vec::new(),
                         })
                     } else {
@@ -184,11 +197,15 @@ impl FsApplyPatchExecutor {
             && result.modified.is_empty()
             && result.deleted.is_empty()
             && !result.errors.is_empty();
-        Ok(VfsToolExecutionResult {
+        let output = VfsToolExecutionResult {
             content: vec![VfsToolContent::text(lines.join("\n"))],
             is_error,
             details: Some(apply_patch_protocol_details(&result, &params.patch)),
-        })
+        };
+        if let Some(updates) = updates {
+            updates(output.clone());
+        }
+        Ok(output)
     }
 }
 
@@ -240,10 +257,13 @@ impl AgentTool for FsApplyPatchTool {
         _: &str,
         args: serde_json::Value,
         cancel: CancellationToken,
-        _: Option<ToolUpdateCallback>,
+        updates: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
+        let updates = updates.map(|updates| {
+            Arc::new(move |result| updates(legacy_result(result))) as VfsToolUpdateSink
+        });
         self.executor
-            .execute(args, cancel)
+            .execute(args, cancel, updates)
             .await
             .map(legacy_result)
             .map_err(legacy_error)
@@ -385,8 +405,128 @@ fn single_mount_patch_target(patch: &str) -> Result<Option<String>, String> {
 #[cfg(test)]
 mod fs_apply_patch_mutation_tests {
     use super::*;
+    use crate::{
+        ListOptions, ListResult, MountError, MountOperationContext, MountProvider, ReadResult,
+        SearchQuery, SearchResult,
+    };
+    use agentdash_platform_spi::{Mount, MountCapability};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Barrier;
+
+    #[derive(Default)]
+    struct PatchProgressProvider;
+
+    #[async_trait]
+    impl MountProvider for PatchProgressProvider {
+        fn provider_id(&self) -> &str {
+            "patch_progress"
+        }
+
+        fn supported_capabilities(&self) -> Vec<&str> {
+            vec!["read", "write", "list"]
+        }
+
+        async fn read_text(
+            &self,
+            _: &Mount,
+            path: &str,
+            _: &MountOperationContext,
+        ) -> Result<ReadResult, MountError> {
+            Ok(ReadResult::new(path, "old\n"))
+        }
+
+        async fn write_text(
+            &self,
+            _: &Mount,
+            _: &str,
+            _: &str,
+            _: &MountOperationContext,
+        ) -> Result<(), MountError> {
+            Ok(())
+        }
+
+        async fn list(
+            &self,
+            _: &Mount,
+            _: &ListOptions,
+            _: &MountOperationContext,
+        ) -> Result<ListResult, MountError> {
+            Ok(ListResult {
+                entries: Vec::new(),
+            })
+        }
+
+        async fn search_text(
+            &self,
+            _: &Mount,
+            _: &SearchQuery,
+            _: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            Ok(SearchResult::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_patch_emits_proposed_then_actual_progress() {
+        let provider = Arc::new(PatchProgressProvider);
+        let mut registry = crate::MountProviderRegistry::new();
+        registry.register(provider.clone());
+        let service = Arc::new(VfsService::new(Arc::new(registry)));
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "main".to_owned(),
+                provider: provider.provider_id().to_owned(),
+                backend_id: "backend".to_owned(),
+                root_ref: "memory://main".to_owned(),
+                capabilities: vec![
+                    MountCapability::Read,
+                    MountCapability::Write,
+                    MountCapability::List,
+                ],
+                default_write: true,
+                display_name: "Main".to_owned(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("main".to_owned()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let updates = Arc::new(std::sync::Mutex::new(Vec::<VfsToolExecutionResult>::new()));
+        let update_sink = {
+            let updates = updates.clone();
+            Arc::new(move |update| updates.lock().unwrap().push(update)) as VfsToolUpdateSink
+        };
+        let patch = "\
+*** Begin Patch
+*** Update File: main://old.txt
+@@
+-old
++new
+*** End Patch";
+
+        let terminal = FsApplyPatchExecutor::new(service, SharedRuntimeVfs::new(vfs), None, None)
+            .execute(
+                serde_json::json!({ "patch": patch }),
+                CancellationToken::new(),
+                Some(update_sink),
+            )
+            .await
+            .expect("patch should complete");
+
+        let updates = updates.lock().unwrap();
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0].details.as_ref().unwrap()["phase"], "applying");
+        assert_eq!(
+            updates[0].details.as_ref().unwrap()["changes"][0]["path"],
+            "main://old.txt"
+        );
+        assert_eq!(
+            updates[1].details.as_ref().unwrap()["changes"][0]["path"],
+            "main://old.txt"
+        );
+        assert_eq!(updates[1], terminal);
+    }
 
     #[test]
     fn apply_patch_owner_details_preserve_actual_changes() {

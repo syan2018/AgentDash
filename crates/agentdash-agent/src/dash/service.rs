@@ -120,8 +120,16 @@ impl DashAgentRepositoryState {
         &self.store
     }
 
+    pub fn take_pending_history_projections(&mut self) -> Vec<super::ProjectedAgentHistoryEntry> {
+        self.store.take_pending_history_projections()
+    }
+
     pub fn service_effect_ids(&self) -> impl Iterator<Item = &EffectId> {
         self.effects.keys()
+    }
+
+    pub fn context_recipe(&self) -> Result<DashContextRecipe, DashServiceError> {
+        context_recipe_from_repository(self)
     }
 
     pub fn new(store: DashAgentStore) -> Self {
@@ -285,7 +293,7 @@ impl DashToolCallbacks for RoutableDashToolCallbacks {
         &self,
         turn_id: &AgentTurnId,
         call: DashToolCall,
-    ) -> Result<DashToolResult, DashCoreError> {
+    ) -> Result<Box<dyn super::DashToolExecutionStream>, DashCoreError> {
         let key = Self::key(turn_id, &call.call_id);
         let admitted = self
             .admitted
@@ -321,7 +329,7 @@ impl DashToolCallbacks for RoutableDashToolCallbacks {
 #[derive(Debug, Clone)]
 pub struct DashHistoryCommit {
     pub history: AgentHistory,
-    pub entries: Vec<AgentHistoryEntry>,
+    pub entries: Vec<super::ProjectedAgentHistoryEntry>,
 }
 
 #[async_trait]
@@ -384,7 +392,6 @@ static DASH_WORKER_OWNER_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[derive(Default)]
 struct PendingProviderRound {
     assistant_text: String,
-    tool_calls: Vec<DashToolCall>,
 }
 
 #[derive(Default)]
@@ -470,7 +477,7 @@ impl DurableDashExecutionCallbacks {
                 context_window,
             },
         }];
-        if finish_reason == DashFinishReason::Stop && pending.tool_calls.is_empty() {
+        if finish_reason == DashFinishReason::Stop {
             return self.commit_history(history).await;
         }
         if !pending.assistant_text.is_empty() {
@@ -480,40 +487,47 @@ impl DurableDashExecutionCallbacks {
                 pending.assistant_text,
             ));
         }
-        for call in pending.tool_calls {
-            let item_id = super::execution_tool_item_id(turn_id, &call.call_id);
-            let projector = self
-                .round_snapshots
-                .tool_projector(round, &call.name)
-                .ok_or_else(|| DashCoreError::Callback {
-                    message: format!(
-                        "executed Dash tool `{}` has no accepted protocol projector",
-                        call.name
-                    ),
-                })?;
-            history.extend([
-                HistoryContribution {
-                    entry_id: provider_round_entry_id(turn_id, round, &call.call_id, "start"),
-                    payload: HistoryPayload::ItemStarted {
-                        turn_id: turn_id.clone(),
-                        item_id: item_id.clone(),
-                        kind: ItemKind::ToolCall,
-                    },
-                },
-                HistoryContribution {
-                    entry_id: provider_round_entry_id(turn_id, round, &call.call_id, "call"),
-                    payload: HistoryPayload::ToolCall {
-                        turn_id: turn_id.clone(),
-                        item_id,
-                        call_id: call.call_id,
-                        name: call.name,
-                        arguments: call.arguments.to_string(),
-                        protocol_projector: projector,
-                    },
-                },
-            ]);
-        }
         self.commit_history(history).await
+    }
+
+    async fn commit_tool_start(
+        &self,
+        turn_id: &AgentTurnId,
+        round: u32,
+        call: &DashToolCall,
+    ) -> Result<(), DashCoreError> {
+        let item_id = super::execution_tool_item_id(turn_id, &call.call_id);
+        let projector = self
+            .round_snapshots
+            .tool_projector(round, &call.name)
+            .ok_or_else(|| DashCoreError::Callback {
+                message: format!(
+                    "executed Dash tool `{}` has no accepted protocol projector",
+                    call.name
+                ),
+            })?;
+        self.commit_history(vec![
+            HistoryContribution {
+                entry_id: provider_round_entry_id(turn_id, round, &call.call_id, "start"),
+                payload: HistoryPayload::ItemStarted {
+                    turn_id: turn_id.clone(),
+                    item_id: item_id.clone(),
+                    kind: ItemKind::ToolCall,
+                },
+            },
+            HistoryContribution {
+                entry_id: provider_round_entry_id(turn_id, round, &call.call_id, "call"),
+                payload: HistoryPayload::ToolCall {
+                    turn_id: turn_id.clone(),
+                    item_id,
+                    call_id: call.call_id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.to_string(),
+                    protocol_projector: projector,
+                },
+            },
+        ])
+        .await
     }
 
     async fn commit_tool_result(
@@ -550,6 +564,10 @@ impl DurableDashExecutionCallbacks {
 #[async_trait]
 impl DashExecutionCallbacks for DurableDashExecutionCallbacks {
     async fn emit(&self, execution: DashExecutionEvent) -> Result<(), DashCoreError> {
+        let publish_ephemeral = !matches!(
+            execution.event,
+            DashCoreEvent::ToolCallStarted { .. } | DashCoreEvent::ToolCallCompleted { .. }
+        );
         match &execution.event {
             DashCoreEvent::ProviderRoundStarted { round } => {
                 self.rounds
@@ -566,14 +584,9 @@ impl DashExecutionCallbacks for DurableDashExecutionCallbacks {
                     .assistant_text
                     .push_str(delta);
             }
-            DashCoreEvent::ToolCallRequested { round, call } => {
-                self.rounds
-                    .lock()
-                    .await
-                    .entry(*round)
-                    .or_default()
-                    .tool_calls
-                    .push(call.clone());
+            DashCoreEvent::ToolCallStarted { round, call } => {
+                self.commit_tool_start(&execution.turn_id, *round, call)
+                    .await?;
             }
             DashCoreEvent::ProviderRoundCompleted {
                 round,
@@ -600,9 +613,14 @@ impl DashExecutionCallbacks for DurableDashExecutionCallbacks {
                 self.commit_tool_result(&execution.turn_id, *round, call, result)
                     .await?;
             }
+            DashCoreEvent::ToolCallProgress { .. } => {}
             DashCoreEvent::ReasoningDelta { .. } => {}
         }
-        self.downstream.emit(execution).await
+        if publish_ephemeral {
+            self.downstream.emit(execution).await
+        } else {
+            Ok(())
+        }
     }
 
     async fn drain_steering(
@@ -934,25 +952,25 @@ impl DashAgentService {
     }
 
     pub async fn apply_surface(&self, surface: DashSurface) -> Result<(), DashServiceError> {
-        let (expected, replacement) = self.stage_surface_apply(surface).await?;
-        let previous_entry_count = expected.store.history().entries().len();
+        let (expected, mut replacement) = self.stage_surface_apply(surface).await?;
+        let projections = replacement.take_pending_history_projections();
         let committed_history = replacement.store.history().clone();
         self.repository
             .compare_and_swap(expected, replacement)
             .await?;
-        self.publish_committed_history_since(previous_entry_count, &committed_history)
+        self.publish_committed_history(projections, &committed_history)
             .await;
         Ok(())
     }
 
     pub async fn revoke_surface(&self, expected_revision: u64) -> Result<(), DashServiceError> {
-        let (expected, replacement) = self.stage_surface_revoke(expected_revision).await?;
-        let previous_entry_count = expected.store.history().entries().len();
+        let (expected, mut replacement) = self.stage_surface_revoke(expected_revision).await?;
+        let projections = replacement.take_pending_history_projections();
         let committed_history = replacement.store.history().clone();
         self.repository
             .compare_and_swap(expected, replacement)
             .await?;
-        self.publish_committed_history_since(previous_entry_count, &committed_history)
+        self.publish_committed_history(projections, &committed_history)
             .await;
         Ok(())
     }
@@ -2990,14 +3008,14 @@ impl DashAgentService {
         mutate: impl FnOnce(&mut DashAgentStore) -> Result<T, DashServiceError>,
     ) -> Result<(DashAgentStore, T), DashServiceError> {
         let expected = self.repository.load().await?;
-        let previous_entry_count = expected.store.history().entries().len();
         let mut replacement = expected.clone();
         let result = mutate(&mut replacement.store)?;
+        let projections = replacement.take_pending_history_projections();
         let committed_history = replacement.store.history().clone();
         self.repository
             .compare_and_swap(expected, replacement.clone())
             .await?;
-        self.publish_committed_history_since(previous_entry_count, &committed_history)
+        self.publish_committed_history(projections, &committed_history)
             .await;
         Ok((replacement.store, result))
     }
@@ -3007,31 +3025,24 @@ impl DashAgentService {
         mutate: impl FnOnce(&mut DashAgentRepositoryState) -> Result<T, DashServiceError>,
     ) -> Result<(DashAgentRepositoryState, T), DashServiceError> {
         let expected = self.repository.load().await?;
-        let previous_entry_count = expected.store.history().entries().len();
         let mut replacement = expected.clone();
         let result = mutate(&mut replacement)?;
+        let projections = replacement.take_pending_history_projections();
         let committed_history = replacement.store.history().clone();
         self.repository
             .compare_and_swap(expected, replacement.clone())
             .await?;
-        self.publish_committed_history_since(previous_entry_count, &committed_history)
+        self.publish_committed_history(projections, &committed_history)
             .await;
         Ok((replacement, result))
     }
 
-    /// Publishes the canonical live view of an already committed native history suffix.
-    ///
-    /// The Complete Agent adapter calls this after an outer transaction atomically commits the
-    /// Dash repository together with source metadata. Publication is process-local and never
-    /// participates in the durable commit result.
-    pub async fn publish_committed_history_since(
+    /// Publishes the exact suffix projection captured by the successful owner commit.
+    pub async fn publish_committed_history(
         &self,
-        previous_entry_count: usize,
+        entries: Vec<super::ProjectedAgentHistoryEntry>,
         history: &AgentHistory,
     ) {
-        let Some(entries) = history.entries().get(previous_entry_count..) else {
-            return;
-        };
         if entries.is_empty() {
             return;
         }
@@ -3041,7 +3052,7 @@ impl DashAgentService {
             .history_callbacks
             .committed(DashHistoryCommit {
                 history: history.clone(),
-                entries: entries.to_vec(),
+                entries,
             })
             .await;
     }
@@ -3213,8 +3224,16 @@ struct MaterializedSessionContext {
 fn context_recipe_from_repository(
     repository: &DashAgentRepositoryState,
 ) -> Result<DashContextRecipe, DashServiceError> {
-    let materialized = materialize_session_context(repository, None, false)?;
-    let snapshot_revision = repository.store.history().state()?.entry_count;
+    let history_state = repository.store.history().state()?;
+    context_recipe_from_history_state(repository.store.history(), &history_state)
+}
+
+pub fn context_recipe_from_history_state(
+    history: &AgentHistory,
+    history_state: &AgentHistoryState,
+) -> Result<DashContextRecipe, DashServiceError> {
+    let materialized = materialize_session_context_from_state(history, history_state, None, false)?;
+    let snapshot_revision = history_state.entry_count;
     let messages = materialized
         .context
         .history
@@ -3248,9 +3267,23 @@ fn materialize_session_context(
     drop_latest_input: bool,
 ) -> Result<MaterializedSessionContext, DashServiceError> {
     let history_state = repository.store.history().state()?;
-    let surface = history_state.surface;
-    let initial_context = history_state.initial_context;
-    let entries = repository.store.history().entries();
+    materialize_session_context_from_state(
+        repository.store.history(),
+        &history_state,
+        excluded_turn,
+        drop_latest_input,
+    )
+}
+
+fn materialize_session_context_from_state(
+    history_source: &AgentHistory,
+    history_state: &AgentHistoryState,
+    excluded_turn: Option<&AgentTurnId>,
+    drop_latest_input: bool,
+) -> Result<MaterializedSessionContext, DashServiceError> {
+    let surface = history_state.surface.clone();
+    let initial_context = history_state.initial_context.clone();
+    let entries = history_source.entries();
     let mut applied_compactions = BTreeMap::new();
     let mut latest_compaction = None;
     for (index, entry) in entries.iter().enumerate() {

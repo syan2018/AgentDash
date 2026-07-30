@@ -44,10 +44,6 @@ use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::runtime_tools::operation_script_product::{
     ApplicationOperationScriptRuntimeToolService, operation_script_runtime_tool_schema,
 };
-use agentdash_application::runtime_tools::workspace_module_product::{
-    ApplicationWorkspaceModuleRuntimeToolService, WorkspaceModuleRuntimeToolDeps,
-    workspace_module_runtime_tool_schema,
-};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::task::tools::ApplicationRuntimeTaskToolService;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
@@ -60,8 +56,8 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunTerminalSourceReconcilePort, CompanionContinuationEffectPort,
     ProcessAgentRunForkSagaRepository, ProcessCompanionFreshSagaRepository,
     ProductAgentRunForkGraphAdapter, ProductAgentRunForkRuntimeAdapter,
-    ProductAgentRunRuntimeSnapshotAdapter, ProductCompanionFreshRuntimeAdapter,
-    build_workflow_agent_call_dispatch,
+    ProductAgentRunRuntimeSnapshotAdapter, ProductAgentRunRuntimeSurfaceUpdater,
+    ProductCompanionFreshRuntimeAdapter, build_workflow_agent_call_dispatch,
 };
 use agentdash_application_extension_gateway::{ExtensionGateway, ExtensionRuntimeProtocolInvoker};
 use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
@@ -102,6 +98,14 @@ use agentdash_integration_api::{
     MemoryDiscoveryProvider, SkillDiscoveryProvider,
 };
 use agentdash_platform_spi::extension_package::ExtensionPackageArtifactStorage;
+use agentdash_workspace_module::canvas::{
+    CanvasWorkspaceModuleProvider, mount_surface::ProductCanvasMountMaterializer,
+};
+use agentdash_workspace_module::product::{
+    ApplicationWorkspaceModuleRuntimeToolService, ExtensionWorkspaceModuleProvider,
+    PlatformWorkspaceModuleProvider, WorkspaceModuleProviderRegistry,
+    WorkspaceModuleRuntimeToolDeps, workspace_module_runtime_tool_schema,
+};
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
 const PROJECT_CONTROL_PLANE_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -217,6 +221,7 @@ pub struct ServiceSet {
     pub auth_session_service: Arc<AuthSessionService>,
     pub extension_gateway: Arc<ExtensionGateway>,
     pub operation_gateway: Arc<agentdash_application_operation_gateway::OperationGateway>,
+    pub workspace_module_providers: WorkspaceModuleProviderRegistry,
     pub operation_script_engine:
         Arc<dyn agentdash_application_ports::operation_script::OperationScriptEngine>,
     pub extension_runtime_protocol_invoker: Arc<ExtensionRuntimeProtocolInvoker>,
@@ -381,6 +386,13 @@ impl AppState {
                     ProductRuntimeToolKind::WorkspaceModuleDescribe,
                 ),
             ));
+        let workspace_module_operate_runtime_tool =
+            Arc::new(DeferredProductRuntimeToolService::new(
+                ProductRuntimeToolKind::WorkspaceModuleOperate,
+                workspace_module_runtime_tool_schema(
+                    ProductRuntimeToolKind::WorkspaceModuleOperate,
+                ),
+            ));
         let workspace_module_invoke_runtime_tool =
             Arc::new(DeferredProductRuntimeToolService::new(
                 ProductRuntimeToolKind::WorkspaceModuleInvoke,
@@ -412,6 +424,7 @@ impl AppState {
             companion_respond_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_list_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_describe_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
+            workspace_module_operate_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_invoke_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             workspace_module_present_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
             operation_script_runtime_tool.clone() as Arc<dyn ProductRuntimeToolService>,
@@ -651,22 +664,36 @@ impl AppState {
             crate::bootstrap::product_operation_mcp_access::ProductRuntimeMcpOperationAccess::new(
                 execution_authorities.clone(),
                 dynamic_runtime_tools,
+                repos.clone(),
             ),
         );
+        let runtime_surface_updates = Arc::new(ProductAgentRunRuntimeSurfaceUpdater::new(
+            repos.agent_frame_repo.clone(),
+            runtime_product_bindings.clone(),
+            product_runtime_provisioner.clone(),
+        ));
+        let canvas_mounts = Arc::new(ProductCanvasMountMaterializer::new(
+            repos.interaction_definition_repo.clone(),
+            repos.lifecycle_agent_repo.clone(),
+            runtime_surface_updates,
+        ));
         let operation_gateway = crate::bootstrap::runtime_gateway::build_operation_gateway(
-            mcp_probe_relay,
-            operation_mcp_access,
-            execution_authorities.clone(),
-            Arc::new(
+            crate::bootstrap::runtime_gateway::OperationGatewayBootstrapDeps {
+                mcp_probe_relay,
+                operation_mcp_access,
+                execution_authorities: execution_authorities.clone(),
+                platform_tool_access: Arc::new(
                 crate::bootstrap::product_operation_platform_tool_access::ProductPlatformToolOperationAccess::new(
                     execution_authorities.clone(),
                     runtime_tool_broker.clone(),
                 ),
-            ),
-            repos.clone(),
-            backend_registry.clone(),
-            setup_action_transport,
-            operation_gateway_handle.clone(),
+                ),
+                repos: repos.clone(),
+                backend_registry: backend_registry.clone(),
+                setup_action_transport,
+                gateway_handle: operation_gateway_handle.clone(),
+                canvas_mounts,
+            },
         )?;
         operation_gateway_handle
             .set(operation_gateway.clone())
@@ -699,11 +726,21 @@ impl AppState {
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
         ));
+        let workspace_module_providers = WorkspaceModuleProviderRegistry::new(vec![
+            Arc::new(PlatformWorkspaceModuleProvider),
+            Arc::new(ExtensionWorkspaceModuleProvider::new(
+                repos.project_extension_installation_repo.clone(),
+            )),
+            Arc::new(CanvasWorkspaceModuleProvider::new(
+                repos.interaction_definition_repo.clone(),
+                repos.interaction_instance_repo.clone(),
+                operation_gateway.clone(),
+            )),
+        ]);
         let workspace_module_runtime_tool_deps = WorkspaceModuleRuntimeToolDeps {
             execution_authorities: execution_authorities.clone(),
-            installations: repos.project_extension_installation_repo.clone(),
-            definitions: repos.interaction_definition_repo.clone(),
-            instances: repos.interaction_instance_repo.clone(),
+            lifecycle_agents: repos.lifecycle_agent_repo.clone(),
+            providers: workspace_module_providers.clone(),
             operation_gateway: operation_gateway.clone(),
         };
         workspace_module_list_runtime_tool
@@ -715,6 +752,12 @@ impl AppState {
         workspace_module_describe_runtime_tool
             .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
                 ProductRuntimeToolKind::WorkspaceModuleDescribe,
+                workspace_module_runtime_tool_deps.clone(),
+            )))
+            .map_err(anyhow::Error::msg)?;
+        workspace_module_operate_runtime_tool
+            .install(Arc::new(ApplicationWorkspaceModuleRuntimeToolService::new(
+                ProductRuntimeToolKind::WorkspaceModuleOperate,
                 workspace_module_runtime_tool_deps.clone(),
             )))
             .map_err(anyhow::Error::msg)?;
@@ -864,6 +907,7 @@ impl AppState {
                 auth_session_service,
                 extension_gateway,
                 operation_gateway,
+                workspace_module_providers,
                 operation_script_engine,
                 extension_runtime_protocol_invoker,
                 extension_package_artifact_storage,

@@ -1,3 +1,4 @@
+mod canvas_skill;
 mod command;
 mod definition;
 mod error;
@@ -6,6 +7,7 @@ mod presentation;
 mod repository;
 mod source;
 
+pub use canvas_skill::{CANVAS_SYSTEM_BUNDLE, CANVAS_SYSTEM_SKILL_NAME, CANVAS_SYSTEM_SKILL_PATH};
 pub use command::*;
 pub use definition::*;
 pub use error::{InteractionError, InteractionResult};

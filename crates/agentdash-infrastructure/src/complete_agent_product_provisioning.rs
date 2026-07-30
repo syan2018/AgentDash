@@ -651,16 +651,6 @@ async fn compile_product_surface(
     let vfs = decode_optional::<Vfs>("vfs", &facts.vfs)?;
     let mcp_servers =
         decode_optional::<Vec<RuntimeMcpServer>>("mcp", &facts.mcp)?.unwrap_or_default();
-    if capability_state.vfs.active.as_ref() != vfs.as_ref() {
-        return Err(invalid(
-            "AgentFrame capability VFS does not match its same-revision VFS projection",
-        ));
-    }
-    if capability_state.tool.mcp_servers != mcp_servers {
-        return Err(invalid(
-            "AgentFrame capability MCP state does not match its same-revision MCP projection",
-        ));
-    }
     let context =
         decode_optional::<AgentContextSourceSnapshot>("context_source", &facts.context_source)?;
     let hook_plan = decode_optional::<AgentFrameHookPlan>("hook_plan", &facts.hook_plan)?;
@@ -726,7 +716,11 @@ async fn compile_product_surface(
         )?);
     }
     requirements.extend(instruction_requirements(context.as_ref())?);
-    requirements.push(capability_manifest_requirement(&capability_state)?);
+    requirements.push(capability_manifest_requirement(
+        &capability_state,
+        vfs.as_ref(),
+        &mcp_servers,
+    )?);
     requirements.extend(workspace_requirements(vfs.as_ref())?);
     requirements.extend(tool_requirements(
         broker.definitions(),
@@ -761,8 +755,10 @@ async fn compile_product_surface(
 
 fn capability_manifest_requirement(
     state: &CapabilityState,
+    vfs: Option<&Vfs>,
+    mcp_servers: &[RuntimeMcpServer],
 ) -> Result<AgentSurfaceRequirement, AgentRunProductRuntimeProvisioningError> {
-    let manifest = capability_manifest(state)?;
+    let manifest = capability_manifest(state, vfs, mcp_servers)?;
     surface_requirement(
         "instruction:capability:manifest".to_owned(),
         true,
@@ -779,10 +775,10 @@ fn capability_manifest_requirement(
 
 fn capability_manifest(
     state: &CapabilityState,
+    vfs: Option<&Vfs>,
+    runtime_mcp_servers: &[RuntimeMcpServer],
 ) -> Result<AgentCapabilityManifest, AgentRunProductRuntimeProvisioningError> {
-    let mcp_servers = state
-        .tool
-        .mcp_servers
+    let mcp_servers = runtime_mcp_servers
         .iter()
         .map(|server| {
             let (status, tool_count, reason_code, message) = match &server.readiness {
@@ -848,10 +844,7 @@ fn capability_manifest(
             })
         })
         .collect::<Result<Vec<_>, AgentRunProductRuntimeProvisioningError>>()?;
-    let vfs = state
-        .vfs
-        .active
-        .as_ref()
+    let vfs = vfs
         .map(|vfs| {
             Ok(AgentCapabilityVfs {
                 default_mount: vfs.default_mount_id.clone(),
@@ -1232,6 +1225,7 @@ fn static_tool_enabled(capability_state: &CapabilityState, name: &str) -> bool {
         "task_read" | "task_write" => ToolCluster::Task,
         "workspace_module_list"
         | "workspace_module_describe"
+        | "workspace_module_operate"
         | "workspace_module_invoke"
         | "workspace_module_present"
         | "operation_script" => ToolCluster::WorkspaceModule,
@@ -1644,8 +1638,7 @@ mod tests {
             },
             false,
         )];
-        capability.tool.mcp_servers = servers;
-        let capability = capability_manifest_requirement(&capability).unwrap();
+        let capability = capability_manifest_requirement(&capability, None, &servers).unwrap();
         assert!(matches!(
             &capability.payload,
             AgentSurfaceContributionPayload::Instruction {

@@ -7,7 +7,15 @@
  * 内容区根据 TabTypeDescriptor 渲染对应组件。
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import {
+  Fragment,
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useState,
+} from "react";
 import { useWorkspaceTabStore } from "../../stores/workspaceTabStore";
 import {
   tabTypeRegistry,
@@ -31,7 +39,7 @@ registerBuiltinTabTypes();
 
 export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelProps>(
   function WorkspacePanel(props, ref) {
-    const { runtimeData } = props;
+    const { runtimeData, refreshRuntime } = props;
     const { projectId, extensionRuntime } = runtimeData;
     const agentRunRuntimeTarget = runtimeData.agentRunRuntimeTarget ?? null;
     const workspaceKey = agentRunRuntimeTarget
@@ -164,13 +172,15 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       try {
         await openUserCanvasModule({
           option,
-          openOrActivate: (typeId, uri, refreshContent) => {
-            const tabId = useWorkspaceTabStore
+          projectId: projectId ?? "",
+          agentRunTarget: agentRunRuntimeTarget,
+          afterPresent: async () => {
+            await refreshRuntime?.();
+          },
+          openOrActivate: (typeId: string, uri: string) => {
+            useWorkspaceTabStore
               .getState()
               .openOrActivateInWorkspace(workspaceKey, typeId, uri, tabLayoutOptions);
-            if (tabId && refreshContent) {
-              useWorkspaceTabStore.getState().refreshTab(tabId);
-            }
           },
         });
         return true;
@@ -183,6 +193,9 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     }, [
       tabLayoutOptions,
       workspaceKey,
+      agentRunRuntimeTarget,
+      projectId,
+      refreshRuntime,
     ]);
 
     const handleActivate = useCallback((tabId: string) => {
@@ -216,12 +229,16 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
           />
         );
       }
-      return type.renderContent({
-        uri: activeTab.uri,
-        tabId: activeTab.id,
-        isActive: true,
-        refreshRevision: activeTab.refreshRevision,
-      });
+      return (
+        <Fragment key={activeTab.id}>
+          {type.renderContent({
+            uri: activeTab.uri,
+            tabId: activeTab.id,
+            isActive: true,
+            refreshRevision: activeTab.refreshRevision,
+          })}
+        </Fragment>
+      );
     }, [activeTab, registrySnapshot]);
 
     return (

@@ -13,6 +13,7 @@ use agentdash_application_vfs::{
 };
 use agentdash_platform_spi::VfsDiscoveryProvider;
 use agentdash_platform_spi::platform::mount::MountProvider;
+use agentdash_workspace_module::canvas::vfs_provider::CanvasSourceBundleMountProvider;
 
 use crate::mount_providers::RelayFsMountProvider;
 use crate::relay::registry::BackendRegistry;
@@ -48,6 +49,9 @@ pub(crate) fn build_vfs_kernel(
             repos.inline_file_repo.clone(),
             repos.skill_asset_repo.clone(),
             Arc::new(lifecycle_history_query.clone()),
+        )))
+        .register(Arc::new(CanvasSourceBundleMountProvider::new(
+            repos.interaction_definition_repo.clone(),
         )))
         .register(Arc::new(RelayFsMountProvider::new(
             backend_registry.clone(),

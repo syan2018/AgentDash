@@ -1,6 +1,7 @@
 pub(crate) mod builder;
 pub(crate) mod launch_envelope_provider;
 pub(crate) mod runtime_launch;
+pub(crate) mod runtime_surface_update;
 pub(crate) mod surface;
 
 pub use builder::{
@@ -16,6 +17,7 @@ pub use runtime_launch::{
     FrameLaunchIntent, FrameLaunchRuntimeSurface, FrameLaunchSurface, FrameRuntimeSurface,
     LaunchResolutionTrace, TerminalHookEffectBinding, runtime_backend_anchor_from_vfs,
 };
+pub use runtime_surface_update::ProductAgentRunRuntimeSurfaceUpdater;
 pub use surface::{
     AgentContextSourceFragment, AgentContextSourceSnapshot, AgentFrameSurfaceExt,
     FrameContextBundleSummary, FrameSurfaceDraft,

@@ -93,7 +93,7 @@ pub struct PlatformToolBinding {
 ### 5. Good / Base / Bad Cases
 
 - Good：binding compile 后 Agent 调用 OperationScript，多个 nested calls 各自产生 Operation audit。
-- Base：Agent 调用 `workspace_module_list/describe/invoke/present`。
+- Base：Agent 调用 `workspace_module_list/describe/operate/invoke/present`。
 - Bad：WorkspaceModule 保存 RuntimeThread，或 Runtime aggregate解释 Extension/Interaction dispatch。
 
 ### 6. Tests Required

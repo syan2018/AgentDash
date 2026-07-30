@@ -17,11 +17,12 @@ use super::{
 /// schema, readiness and placement are evaluated at the actual call boundary.
 pub struct GatewayOperationScriptExecutor {
     gateway: Arc<OperationGateway>,
+    principal: OperationPrincipal,
 }
 
 impl GatewayOperationScriptExecutor {
-    pub fn new(gateway: Arc<OperationGateway>) -> Self {
-        Self { gateway }
+    pub fn new(gateway: Arc<OperationGateway>, principal: OperationPrincipal) -> Self {
+        Self { gateway, principal }
     }
 }
 
@@ -32,7 +33,13 @@ impl OperationScriptOperationExecutor for GatewayOperationScriptExecutor {
         call: OperationScriptOperationCall,
         cancel: CancellationToken,
     ) -> Result<OperationScriptOperationResult, OperationScriptError> {
-        let principal = OperationPrincipal::server_resolved(call.context.principal.clone());
+        if self.principal.principal_ref() != &call.context.principal {
+            return Err(OperationScriptError::NestedOperation {
+                code: "operation_script_principal_mismatch".into(),
+                outcome_unknown: false,
+            });
+        }
+        let principal = self.principal.clone();
         let scope_ref = call.context.scope.clone();
         let origin = OperationOriginRef::OperationScriptNested {
             script_invocation_id: call.execution_id.to_string(),

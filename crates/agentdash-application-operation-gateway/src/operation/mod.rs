@@ -74,7 +74,10 @@ pub use platform_tool_operations::{
     PLATFORM_TOOL_OPERATION_NAMESPACE, PlatformToolOperation, PlatformToolOperationAccess,
     PlatformToolOperationProvider,
 };
-pub use schema::{validate_json_schema_definition, validate_json_schema_subset};
+pub use schema::{
+    project_json_schema_to_supported_subset, validate_json_schema_definition,
+    validate_json_schema_subset,
+};
 pub use setup_operations::{
     SETUP_OPERATION_NAMESPACE, SETUP_OPERATION_PROVIDER_KEY, SetupOperationAccessPort,
     SetupOperationAuthorityResolver, SetupOperationProvider, setup_operation_ref,

@@ -707,6 +707,7 @@ export function AgentRunWorkspacePage({
           <WorkspacePanel
             ref={workspacePanelRef}
             runtimeData={workspaceRuntimeData}
+            refreshRuntime={refreshAgentRunWorkspaceState}
           />
         </Panel>
       </Group>

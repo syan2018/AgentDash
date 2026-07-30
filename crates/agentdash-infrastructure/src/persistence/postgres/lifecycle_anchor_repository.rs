@@ -240,23 +240,15 @@ impl From<&AgentFrame> for StoredAgentFrame {
 
 impl From<StoredAgentFrame> for AgentFrame {
     fn from(stored: StoredAgentFrame) -> Self {
-        let mut frame = Self {
+        Self {
             id: stored.id,
             agent_id: stored.agent_id,
             revision: stored.revision,
-            surface: Some(stored.surface),
-            effective_capability_json: None,
-            context_slice_json: None,
-            vfs_surface_json: None,
-            mcp_surface_json: None,
-            execution_profile_json: None,
-            hook_plan: None,
+            surface: stored.surface,
             created_by_kind: stored.created_by_kind,
             created_by_id: stored.created_by_id,
             created_at: stored.created_at,
-        };
-        frame.apply_surface_projection();
-        frame
+        }
     }
 }
 
@@ -998,15 +990,15 @@ mod tests {
     }
 
     #[test]
-    fn stored_frame_projects_its_canonical_surface() {
+    fn stored_frame_restores_its_canonical_surface() {
         let frame = AgentFrame::from(stored_frame());
 
         assert_eq!(
-            frame.effective_capability_json,
+            frame.surface.capability_state,
             Some(json!({"canonical": true}))
         );
         assert_eq!(
-            frame.vfs_surface_json,
+            frame.surface.vfs_surface,
             Some(json!({"mounts": ["canonical"]}))
         );
     }

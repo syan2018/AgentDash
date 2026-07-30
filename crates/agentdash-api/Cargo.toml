@@ -26,6 +26,7 @@ agentdash-application-lifecycle = { workspace = true }
 agentdash-application-workflow = { workspace = true }
 agentdash-application-shared-library = { workspace = true }
 agentdash-application = { workspace = true }
+agentdash-workspace-module = { workspace = true }
 agentdash-infrastructure = { workspace = true }
 agentdash-llm-provider = { workspace = true }
 agentdash-mcp = { workspace = true }

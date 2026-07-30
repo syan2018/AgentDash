@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
+use super::schema::project_json_schema_to_supported_subset;
 use super::{
     DynamicOperationProvider, OperationActorKind, OperationAuthorizationScope, OperationDescriptor,
     OperationDispatch, OperationExecutionError, OperationExecutionPolicy,
@@ -24,6 +25,7 @@ pub struct OperationMcpTool {
     pub description: String,
     pub input_schema: Value,
     pub placement: OperationPlacement,
+    pub provenance_source: String,
 }
 
 #[async_trait]
@@ -143,7 +145,7 @@ fn descriptor_from_tool(
     Ok(OperationDescriptor {
         title: operation_ref.operation_key.clone(),
         description: Some(tool.description),
-        input_schema: tool.input_schema,
+        input_schema: project_json_schema_to_supported_subset(tool.input_schema),
         output_schema: json!(true),
         effect: OperationEffect::ExternalSideEffect,
         replay_policy: OperationReplayPolicy::NonReplayable,
@@ -155,7 +157,7 @@ fn descriptor_from_tool(
         execution_policy: OperationExecutionPolicy::default(),
         readiness: OperationReadiness::Ready,
         provenance: OperationProvenance {
-            source: "agent_frame.mcp_surface".to_string(),
+            source: tool.provenance_source,
             artifact_digest: None,
         },
         dispatch: OperationDispatch {
@@ -195,6 +197,7 @@ mod tests {
                 placement: OperationPlacement::LocalBackend {
                     backend_id: "backend-1".to_string(),
                 },
+                provenance_source: "fixture.mcp_surface".to_owned(),
             }])
         }
 
@@ -291,11 +294,44 @@ mod tests {
             placement: OperationPlacement::LocalBackend {
                 backend_id: "backend-1".to_string(),
             },
+            provenance_source: "fixture.mcp_surface".to_owned(),
         })
         .expect_err("invalid identity");
         assert_eq!(
             error.kind(),
             super::super::OperationExecutionErrorKind::InvalidRequest
         );
+    }
+
+    #[test]
+    fn mcp_descriptor_projects_external_schema_to_gateway_subset() {
+        let descriptor = descriptor_from_tool(OperationMcpTool {
+            server_name: "docs".to_owned(),
+            tool_name: "search".to_owned(),
+            description: "Search docs".to_owned(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "required": ["query"]
+            }),
+            placement: OperationPlacement::Cloud,
+            provenance_source: "project.mcp_presets".to_owned(),
+        })
+        .expect("descriptor");
+
+        assert!(
+            super::super::schema::validate_json_schema_definition(&descriptor.input_schema).is_ok()
+        );
+        assert!(
+            descriptor.input_schema["properties"]["query"]
+                .get("minLength")
+                .is_none()
+        );
+        assert_eq!(descriptor.provenance.source, "project.mcp_presets");
     }
 }

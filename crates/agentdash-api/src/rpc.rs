@@ -151,13 +151,36 @@ impl From<agentdash_application::ApplicationError> for ApiError {
 impl From<agentdash_domain::interaction::InteractionError> for ApiError {
     fn from(err: agentdash_domain::interaction::InteractionError) -> Self {
         use agentdash_domain::interaction::InteractionError as E;
-        match err {
+        match &err {
             E::NotFound { .. } => Self::NotFound(err.to_string()),
             E::DefinitionRevisionConflict { .. }
             | E::StateRevisionConflict { .. }
             | E::CommandIdempotencyConflict { .. }
             | E::PersistenceConflict { .. } => Self::Conflict(err.to_string()),
-            E::Persistence { .. } | E::Serialization { .. } => Self::Internal(err.to_string()),
+            E::Persistence { .. } => {
+                let context =
+                    DiagnosticErrorContext::new("interaction.request", "persistence_error");
+                diag_error!(
+                    Error,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &err,
+                    "Interaction persistence request failed"
+                );
+                Self::Internal(String::from("Interaction 持久化失败"))
+            }
+            E::Serialization { .. } => {
+                let context =
+                    DiagnosticErrorContext::new("interaction.request", "serialization_error");
+                diag_error!(
+                    Error,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &err,
+                    "Interaction document decoding failed"
+                );
+                Self::Internal(String::from("Interaction 数据读取失败"))
+            }
             _ => Self::BadRequest(err.to_string()),
         }
     }
@@ -373,5 +396,28 @@ mod tests {
         assert_eq!(value["error_code"], "command_unavailable");
         assert_eq!(value["replacement_command"], "send_next");
         assert_eq!(value["detail"]["state"], "completed");
+    }
+
+    #[tokio::test]
+    async fn interaction_decode_failure_returns_fixed_internal_error() {
+        let response = ApiError::from(
+            agentdash_domain::interaction::InteractionError::Serialization {
+                context: "interaction_definition_revisions.contract",
+                message: "missing field `action_bindings`".into(),
+            },
+        )
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        let value: Value = serde_json::from_slice(&body).expect("json body");
+
+        assert_eq!(value["error"], "Interaction 数据读取失败");
+        assert!(
+            !String::from_utf8_lossy(&body).contains("action_bindings"),
+            "internal decode details must stay in diagnostics"
+        );
     }
 }

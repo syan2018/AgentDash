@@ -19,9 +19,9 @@ use uuid::Uuid;
 
 use crate::agent_run::frame::AgentFrameBuilder;
 use crate::capability::{
-    AuthorityState, CapabilityResolver, CapabilityResolverInput, CompanionContribution,
-    ContextContributionSource, ContextContributions, McpCandidates, ToolContribution,
-    load_available_presets, tool_directives_from_active_workflow,
+    AuthorityState, CapabilityResolver, CapabilityResolverInput, CapabilityResolverOutput,
+    CompanionContribution, ContextContributionSource, ContextContributions, McpCandidates,
+    ToolContribution, load_available_presets, tool_directives_from_active_workflow,
 };
 use crate::context::{
     ContextBuildPhase, Contribution, SessionContextConfig, build_session_context_bundle,
@@ -187,7 +187,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         let vfs = self
             .prepare_owner_bootstrap_vfs(&spec, project_id, active_workflow.as_ref())
             .await?;
-        let mut cap_output = self
+        let cap_output = self
             .resolve_owner_capabilities(
                 &spec,
                 project_id,
@@ -197,13 +197,15 @@ impl<'a> OwnerBootstrapComposer<'a> {
             )
             .await?;
         let backend_bound_surface = vfs_has_runtime_backend_anchor(vfs.as_ref());
+        let mut capability_state = cap_output.capability_state;
         apply_owner_backend_surface_capabilities(
-            &mut cap_output,
+            &mut capability_state,
             spec.workspace_module_policy_refs.as_deref(),
             backend_bound_surface,
         );
         let runtime_mcp_servers = normalize_owner_bootstrap_mcp_projection(
-            &mut cap_output,
+            &mut capability_state,
+            &cap_output.mcp_servers,
             &spec.request_mcp_servers,
             backend_bound_surface,
         );
@@ -249,7 +251,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             .with_input(user_input)
             .with_executor_config(spec.executor_config.clone())
             .with_mcp_servers(runtime_mcp_servers)
-            .with_resolved_capabilities(cap_output)
+            .with_resolved_capabilities(capability_state)
             .with_optional_workspace_defaults(workspace_defaults)
             .with_optional_context_bundle(effective_bundle);
 
@@ -321,6 +323,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         let vfs = if matches!(spec.owner, OwnerScope::Project { .. }) {
             let builtin_skills =
                 ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::Project(vec![
+                    ports_lifecycle_surface::BuiltinLifecycleSkill::CanvasSystem,
                     ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
                     ports_lifecycle_surface::BuiltinLifecycleSkill::WorkspaceModuleSystem,
                 ]);
@@ -382,7 +385,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         owner_ctx: CapabilityScopeCtx,
         active_workflow: Option<&ports_lifecycle_surface::ActiveWorkflowProjection>,
         vfs: Option<&Vfs>,
-    ) -> Result<CapabilityState, String> {
+    ) -> Result<CapabilityResolverOutput, String> {
         let workflow_tool: Option<ToolContribution> = if let Some(workflow) = active_workflow {
             let directives = workflow
                 .active_contract()
@@ -725,6 +728,7 @@ async fn resolve_owner_workflow_tool_directives(
 
 fn normalize_owner_bootstrap_mcp_projection(
     capability_state: &mut CapabilityState,
+    resolved_mcp_servers: &[agentdash_platform_spi::RuntimeMcpServer],
     request_mcp_servers: &[agentdash_platform_spi::RuntimeMcpServer],
     include_backend_bound_mcp: bool,
 ) -> Vec<agentdash_platform_spi::RuntimeMcpServer> {
@@ -735,9 +739,7 @@ fn normalize_owner_bootstrap_mcp_projection(
             .filter(|server| include_backend_bound_mcp || !server.uses_relay)
             .cloned(),
     );
-    let removed_backend_bound_caps = capability_state
-        .tool
-        .mcp_servers
+    let removed_backend_bound_caps = resolved_mcp_servers
         .iter()
         .filter(|server| !include_backend_bound_mcp && server.uses_relay)
         .map(capability_for_runtime_mcp_server)
@@ -745,16 +747,8 @@ fn normalize_owner_bootstrap_mcp_projection(
     for cap in removed_backend_bound_caps {
         capability_state.tool.capabilities.remove(&cap);
     }
-    if !include_backend_bound_mcp {
-        capability_state
-            .tool
-            .mcp_servers
-            .retain(|server| !server.uses_relay);
-    }
     servers.extend(
-        capability_state
-            .tool
-            .mcp_servers
+        resolved_mcp_servers
             .iter()
             .filter(|server| include_backend_bound_mcp || !server.uses_relay)
             .cloned(),
@@ -772,7 +766,6 @@ fn normalize_owner_bootstrap_mcp_projection(
             .capabilities
             .insert(capability_for_runtime_mcp_server(server));
     }
-    capability_state.tool.mcp_servers = servers.clone();
     servers
 }
 
@@ -920,12 +913,12 @@ mod tests {
 
         let servers = normalize_owner_bootstrap_mcp_projection(
             &mut capability_state,
+            &[],
             std::slice::from_ref(&request_server),
             true,
         );
 
         assert_eq!(servers, vec![request_server.clone()]);
-        assert_eq!(capability_state.tool.mcp_servers, vec![request_server]);
         assert!(
             capability_state
                 .tool
@@ -942,7 +935,7 @@ mod tests {
     #[test]
     fn owner_bootstrap_mcp_projection_dedupes_by_source_priority() {
         let mut capability_state = CapabilityState::default();
-        capability_state.tool.mcp_servers = vec![
+        let resolved_servers = vec![
             runtime_mcp_server("shared", "http://resolver/mcp"),
             runtime_mcp_server("resolver_only", "http://resolver-only/mcp"),
         ];
@@ -953,6 +946,7 @@ mod tests {
 
         let servers = normalize_owner_bootstrap_mcp_projection(
             &mut capability_state,
+            &resolved_servers,
             &[runtime_mcp_server("shared", "http://request/mcp")],
             true,
         );
@@ -963,7 +957,6 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["shared", "resolver_only"]);
         assert_eq!(server_url(&servers[0]), "http://request/mcp");
-        assert_eq!(capability_state.tool.mcp_servers, servers);
         assert!(
             capability_state
                 .tool
@@ -993,6 +986,7 @@ mod tests {
 
         normalize_owner_bootstrap_mcp_projection(
             &mut capability_state,
+            &[],
             std::slice::from_ref(&request_server),
             true,
         );
@@ -1020,7 +1014,7 @@ mod tests {
         let mut cloud_server = runtime_mcp_server("cloud_tools", "http://cloud/mcp");
         cloud_server.uses_relay = false;
         let mut capability_state = CapabilityState::default();
-        capability_state.tool.mcp_servers = vec![relay_server.clone(), cloud_server.clone()];
+        let resolved_servers = vec![relay_server.clone(), cloud_server.clone()];
         capability_state
             .tool
             .capabilities
@@ -1032,12 +1026,12 @@ mod tests {
 
         let servers = normalize_owner_bootstrap_mcp_projection(
             &mut capability_state,
+            &resolved_servers,
             std::slice::from_ref(&relay_server),
             false,
         );
 
         assert_eq!(servers, vec![cloud_server.clone()]);
-        assert_eq!(capability_state.tool.mcp_servers, vec![cloud_server]);
         assert!(
             !capability_state
                 .tool

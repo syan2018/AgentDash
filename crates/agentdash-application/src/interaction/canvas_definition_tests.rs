@@ -159,6 +159,7 @@ fn source(content: &str) -> SourceBundle {
 fn create_input(project_id: Uuid) -> CreateCanvasDefinitionInput {
     CreateCanvasDefinitionInput {
         project_id,
+        authoring_mount_id: None,
         title: "Dashboard".into(),
         description: String::new(),
         source_bundle: source("v1"),
@@ -273,6 +274,7 @@ async fn publish_copy_and_unpublish_pin_exact_lineage() {
             CopyCanvasDefinitionInput {
                 source_definition_id: shared.definition.id,
                 source_revision_id: shared.revision.revision_id,
+                authoring_mount_id: None,
                 title: Some("My Copy".into()),
                 description: None,
             },

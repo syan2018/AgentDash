@@ -9,6 +9,48 @@ struct FixtureExecutor {
     active: AtomicUsize,
     peak: AtomicUsize,
 }
+
+struct SkillInventoryExecutor;
+
+#[async_trait]
+impl OperationScriptOperationExecutor for SkillInventoryExecutor {
+    async fn execute(
+        &self,
+        call: OperationScriptOperationCall,
+        _: CancellationToken,
+    ) -> Result<OperationScriptOperationResult, OperationScriptError> {
+        let value = match call.operation_ref.operation_key.as_str() {
+            "fs_glob" => {
+                let mut paths = vec![".agents/skills/alpha/SKILL.md".to_owned()];
+                paths.extend((1..100).map(|index| format!("skills/skill-{index:03}/SKILL.md")));
+                serde_json::json!({
+                    "content": [{
+                        "type": "text",
+                        "text": paths.join("\n")
+                    }],
+                    "is_error": false
+                })
+            }
+            "fs_read" => {
+                let path = call.input["path"].as_str().unwrap_or_default();
+                serde_json::json!({
+                    "content": [{
+                        "type": "text",
+                        "text": format!(
+                            "file: {path}\n   1 | ---\n   2 | name: {path}\n   3 | description: \"fixture\"\n   4 | ---"
+                        )
+                    }],
+                    "is_error": false
+                })
+            }
+            _ => unreachable!("exact fixture manifest"),
+        };
+        Ok(OperationScriptOperationResult {
+            value,
+            outcome_unknown: false,
+        })
+    }
+}
 #[async_trait]
 impl OperationScriptOperationExecutor for FixtureExecutor {
     async fn execute(
@@ -130,6 +172,84 @@ async fn invoke_and_invoke_all_are_exact_ordered_and_bounded() {
     };
     assert_eq!(value["many"][1]["input"]["value"], 3);
     assert_eq!(value["many"][2]["input"]["value"], 4);
+}
+
+#[tokio::test]
+async fn canvas_skill_inventory_script_globs_then_reads_in_parallel() {
+    let glob = OperationRef::new("platform", "vfs", "fs_glob", 1).expect("glob ref");
+    let read = OperationRef::new("platform", "vfs", "fs_read", 1).expect("read ref");
+    let mut program = program(
+        r#"
+            fn frontmatter_field(text, key) {
+                let marker = key + ": ";
+                for line in text.split("\n") {
+                    if line.contains(marker) {
+                        let parts = line.split(marker);
+                        let value = parts[1];
+                        value.replace("\"", "");
+                        return value;
+                    }
+                }
+                ""
+            }
+
+            let found = ops.invoke(
+                "platform:vfs:fs_glob:v1",
+                #{ path: "main://", pattern: "**/SKILL.md" }
+            );
+            let requests = [];
+            for path in found.content[0].text.split("\n") {
+                if path.ends_with("SKILL.md") {
+                    requests.push(#{
+                        operation: "platform:vfs:fs_read:v1",
+                        input: #{ path: "main://" + path }
+                    });
+                }
+            }
+            let files = ops.invoke_all(requests);
+            let skills = [];
+            for index in 0..files.len() {
+                let text = files[index].content[0].text;
+                skills.push(#{
+                    path: requests[index].input.path,
+                    name: frontmatter_field(text, "name"),
+                    description: frontmatter_field(text, "description")
+                });
+            }
+            #{
+                skills: skills
+            }
+        "#,
+    );
+    program.allowed_operations = vec![glob, read];
+
+    let outcome = run(
+        &engine(),
+        program,
+        context(),
+        Arc::new(SkillInventoryExecutor),
+    )
+    .await
+    .expect("skill inventory script");
+    let OperationScriptResultValue::Inline { value } = outcome.value else {
+        panic!("inline result");
+    };
+
+    assert_eq!(outcome.calls.len(), 101);
+    assert_eq!(value["skills"].as_array().map(Vec::len), Some(100));
+    assert_eq!(
+        value["skills"][0]["path"],
+        "main://.agents/skills/alpha/SKILL.md"
+    );
+    assert_eq!(
+        value["skills"][0]["name"],
+        "main://.agents/skills/alpha/SKILL.md"
+    );
+    assert_eq!(value["skills"][0]["description"], "fixture");
+    assert_eq!(
+        value["skills"][99]["path"],
+        "main://skills/skill-099/SKILL.md"
+    );
 }
 
 #[tokio::test]

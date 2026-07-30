@@ -173,8 +173,12 @@ impl BoundOperationHost {
         self,
         engine: Arc<dyn OperationScriptEngine>,
     ) -> BoundOperationScriptHost {
+        let executor = Arc::new(GatewayOperationScriptExecutor::new(
+            self.gateway.clone(),
+            self.principal.clone(),
+        ));
         BoundOperationScriptHost {
-            executor: Arc::new(GatewayOperationScriptExecutor::new(self.gateway.clone())),
+            executor,
             host: self,
             engine,
         }
@@ -405,6 +409,25 @@ impl AgentRunOperationHost {
             OperationScopeRef::InteractionInstance { instance_id },
             OperationOriginRef::AgentTool,
             None,
+        )
+    }
+
+    pub fn attached_interaction(
+        gateway: Arc<OperationGateway>,
+        run_id: Uuid,
+        agent_id: Uuid,
+        project_id: Uuid,
+        instance_id: Uuid,
+    ) -> Result<BoundOperationHost, OperationExecutionError> {
+        BoundOperationHost::new(
+            gateway,
+            OperationPrincipal::server_resolved(OperationPrincipalRef::AgentRunAgent {
+                run_id,
+                agent_id,
+            }),
+            OperationScopeRef::Project { project_id },
+            OperationOriginRef::Interaction { instance_id },
+            Some(format!("interaction-instance:{instance_id}")),
         )
     }
 }

@@ -30,7 +30,7 @@ use agentdash_domain::workflow::{
     ActivityDefinition, AgentProcedureContract, LifecycleRun, WorkflowGraph,
 };
 use agentdash_platform_spi::{CapabilityScope, CapabilityScopeCtx};
-use agentdash_platform_spi::{CapabilityState, SessionContextBundle, Vfs};
+use agentdash_platform_spi::{RuntimeMcpServer, SessionContextBundle, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -80,10 +80,16 @@ pub struct FrameRequestAssembler<'a> {
 
 #[async_trait]
 pub trait CompanionParentFactsProvider: Send + Sync {
-    async fn latest_companion_parent_capability_state(
+    async fn latest_companion_parent_runtime_surface(
         &self,
         parent_session_id: &str,
-    ) -> Option<CapabilityState>;
+    ) -> Option<CompanionParentRuntimeSurface>;
+}
+
+#[derive(Debug, Clone)]
+pub struct CompanionParentRuntimeSurface {
+    pub vfs: Option<Vfs>,
+    pub mcp_servers: Vec<RuntimeMcpServer>,
 }
 
 impl<'a> FrameRequestAssembler<'a> {
@@ -218,17 +224,17 @@ impl<'a> FrameRequestAssembler<'a> {
         let Some(provider) = self.companion_parent_facts_provider else {
             return Err("companion parent facts provider 未注入".to_string());
         };
-        let parent_capability_state = provider
-            .latest_companion_parent_capability_state(parent_session_id)
+        let parent_surface = provider
+            .latest_companion_parent_runtime_surface(parent_session_id)
             .await
             .ok_or_else(|| {
                 format!(
-                    "companion parent session `{parent_session_id}` 缺少 capability state，拒绝构造 child session"
+                    "companion parent session `{parent_session_id}` 缺少 runtime surface，拒绝构造 child session"
                 )
             })?;
         Ok(CompanionParentFacts {
-            parent_vfs: parent_capability_state.vfs.active.clone(),
-            parent_mcp_servers: parent_capability_state.tool.mcp_servers.clone(),
+            parent_vfs: parent_surface.vfs,
+            parent_mcp_servers: parent_surface.mcp_servers,
             parent_context_bundle: None,
         })
     }
@@ -330,9 +336,6 @@ impl<'a> FrameRequestAssembler<'a> {
             .map_err(|error| error.to_string())?;
         let vfs = surface.vfs;
         prepared.vfs = Some(vfs.clone());
-        if let Some(capability_state) = prepared.capability_state.as_mut() {
-            capability_state.vfs.active = Some(vfs);
-        }
         Ok(())
     }
 
@@ -369,14 +372,14 @@ impl<'a> FrameRequestAssembler<'a> {
             capability_context: None,
             authority_state: AuthorityState::companion_child(),
         };
-        let mut capability_state =
-            CapabilityResolver::resolve_checked(&cap_input, self.platform_config)?;
-        capability_state = CapabilityResolver::apply_companion_slice(capability_state, slice_mode);
+        let mut resolved = CapabilityResolver::resolve_checked(&cap_input, self.platform_config)?;
+        resolved.capability_state =
+            CapabilityResolver::apply_companion_slice(resolved.capability_state, slice_mode);
         // Skill baseline / guidelines / memory 由 launch-time 单入口在 runtime surface
         // 闭包后从最终 launch VFS 统一派生，companion route 不再各自 derive skill baseline。
 
-        prepared.mcp_servers = capability_state.tool.mcp_servers.clone();
-        prepared.capability_state = Some(capability_state);
+        prepared.mcp_servers = resolved.mcp_servers;
+        prepared.capability_state = Some(resolved.capability_state);
         Ok(())
     }
 }

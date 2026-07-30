@@ -3,8 +3,9 @@ use std::{collections::BTreeSet, sync::Arc};
 use agentdash_application_ports::lifecycle_surface_projection as port;
 use agentdash_application_vfs::mount_skill_asset::refresh_lifecycle_skill_asset_projection;
 use agentdash_domain::{
-    companion::COMPANION_SYSTEM_SKILL_NAME, routine::ROUTINE_MEMORY_SKILL_NAME,
-    skill_asset::SkillAssetRepository, workspace_module::WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
+    companion::COMPANION_SYSTEM_SKILL_NAME, interaction::CANVAS_SYSTEM_SKILL_NAME,
+    routine::ROUTINE_MEMORY_SKILL_NAME, skill_asset::SkillAssetRepository,
+    workspace_module::WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
 };
 use agentdash_platform_spi::Vfs;
 
@@ -140,6 +141,7 @@ fn lifecycle_mount(
 
 fn builtin_skill_key(skill: port::BuiltinLifecycleSkill) -> String {
     match skill {
+        port::BuiltinLifecycleSkill::CanvasSystem => CANVAS_SYSTEM_SKILL_NAME,
         port::BuiltinLifecycleSkill::CompanionSystem => COMPANION_SYSTEM_SKILL_NAME,
         port::BuiltinLifecycleSkill::WorkspaceModuleSystem => WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
         port::BuiltinLifecycleSkill::RoutineMemory => ROUTINE_MEMORY_SKILL_NAME,

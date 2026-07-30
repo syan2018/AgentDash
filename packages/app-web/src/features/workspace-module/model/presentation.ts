@@ -9,11 +9,11 @@ export interface WorkspaceModuleTabTarget {
   uri?: string;
 }
 
-const CANVAS_PRESENTATION_SCHEME = "canvas://";
+const CANVAS_PRESENTATION_SCHEMES = ["canvas://", "interaction://"] as const;
 
 export function isConcreteCanvasPresentationUri(uri: string): boolean {
-  if (!uri.startsWith(CANVAS_PRESENTATION_SCHEME)) return false;
-  return uri.slice(CANVAS_PRESENTATION_SCHEME.length).trim().length > 0;
+  const scheme = CANVAS_PRESENTATION_SCHEMES.find((candidate) => uri.startsWith(candidate));
+  return Boolean(scheme && uri.slice(scheme.length).trim().length > 0);
 }
 
 function isJsonRecord(value: unknown): value is Record<string, unknown> {

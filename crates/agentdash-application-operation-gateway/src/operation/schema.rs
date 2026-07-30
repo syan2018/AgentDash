@@ -1,5 +1,86 @@
 use serde_json::Value;
 
+/// Projects an externally supplied schema into the exact subset enforced by OperationGateway.
+///
+/// External providers such as MCP remain the final validator for constraints that are not part of
+/// the Gateway subset. Keeping the projection here prevents one unsupported annotation or
+/// validation keyword from invalidating the actor's entire dynamic Operation surface.
+pub fn project_json_schema_to_supported_subset(schema: Value) -> Value {
+    match schema {
+        Value::Bool(_) => schema,
+        Value::Object(mut object) => {
+            if !object.contains_key("anyOf")
+                && let Some(one_of) = object.remove("oneOf")
+            {
+                object.insert("anyOf".to_owned(), one_of);
+            }
+            let mut projected = serde_json::Map::new();
+            for key in [
+                "type",
+                "required",
+                "enum",
+                "const",
+                "minimum",
+                "maximum",
+                "description",
+            ] {
+                if let Some(value) = object.remove(key) {
+                    projected.insert(key.to_owned(), value);
+                }
+            }
+            if let Some(properties) = object
+                .remove("properties")
+                .and_then(|value| value.as_object().cloned())
+            {
+                projected.insert(
+                    "properties".to_owned(),
+                    Value::Object(
+                        properties
+                            .into_iter()
+                            .map(|(key, schema)| {
+                                (key, project_json_schema_to_supported_subset(schema))
+                            })
+                            .collect(),
+                    ),
+                );
+            }
+            if let Some(items) = object.remove("items") {
+                projected.insert(
+                    "items".to_owned(),
+                    project_json_schema_to_supported_subset(items),
+                );
+            }
+            if let Some(additional) = object.remove("additionalProperties") {
+                projected.insert(
+                    "additionalProperties".to_owned(),
+                    project_json_schema_to_supported_subset(additional),
+                );
+            }
+            if let Some(branches) = object
+                .remove("anyOf")
+                .and_then(|value| value.as_array().cloned())
+            {
+                projected.insert(
+                    "anyOf".to_owned(),
+                    Value::Array(
+                        branches
+                            .into_iter()
+                            .map(project_json_schema_to_supported_subset)
+                            .collect(),
+                    ),
+                );
+            }
+            let projected = Value::Object(projected);
+            if validate_json_schema_definition(&projected).is_ok() {
+                projected
+            } else {
+                Value::Bool(true)
+            }
+        }
+        _ => Value::Bool(true),
+    }
+}
+
 pub fn validate_json_schema_definition(schema: &Value) -> Result<(), String> {
     validate_schema_definition_at(schema, "$schema")
 }
@@ -327,7 +408,10 @@ fn json_value_matches_type(value: &Value, expected: &str) -> bool {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{validate_json_schema_definition, validate_json_schema_subset};
+    use super::{
+        project_json_schema_to_supported_subset, validate_json_schema_definition,
+        validate_json_schema_subset,
+    };
 
     #[test]
     fn rejects_additional_properties_and_enum_mismatch() {
@@ -408,5 +492,44 @@ mod tests {
         assert!(validate_json_schema_subset(&schema, &json!({ "offset": -1 })).is_err());
         assert!(validate_json_schema_subset(&schema, &json!({ "offset": 11 })).is_err());
         assert!(validate_json_schema_subset(&schema, &json!("invalid")).is_err());
+    }
+
+    #[test]
+    fn external_schema_projection_removes_unsupported_keywords_recursively() {
+        let projected = project_json_schema_to_supported_subset(json!({
+            "type": "object",
+            "title": "MCP input",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S+",
+                    "description": "Search query"
+                }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+        }));
+
+        assert!(validate_json_schema_definition(&projected).is_ok());
+        assert_eq!(projected["properties"]["query"]["type"], "string");
+        assert_eq!(
+            projected["properties"]["query"]["description"],
+            "Search query"
+        );
+        assert!(projected["properties"]["query"].get("minLength").is_none());
+        assert!(projected["properties"]["query"].get("pattern").is_none());
+    }
+
+    #[test]
+    fn malformed_external_schema_projects_to_an_unconstrained_valid_schema() {
+        let projected = project_json_schema_to_supported_subset(json!({
+            "type": "timestamp",
+            "required": "query",
+            "anyOf": []
+        }));
+
+        assert_eq!(projected, Value::Bool(true));
+        assert!(validate_json_schema_definition(&projected).is_ok());
     }
 }

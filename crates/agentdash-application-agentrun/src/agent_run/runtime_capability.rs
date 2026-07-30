@@ -1,59 +1,32 @@
 use agentdash_domain::common::Vfs;
 use agentdash_domain::workflow::{AgentFrame, MountDirective};
-use agentdash_platform_spi::{CapabilityState, RuntimeMcpServer};
+use agentdash_platform_spi::CapabilityState;
 
 pub use agentdash_platform_spi::{
     CapabilityStateDelta, DefaultMountDelta, NamedEntityDelta, SetDelta, VfsSurfaceDelta,
-    compute_capability_state_delta,
+    compute_capability_state_delta, compute_vfs_surface_delta,
 };
 
-/// AgentFrame revision 拆解后的 capability surface JSON 三元组。
+/// AgentFrame revision 的 callable admission surface。
 #[derive(Debug, Clone)]
 pub struct FrameCapabilitySurfaces {
     pub effective_capability_json: Option<serde_json::Value>,
-    pub vfs_surface_json: Option<serde_json::Value>,
-    pub mcp_surface_json: Option<serde_json::Value>,
 }
 
 /// 从 immutable AgentFrame revision 投影只读 CapabilityState。
 pub fn project_capability_state_from_frame(frame: &AgentFrame) -> CapabilityState {
-    let mut state: CapabilityState = frame
-        .effective_capability_json
+    frame
+        .surface
+        .capability_state
         .as_ref()
         .and_then(|json| serde_json::from_value(json.clone()).ok())
-        .unwrap_or_default();
-
-    if state.vfs.active.is_none()
-        && let Some(vfs) = frame
-            .vfs_surface_json
-            .as_ref()
-            .and_then(|json| serde_json::from_value::<Vfs>(json.clone()).ok())
-    {
-        state.vfs.active = Some(vfs);
-    }
-
-    if state.tool.mcp_servers.is_empty()
-        && let Some(servers) = frame
-            .mcp_surface_json
-            .as_ref()
-            .and_then(|json| serde_json::from_value::<Vec<RuntimeMcpServer>>(json.clone()).ok())
-    {
-        state.tool.mcp_servers = servers;
-    }
-
-    state
+        .unwrap_or_default()
 }
 
-/// 将 CapabilityState 写成 AgentFrame canonical surface 与同 revision split projections。
+/// 将 CapabilityState 写成独立 AgentFrame capability surface。
 pub fn capability_state_to_frame_surfaces(state: &CapabilityState) -> FrameCapabilitySurfaces {
     FrameCapabilitySurfaces {
         effective_capability_json: serde_json::to_value(state).ok(),
-        vfs_surface_json: state
-            .vfs
-            .active
-            .as_ref()
-            .and_then(|vfs| serde_json::to_value(vfs).ok()),
-        mcp_surface_json: serde_json::to_value(&state.tool.mcp_servers).ok(),
     }
 }
 

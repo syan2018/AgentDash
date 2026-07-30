@@ -273,31 +273,37 @@ fn product_tool_definition(
         ),
         ProductRuntimeToolKind::WorkspaceModuleList => (
             "workspace_module_list",
-            "List Workspace Modules visible through the applied Product runtime surface.",
+            "List current actor-visible Workspace Modules together with surface readiness and provider diagnostics; call before describe, invoke, present, or OperationScript composition.",
             RuntimeToolPermission::ProductRead,
             RuntimeToolEffect::ReadOnly,
         ),
         ProductRuntimeToolKind::WorkspaceModuleDescribe => (
             "workspace_module_describe",
-            "Describe one Workspace Module and its visible operations.",
+            "Describe one current Workspace Module and return its visible views, operation keys, exact OperationRefs, schemas, effects, replay policies, and readiness.",
             RuntimeToolPermission::ProductRead,
             RuntimeToolEffect::ReadOnly,
         ),
+        ProductRuntimeToolKind::WorkspaceModuleOperate => (
+            "workspace_module_operate",
+            "Run a provider-owned Workspace Module lifecycle route such as canvas.create, canvas.attach, or canvas.copy; use invoke for one described Operation and operation_script for bounded composition.",
+            RuntimeToolPermission::ProductWrite,
+            RuntimeToolEffect::ProductMutation,
+        ),
         ProductRuntimeToolKind::WorkspaceModuleInvoke => (
             "workspace_module_invoke",
-            "Invoke an exact Workspace Module OperationRef through the canonical OperationGateway.",
+            "Invoke one Operation from the latest module descriptor using module_id, operation_key, and input; the trusted host resolves its exact OperationRef through the canonical OperationGateway.",
             RuntimeToolPermission::ProductWrite,
             RuntimeToolEffect::ProductMutation,
         ),
         ProductRuntimeToolKind::WorkspaceModulePresent => (
             "workspace_module_present",
-            "Resolve and present a trusted Workspace Module view in the current AgentRun.",
+            "Present one trusted Workspace Module view using the exact current module_id and optional view_key returned by describe.",
             RuntimeToolPermission::ProductWrite,
             RuntimeToolEffect::ProductMutation,
         ),
         ProductRuntimeToolKind::OperationScript => (
             "operation_script",
-            "Validate and execute an ephemeral multi-Operation Rhai program through the canonical OperationGateway.",
+            "Compose multiple exact Operations into one bounded ephemeral Rhai tool call to reduce Agent round trips and make independent queries run concurrently with ops.invoke_all; use refs from the latest Workspace Module descriptors and Workflow for durable execution.",
             RuntimeToolPermission::ProductWrite,
             RuntimeToolEffect::ProductMutation,
         ),
@@ -813,6 +819,7 @@ mod tests {
             ProductRuntimeToolKind::CompanionRespond,
             ProductRuntimeToolKind::WorkspaceModuleList,
             ProductRuntimeToolKind::WorkspaceModuleDescribe,
+            ProductRuntimeToolKind::WorkspaceModuleOperate,
             ProductRuntimeToolKind::WorkspaceModuleInvoke,
             ProductRuntimeToolKind::WorkspaceModulePresent,
             ProductRuntimeToolKind::OperationScript,
@@ -838,6 +845,7 @@ mod tests {
                 "companion_respond",
                 "workspace_module_list",
                 "workspace_module_describe",
+                "workspace_module_operate",
                 "workspace_module_invoke",
                 "workspace_module_present",
                 "operation_script",
@@ -870,6 +878,17 @@ mod tests {
             RuntimeToolPermission::ProductWrite
         );
         assert_eq!(definitions[8].effect, RuntimeToolEffect::ProductMutation);
+        assert!(definitions[6].description.contains("lifecycle route"));
+        assert!(
+            definitions[7]
+                .description
+                .contains("module_id, operation_key, and input")
+        );
+        assert!(
+            definitions[9]
+                .description
+                .contains("bounded ephemeral cross-module")
+        );
         assert!(definitions.iter().all(|definition| {
             definition.authorization_policy == RuntimeToolAuthorizationPolicy::Product
         }));

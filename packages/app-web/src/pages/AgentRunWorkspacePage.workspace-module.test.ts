@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
+const workspaceModuleMocks = vi.hoisted(() => ({
+  presentWorkspaceModule: vi.fn(),
+  presentAgentRunWorkspaceModule: vi.fn(),
+}));
+
+vi.mock("../services/workspaceModule", () => workspaceModuleMocks);
+
 import type { AgentRunWorkspaceView } from "../types";
 import { useWorkspaceTabStore, type WorkspaceTabLayoutOptions } from "../stores/workspaceTabStore";
 import {
@@ -628,6 +635,13 @@ describe("Canvas workspace module selector and user-open flow", () => {
 
   it("opens an already active Canvas from the canonical project presentation URI", async () => {
     const openOrActivate = vi.fn();
+    workspaceModuleMocks.presentWorkspaceModule.mockResolvedValueOnce({
+      module_id: "interaction:instance-1",
+      view_key: "runtime",
+      renderer_kind: "canvas",
+      presentation_uri: "interaction://instance-1",
+      title: "Canvas A",
+    });
 
     await openUserCanvasModule({
       option: {
@@ -636,13 +650,13 @@ describe("Canvas workspace module selector and user-open flow", () => {
         title: "Canvas A",
         presentation_uri: "canvas://cvs-candidate",
       },
+      projectId: "project-1",
       openOrActivate,
     });
 
     expect(openOrActivate).toHaveBeenCalledWith(
       "canvas",
-      "canvas://cvs-candidate",
-      true,
+      "interaction://instance-1",
     );
   });
 
@@ -654,19 +668,35 @@ describe("Canvas workspace module selector and user-open flow", () => {
       title: "Canvas A",
       presentation_uri: "canvas://cvs-candidate",
     };
+    workspaceModuleMocks.presentWorkspaceModule.mockResolvedValueOnce({
+      module_id: "interaction:instance-1",
+      view_key: "runtime",
+      renderer_kind: "canvas",
+      presentation_uri: "interaction://instance-1",
+      title: "Canvas A",
+    });
 
     await expect(openUserCanvasModule({
       option,
+      projectId: "project-1",
       openOrActivate,
     })).resolves.toBeUndefined();
-    expect(openOrActivate).toHaveBeenCalledWith("canvas", "canvas://cvs-candidate", true);
+    expect(openOrActivate).toHaveBeenCalledWith("canvas", "interaction://instance-1");
 
     openOrActivate.mockClear();
+    workspaceModuleMocks.presentWorkspaceModule.mockResolvedValueOnce({
+      module_id: "canvas:cvs-mount-a",
+      view_key: "preview",
+      renderer_kind: "canvas",
+      presentation_uri: "canvas://",
+      title: "Canvas A",
+    });
     await expect(openUserCanvasModule({
       option: {
         ...option,
         presentation_uri: "canvas://",
       },
+      projectId: "project-1",
       openOrActivate,
     })).rejects.toThrow("当前 Canvas 没有可打开的 presentation。");
     expect(openOrActivate).not.toHaveBeenCalled();

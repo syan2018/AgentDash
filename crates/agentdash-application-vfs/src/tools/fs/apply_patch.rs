@@ -126,17 +126,38 @@ impl FsApplyPatchExecutor {
         let access_policy = state.access_policy;
         let mutation_keys = fs_apply_patch_mutation_keys(&vfs, &params.patch)
             .map_err(VfsToolExecutionError::ExecutionFailed)?;
+        let single_mount = single_mount_patch_target(&params.patch)
+            .map_err(VfsToolExecutionError::ExecutionFailed)?;
         let result = tokio::select! {
             _ = cancel.cancelled() => return Err(VfsToolExecutionError::Cancelled),
             result = self.execution_state.mutation_queue.with_locks(
                 mutation_keys,
-                self.service.apply_patch_multi_with_policy(
-                    &vfs,
-                    Some(&access_policy),
-                    &params.patch,
-                    self.overlay.as_ref().map(|arc| arc.as_ref()),
-                    self.identity.as_ref(),
-                ),
+                async {
+                    if let Some(mount_id) = single_mount {
+                        let result = self.service.apply_patch_with_policy(
+                            &vfs,
+                            Some(&access_policy),
+                            &mount_id,
+                            &params.patch,
+                            self.overlay.as_ref().map(|arc| arc.as_ref()),
+                            self.identity.as_ref(),
+                        ).await?;
+                        Ok(crate::MultiMountPatchResult {
+                            added: result.added,
+                            modified: result.modified,
+                            deleted: result.deleted,
+                            errors: Vec::new(),
+                        })
+                    } else {
+                        self.service.apply_patch_multi_with_policy(
+                            &vfs,
+                            Some(&access_policy),
+                            &params.patch,
+                            self.overlay.as_ref().map(|arc| arc.as_ref()),
+                            self.identity.as_ref(),
+                        ).await
+                    }
+                },
             ) => result.map_err(|error| VfsToolExecutionError::ExecutionFailed(error.to_string()))?,
         };
 
@@ -294,10 +315,8 @@ fn patch_entry_diffs(patch: &str) -> Vec<String> {
             diffs.push(current.join("\n"));
             current.clear();
         }
-        if starts_entry || !current.is_empty() {
-            if line != "*** End Patch" {
-                current.push(line.to_string());
-            }
+        if (starts_entry || !current.is_empty()) && line != "*** End Patch" {
+            current.push(line.to_string());
         }
     }
     if !current.is_empty() {
@@ -344,6 +363,23 @@ fn fs_apply_patch_target_keys(patch: &str) -> Result<Vec<String>, String> {
         }
     }
     Ok(keys.into_iter().collect())
+}
+
+fn single_mount_patch_target(patch: &str) -> Result<Option<String>, String> {
+    let mut mount_ids = fs_apply_patch_target_keys(patch)?
+        .into_iter()
+        .map(|target| {
+            target
+                .split_once("://")
+                .map(|(mount_id, _)| mount_id.to_owned())
+                .ok_or_else(|| format!("invalid normalized VFS target: {target}"))
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    Ok(if mount_ids.len() == 1 {
+        mount_ids.pop_first()
+    } else {
+        None
+    })
 }
 
 #[cfg(test)]
@@ -397,6 +433,23 @@ mod fs_apply_patch_mutation_tests {
         .expect_err("bare paths should be rejected");
 
         assert!(err.contains("缺少 mount 前缀"));
+    }
+
+    #[test]
+    fn apply_patch_detects_single_mount_for_atomic_provider_dispatch() {
+        let patch = r#"*** Begin Patch
+*** Update File: canvas://src/main.tsx
+@@
+-old
++new
+*** Add File: canvas://src/theme.css
++body {}
+*** End Patch"#;
+
+        assert_eq!(
+            single_mount_patch_target(patch).expect("patch should parse"),
+            Some("canvas".to_owned())
+        );
     }
 
     #[test]

@@ -258,13 +258,8 @@ impl FrameAssemblyBuilder {
     }
 
     pub(super) fn to_surface_draft(&self) -> FrameSurfaceDraft {
-        let mut capability_state = self.capability_state.clone();
-        if let Some(state) = capability_state.as_mut() {
-            state.vfs.active = self.vfs.clone();
-            state.tool.mcp_servers = self.mcp_servers.clone();
-        }
         FrameSurfaceDraft {
-            capability_state,
+            capability_state: self.capability_state.clone(),
             vfs: self.vfs.clone(),
             mcp_servers: self.mcp_servers.clone(),
             context_bundle_summary: self

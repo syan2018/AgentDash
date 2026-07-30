@@ -1,6 +1,7 @@
 use agentdash_domain::agent::MEMORY_MANAGER_BUNDLE;
 use agentdash_domain::companion::COMPANION_SYSTEM_BUNDLE;
 use agentdash_domain::embedded_skill::EmbeddedSkillBundle;
+use agentdash_domain::interaction::CANVAS_SYSTEM_BUNDLE;
 use agentdash_domain::routine::ROUTINE_MEMORY_BUNDLE;
 use agentdash_domain::workspace_module::WORKSPACE_MODULE_SYSTEM_BUNDLE;
 
@@ -12,6 +13,11 @@ pub struct BuiltinSkillAssetTemplate {
 }
 
 const BUILTIN_SKILL_TEMPLATES: &[BuiltinSkillAssetTemplate] = &[
+    BuiltinSkillAssetTemplate {
+        builtin_key: "canvas-system",
+        display_name: "Canvas System",
+        bundle: &CANVAS_SYSTEM_BUNDLE,
+    },
     BuiltinSkillAssetTemplate {
         builtin_key: "workspace-module-system",
         display_name: "Workspace Module System",
@@ -72,5 +78,24 @@ mod tests {
                 .iter()
                 .any(|template| template.builtin_key == "memory-manager")
         );
+    }
+
+    #[test]
+    fn canvas_system_template_is_registered() {
+        let template =
+            get_builtin_skill_asset_template("canvas-system").expect("canvas-system template");
+
+        assert_eq!(template.display_name, "Canvas System");
+        assert_eq!(template.bundle.name, "canvas-system");
+        assert_eq!(template.bundle.files.len(), 4);
+        let skill = template
+            .bundle
+            .files
+            .iter()
+            .find(|file| file.relative_path == "SKILL.md")
+            .expect("canvas-system SKILL.md");
+        let meta = parse_skill_metadata(skill.content).expect("valid skill frontmatter");
+        assert_eq!(meta.name, "canvas-system");
+        assert!(meta.description.contains("Canvas"));
     }
 }

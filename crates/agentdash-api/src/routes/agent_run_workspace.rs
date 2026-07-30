@@ -21,7 +21,8 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     routes::{
-        vfs_surfaces::dto as vfs_surface_dto, workspace_module::load_project_workspace_modules,
+        vfs_surfaces::dto as vfs_surface_dto,
+        workspace_module::load_agent_run_workspace_module_surface,
     },
     rpc::ApiError,
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
@@ -37,10 +38,11 @@ pub(crate) async fn load(
         run_id: run.id,
         agent_id: agent.id,
     };
+    let agent_owner_user_id = agent.created_by_user_id.clone();
     let execution_authority = match state
         .services
         .execution_authorities
-        .resolve(ExecutionAuthorityRequest::for_target(target))
+        .resolve(ExecutionAuthorityRequest::for_target(target.clone()))
         .await
     {
         Ok(authority) => Some(authority),
@@ -80,16 +82,9 @@ pub(crate) async fn load(
         .map_err(ApiError::from)?;
     let workspace_modules = match execution_authority.as_ref() {
         Some(authority) => {
-            load_project_workspace_modules(state, current_user, snapshot.run.project_id)
+            load_agent_run_workspace_module_surface(state, authority, target, agent_owner_user_id)
                 .await?
-                .into_iter()
-                .filter(|module| {
-                    authority
-                        .capability_state()
-                        .workspace_module
-                        .allows(&module.summary.module_id)
-                })
-                .collect()
+                .0
         }
         None => Vec::new(),
     };

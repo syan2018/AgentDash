@@ -24,9 +24,13 @@ use agentdash_application_operation_gateway::{
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
 use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
+use agentdash_infrastructure::mcp::runtime_mcp_capability_key;
 use agentdash_platform_spi::AuthIdentity;
 use agentdash_platform_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_platform_spi::platform::mcp_relay::{McpRelayProvider, RelayProbeTarget};
+use agentdash_workspace_module::canvas::mount_surface::CanvasMountMaterializationPort;
+use agentdash_workspace_module::canvas::operation_provider::CanvasAuthoringOperationProvider;
+use agentdash_workspace_module::canvas::runtime_operation_provider::CanvasRuntimeOperationProvider;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
@@ -49,19 +53,34 @@ impl SharedOperationGatewayHandle {
     }
 }
 
+pub(crate) struct OperationGatewayBootstrapDeps {
+    pub mcp_probe_relay: Arc<dyn agentdash_platform_spi::McpRelayProvider>,
+    pub operation_mcp_access: Arc<dyn agentdash_application_operation_gateway::OperationMcpAccess>,
+    pub execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
+    pub platform_tool_access: Arc<dyn PlatformToolOperationAccess>,
+    pub repos: RepositorySet,
+    pub backend_registry: Arc<BackendRegistry>,
+    pub setup_action_transport:
+        Arc<dyn agentdash_application_ports::backend_transport::BackendTransport>,
+    pub gateway_handle: SharedOperationGatewayHandle,
+    pub canvas_mounts: Arc<dyn CanvasMountMaterializationPort>,
+}
+
 pub(crate) fn build_operation_gateway(
-    mcp_probe_relay: Arc<dyn agentdash_platform_spi::McpRelayProvider>,
-    operation_mcp_access: Arc<dyn agentdash_application_operation_gateway::OperationMcpAccess>,
-    execution_authorities: Arc<dyn ExecutionAuthorityResolver>,
-    platform_tool_access: Arc<dyn PlatformToolOperationAccess>,
-    repos: RepositorySet,
-    backend_registry: Arc<BackendRegistry>,
-    setup_action_transport: Arc<
-        dyn agentdash_application_ports::backend_transport::BackendTransport,
-    >,
-    gateway_handle: SharedOperationGatewayHandle,
+    deps: OperationGatewayBootstrapDeps,
 ) -> Result<Arc<OperationGateway>, agentdash_application_operation_gateway::OperationExecutionError>
 {
+    let OperationGatewayBootstrapDeps {
+        mcp_probe_relay,
+        operation_mcp_access,
+        execution_authorities,
+        platform_tool_access,
+        repos,
+        backend_registry,
+        setup_action_transport,
+        gateway_handle,
+        canvas_mounts,
+    } = deps;
     let mcp_probe_setup = Arc::new(ApplicationMcpProbeSetupPort::new(
         Some(mcp_probe_relay),
         McpProbeBackendTargetResolver::new(repos.clone(), backend_registry.clone()),
@@ -106,6 +125,17 @@ pub(crate) fn build_operation_gateway(
         },
     )));
     let platform_tool_provider = Arc::new(PlatformToolOperationProvider::new(platform_tool_access));
+    let canvas_provider = Arc::new(CanvasAuthoringOperationProvider::new(
+        repos.interaction_definition_repo.clone(),
+        repos.lifecycle_agent_repo.clone(),
+        canvas_mounts,
+    ));
+    let canvas_runtime_provider = Arc::new(CanvasRuntimeOperationProvider::new(
+        repos.interaction_definition_repo.clone(),
+        repos.interaction_instance_repo.clone(),
+        repos.interaction_presentation_repo.clone(),
+        repos.lifecycle_agent_repo.clone(),
+    ));
     OperationGateway::try_new(
         Arc::new(CompositeOperationAuthorityResolver::new(
             setup_authority,
@@ -121,6 +151,8 @@ pub(crate) fn build_operation_gateway(
             platform_tool_provider,
             extension_provider,
             interaction_provider,
+            canvas_provider,
+            canvas_runtime_provider,
         ],
         Arc::new(EphemeralOperationResultStore::default()),
         Arc::new(TracingOperationAuditSink),
@@ -689,6 +721,8 @@ impl agentdash_application_operation_gateway::OperationAuthorityResolver
         }
         let mut facts = Vec::new();
         let mut capabilities = std::collections::BTreeSet::from(["operation.invoke".to_string()]);
+        let mut resolved_project_id =
+            agentdash_application_operation_gateway::scope_project_id(&scope.scope_ref);
         match principal.principal_ref() {
             OperationPrincipalRef::User { user_id } => {
                 let identity = principal.user_identity().ok_or_else(|| {
@@ -738,6 +772,22 @@ impl agentdash_application_operation_gateway::OperationAuthorityResolver
                                 });
                             }
                         }
+                        let revision = self
+                            .repos
+                            .interaction_definition_repo
+                            .get_revision(instance.definition_revision_id)
+                            .await
+                            .map_err(|error| {
+                                OperationExecutionError::provider_failed(error.to_string())
+                            })?
+                            .ok_or_else(|| OperationExecutionError::NotReady {
+                                code: "interaction_revision_not_found".to_string(),
+                                message: format!(
+                                    "Interaction definition revision 不存在: {}",
+                                    instance.definition_revision_id
+                                ),
+                            })?;
+                        resolved_project_id = Some(revision.project_id);
                         facts.push(format!(
                             "interaction:{}:{}:{}:{}",
                             instance.id,
@@ -753,9 +803,22 @@ impl agentdash_application_operation_gateway::OperationAuthorityResolver
                         ));
                     }
                 }
-                if let Some(project_id) =
-                    agentdash_application_operation_gateway::scope_project_id(&scope.scope_ref)
-                {
+                if let Some(project_id) = resolved_project_id {
+                    for preset in self
+                        .repos
+                        .mcp_preset_repo
+                        .list_by_project(project_id)
+                        .await
+                        .map_err(|error| {
+                            OperationExecutionError::provider_failed(error.to_string())
+                        })?
+                    {
+                        capabilities.insert(runtime_mcp_capability_key(&preset.key));
+                        facts.push(format!(
+                            "mcp-preset:{}:{}:{}",
+                            preset.id, preset.key, preset.updated_at
+                        ));
+                    }
                     for installation in self.enabled_installations(project_id).await? {
                         capabilities.insert(format!("extension:{}", installation.extension_key));
                         facts.push(format!(

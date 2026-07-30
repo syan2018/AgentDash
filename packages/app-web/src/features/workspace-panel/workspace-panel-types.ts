@@ -13,4 +13,5 @@ export type { WorkspaceBackendTarget, WorkspaceRuntimeData };
 
 export interface WorkspacePanelProps {
   runtimeData: WorkspaceRuntimeData;
+  refreshRuntime?: () => Promise<unknown>;
 }

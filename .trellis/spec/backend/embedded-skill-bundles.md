@@ -157,13 +157,17 @@ frame 要暴露哪些 Skill”分成三个稳定事实。Canvas、Workspace Modu
 Routine 只声明选择策略；它们共享同一套 Project 资产与 lifecycle mount，因此 runtime
 skill baseline、workspace resource surface 和前端 capability 展示观察到同一组文件。
 
-Canvas runnable asset 继续只保存 `Canvas.files` 的业务源码与数据；`canvas-system`
-承载 authoring、runtime bridge、VFS asset、interaction snapshot、render diagnostics
-和 submit-to-Agent 协议。`workspace-module-system` 承载 module
-list/describe/invoke/present 操作协议。`routine-memory` 与 `memory-manager` 承载
-Routine/Memory 协议，而 Routine state 继续由 `routine_vfs` 投影。各领域指南经统一
-lifecycle skill surface 可见，原因是它们属于 session 操作协议，而非某个业务实体的
-文件树。
+Canvas authoring asset 由 `InteractionDefinitionRevision(kind=canvas)` 与 immutable
+`SourceBundle` 承载；`canvas-system` 说明 authoring revision、definition/runtime identity、
+canonical Interaction state/command、Extension component binding、presentation quality 与交付流程。
+`workspace-module-system` 承载 module list/describe/operate/invoke/present 通用操作协议。
+`canvas-system` 的 references 进一步覆盖 authoring VFS、MessageChannel host SDK、exact
+Operations、VFS 图片、canonical Interaction state、renderer diagnostics 与 submit-to-Agent。
+两者分离的原因是
+Workspace Module 是通用 actor projection，而 Canvas Skill 负责 Canvas 产品工作流与视觉交付。
+`routine-memory` 与 `memory-manager` 承载 Routine/Memory 协议，而 Routine state 继续由
+`routine_vfs` 投影。各领域指南经统一 lifecycle skill surface 可见，原因是它们属于 session
+操作协议，而非某个业务实体的文件树。
 
 ## Validation Contract
 
@@ -180,3 +184,17 @@ lifecycle skill surface 可见，原因是它们属于 session 操作协议，�
   `ensure_embedded_skill_bundle`，使验证、路径归一化和内容同步使用同一实现。
 - bundle 新增文件时同步更新 `files` 声明，使编译产物中的 catalog 与源码目录保持
   完整一致。
+- 工具本地的调用形状、必填参数和最短决策提示放在
+  `RuntimeToolDefinition.description` 与 parameters schema 的 property description 中，使
+  Agent 在 Skill 未触发时仍能正确选择并调用工具。Skill 主文只保留跨工具选择与核心流程，
+  详细 host API、错误矩阵、重放语义和诊断说明放在由 `SKILL.md` 直接链接的一层
+  `references/`；这样工具合同、按需领域知识与上下文成本分别由正确 owner 承担。
+- 同一 tool cluster 的工具仍按不同执行语义保持独立 identity。例如
+  `workspace_module_operate` 只承接 provider-owned lifecycle route，
+  `workspace_module_invoke` 承接单个 described Operation，
+  `operation_script` 承接 current actor surface 上有界、ephemeral 的跨 provider 组合。Skill
+  负责解释选择关系，不能用一个宽泛入口合并不同的 authority、limits、evidence 与 replay
+  合同。
+- Skill 语义测试至少锁定主文到 references 的可发现链接、工具真实参数形状以及关键 host API
+  标识；Operation provider 测试应把完整 descriptor 集合交给 `OperationCatalog::try_new`，因为
+  单个 producer 单测无法证明 Gateway 会接纳整个 dynamic provider surface。

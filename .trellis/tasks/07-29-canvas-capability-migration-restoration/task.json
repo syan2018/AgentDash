@@ -1,0 +1,32 @@
+{
+  "id": "canvas-capability-migration-restoration",
+  "name": "canvas-capability-migration-restoration",
+  "title": "完整迁回 Canvas 产品能力",
+  "description": "以 2026-07-09 reference 为能力基线，完整回迁 Canvas module，并将执行、状态、资源与 Agent bridge 收束到 Interaction/Operation 新底层。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "cross-layer",
+  "package": null,
+  "priority": "P0",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-07-29",
+  "completedAt": null,
+  "branch": "codex/canvas-capability-restoration",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "D:/ABCTools_Dev/AgentDash-main-reference",
+    "crates/agentdash-workspace-module",
+    "crates/agentdash-application-operation-gateway",
+    "crates/agentdash-domain/src/interaction",
+    "packages/app-web/src/features/canvas-panel"
+  ],
+  "notes": "planning；先完整硬搬旧 Canvas/Workspace 工具/bridge/前端/Skill/测试并允许编译失败，再接新事实源，最后删除错误路径；Agent-facing 工具合同保持旧版。",
+  "meta": {}
+}

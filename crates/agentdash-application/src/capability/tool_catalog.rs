@@ -301,8 +301,9 @@ mod tests {
     #[test]
     fn query_workspace_module_returns_canvas_module_tools() {
         let result = query_tool_catalog(&["workspace_module".to_string()]);
-        assert_eq!(result.len(), 5);
+        assert_eq!(result.len(), 6);
         let names: Vec<&str> = result.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"workspace_module_operate"));
         assert!(names.contains(&"workspace_module_list"));
         assert!(names.contains(&"workspace_module_describe"));
         assert!(names.contains(&"workspace_module_invoke"));
@@ -335,6 +336,6 @@ mod tests {
                 .allowed_scopes
                 .contains(&CapabilityCatalogScope::Task)
         );
-        assert_eq!(workspace_module.tools.len(), 5);
+        assert_eq!(workspace_module.tools.len(), 6);
     }
 }

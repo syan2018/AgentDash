@@ -98,15 +98,7 @@ impl ExecutionAuthority {
     }
 
     fn operation_capabilities(&self) -> BTreeSet<String> {
-        let mut capabilities = self.capability_state.capability_keys();
-        capabilities.extend(
-            self.capability_state
-                .tool
-                .mcp_servers
-                .iter()
-                .map(|server| format!("mcp:{}", server.name)),
-        );
-        capabilities
+        self.capability_state.capability_keys()
     }
 
     pub fn operation_authority_grant(&self) -> OperationAuthorityGrant {
@@ -609,7 +601,7 @@ mod tests {
             agent_id: uuid::Uuid::new_v4(),
         };
         let mut accepted = AgentFrame::new_revision(target.agent_id, 1, "accepted");
-        accepted.effective_capability_json = Some(
+        accepted.surface.capability_state = Some(
             serde_json::to_value(CapabilityState::from_clusters([
                 ToolCluster::Read,
                 ToolCluster::Task,
@@ -618,7 +610,7 @@ mod tests {
             .expect("capability"),
         );
         let mut latest = AgentFrame::new_revision(target.agent_id, 2, "unaccepted");
-        latest.effective_capability_json = Some(
+        latest.surface.capability_state = Some(
             serde_json::to_value(CapabilityState::from_clusters([ToolCluster::Workflow]))
                 .expect("capability"),
         );

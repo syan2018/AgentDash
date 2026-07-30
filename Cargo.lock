@@ -220,6 +220,7 @@ dependencies = [
  "agentdash-platform-spi",
  "agentdash-relay",
  "agentdash-test-support",
+ "agentdash-workspace-module",
  "anyhow",
  "async-stream",
  "async-trait",
@@ -882,6 +883,30 @@ dependencies = [
  "chrono",
  "serde_json",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "agentdash-workspace-module"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-runtime-contract",
+ "agentdash-application",
+ "agentdash-application-agentrun",
+ "agentdash-application-operation-gateway",
+ "agentdash-application-ports",
+ "agentdash-application-vfs",
+ "agentdash-contracts",
+ "agentdash-domain",
+ "agentdash-platform-spi",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
  "uuid",
 ]
 

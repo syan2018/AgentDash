@@ -1,8 +1,4 @@
-//! AgentFrame typed surface 读取扩展。
-//!
-//! AgentFrame 上的 JSON 字段 (effective_capability_json, vfs_surface_json 等)
-//! 通过 `AgentFrameSurfaceExt` trait 提供类型安全的反序列化读取，
-//! 避免每个消费者各自 parse，替代此前散落在各处的 JSON 反序列化逻辑。
+//! AgentFrame canonical surface 的类型安全读取扩展。
 
 use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookPlan;
 use agentdash_domain::workflow::AgentFrame;
@@ -125,8 +121,7 @@ impl FrameSurfaceDraft {
 
 /// AgentFrame 的 typed surface 读取扩展。
 ///
-/// AgentFrame 上的 JSON 字段 (effective_capability_json, vfs_surface_json 等)
-/// 通过此 trait 提供类型安全的反序列化读取，避免每个消费者各自 parse。
+/// AgentFrame canonical document 通过此 trait 提供类型安全读取。
 pub trait AgentFrameSurfaceExt {
     fn typed_capability_state(&self) -> Option<CapabilityState>;
     fn typed_vfs(&self) -> Option<Vfs>;
@@ -137,7 +132,7 @@ pub trait AgentFrameSurfaceExt {
     fn context_slice_value(&self) -> serde_json::Value;
     /// frame 上记录的 context bundle 摘要 (bundle_id, phase_tag, fragment_count)。
     ///
-    /// 只有当 `context_slice_json` 包含 `with_context_bundle_summary` 写入的
+    /// 只有当 canonical `context_slice` 包含 `with_context_bundle_summary` 写入的
     /// 结构时才能成功反序列化；其他格式或缺失均返回 `None`。
     fn context_bundle_summary(&self) -> Option<FrameContextBundleSummary>;
     /// Complete immutable context source snapshot for this exact frame revision.
@@ -146,32 +141,37 @@ pub trait AgentFrameSurfaceExt {
 
 impl AgentFrameSurfaceExt for AgentFrame {
     fn typed_capability_state(&self) -> Option<CapabilityState> {
-        self.effective_capability_json
+        self.surface
+            .capability_state
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 
     fn typed_vfs(&self) -> Option<Vfs> {
-        self.vfs_surface_json
+        self.surface
+            .vfs_surface
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 
     fn typed_mcp_servers(&self) -> Vec<RuntimeMcpServer> {
-        self.mcp_surface_json
+        self.surface
+            .mcp_surface
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default()
     }
 
     fn typed_execution_profile(&self) -> Option<AgentConfig> {
-        self.execution_profile_json
+        self.surface
+            .execution_profile
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 
     fn validated_hook_plan(&self) -> Result<AgentFrameHookPlan, String> {
         let value = self
+            .surface
             .hook_plan
             .as_ref()
             .ok_or_else(|| "AgentFrame has no immutable HookPlan".to_string())?;
@@ -182,13 +182,15 @@ impl AgentFrameSurfaceExt for AgentFrame {
     }
 
     fn context_slice_value(&self) -> serde_json::Value {
-        self.context_slice_json
+        self.surface
+            .context_slice
             .clone()
             .unwrap_or(serde_json::Value::Null)
     }
 
     fn context_bundle_summary(&self) -> Option<FrameContextBundleSummary> {
-        self.context_slice_json
+        self.surface
+            .context_slice
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
@@ -229,7 +231,7 @@ mod tests {
         let json = serde_json::to_value(&state).unwrap();
 
         let mut frame = test_frame();
-        frame.effective_capability_json = Some(json);
+        frame.surface.capability_state = Some(json);
 
         let result = frame.typed_capability_state().expect("should deserialize");
         assert_eq!(result.tool.enabled_clusters, state.tool.enabled_clusters);
@@ -247,7 +249,7 @@ mod tests {
         let json = serde_json::to_value(&vfs).unwrap();
 
         let mut frame = test_frame();
-        frame.vfs_surface_json = Some(json);
+        frame.surface.vfs_surface = Some(json);
 
         let result = frame.typed_vfs().expect("should deserialize");
         assert_eq!(result.mounts.len(), 1);
@@ -275,7 +277,7 @@ mod tests {
         let json = serde_json::to_value(&servers).unwrap();
 
         let mut frame = test_frame();
-        frame.mcp_surface_json = Some(json);
+        frame.surface.mcp_surface = Some(json);
 
         let result = frame.typed_mcp_servers();
         assert_eq!(result.len(), 1);
@@ -288,7 +290,7 @@ mod tests {
         let json = serde_json::to_value(&config).unwrap();
 
         let mut frame = test_frame();
-        frame.execution_profile_json = Some(json);
+        frame.surface.execution_profile = Some(json);
 
         let result = frame.typed_execution_profile().expect("should deserialize");
         assert_eq!(result.executor, "PI_AGENT");
@@ -301,7 +303,7 @@ mod tests {
             .expect("summary json");
 
         let mut frame = test_frame();
-        frame.context_slice_json = Some(summary_json);
+        frame.surface.context_slice = Some(summary_json);
 
         let summary = frame
             .context_bundle_summary()
@@ -334,14 +336,14 @@ mod tests {
     fn context_slice_value_clones_existing_json() {
         let mut frame = test_frame();
         let json = serde_json::json!({"arbitrary": "data"});
-        frame.context_slice_json = Some(json.clone());
+        frame.surface.context_slice = Some(json.clone());
         assert_eq!(frame.context_slice_value(), json);
     }
 
     #[test]
     fn context_bundle_summary_returns_none_for_non_bundle_json() {
         let mut frame = test_frame();
-        frame.context_slice_json = Some(serde_json::json!({"project": "test"}));
+        frame.surface.context_slice = Some(serde_json::json!({"project": "test"}));
         assert!(frame.context_bundle_summary().is_none());
     }
 
@@ -368,11 +370,11 @@ mod tests {
         let execution_profile = AgentConfig::new("PI_AGENT");
         let bundle = SessionContextBundle::new(Uuid::new_v4(), "owner_bootstrap");
 
-        frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
-        frame.vfs_surface_json = Some(serde_json::to_value(&vfs).unwrap());
-        frame.mcp_surface_json = Some(serde_json::to_value(&mcp_servers).unwrap());
-        frame.execution_profile_json = Some(serde_json::to_value(&execution_profile).unwrap());
-        frame.context_slice_json =
+        frame.surface.capability_state = Some(serde_json::to_value(&capability_state).unwrap());
+        frame.surface.vfs_surface = Some(serde_json::to_value(&vfs).unwrap());
+        frame.surface.mcp_surface = Some(serde_json::to_value(&mcp_servers).unwrap());
+        frame.surface.execution_profile = Some(serde_json::to_value(&execution_profile).unwrap());
+        frame.surface.context_slice =
             Some(serde_json::to_value(FrameContextBundleSummary::from_bundle(&bundle)).unwrap());
 
         let draft = FrameSurfaceDraft::from_frame(&frame);
@@ -417,7 +419,7 @@ mod tests {
             site: HookExecutionSite::ToolBroker,
         });
         let mut frame = test_frame();
-        frame.hook_plan = Some(serde_json::to_value(plan).unwrap());
+        frame.surface.hook_plan = Some(serde_json::to_value(plan).unwrap());
 
         assert!(
             frame

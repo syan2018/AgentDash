@@ -1,12 +1,12 @@
 # Canvas Runtime Operations
 
-Canvas 只能调用 `operations.list()` 返回、并经 `operations.describe()` 确认的 exact
-OperationRef：
+当 renderer 需要直接调用已投影 Operation 时，先从 `operations.list()` 取得当前 runtime
+catalog，再通过 `operations.describe()` 确认 exact OperationRef：
 
 ```ts
 const operations = await window.agentdash.operations.list();
-const operation = operations.find((item) => item.operation_ref.operation_key === "refresh");
-if (!operation) throw new Error("refresh Operation 当前不可用");
+const operation = operations.find((item) => item.operation_ref.operation_key === "load_summary");
+if (!operation) throw new Error("load_summary Operation 当前不可用");
 
 const result = await window.agentdash.operations.invoke(
   operation.operation_ref,
@@ -17,6 +17,9 @@ const result = await window.agentdash.operations.invoke(
 
 ## 规则
 
+- Canvas 自身定义的按钮、刷新与表单提交优先建模为 `canvas.json.actions`，由
+  `window.agentdash.actions.invoke(...)` 触发。
+- `operations.list()` 只是 renderer 当前 runtime catalog，不等同于 Agent 当前完整工具面。
 - 只从显式点击、提交或刷新动作调用 mutation/external Operation。
 - 不按 operation key 字符串自行构造 provider、scope 或 authority。
 - 不发送 token、backend ID、MCP transport、relay command、绝对路径或任意 HTTP 请求。

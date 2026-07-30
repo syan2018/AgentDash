@@ -19,8 +19,11 @@ authoring mount、runtime state、attachment authority 与 UI presentation。
 4. 通过 authoring mount 和通用 VFS 工具编辑文件；mount 不支持 exec。
 5. 使用 `workspace_module_present` 展示已有 definition。服务端创建或复用 presentation attachment
    后返回 canonical `interaction://{instance_id}` runtime identity；present 不挂载 source。
-6. iframe 需要 Operation、资产、Interaction、Agent 回流或诊断时先读取
-   [runtime-bridge.md](references/runtime-bridge.md)。
+6. Canvas 自定义按钮、刷新和表单提交通过
+   `window.agentdash.actions.invoke(...)` 触发 SourceBundle 固定的 host action；读取
+   [interaction-runtime.md](references/interaction-runtime.md)。只有 renderer 需要直接调用当前
+   runtime surface 已投影的 exact Operation 时，才使用 `window.agentdash.operations.*`；完整 SDK
+   边界见 [runtime-bridge.md](references/runtime-bridge.md)。
 7. 交付前读取 [presentation-quality.md](references/presentation-quality.md)。
 8. revision、attachment、permission、readiness 或 capability 变化后重新 describe。
 
@@ -32,6 +35,8 @@ authoring mount、runtime state、attachment authority 与 UI presentation。
 - `interaction:{instance_id}` 标识已 attach 的 shared runtime module。
 - `interaction://{instance_id}` 标识 runtime presentation。
 - definition revision 固定 immutable `SourceBundle`；source 修改创建新 revision。
+- `canvas.json.actions` 与 `actions/*.rhai` 同属 immutable `SourceBundle`，随 revision digest
+  固定 action target 与 exact Operation allowlist。
 - attachment 只授予 actor 访问 instance 的能力，不是 definition 或 instance 本身。
 - presentation URI 只负责打开 UI，不是执行或写入 authority。
 

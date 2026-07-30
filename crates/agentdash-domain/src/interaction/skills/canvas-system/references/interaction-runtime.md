@@ -49,57 +49,57 @@ PlatformCommand 修改 canonical state，因此必须通过已创建的 Interact
 ### 实时读取 attached Agent 的 skills
 
 definition 的 `canvas.json.actions` 固定 `skills.refresh`，target 使用 SourceBundle 内的
-`actions/load-skills.rhai`，并只授予：
+`actions/load-skills.rhai`，并只授予 `platform:vfs:fs_grep:v1`：
 
-- `platform:vfs:fs_glob:v1`
-- `platform:vfs:fs_read:v1`
+```json
+{
+  "format_version": 1,
+  "actions": [
+    {
+      "action_key": "skills.refresh",
+      "payload_schema": {
+        "type": "object"
+      },
+      "target": {
+        "kind": "operation_script",
+        "language": "rhai_v1",
+        "host_api_version": 1,
+        "source": {
+          "kind": "source_file",
+          "path": "actions/load-skills.rhai"
+        },
+        "requested_operations": [
+          {
+            "provider": {
+              "namespace": "platform",
+              "provider_key": "vfs"
+            },
+            "operation_key": "fs_grep",
+            "contract_version": 1
+          }
+        ]
+      }
+    }
+  ]
+}
+```
 
-脚本先读取 `main://**/SKILL.md`，再把所有文件读取收束进一次 `ops.invoke_all`：
+脚本只搜索 `SKILL.md` 中的 `name` 与 `description` 行：
 
 ```rhai
-fn frontmatter_field(text, key) {
-    let marker = key + ": ";
-    for line in text.split("\n") {
-        if line.contains(marker) {
-            let parts = line.split(marker);
-            let value = parts[1];
-            value.replace("\"", "");
-            return value;
-        }
-    }
-    ""
-}
+let matches = ops.invoke("platform:vfs:fs_grep:v1", #{
+    path: "main://",
+    glob: "**/SKILL.md",
+    pattern: "^(name|description):",
+    output_mode: "content"
+});
 
-let found = ops.invoke(
-    "platform:vfs:fs_glob:v1",
-    #{ path: "main://", pattern: "**/SKILL.md" }
-);
-let requests = [];
-for path in found.content[0].text.split("\n") {
-    if path.ends_with("SKILL.md") {
-        requests.push(#{
-            operation: "platform:vfs:fs_read:v1",
-            input: #{ path: "main://" + path }
-        });
-    }
-}
-let files = ops.invoke_all(requests);
-let skills = [];
-for index in 0..files.len() {
-    let text = files[index].content[0].text;
-    skills.push(#{
-        path: requests[index].input.path,
-        name: frontmatter_field(text, "name"),
-        description: frontmatter_field(text, "description")
-    });
-}
-#{ skills: skills }
+#{ lines: matches.content[0].text }
 ```
 
 Canvas 按钮只调用 `window.agentdash.actions.invoke("skills.refresh", {})`，直接渲染脚本返回的
-`skills[{path,name,description}]`。VFS 路径、Agent authority 和 exact Operation manifest 都由
-host/definition 控制，源码不携带 AgentRun identity；脚本只返回展示所需字段，避免把全部 Skill
-正文穿过 runtime bridge。
+`lines`。VFS 路径、Agent authority 和 exact Operation allowlist 都由 host/definition 控制，
+源码不携带 AgentRun identity；脚本只返回展示所需行，避免把全部 Skill 正文穿过 runtime bridge。
 
 ## Resource slot
 

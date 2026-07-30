@@ -27,6 +27,7 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 3. 本项目要求的Commit格式为 `type(scope): 可保留英文专业用词的中文提交信息`，并分点描述具体更新内容作为commit备注。
 4. 使用 `pnpm dev` 启动调试，其会自动编译 Rust binary，再依次拉起 云端后端 / 本机后端 / 前端；Rust后端无法热重载，更新后重新调试需要杀先前进程。
 5. 更新文档时不要瞎记录“不要做什么”，只应该记录“为什么这么做”。项目朝着整洁的方向迈进，没有人会关心过去的错误实现是什么样的。更不要记那些只对当前任务有意义而对模块开发没有任何价值的废话。
+6. 仅当用户明确要求时才创建 Trellis task 或进入 Trellis 开发流程；用户未提及即视为不创建，除非明确要启动超过 10 文件以上复杂任务推进，不然不主动询问是否创建，也不要试图按 Trellis 的多 Agent 开发流程推进。
 
 # 问题收纳
 

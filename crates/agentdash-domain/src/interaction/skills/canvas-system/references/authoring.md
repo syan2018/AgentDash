@@ -46,3 +46,59 @@ Module 与 VFS 工具。
 - 把有状态业务事实保存在 Interaction state，而不是仅存在于 DOM 变量中。
 - 用 resource slot 声明外部数据，不嵌入 credential 或 host path。
 - 把 Extension component 作为固定 ABI 的显式 binding，不进行任意 same-realm import。
+
+## `canvas.json.actions` 合同
+
+以下 action 把 `skills.refresh` 固定到当前 SourceBundle 内的 Rhai 文件，并只允许脚本调用一个
+exact Operation：
+
+```json
+{
+  "format_version": 1,
+  "actions": [
+    {
+      "action_key": "skills.refresh",
+      "payload_schema": {
+        "type": "object"
+      },
+      "target": {
+        "kind": "operation_script",
+        "language": "rhai_v1",
+        "host_api_version": 1,
+        "source": {
+          "kind": "source_file",
+          "path": "actions/load-skills.rhai"
+        },
+        "requested_operations": [
+          {
+            "provider": {
+              "namespace": "platform",
+              "provider_key": "vfs"
+            },
+            "operation_key": "fs_grep",
+            "contract_version": 1
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+遵守以下合同：
+
+- `language` 使用 `"rhai_v1"`，`host_api_version` 使用 `1`。
+- `source.kind` 使用 `"source_file"`，`source.path` 指向当前 SourceBundle 中存在的 `.rhai`
+  文件。
+- manifest 直接使用 domain `OperationRef`，因此 provider 是嵌套对象；renderer SDK 使用的是平铺
+  OperationRef DTO，两种边界分别按各自合同表达。
+- `requested_operations` 是脚本的 exact allowlist。Rhai 通过规范字符串调用同一个 ref：
+
+```rhai
+let result = ops.invoke("platform:vfs:fs_grep:v1", #{
+    path: "main://",
+    glob: "**/SKILL.md",
+    pattern: "^(name|description):",
+    output_mode: "content"
+});
+```

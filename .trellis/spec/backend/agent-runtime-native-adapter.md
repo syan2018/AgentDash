@@ -126,10 +126,12 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   不再拆出 branch/history/command/effect/change 关系镜像。
 - `DashSurface` 以 `SurfaceApplied/SurfaceRevoked` native history entry 表达，当前 surface 从
   history fold 得出。repository root 不保存第二个 `surface` 字段。
-- `DashSurface` 保存按应用顺序排列的materialized instructions
-  `[{ key, channel, text }]`、callable tools与最终accepted ContextFrames。ContextFrame保存typed
-  sections、delivery metadata和唯一的`rendered_text`；provider materializer与
-  `ContextFrameChanged`都读取该值，因此模型输入、history重放和前端审计不会产生第二套文本渲染。
+- `DashSurface`只保存按应用顺序排列的materialized instructions
+  `[{ key, channel, text }]`与callable tools；accepted ContextFrames属于
+  `InitialContextInstalled/SurfaceApplied/SurfaceRevoked/CompactionApplied`各自的history
+  occurrence。ContextFrame只保存kind、真实delivery status、typed sections、唯一
+  `rendered_text`与发生时间；provider materializer与`ContextFrameChanged`读取同一accepted值，
+  因此模型输入、history重放和前端审计不会产生第二套文本渲染。
 - concrete Agent内建工作基底属于该Complete Agent实现，不属于Product或AgentFrame。Dash以稳定
   intrinsic instruction key把编译期提示词放在Product instructions之前，再把合并后的完整
   `DashSurface`提交到native history；provider prompt与Identity ContextFrame都从该entry投影。
@@ -146,7 +148,7 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   projector与typed provenance；Product surface无损携带capability/source/tool path/context usage，
   Native adapter按字段接纳而不从runtime name或route反推。provider `tools[]`携带完整机器契约；
   accepted tool保留同一provenance。
-  Native Adapter把capability manifest各维度与`ToolSchemaDelta`合并到同一个
+  Dash ContextFrame compiler把capability manifest各维度与`ToolSchemaDelta`合并到同一个
   `CapabilityStateDelta` ContextFrame：首次接纳按empty→current生成完整初始增量，后续revision只
   保留真正变化的section，语义未变时不生成空frame。ToolSchema renderer从同一列表生成完整、
   确定性的可读参数说明；已知结构使用可读路径表达，其余schema字段保留为紧凑片段，因为展示优化
@@ -155,25 +157,25 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   deferred tool按需读取独立调用，不作为默认ToolSchemaDelta投递内容。
   合并为单frame的原因是capability状态和它开放的工具说明属于同一次surface transition，不能让
   模型与审计分别观察两个可独立漂移的revision。
-- Dash对`CapabilityStateDelta`固定声明`context/system_append`。Native history按当前active
-  surface链累积这些append frame，每个provider round重放initial delta与后续真delta；surface
-  revoke清空该链。这样平台拥有工具上下文的更新、顺序与撤销语义，connector只接收最终物化文本，
-  不拥有native prompt注入策略。
-- `DashSurface.context_frames`中的非`SystemAppend` frame表达当前surface的完整stable context
-  snapshot，provider每轮需要完整消费；canonical projector则比较相邻`SurfaceApplied`事实，只发布
-  新增或语义变化的stable frame。比较时忽略仅由surface revision/digest带来的frame id与cache
-  identity变化，保留delivery order、role、sections和`rendered_text`等真实语义。区分snapshot与
-  transition的原因是模型恢复需要完整当前状态，而timeline/live需要exactly-once变化，二者不能由
-  “直接遍历当前frames”同时满足。
+- History payload类型决定active fold语义：Surface apply/revoke用本次payload的stable Frames替换
+  整个stable slot集合，并追加最多一个真实`previous → current` Capability delta；successful
+  compaction以payload完整替换baseline，之后只fold后续Surface事实。这样normal delta与reset边界
+  来自accepted occurrence，不依赖已删除connector consumption metadata或Frame ID扫描。
+- Dash ContextFrame compiler同时读取current Initial Context与Surface，按Identity、UserContext、
+  Environment、SystemGuidelines、AssignmentContext、MemoryContext聚合；每个stable kind最多一个
+  Frame，同类来源按accepted顺序保留在`ContextFragments`内。canonical projector比较相邻
+  occurrence的kind、sections与`rendered_text`，只发布真实变化；CompactionApplied则原样发布完整
+  reset Vec，因为presentation不能重新推导accepted成员。
 - Dash provider port在每个逻辑provider round固定一份request snapshot：当前accepted
   stable ContextFrames与active system-append ledger生成system/context文本，当前tools生成structured
   tool contract，并同时固定该round的owner projector。工具结果提交与surface mutation完成后，
   下一round重新物化；同一round重试复用已固定snapshot，原因是一次已发出的provider请求不能在
   中途改变语义。
 - Product的skill、memory、MCP、workspace与context requirement必须先物化为Agent实际接纳的
-  instruction/tool surface，再由Native Adapter按channel映射为Identity、Environment、
+  instruction/tool surface，再由Dash compiler按presentation映射为Identity、Environment、
   SystemGuidelines、AssignmentContext、CapabilityStateDelta、MemoryContext或UserContext。
-  Adapter不读取Product表反补ContextFrame，也不从展示文本反猜Agent输入。
+  Native Adapter只转换Bound Surface facts与调用Dash apply API，不读取Product表反补ContextFrame，
+  也不拥有Frame分组、排序或reset语义。
 - source metadata 与 repository描述同一个 concrete Agent source，必须在同一 Dash source
   document/atomic commit 中更新。
 - Create 前还没有 source coordinate 的 effect 可以保留独立 `effect_id` lookup receipt。
@@ -274,12 +276,13 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 | 连续surface只增加一个tool | 只发布该tool的`added_tools`，不重放完整当前schema |
 | tool同名但description/schema变化 | 发布到`changed_tools`，不同时出现在`added_tools` |
 | tool从surface消失 | tool name进入`removed_tools` |
-| capability manifest与tool schema同时变化 | 合并为一个`context/system_append` CAP frame |
+| capability manifest与tool schema同时变化 | 合并为一个`CapabilityStateDelta` Frame |
 | surface revision变化但instruction/tool语义未变 | 不发布伪ContextFrame delta |
 | 只改变tool/capability的surface revision | provider继续消费完整stable snapshot；canonical只发布CAP |
 | stable instruction内容、顺序或delivery语义变化 | canonical发布对应changed ContextFrame |
-| active surface连续热更新 | provider context按history顺序累积initial CAP delta与后续真delta |
-| active surface被revoke | 清空该surface链的append context，后续request不保留失效schema |
+| active surface连续热更新 | provider context保留当前baseline与其后的真实CAP delta |
+| active surface被revoke | stable slot替换为Initial-only，追加current-to-empty CAP delta |
+| successful compaction | 从current Initial Context与Surface建立fresh baseline，不保留旧CAP delta |
 | Product contribution使用Dash intrinsic保留key | side effect与history mutation前typed invalid argument |
 | Product binding digest与Dash materialization digest比较 | 分别解释上游binding与实际接纳内容，不要求相等 |
 | 内建提示内容升级 | verified profile/build evidence变化；rebind提交新的实际surface，既有history保持原事实 |
@@ -326,9 +329,9 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
 - Good：首个具备非空 user input 与 Agent output 的 terminal 回合提交后，Dash 根据该 source 的原生对话生成标题并追加
   `ThreadNameChanged`；snapshot与live notification来自该 entry，Product据此仅初始化一次
   AgentRun标题，之后两个owner可以独立修改各自标题。
-- Good：Product提交skills/MCP/memory instructions与tool surface，Native Adapter在接纳边界生成
-  typed ContextFrames并与tool definitions一起写入`SurfaceApplied`；provider与canonical projector
-  消费同一已接纳frame。
+- Good：Product提交skills/MCP/memory instructions与tool surface，Dash compiler在接纳边界生成
+  typed ContextFrames并与raw Surface一起写入`SurfaceApplied` occurrence；provider与canonical
+  projector消费同一已接纳frame。
 - Good：Dash Adapter先加入自身intrinsic instruction，再物化Product surface；Agent收到的基础行为
   规则和平台展示的Identity frame来自同一source-owned history entry。
 - Base：live subscriber掉线，Core继续执行并提交 history；新浏览器connection先订阅source，
@@ -383,19 +386,21 @@ pub fn dash_complete_agent_build_digest() -> AgentPayloadDigest;
   `ItemStarted(fileChange)`与`FileChangePatchUpdated`。
 - Compaction canonical projection测试使用固定毫秒时间，断言`TurnStarted.started_at`与terminal
   `duration_ms`同时正确，避免前端把缺失时间解释为Unix epoch。
-- surface/context tests断言 native history保存实际instruction、tools与accepted ContextFrames，
+- surface/context tests断言 native history occurrence保存实际instruction、tools与accepted
+  ContextFrames，
   provider prompt逐字包含frame `rendered_text`，snapshot与live逐项发布同一frame，repository root
   不存在平行surface字段；连续surface只改变tool时，第二个`SurfaceApplied`的canonical projection
   只包含CAP frame，不重发unchanged identity/environment/guidelines/assignment snapshot。
 - intrinsic surface测试断言内建`.md`进入provider request与Identity ContextFrame，Product applied
   receipt不认领该contribution，且Product binding digest不同于Dash materialization digest。
 - surface delta tests连续应用三版surface，覆盖tool新增、修改、删除，断言read重放只返回真实
-  变化、capability与ToolSchema只形成一个`context/system_append` frame、`rendered_text`完整表达
+  变化、capability与ToolSchema只形成一个`CapabilityStateDelta` frame、`rendered_text`完整表达
   可读参数语义且不重复原始JSON，section保留原始schema；context channel矩阵覆盖system、
   identity、workspace、workflow、skills、MCP、memory与user context的typed frame映射。
 - active-turn测试在第一轮tool callback期间替换surface，断言旧call沿已接纳route完成、下一round
-  读取新ContextFrame/tools/projector、provider prompt仍包含同一active surface链的早期append
-  frame，且native user/tool transcript没有重复；revoke测试证明失效链被清空。
+  读取新ContextFrame/tools/projector、provider prompt包含normal update链；成功compaction后旧delta
+  被完整reset，且native user/tool transcript没有转成ContextFrame或重复；revoke测试证明stable
+  slot替换为Initial-only且capability使用current-to-empty delta。
 - naming test断言Succeeded与“已有Agent output的Failed”回合都把accepted user input与最终
   Agent output交给namer，只提交一次非空`ThreadNameChanged`，且`read/changes/live`均投影同一标题；
   Accepted、interaction与无output失败不命名，命名失败不改变原回合terminal。
@@ -453,7 +458,7 @@ let snapshot = dash_complete_agent.read(AgentReadQuery {
 // Wrong: 把当前完整snapshot伪装成每次都新增的tool delta。
 let added_tools = surface.tools.iter().map(runtime_tool_schema_entry).collect();
 
-// Correct: Native Adapter比较同一source history中的相邻surface事实。
+// Correct: Dash compiler比较同一source history中的相邻surface事实。
 let previous = history.state_at(entry.sequence - 1)?.surface;
 let (added_tools, removed_tools, changed_tools) = diff_tools(previous, &surface);
 ```
@@ -463,13 +468,15 @@ let (added_tools, removed_tools, changed_tools) = diff_tools(previous, &surface)
 requirements.push(dash_specific_default_prompt());
 provider.system_prompt.push_str(HIDDEN_DEFAULT);
 
-// Correct: concrete Agent先形成自己的intrinsic contribution和accepted ContextFrames。
+// Correct: adapter只形成raw facts，Dash在history commit边界编译accepted ContextFrames。
 let mut instructions = vec![dash_intrinsic_instruction()];
 instructions.extend(materialize_product_instructions(bound_surface)?);
 let digest = materialization_digest(&instructions, &tools)?;
-let context_frames = materialize_accepted_context(&instructions, &tools, previous_surface)?;
+let surface = DashSurface { digest, instructions, tools, .. };
+let context_frames = compile_surface_update(initial_context, &surface, previous_surface)?;
 history.commit(HistoryPayload::SurfaceApplied {
-    surface: DashSurface { digest, instructions, tools, context_frames, .. },
+    surface,
+    context_frames,
 })?;
 ```
 

@@ -203,6 +203,14 @@ impl DashAgentStore {
             first_kept_event_seq,
             created_at_ms,
         );
+        let context_frames = super::compile_compaction_rebuild(
+            history_state.initial_context.as_ref(),
+            history_state.surface.as_ref(),
+            &compaction_id,
+            &revision,
+            summary_frame,
+        )
+        .map_err(|error| StoreError::ContextCompilation(error.to_string()))?;
         self.commit(DashAgentCommit {
             expected_head: self.history.head().cloned(),
             command_settlement: Some(CommandSettlement {
@@ -215,7 +223,7 @@ impl DashAgentStore {
                     payload: HistoryPayload::CompactionApplied {
                         compaction_id: compaction_id.clone(),
                         context_revision: revision,
-                        summary_frame: Box::new(summary_frame),
+                        context_frames,
                         retained_from,
                     },
                 },
@@ -356,4 +364,6 @@ pub enum StoreError {
     CommandNotPromoted(CommandId),
     #[error("unknown compaction: {0:?}")]
     UnknownCompaction(CompactionId),
+    #[error("failed to compile accepted context: {0}")]
+    ContextCompilation(String),
 }

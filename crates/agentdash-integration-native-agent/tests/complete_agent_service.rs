@@ -53,10 +53,12 @@ use async_trait::async_trait;
 use futures::{StreamExt, stream};
 use tokio::sync::{Barrier, Notify, RwLock};
 
+type SideEffectClaimGate = Arc<Mutex<Option<(Arc<Notify>, Arc<Notify>)>>>;
+
 struct RecordingDashRepository {
     source: String,
     durable: Arc<RwLock<RecordingCompleteDurableState>>,
-    side_effect_claim_gate: Arc<Mutex<Option<(Arc<Notify>, Arc<Notify>)>>>,
+    side_effect_claim_gate: SideEffectClaimGate,
 }
 
 #[async_trait]
@@ -131,7 +133,7 @@ struct RecordingCompleteStore {
     lose_next_commit_receipt: AtomicBool,
     fail_next_terminal_commit: AtomicBool,
     accepted_commit_barrier: Mutex<Option<Arc<Barrier>>>,
-    side_effect_claim_gate: Arc<Mutex<Option<(Arc<Notify>, Arc<Notify>)>>>,
+    side_effect_claim_gate: SideEffectClaimGate,
 }
 
 impl RecordingCompleteStore {
@@ -1847,7 +1849,7 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         &revision_two_live.presentations[0].presentation.envelope.event,
         BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
             if changed.frame.kind == ContextFrameKind::CapabilityStateDelta
-                && changed.frame.delivery_metadata.cache_revision.as_deref() == Some("2")
+                && changed.frame.id.starts_with("surface:2:")
     ));
     assert!(
         tokio::time::timeout(Duration::from_millis(50), live.next())
@@ -1869,7 +1871,7 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         .iter()
         .filter_map(|record| match &record.presentation.envelope.event {
             BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
-                if changed.frame.delivery_metadata.cache_revision.as_deref() == Some("1") =>
+                if changed.frame.id.starts_with("surface:1:") =>
             {
                 Some(changed.frame.kind)
             }
@@ -1880,13 +1882,12 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         context_kinds,
         vec![
             ContextFrameKind::Identity,
-            ContextFrameKind::SystemGuidelines,
-            ContextFrameKind::Identity,
-            ContextFrameKind::Environment,
-            ContextFrameKind::AssignmentContext,
-            ContextFrameKind::CapabilityStateDelta,
-            ContextFrameKind::MemoryContext,
             ContextFrameKind::UserContext,
+            ContextFrameKind::Environment,
+            ContextFrameKind::SystemGuidelines,
+            ContextFrameKind::AssignmentContext,
+            ContextFrameKind::MemoryContext,
+            ContextFrameKind::CapabilityStateDelta,
         ]
     );
     let revision_two_frames = snapshot
@@ -1895,7 +1896,7 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         .iter()
         .filter_map(|record| match &record.presentation.envelope.event {
             BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
-                if changed.frame.delivery_metadata.cache_revision.as_deref() == Some("2") =>
+                if changed.frame.id.starts_with("surface:2:") =>
             {
                 Some(&changed.frame)
             }
@@ -1928,7 +1929,7 @@ async fn surface_instructions_preserve_materialized_context_frame_boundaries() {
         })
         .filter_map(|record| match &record.presentation.envelope.event {
             BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))
-                if changed.frame.delivery_metadata.cache_revision.as_deref() == Some("2") =>
+                if changed.frame.id.starts_with("surface:2:") =>
             {
                 Some(&changed.frame)
             }

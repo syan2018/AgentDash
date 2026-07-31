@@ -183,7 +183,7 @@ function FrameContribution({ frame }: { frame: ContextFrame }) {
           ContextFrame
         </span>
         <span className="rounded-[6px] bg-secondary px-1.5 py-0.5">{frame.kind}</span>
-        <span className="rounded-[6px] bg-secondary px-1.5 py-0.5">{frame.message_role}</span>
+        <span className="rounded-[6px] bg-secondary px-1.5 py-0.5">{frame.delivery_status}</span>
         <span className="truncate font-mono text-[10px] text-muted-foreground" title={frame.id}>
           {frame.id}
         </span>

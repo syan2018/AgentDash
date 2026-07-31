@@ -2,27 +2,28 @@ import { describe, expect, it } from "vitest";
 import { parseContextFrame } from "./contextFrame";
 
 describe("parseContextFrame", () => {
-  it("允许 rendered_text 为空但保留结构化 sections", () => {
+  it("严格解析当前 ContextFrame 核心字段并保留 fragment 顺序", () => {
     const frame = parseContextFrame({
       id: "ctx-1",
       kind: "identity",
-      source: "runtime",
-      delivery_status: "delivered",
-      delivery_channel: "system",
-      message_role: "system",
+      delivery_status: "applied_before_prompt",
       rendered_text: "",
       created_at_ms: 123,
       sections: [
         {
-          kind: "identity",
-          title: "Identity",
-          summary: "当前身份",
+          kind: "context_fragments",
           fragments: [
             {
               slot: "identity",
-              label: "identity_system_prompt",
+              label: "first",
               source: "connector",
-              content: "## System Prompt\nbase",
+              content: "first content",
+            },
+            {
+              slot: "identity",
+              label: "second",
+              source: "product",
+              content: "second content",
             },
           ],
         },
@@ -31,164 +32,35 @@ describe("parseContextFrame", () => {
 
     expect(frame).not.toBeNull();
     expect(frame?.rendered_text).toBe("");
-    expect(frame?.sections).toHaveLength(1);
+    const section = frame?.sections[0];
+    expect(section?.kind).toBe("context_fragments");
+    if (section?.kind === "context_fragments") {
+      expect(section.fragments.map((fragment) => fragment.label)).toEqual([
+        "first",
+        "second",
+      ]);
+    }
   });
 
-  it("接受 generated ContextFrame 的 bigint 时间坐标", () => {
+  it("直接消费 generated ContextFrame 的 number 时间坐标", () => {
     const frame = parseContextFrame({
       id: "ctx-bigint",
-      kind: "identity",
-      source: "runtime_context_update",
+      kind: "environment",
       delivery_status: "applied_before_prompt",
-      delivery_channel: "connector_context",
-      message_role: "system",
-      rendered_text: "system prompt",
-      created_at_ms: 0n,
+      rendered_text: "workspace",
+      created_at_ms: 0,
       sections: [],
     });
 
     expect(frame?.created_at_ms).toBe(0);
   });
 
-  it("解析后端新增的 guidelines 与 companion section", () => {
+  it("解析 capability delta 的当前 section 集合", () => {
     const frame = parseContextFrame({
-      id: "ctx-2",
-      kind: "capability_state_snapshot",
-      source: "runtime_context_update",
-      delivery_status: "queued_for_transform_context",
-      delivery_channel: "turn_start",
-      message_role: "user",
-      rendered_text: "## Companion Agent Roster Delta",
-      created_at_ms: 123,
-      sections: [
-        {
-          kind: "companion_agent_roster_delta",
-          added_agents: [
-            {
-              agent_key: "reviewer",
-              executor: "PI_AGENT",
-              display_name: "Review Agent",
-              context_usage_kind: "agents",
-            },
-          ],
-          removed_agent_keys: ["legacy-reviewer"],
-          changed_agents: [],
-          effective_agents: [
-            {
-              agent_key: "reviewer",
-              executor: "PI_AGENT",
-              display_name: "Review Agent",
-            },
-          ],
-        },
-        {
-          kind: "user_preferences",
-          title: "User Preferences",
-          summary: "用户级偏好设置。",
-          items: ["使用中文"],
-        },
-        {
-          kind: "project_guidelines",
-          title: "Project Guidelines",
-          summary: "工作区中发现的项目级指引文件。",
-          entries: [
-            {
-              path: "AGENTS.md",
-              content: "项目约定",
-            },
-          ],
-        },
-      ],
-    });
-
-    expect(frame?.sections.map((section) => section.kind)).toEqual([
-      "companion_agent_roster_delta",
-      "user_preferences",
-      "project_guidelines",
-    ]);
-  });
-
-  it("system_guidelines frame 派生 session_policy #20 / system 通道 delivery metadata", () => {
-    // 后端未显式给出 delivery_metadata 时，parser 需按 kind 回退出与后端一致的
-    // session_policy #20 / system 投递画像，前端列表才能稳定看到 system_guidelines。
-    const frame = parseContextFrame({
-      id: "system-guidelines-1",
-      kind: "system_guidelines",
-      source: "runtime_context_update",
-      delivery_status: "prepared_for_connector",
-      delivery_channel: "connector_context",
-      message_role: "system",
-      rendered_text:
-        "## User Preferences\n\n- 使用中文\n\n## Project Guidelines\n\n### AGENTS.md\n\n项目约定",
-      created_at_ms: 123,
-      sections: [
-        {
-          kind: "user_preferences",
-          title: "User Preferences",
-          summary: "用户级偏好设置。",
-          items: ["使用中文"],
-        },
-        {
-          kind: "project_guidelines",
-          title: "Project Guidelines",
-          summary: "工作区中发现的项目级指引文件。",
-          entries: [{ path: "AGENTS.md", content: "项目约定" }],
-        },
-      ],
-    });
-
-    expect(frame?.kind).toBe("system_guidelines");
-    expect(frame?.delivery_metadata.delivery_phase).toBe("session_policy");
-    expect(frame?.delivery_metadata.delivery_order).toBe(20);
-    expect(frame?.delivery_metadata.model_channel).toBe("system");
-    expect(frame?.sections.map((section) => section.kind)).toEqual([
-      "user_preferences",
-      "project_guidelines",
-    ]);
-  });
-
-  it("保留未知 section 以便诊断协议漂移", () => {
-    const frame = parseContextFrame({
-      id: "ctx-3",
-      kind: "assignment_context",
-      source: "runtime_context_update",
-      delivery_status: "queued_for_transform_context",
-      delivery_channel: "turn_start",
-      message_role: "user",
-      rendered_text: "",
-      created_at_ms: 123,
-      sections: [
-        {
-          kind: "future_section",
-          payload: { value: 1 },
-        },
-      ],
-    });
-
-    expect(frame?.sections).toEqual([
-      {
-        kind: "unknown_section",
-        original_kind: "future_section",
-        raw: {
-          kind: "future_section",
-          payload: { value: 1 },
-        },
-      },
-    ]);
-  });
-
-  it("解析 MCP server delta 与 project MCP ToolSchema PromptText", () => {
-    const frame = parseContextFrame({
-      id: "ctx-mcp-tool-schema",
+      id: "ctx-delta",
       kind: "capability_state_delta",
-      source: "runtime_context_update",
-      phase_node: "bootstrap",
-      apply_mode: "initial",
-      delivery_status: "queued_for_transform_context",
-      delivery_channel: "turn_start",
-      message_role: "user",
-      rendered_text:
-        "## Tool Schema Delta\n\n### `mcp_code_analyzer_scan_repo`\n\ncapability: `mcp:code-analyzer`；source: `mcp:code-analyzer`；path: `mcp:code-analyzer::scan_repo`",
+      delivery_status: "applied_to_compacted_context",
+      rendered_text: "Capability updated",
       created_at_ms: 123,
       sections: [
         {
@@ -198,39 +70,82 @@ describe("parseContextFrame", () => {
           changed_mcp_servers: [],
         },
         {
-          kind: "tool_schema_delta",
-          added_tools: [
-            {
-              name: "mcp_code_analyzer_scan_repo",
-              description: "扫描仓库结构",
-              parameters_schema: {
-                type: "object",
-                properties: {
-                  root: { type: "string", description: "扫描根目录" },
-                },
-                required: ["root"],
-              },
-              capability_key: "mcp:code-analyzer",
-              source: "mcp:code-analyzer",
-              tool_path: "mcp:code-analyzer::scan_repo",
-              context_usage_kind: "mcp_tools",
-            },
-          ],
+          kind: "companion_agent_roster_delta",
+          added_agents: [{
+            agent_key: "reviewer",
+            executor: "PI_AGENT",
+            display_name: "Review Agent",
+          }],
+          removed_agent_keys: [],
+          changed_agents: [],
+          effective_agents: [],
         },
       ],
     });
 
-    expect(frame?.rendered_text).toContain("mcp_code_analyzer_scan_repo");
-    expect(frame?.rendered_text).toContain("mcp:code-analyzer::scan_repo");
+    expect(frame?.delivery_status).toBe("applied_to_compacted_context");
     expect(frame?.sections.map((section) => section.kind)).toEqual([
       "mcp_server_delta",
-      "tool_schema_delta",
+      "companion_agent_roster_delta",
     ]);
-    const toolSchema = frame?.sections[1];
-    expect(toolSchema?.kind).toBe("tool_schema_delta");
-    if (toolSchema?.kind === "tool_schema_delta") {
-      expect(toolSchema.added_tools[0]?.source).toBe("mcp:code-analyzer");
-      expect(toolSchema.added_tools[0]?.tool_path).toBe("mcp:code-analyzer::scan_repo");
-    }
+  });
+
+  it("拒绝旧 delivery status 与未知 section", () => {
+    expect(parseContextFrame({
+      id: "ctx-old-status",
+      kind: "identity",
+      delivery_status: "prepared_for_connector",
+      rendered_text: "",
+      created_at_ms: 123,
+      sections: [],
+    })).toBeNull();
+
+    expect(parseContextFrame({
+      id: "ctx-unknown-section",
+      kind: "assignment_context",
+      delivery_status: "applied_before_prompt",
+      rendered_text: "",
+      created_at_ms: 123,
+      sections: [{ kind: "future_section" }],
+    })).toBeNull();
+  });
+
+  it("拒绝缺失 required 字段或包含无效成员的 wire", () => {
+    expect(parseContextFrame({
+      id: "ctx-missing-sections",
+      kind: "identity",
+      delivery_status: "applied_before_prompt",
+      rendered_text: "",
+      created_at_ms: 123,
+    })).toBeNull();
+
+    expect(parseContextFrame({
+      id: "ctx-missing-delta-array",
+      kind: "capability_state_delta",
+      delivery_status: "applied_before_prompt",
+      rendered_text: "",
+      created_at_ms: 123,
+      sections: [{
+        kind: "capability_key_delta",
+        added_capabilities: [],
+        removed_capabilities: [],
+      }],
+    })).toBeNull();
+
+    expect(parseContextFrame({
+      id: "ctx-invalid-fragment",
+      kind: "identity",
+      delivery_status: "applied_before_prompt",
+      rendered_text: "",
+      created_at_ms: 123,
+      sections: [{
+        kind: "context_fragments",
+        fragments: [{
+          slot: "identity",
+          source: "product",
+          content: "identity",
+        }],
+      }],
+    })).toBeNull();
   });
 });

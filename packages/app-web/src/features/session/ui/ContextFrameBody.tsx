@@ -61,13 +61,10 @@ function DebugBlock({ frame }: { frame: ContextFrame }) {
   const [open, setOpen] = useState(false);
   const chips = [
     `kind: ${frame.kind}`,
-    `source: ${frame.source}`,
-    `channel: ${frame.delivery_channel}`,
-    `role: ${frame.message_role}`,
     `delivery: ${frame.delivery_status}`,
     `sections: ${frame.sections.length}`,
-    frame.phase_node ? `phase: ${frame.phase_node}` : null,
-    frame.apply_mode ? `apply: ${frame.apply_mode}` : null,
+    `created: ${frame.created_at_ms}`,
+    `id: ${frame.id}`,
   ].filter((chip): chip is string => chip != null);
 
   return (

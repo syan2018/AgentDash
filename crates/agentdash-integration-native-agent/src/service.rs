@@ -62,7 +62,6 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use crate::DashAgentCoreToolCallbacks;
-use crate::accepted_context::{materialize_initial_context_frames, materialize_surface_frames};
 use crate::intrinsic_surface;
 use crate::tool_presentation::{
     ToolPresentationResult, project_tool_draft_item, project_tool_item,
@@ -904,22 +903,22 @@ impl CompleteAgentService for DashAgentCompleteService {
                 None
             };
         let (service, _) = self.open_source(&command.source).await?;
-        if accepted_record.is_none() {
-            if let Some(expected) = command.meta.expected_snapshot_revision {
-                let actual = AgentSnapshotRevision(
-                    service
-                        .read()
-                        .await
-                        .map_err(map_dash_error)?
-                        .state
-                        .entry_count,
-                );
-                if actual != expected {
-                    return Err(conflict(format!(
-                        "Dash Agent snapshot revision moved from {} to {}",
-                        expected.0, actual.0
-                    )));
-                }
+        if accepted_record.is_none()
+            && let Some(expected) = command.meta.expected_snapshot_revision
+        {
+            let actual = AgentSnapshotRevision(
+                service
+                    .read()
+                    .await
+                    .map_err(map_dash_error)?
+                    .state
+                    .entry_count,
+            );
+            if actual != expected {
+                return Err(conflict(format!(
+                    "Dash Agent snapshot revision moved from {} to {}",
+                    expected.0, actual.0
+                )));
             }
         }
         let dash_receipt = service
@@ -1725,15 +1724,13 @@ fn translate_initial_context(
             })
         })
         .collect::<Result<Vec<_>, AgentServiceError>>()?;
-    let mut installation = InitialContextInstallation {
+    let installation = InitialContextInstallation {
         package_id: package.package_id.to_string(),
         package_digest: package.digest.to_string(),
         mode,
         fidelity: ContextDeliveryFidelity::TypedNative,
         contributions,
-        context_frames: Vec::new(),
     };
-    installation.context_frames = materialize_initial_context_frames(&installation);
     Ok(installation)
 }
 
@@ -1799,7 +1796,7 @@ fn service_terminal(outcome: DashTerminalOutcome) -> AgentTerminalOutcome {
 
 fn dash_surface_from_bound(
     surface: &agentdash_agent_runtime_contract::BoundAgentSurface,
-    previous: Option<&agentdash_agent_runtime_contract::BoundAgentSurface>,
+    _previous: Option<&agentdash_agent_runtime_contract::BoundAgentSurface>,
 ) -> Result<DashSurface, AgentServiceError> {
     let mut instructions = vec![intrinsic_surface::instruction()];
     let mut tools = Vec::new();
@@ -1860,19 +1857,12 @@ fn dash_surface_from_bound(
     }
     let digest =
         intrinsic_surface::materialization_digest(&instructions, &tools).map_err(internal)?;
-    let mut accepted_surface = DashSurface {
+    let accepted_surface = DashSurface {
         revision: surface.revision.0,
         digest,
         instructions,
         tools,
-        context_frames: Vec::new(),
     };
-    let previous_surface = previous
-        .map(|surface| dash_surface_from_bound(surface, None))
-        .transpose()?;
-    accepted_surface.context_frames =
-        materialize_surface_frames(&accepted_surface, previous_surface.as_ref())
-            .map_err(internal)?;
     Ok(accepted_surface)
 }
 

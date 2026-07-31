@@ -19,61 +19,6 @@ use agentdash_agent::dash::{
 use async_trait::async_trait;
 use futures::stream;
 
-fn accepted_context_frame(id: &str, text: &str) -> agentdash_agent_protocol::ContextFrame {
-    use agentdash_agent_protocol::{
-        ContextDeliveryChannel, ContextDeliveryMetadata, ContextDeliveryStatus, ContextFrame,
-        ContextFrameKind, ContextFrameSource, ContextMessageRole,
-    };
-    ContextFrame {
-        id: id.to_owned(),
-        kind: ContextFrameKind::SystemGuidelines,
-        source: ContextFrameSource::RuntimeContextUpdate,
-        phase_node: None,
-        apply_mode: Some("test_acceptance".to_owned()),
-        delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
-        delivery_channel: ContextDeliveryChannel::ConnectorContext,
-        message_role: ContextMessageRole::System,
-        delivery_metadata: ContextDeliveryMetadata::for_frame(
-            ContextFrameKind::SystemGuidelines,
-            ContextDeliveryChannel::ConnectorContext,
-            ContextMessageRole::System,
-        ),
-        rendered_text: text.to_owned(),
-        sections: Vec::new(),
-        created_at_ms: 0,
-    }
-}
-
-fn accepted_system_append_frame(id: &str, text: &str) -> agentdash_agent_protocol::ContextFrame {
-    use agentdash_agent_protocol::{
-        ContextAgentConsumptionMode, ContextDeliveryChannel, ContextDeliveryMetadata,
-        ContextDeliveryStatus, ContextFrame, ContextFrameKind, ContextFrameSource,
-        ContextMessageRole,
-    };
-    let kind = ContextFrameKind::CapabilityStateDelta;
-    let role = ContextMessageRole::Context;
-    let mut delivery_metadata =
-        ContextDeliveryMetadata::for_frame(kind, ContextDeliveryChannel::ConnectorContext, role);
-    delivery_metadata.agent_consumption.mode = ContextAgentConsumptionMode::SystemAppend;
-    delivery_metadata
-        .connector_profile
-        .declared_consumption_modes = vec![ContextAgentConsumptionMode::SystemAppend];
-    ContextFrame {
-        id: id.to_owned(),
-        kind,
-        source: ContextFrameSource::RuntimeContextUpdate,
-        phase_node: None,
-        apply_mode: Some("test_surface_append".to_owned()),
-        delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
-        delivery_channel: ContextDeliveryChannel::ConnectorContext,
-        message_role: role,
-        delivery_metadata,
-        rendered_text: text.to_owned(),
-        sections: Vec::new(),
-        created_at_ms: 0,
-    }
-}
-
 fn test_tool(
     name: &str,
     projector: agentdash_agent_protocol::ToolProtocolProjector,
@@ -382,10 +327,6 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
                 "workspace_module_invoke",
                 agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
             )],
-            context_frames: vec![accepted_system_append_frame(
-                "surface:1:tools",
-                "accepted tool schema revision one",
-            )],
         })
         .await
         .unwrap();
@@ -415,10 +356,6 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
                 "fs_apply_patch",
                 agentdash_agent_protocol::ToolProtocolProjector::FileChange,
             )],
-            context_frames: vec![accepted_system_append_frame(
-                "surface:2:tools",
-                "accepted tool schema revision two",
-            )],
         })
         .await
         .unwrap();
@@ -446,7 +383,11 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
             .collect::<Vec<_>>(),
         ["workspace_module_invoke"]
     );
-    assert!(requests[0].system_prompt.contains("revision one"));
+    assert!(
+        requests[0]
+            .system_prompt
+            .contains("workspace_module_invoke")
+    );
     assert_eq!(
         requests[1]
             .tools
@@ -456,10 +397,12 @@ async fn active_turn_adopts_replaced_tool_callbacks_between_tool_invocations() {
         ["fs_apply_patch"]
     );
     assert!(
-        requests[1].system_prompt.contains("revision one"),
+        requests[1]
+            .system_prompt
+            .contains("workspace_module_invoke"),
         "system-append ContextFrames from earlier accepted surfaces must remain in model context"
     );
-    assert!(requests[1].system_prompt.contains("revision two"));
+    assert!(requests[1].system_prompt.contains("fs_apply_patch"));
     assert_eq!(
         requests[1]
             .messages
@@ -497,7 +440,6 @@ async fn failed_turn_retains_each_completed_tool_call_in_native_history() {
                 "inspect_capability",
                 agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
             )],
-            context_frames: Vec::new(),
         })
         .await
         .unwrap();
@@ -562,7 +504,6 @@ async fn failed_terminal_turn_with_agent_output_still_initializes_thread_name() 
                 "inspect_capability",
                 agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
             )],
-            context_frames: Vec::new(),
         })
         .await
         .unwrap();
@@ -638,6 +579,161 @@ impl DashCompactor for CapturingCompactor {
             retained_from: Some(HistoryEntryId::new("tool-call")),
         })
     }
+}
+
+#[tokio::test]
+async fn successful_compaction_rebuilds_the_active_frame_baseline_before_later_surface_deltas() {
+    let service = create_service(
+        AgentHistory::empty(
+            AgentSessionId::new("context-reset-session"),
+            BranchId::new("main"),
+        ),
+        dependencies(Arc::new(CapturingProvider::default())),
+    )
+    .await;
+    let identity = |key: &str, text: &str| DashSurfaceInstruction {
+        key: key.to_owned(),
+        channel: "persona".to_owned(),
+        text: text.to_owned(),
+        presentation: agentdash_agent_protocol::AgentSurfaceInstructionPresentation::Identity,
+    };
+    service
+        .apply_surface(DashSurface {
+            revision: 1,
+            digest: "surface-1".to_owned(),
+            instructions: vec![identity("identity:base", "base identity")],
+            tools: vec![test_tool(
+                "tool_one",
+                agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
+            )],
+        })
+        .await
+        .unwrap();
+    service
+        .apply_surface(DashSurface {
+            revision: 2,
+            digest: "surface-2".to_owned(),
+            instructions: vec![
+                identity("identity:base", "base identity"),
+                identity("identity:project", "project identity"),
+            ],
+            tools: vec![test_tool(
+                "tool_two",
+                agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
+            )],
+        })
+        .await
+        .unwrap();
+
+    let before = service.context_recipe().await.unwrap();
+    assert_eq!(
+        before
+            .frames
+            .iter()
+            .filter(|frame| {
+                frame.kind == agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta
+            })
+            .count(),
+        2
+    );
+
+    service
+        .execute(DashCommandRequest {
+            command_id: CommandId::new("compact-reset"),
+            effect_id: EffectId::new("compact-reset-effect"),
+            command: DashPublicCommand::RequestCompaction {
+                mode: agentdash_agent::dash::CompactionMode::Manual,
+            },
+        })
+        .await
+        .unwrap();
+
+    let rebuilt = service.context_recipe().await.unwrap();
+    assert!(
+        rebuilt
+            .frames
+            .iter()
+            .all(|frame| frame.id.starts_with("compaction:compact-reset:"))
+    );
+    assert!(rebuilt.frames.iter().all(|frame| {
+        frame.delivery_status
+            == agentdash_agent_protocol::ContextDeliveryStatus::AppliedToCompactedContext
+    }));
+    assert_eq!(
+        rebuilt
+            .frames
+            .iter()
+            .filter(|frame| frame.kind == agentdash_agent_protocol::ContextFrameKind::Identity)
+            .count(),
+        1
+    );
+    let identity_frame = rebuilt
+        .frames
+        .iter()
+        .find(|frame| frame.kind == agentdash_agent_protocol::ContextFrameKind::Identity)
+        .unwrap();
+    let agentdash_agent_protocol::ContextFrameSection::ContextFragments { fragments } =
+        &identity_frame.sections[0]
+    else {
+        panic!("stable identity must use ordered context fragments");
+    };
+    assert_eq!(
+        fragments
+            .iter()
+            .map(|fragment| fragment.source.as_str())
+            .collect::<Vec<_>>(),
+        ["identity:base", "identity:project"]
+    );
+    assert_eq!(
+        rebuilt
+            .frames
+            .iter()
+            .filter(|frame| {
+                frame.kind == agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        rebuilt.frames.last().map(|frame| frame.kind),
+        Some(agentdash_agent_protocol::ContextFrameKind::CompactionSummary)
+    );
+
+    service
+        .apply_surface(DashSurface {
+            revision: 3,
+            digest: "surface-3".to_owned(),
+            instructions: vec![identity("identity:base", "updated identity")],
+            tools: vec![test_tool(
+                "tool_three",
+                agentdash_agent_protocol::ToolProtocolProjector::Dynamic,
+            )],
+        })
+        .await
+        .unwrap();
+    let updated = service.context_recipe().await.unwrap();
+    assert_eq!(
+        updated
+            .frames
+            .iter()
+            .filter(|frame| {
+                frame.kind == agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta
+            })
+            .count(),
+        2,
+        "the rebuild baseline and only the post-compaction delta remain active"
+    );
+    assert!(
+        updated
+            .frames
+            .iter()
+            .all(|frame| !frame.id.starts_with("surface:1:")
+                && !frame.id.starts_with("surface:2:"))
+    );
+    assert_eq!(
+        updated.frames.last().map(|frame| frame.kind),
+        Some(agentdash_agent_protocol::ContextFrameKind::CompactionSummary)
+    );
 }
 
 #[tokio::test]
@@ -732,12 +828,14 @@ async fn compaction_receives_the_same_materialized_session_context_as_a_normal_t
         .apply_surface(DashSurface {
             revision: 1,
             digest: "surface".to_owned(),
-            instructions: Vec::new(),
+            instructions: vec![DashSurfaceInstruction {
+                key: "instruction:test:accepted".to_owned(),
+                channel: "system".to_owned(),
+                text: "accepted system context".to_owned(),
+                presentation:
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
+            }],
             tools: Vec::new(),
-            context_frames: vec![accepted_context_frame(
-                "accepted-context",
-                "accepted system context",
-            )],
         })
         .await
         .expect("surface should apply");
@@ -993,10 +1091,6 @@ async fn installed_initial_context_is_materialized_into_the_provider_prompt() {
             source_revision: "revision-7".into(),
             digest: "sha256:summary".into(),
         }],
-        context_frames: vec![accepted_context_frame(
-            "initial-context:package-1:0",
-            "## AgentDash Initial Context: Compaction Summary\nthe durable parent summary",
-        )],
     };
     let service = DashAgentService::create_with_repository(
         Arc::new(RecordingDashRepository::default()),
@@ -1032,7 +1126,7 @@ async fn installed_initial_context_is_materialized_into_the_provider_prompt() {
 }
 
 #[tokio::test]
-async fn surface_revoke_clears_the_active_system_append_context_chain() {
+async fn surface_revoke_clears_the_active_surface_context() {
     let provider = Arc::new(CapturingProvider::default());
     let service = create_service(
         AgentHistory::empty(
@@ -1046,12 +1140,14 @@ async fn surface_revoke_clears_the_active_system_append_context_chain() {
         .apply_surface(DashSurface {
             revision: 1,
             digest: "surface-before-revoke".to_owned(),
-            instructions: Vec::new(),
+            instructions: vec![DashSurfaceInstruction {
+                key: "instruction:test:stale".to_owned(),
+                channel: "system".to_owned(),
+                text: "STALE CAPABILITY SCHEMA".to_owned(),
+                presentation:
+                    agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
+            }],
             tools: Vec::new(),
-            context_frames: vec![accepted_system_append_frame(
-                "surface:1:capability-state-delta",
-                "STALE CAPABILITY SCHEMA",
-            )],
         })
         .await
         .unwrap();
@@ -1093,7 +1189,6 @@ async fn surface_can_repeat_apply_and_revoke_with_the_same_revision_and_digest()
         digest: "surface-reapply".to_owned(),
         instructions: Vec::new(),
         tools: Vec::new(),
-        context_frames: Vec::new(),
     };
 
     service.apply_surface(surface.clone()).await.unwrap();
@@ -1144,10 +1239,6 @@ async fn repository_reopen_preserves_surface_inspect_and_idempotency_without_pro
                     agentdash_agent_protocol::AgentSurfaceInstructionPresentation::SystemGuidelines,
             }],
             tools: vec![],
-            context_frames: vec![accepted_context_frame(
-                "surface:7:instruction:test:persisted",
-                "persisted instructions",
-            )],
         })
         .await
         .unwrap();

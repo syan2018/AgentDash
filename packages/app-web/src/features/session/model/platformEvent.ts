@@ -5,7 +5,11 @@
  * event type / message / data，避免散落在 UI 组件里重复判断。
  */
 
-import type { BackboneEvent, PlatformEvent } from "../../../generated/backbone-protocol";
+import type {
+  BackboneEvent,
+  ContextFrame,
+  PlatformEvent,
+} from "../../../generated/backbone-protocol";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -112,11 +116,10 @@ export function extractPlatformEventMessage(event: BackboneEvent): string | null
 }
 
 /** 提取 canonical PlatformEvent::ContextFrameChanged 中的 Agent 实际接纳帧。 */
-export function extractContextFrameValue(event: BackboneEvent): Record<string, unknown> | null {
+export function extractContextFrameValue(event: BackboneEvent): ContextFrame | null {
   if (
     event.type !== "platform" ||
-    event.payload.kind !== "context_frame_changed" ||
-    !isRecord(event.payload.data.frame)
+    event.payload.kind !== "context_frame_changed"
   ) {
     return null;
   }

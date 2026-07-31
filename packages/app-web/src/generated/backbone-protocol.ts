@@ -995,12 +995,6 @@ range?: TextRange | null,
  */
 summary: string, };
 
-export type ContextAgentConsumption = { target: string, mode: ContextAgentConsumptionMode, reason: string, };
-
-export type ContextAgentConsumptionMode = "consume" | "audit_only" | "ignore" | "connector_native" | "system_append";
-
-export type ContextCachePolicy = "static" | "session_digest" | "runtime_state_digest" | "assignment_revision" | "discovery_digest" | "turn_ephemeral" | "uncached";
-
 /**
  *Deprecated: Use `ContextCompaction` item type instead.
  *
@@ -1030,35 +1024,21 @@ export type ContextCachePolicy = "static" | "session_digest" | "runtime_state_di
  */
 export type ContextCompactedNotification = { threadId: string, turnId: string, };
 
-export type ContextConnectorProfile = { profile_id: string, declared_consumption_modes?: Array<ContextAgentConsumptionMode>, };
-
-export type ContextDeliveryChannel = "turn_start" | "connector_context" | "transform_context" | "continuation";
-
-export type ContextDeliveryMetadata = { delivery_phase: ContextDeliveryPhase, delivery_order: number, cache_policy: ContextCachePolicy, cache_key?: string | null, cache_revision?: string | null, model_channel: ContextModelChannel, agent_consumption: ContextAgentConsumption, frontend_label: string, connector_profile: ContextConnectorProfile, };
-
-export type ContextDeliveryPhase = "stable_system" | "session_policy" | "run_state" | "assignment" | "discovered_inventory" | "turn_runtime";
-
-export type ContextDeliveryStatus = "accepted" | "prepared_for_connector" | "queued_for_transform_context" | "applied_before_prompt" | "applied_to_compacted_context";
+export type ContextDeliveryStatus = "applied_before_prompt" | "applied_to_compacted_context";
 
 /**
  * AgentDash-owned model-context delivery payload.
  *
  * A concrete Agent accepts these frames, consumes `rendered_text` according to the delivery
- * metadata, and publishes the same value for history, live presentation, and audit.
+ * status, and publishes the same value for history, live presentation, and audit.
  */
-export type ContextFrame = { id: string, kind: ContextFrameKind, source: ContextFrameSource, phase_node?: string | null, apply_mode?: string | null, delivery_status: ContextDeliveryStatus, delivery_channel: ContextDeliveryChannel, message_role: ContextMessageRole, delivery_metadata: ContextDeliveryMetadata, rendered_text: string, sections: Array<ContextFrameSection>, created_at_ms: bigint, };
+export type ContextFrame = { id: string, kind: ContextFrameKind, delivery_status: ContextDeliveryStatus, rendered_text: string, sections: Array<ContextFrameSection>, created_at_ms: number, };
 
 export type ContextFrameChanged = { frame: ContextFrame, };
 
-export type ContextFrameKind = "identity" | "user_context" | "environment" | "system_guidelines" | "compaction_summary" | "assignment_context" | "capability_state_delta" | "memory_context" | "pending_action" | "system_delivery" | "system_notice" | "auto_resume";
+export type ContextFrameKind = "identity" | "user_context" | "environment" | "system_guidelines" | "assignment_context" | "capability_state_delta" | "memory_context" | "compaction_summary";
 
-export type ContextFrameSection = { "kind": "identity", title: string, summary: string, fragments: Array<RuntimeContextFragmentEntry>, } | { "kind": "assignment_context", title: string, summary: string, fragments: Array<RuntimeContextFragmentEntry>, } | { "kind": "capability_key_delta", added_capabilities: Array<string>, removed_capabilities: Array<string>, effective_capabilities: Array<string>, } | { "kind": "tool_path_delta", blocked_tool_paths: Array<string>, unblocked_tool_paths: Array<string>, whitelisted_tool_paths: Array<string>, removed_whitelist_paths: Array<string>, } | { "kind": "mcp_server_delta", added_mcp_servers: Array<string>, removed_mcp_servers: Array<string>, changed_mcp_servers: Array<string>, } | { "kind": "vfs_delta", vfs_mounts_added: Array<string>, vfs_mounts_removed: Array<string>, default_mount_before?: string | null, default_mount_after?: string | null, } | { "kind": "tool_schema_delta", added_tools: Array<RuntimeToolSchemaEntry>, removed_tools: Array<string>, changed_tools: Array<RuntimeToolSchemaEntry>, } | { "kind": "skill_delta", added_skills: Array<RuntimeSkillEntry>, removed_skills: Array<RuntimeSkillEntry>, changed_skills: Array<RuntimeSkillEntry>, } | { "kind": "memory_inventory", title: string, summary: string, mode: RuntimeMemoryInventoryMode, sources: Array<RuntimeMemorySourceEntry>, diagnostics: Array<RuntimeMemoryDiagnosticEntry>, added_sources: Array<RuntimeMemorySourceEntry>, removed_sources: Array<RuntimeMemorySourceEntry>, changed_sources: Array<RuntimeMemorySourceEntry>, } | { "kind": "companion_agent_roster_delta", added_agents: Array<RuntimeCompanionAgentEntry>, removed_agent_keys: Array<string>, changed_agents: Array<RuntimeCompanionAgentEntry>, effective_agents: Array<RuntimeCompanionAgentEntry>, } | { "kind": "system_notice", title: string, summary: string, body?: string | null, } | { "kind": "pending_action", title: string, summary: string, action_id: string, action_type: string, status: string, revision: bigint, turn_id?: string | null, instructions: Array<string>, injections: Array<RuntimeHookInjectionEntry>, } | { "kind": "auto_resume", title: string, summary: string, reason: string, prompt: string, } | { "kind": "compaction_summary", title: string, summary: string, tokens_before: bigint, messages_compacted: number, compaction_id?: string | null, projection_version?: bigint | null, strategy?: string | null, trigger?: string | null, phase?: string | null, source_start_event_seq?: bigint | null, source_end_event_seq?: bigint | null, first_kept_event_seq?: bigint | null, compacted_until_ref?: JsonValue | null, timestamp_ms?: bigint | null, } | { "kind": "environment", title: string, summary: string, date?: string | null, platform?: string | null, model_id?: string | null, executor?: string | null, working_directory?: string | null, } | { "kind": "user_preferences", title: string, summary: string, items: Array<string>, } | { "kind": "project_guidelines", title: string, summary: string, entries: Array<ProjectGuidelineEntry>, } | { "kind": "user_context", title: string, summary: string, user_id?: string | null, display_name?: string | null, email?: string | null, groups: Array<string>, provider?: string | null, extra?: JsonValue, };
-
-export type ContextFrameSource = "runtime_context_update" | "companion_result";
-
-export type ContextMessageRole = "system" | "developer" | "context" | "user";
-
-export type ContextModelChannel = "system" | "developer" | "context" | "user" | "audit_only" | "ignored";
+export type ContextFrameSection = { "kind": "context_fragments", fragments: Array<RuntimeContextFragmentEntry>, } | { "kind": "capability_key_delta", added_capabilities: Array<string>, removed_capabilities: Array<string>, effective_capabilities: Array<string>, } | { "kind": "tool_path_delta", blocked_tool_paths: Array<string>, unblocked_tool_paths: Array<string>, whitelisted_tool_paths: Array<string>, removed_whitelist_paths: Array<string>, } | { "kind": "mcp_server_delta", added_mcp_servers: Array<string>, removed_mcp_servers: Array<string>, changed_mcp_servers: Array<string>, } | { "kind": "vfs_delta", vfs_mounts_added: Array<string>, vfs_mounts_removed: Array<string>, default_mount_before?: string | null, default_mount_after?: string | null, } | { "kind": "tool_schema_delta", added_tools: Array<RuntimeToolSchemaEntry>, removed_tools: Array<string>, changed_tools: Array<RuntimeToolSchemaEntry>, } | { "kind": "skill_delta", added_skills: Array<RuntimeSkillEntry>, removed_skills: Array<RuntimeSkillEntry>, changed_skills: Array<RuntimeSkillEntry>, } | { "kind": "memory_inventory", title: string, summary: string, mode: RuntimeMemoryInventoryMode, sources: Array<RuntimeMemorySourceEntry>, diagnostics: Array<RuntimeMemoryDiagnosticEntry>, added_sources: Array<RuntimeMemorySourceEntry>, removed_sources: Array<RuntimeMemorySourceEntry>, changed_sources: Array<RuntimeMemorySourceEntry>, } | { "kind": "companion_agent_roster_delta", added_agents: Array<RuntimeCompanionAgentEntry>, removed_agent_keys: Array<string>, changed_agents: Array<RuntimeCompanionAgentEntry>, effective_agents: Array<RuntimeCompanionAgentEntry>, } | { "kind": "system_notice", title: string, summary: string, body?: string | null, } | { "kind": "compaction_summary", title: string, summary: string, tokens_before: number, messages_compacted: number, compaction_id?: string | null, projection_version?: number | null, strategy?: string | null, trigger?: string | null, phase?: string | null, source_start_event_seq?: number | null, source_end_event_seq?: number | null, first_kept_event_seq?: number | null, compacted_until_ref?: JsonValue | null, timestamp_ms?: number | null, };
 
 export type ContextUsageSource = "provider" | "providerPlusEstimate" | "localEstimate";
 
@@ -3057,8 +3037,6 @@ export type PlatformEvent = { "kind": "context_frame_changed", "data": ContextFr
  */
 export type PresentationDurability = "durable" | "ephemeral";
 
-export type ProjectGuidelineEntry = { path: string, content: string, };
-
 export type ProviderAttemptPhase = "connecting" | "connected_waiting_first_delta" | "streaming" | "retry_scheduled" | "retrying" | "failed" | "succeeded";
 
 export type ProviderAttemptStatus = { turn_id: string, phase: ProviderAttemptPhase, attempt: number, max_attempts: number, will_retry: boolean, delay_ms: bigint | null, reason_code: string | null, message: string | null, provider: string | null, model: string | null, };
@@ -3260,8 +3238,6 @@ export type RequestPermissionProfile = { fileSystem: AdditionalFileSystemPermiss
 export type RuntimeCompanionAgentEntry = { agent_key: string, executor: string, display_name: string, context_usage_kind?: string | null, };
 
 export type RuntimeContextFragmentEntry = { slot: string, label: string, source: string, content: string, context_usage_kind?: string | null, };
-
-export type RuntimeHookInjectionEntry = { slot: string, source: string, content: string, context_usage_kind?: string | null, };
 
 export type RuntimeMemoryDiagnosticEntry = { provider_key: string, code: string, message: string, source_key?: string | null, uri?: string | null, context_usage_kind?: string | null, };
 

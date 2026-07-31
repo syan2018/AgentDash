@@ -47,6 +47,12 @@ Session timeline 消费 `generated/backbone-protocol.ts` 中的 `UserInputSubmit
 手写另一套 wire DTO 或从 system event 文本反推来源，原因是模型投递通道与 UI 展示差分需要共享
 同一份 Backbone 事实。
 
+Session ContextFrame model同样直接派生generated `ContextFrame`、`ContextFrameSection`及其entry
+类型。由于NDJSON envelope validator只验证Backbone envelope外形，feature parser仍需严格验证
+nested Frame；required数组/字段缺失、数组成员无效或未知section时拒绝整帧，不把缺失值补成
+`[]`/默认文案，也不静默丢弃坏成员。Rust TS导出需要把JSON整数标注为`number`，使view model无需
+建立bigint兼容层。
+
 Canvas 资产 UI 消费 `generated/canvas-contracts.ts` 中的 `CanvasResponse`、`CanvasScopeDto`、`CanvasAccessDto`、`CanvasListScopeDto`、`PublishCanvasToProjectRequest`、`CopyCanvasToPersonalRequest` 和 `UnpublishCanvasResponse`。`services/canvas.ts` 只封装 endpoint 和 query/body 传递；Mine/Shared 分组、按钮可见性和 editor 只读状态全部读取 `canvas.scope` 与 `canvas.access`。
 
 Canvas access-driven UI contract:

@@ -30,9 +30,10 @@ provenance 与整体 digest。
   `TypedNative | CanonicalRendered | Unsupported` fidelity；
 - Runtime 在 applied evidence 到达前不激活 source；
 - 派发任务作为 create 之后的首个普通 `SubmitInput`，不能代替 initial context 安装。
-- concrete Agent在安装时把每项contribution物化为accepted ContextFrame并随history保存；
-  provider input与canonical history读取同一`rendered_text`，原因是initial context的authority、
-  provenance与实际模型文本必须由同一接纳事实证明。
+- concrete Agent在安装时按Agent语义聚合contribution；同一stable kind只形成一个accepted
+  ContextFrame，来源顺序保留在`ContextFragments`内。accepted Frames属于
+  `InitialContextInstalled` occurrence，provider input与canonical history读取同一
+  `rendered_text`，原因是initial context的authority、provenance与实际模型文本必须由同一接纳事实证明。
 
 ## 4. Compaction capability
 
@@ -61,10 +62,11 @@ command inbox、public effect、retry与recovery事实位于同一个source repo
 `DashAgentCommit`原子提交command settlement、history append/head CAS与下一continuation
 intent；change feed按history revision即时派生。
 
-`CompactionApplied`保存最终CompactionSummary ContextFrame。后续provider round、overflow
-continuation与canonical presentation直接使用该frame的`rendered_text`，使summary恢复与用户看到的
-compaction evidence保持同一revision。canonical presentation在该摘要前重新发布当前已接纳的
-AgentFrame ContextFrame，使时间线按“权威上下文刷新、压缩摘要”呈现这次事实切换。
+`CompactionApplied`保存从当前accepted Initial Context与Surface完整重建的有序
+`context_frames`，其中包含唯一CompactionSummary。只有紧随其后的`CompactionCompleted`成功事实
+使该批Frames成为active reset；failed/lost/cancelled不推进context revision。后续provider round、
+overflow continuation、usage、inspector与canonical presentation都消费同一批accepted Frames，
+原因是压缩后的系统上下文基线不能从压缩前Surface delta history重新推导。
 
 Manual compaction：
 
@@ -102,12 +104,13 @@ running/succeeded/failed/lost，不固定解释为completed。
 - Runtime reconnect只读 snapshot revision + durable change tail，不 replay presentation
   journal 或 Agent 内部 history。
 
-## 9. Scenario: Minimal Compaction Applied Fact 与 Exact Recipe
+## 9. Scenario: Accepted Compaction Rebuild 与 Exact Recipe
 
 ### 9.1 Scope / Trigger
 
-修改Dash compaction applied fact、summary frame、provider materializer或context query时适用。
-Applied fact必须能从source history重放，因为成功压缩会改变下一轮模型输入。
+修改Dash compaction applied fact、ContextFrame compiler、provider materializer或context query时
+适用。Applied fact必须原子保存本次Agent实际接受的完整Frame序列，因为成功压缩会重置下一轮模型的
+system context。
 
 ### 9.2 Signatures
 
@@ -115,7 +118,7 @@ Applied fact必须能从source history重放，因为成功压缩会改变下一
 HistoryPayload::CompactionApplied {
     compaction_id: CompactionId,
     context_revision: ContextRevision,
-    summary_frame: ContextFrame,
+    context_frames: Vec<ContextFrame>,
     retained_from: Option<HistoryEntryId>,
 }
 ```
@@ -135,13 +138,19 @@ pub struct AgentContextRecipe {
 
 ### 9.3 Contracts
 
-- 只有`CompactionApplied + CompactionCompleted`共同出现的summary frame进入current recipe。
-- `summary_frame.sections`使用`ContextFrameSection::CompactionSummary`，并保存identity、trigger、
-  source range、first-kept coordinate、统计与真实created time。
+- 只有`CompactionApplied + CompactionCompleted`共同出现时，`context_frames`整体替换active Frame
+  baseline；Applied未Completed以及failed/lost/cancelled均不改变current recipe。
+- rebuild从当前accepted Initial Context与Surface编译，不读取旧Surface delta ledger。stable kind
+  各自最多一个Frame，capability使用`empty → current`，最后加入唯一CompactionSummary。
+- 每个rebuild Frame都使用当前compaction occurrence前缀的新ID、统一
+  `AppliedToCompactedContext`状态与accepted time；History fold拒绝重复ID、错误前缀、非canonical
+  顺序、重复stable slot或不匹配的summary occurrence。
 - normal provider round、compaction input、post-compaction continuation和context query调用同一个
-  history materializer；frame排序、retained boundary和tool pairing只有一份实现。
+  active Frame fold；frame顺序以accepted Vec为准，retained boundary和tool pairing只有一份实现。
 - current recipe按provider输入顺序包含typed ContextFrame、已接纳Tool definition与retained
   Message；CompactionSummary固定排在其它权威ContextFrame之后。
+- conversation message、ToolCall与ToolResult始终以native records进入recipe，不转换成ContextFrame；
+  被压缩prefix由Summary映射，`retained_from`后的suffix保持native message。
 - `usage`从同一次物化得到的frames、tools与messages派生，不写入history；因此Inspector分类与
   实际recipe成员使用同一估算口径。
 - tool call message使用call entry identity，tool result message使用result entry identity；
@@ -158,6 +167,7 @@ pub struct AgentContextRecipe {
 | Condition | Required behavior |
 | --- | --- |
 | context revision与Started source/summary/retained boundary不一致 | history fold拒绝transition |
+| rebuild Frame ID重复、occurrence前缀错误、顺序错误或stable kind重复 | history fold拒绝transition |
 | 同一compaction重复Applied | history fold拒绝transition |
 | Completed没有Applied | history fold拒绝transition |
 | retained boundary命中tool pair | call/result都保留并按原顺序物化 |
@@ -165,15 +175,16 @@ pub struct AgentContextRecipe {
 
 ### 9.5 Good / Base / Bad Cases
 
-- Good：Applied只保存canonical summary frame、context revision和retained boundary，reload后recipe
-  digest稳定。
-- Base：`retained_from=None`表示无历史suffix，summary frame仍是完整recipe contribution。
-- Bad：同时保存summary字符串、frame、source digest、entry列表、tool pair与usage副本；这些字段
-  会让同一history事实出现多个可漂移表示。
+- Good：Applied保存本次canonical rebuild Frames、context revision和retained boundary，reload后
+  recipe digest稳定，projector原样发布同一Vec。
+- Base：`retained_from=None`表示无历史suffix，rebuild Frames与summary仍构成完整system recipe。
+- Bad：Applied只保存summary并在query/projector中扫描旧Surface history重建其余Frames；这会让
+  reset后的真实输入没有accepted occurrence owner。
 
 ### 9.6 Tests Required
 
-- history fold覆盖Applied transition、重复Applied、无Applied Completed与terminal不推进recipe。
+- history fold覆盖Applied transition、重复Applied、无Applied Completed、invalid occurrence
+  Frames与terminal不推进recipe。
 - materializer fixture比较compactor输入、下一轮provider输入和context query。
 - canonical projection验证同一summary frame进入timeline与current inspector。
 - reload验证summary frame、context revision、retained materialization与recipe digest。
@@ -181,9 +192,9 @@ pub struct AgentContextRecipe {
 ### 9.7 Wrong vs Correct
 
 ```rust
-// Wrong：把可从history/summary frame派生的信息再做一份checkpoint mirror。
-CompactionApplied { compaction_id, checkpoint }
+// Wrong：压缩后继续从旧Surface delta history推导active context。
+CompactionApplied { compaction_id, summary_frame }
 
-// Correct：一次Applied提交最小、可重放的canonical事实。
-CompactionApplied { compaction_id, context_revision, summary_frame, retained_from }
+// Correct：一次Applied提交本次Agent实际接受的完整reset事实。
+CompactionApplied { compaction_id, context_revision, context_frames, retained_from }
 ```

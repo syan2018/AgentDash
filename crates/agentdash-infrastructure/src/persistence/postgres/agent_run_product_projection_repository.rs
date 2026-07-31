@@ -990,6 +990,175 @@ mod product_binding_persistence_tests {
         assert_eq!(committed, product_binding);
     }
 
+    #[tokio::test]
+    async fn context_frame_hard_migration_releases_old_dash_owners_for_reprovisioning() {
+        let (pool, _runtime) = activation_test_pool().await;
+        let project_id = Uuid::new_v4();
+        let target = AgentRunTarget {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+        };
+        let old_source = format!("old-dash-source-{}", Uuid::new_v4());
+        let old_thread = format!("old-thread-{}", Uuid::new_v4());
+
+        sqlx::query(
+            "INSERT INTO projects(id,name,created_at,updated_at) VALUES ($1,$2,NOW(),NOW())",
+        )
+        .bind(project_id.to_string())
+        .bind("ContextFrame migration test")
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO lifecycle_runs(
+                 id,project_id,topology,status,created_at,updated_at,last_activity_at
+             ) VALUES ($1,$2,'single','active',NOW(),NOW(),NOW())",
+        )
+        .bind(target.run_id.to_string())
+        .bind(project_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO lifecycle_agents(
+                 id,run_id,project_id,source,status,runtime_binding,created_at,updated_at
+             ) VALUES ($1,$2,$3,'unknown','idle',$4,NOW(),NOW())",
+        )
+        .bind(target.agent_id.to_string())
+        .bind(target.run_id.to_string())
+        .bind(project_id.to_string())
+        .bind(serde_json::json!({
+            "runtime_thread_id": old_thread,
+            "agent": {"source": old_source},
+        }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO dash_complete_source(
+                 source_coordinate,repository,metadata,observation
+             ) VALUES ($1,'{}','{}','{}')",
+        )
+        .bind(&old_source)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO dash_complete_effect(effect_id,record) VALUES ($1,'{}')")
+            .bind(format!("old-effect-{}", Uuid::new_v4()))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        for (status, order_key) in [("queued", 1_i64), ("dispatched", 2_i64)] {
+            sqlx::query(
+                "INSERT INTO agent_run_mailbox_messages(
+                     id,run_id,agent_id,delivery_source_coordinate,
+                     delivery_binding_generation,origin,source_namespace,source_kind,
+                     source_actor,source_display_label_key,delivery,delivery_json,
+                     barrier,drain_mode,status,priority,order_key,created_at,updated_at
+                 ) VALUES (
+                     $1,$2,$3,$4,7,'user','test','prompt','user','test',
+                     'launch_or_continue_turn','{}','immediate_if_idle','one',
+                     $5,0,$6,NOW(),NOW()
+                 )",
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(target.run_id.to_string())
+            .bind(target.agent_id.to_string())
+            .bind(&old_source)
+            .bind(status)
+            .bind(order_key)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/0007_rebuild_dash_context_frame_authority.sql"
+        ))
+        .execute(&pool)
+        .await
+        .expect("reapply ContextFrame hard migration");
+
+        let binding: Option<serde_json::Value> =
+            sqlx::query_scalar("SELECT runtime_binding FROM lifecycle_agents WHERE id=$1")
+                .bind(target.agent_id.to_string())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(binding.is_none());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM dash_complete_source")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM dash_complete_effect")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+        let evidence = sqlx::query_as::<_, (String, Option<String>, Option<i64>)>(
+            "SELECT status,delivery_source_coordinate,delivery_binding_generation
+             FROM agent_run_mailbox_messages
+             WHERE run_id=$1 AND agent_id=$2
+             ORDER BY order_key",
+        )
+        .bind(target.run_id.to_string())
+        .bind(target.agent_id.to_string())
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(evidence[0], ("queued".to_owned(), None, None));
+        assert_eq!(
+            evidence[1],
+            ("dispatched".to_owned(), Some(old_source), Some(7),)
+        );
+
+        let mut execution_profile =
+            agentdash_application_agentrun::agent_run::ProductExecutionProfileRef {
+                profile_key: "codex".to_owned(),
+                profile_revision: 1,
+                profile_digest: String::new(),
+                configuration: serde_json::json!({"executor": "codex"}),
+                credential_scope: None,
+            };
+        execution_profile.refresh_digest();
+        let replacement = AgentRunProductRuntimeBinding {
+            target: target.clone(),
+            runtime_thread_id: RuntimeThreadId::new(format!(
+                "replacement-thread-{}",
+                Uuid::new_v4()
+            ))
+            .unwrap(),
+            agent: agentdash_application_agentrun::agent_run::AgentRunCompleteAgentAssociation {
+                service_instance_id: agentdash_agent_runtime_contract::AgentServiceInstanceId::new(
+                    "fixture-agent",
+                )
+                .unwrap(),
+                source: agentdash_agent_runtime_contract::AgentSourceCoordinate::new(format!(
+                    "replacement-source-{}",
+                    Uuid::new_v4()
+                ))
+                .unwrap(),
+            },
+            launch_frame: agentdash_application_agentrun::agent_run::ProductAgentFrameRef {
+                frame_id: Uuid::new_v4(),
+                agent_id: target.agent_id,
+                revision: 1,
+            },
+            execution_profile_digest: execution_profile.profile_digest.clone(),
+            execution_profile,
+        };
+        PostgresAgentRunProductRuntimeBindingRepository::new(pool)
+            .commit_product_binding(&replacement)
+            .await
+            .expect("released Product owner can be reprovisioned");
+    }
+
     async fn activation_test_pool() -> (PgPool, Option<crate::postgres_runtime::PostgresRuntime>) {
         if crate::persistence::postgres::test_database_url().is_some() {
             return (

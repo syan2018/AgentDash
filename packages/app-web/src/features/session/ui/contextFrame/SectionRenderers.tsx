@@ -14,30 +14,22 @@ import { CB } from "../bodies/cardBodyTokens";
 import { DisclosureChevron } from "../../../../components/ui/disclosure";
 import { JsonTree } from "../bodies/JsonTree";
 import type {
-  AutoResumeSection,
   CapabilityKeyDeltaSection,
   CompactionSummarySection,
   CompanionAgentRosterDeltaSection,
   ContextFrameSection,
   ContextTokenInfo,
-  IdentitySection,
+  ContextFragmentsSection,
   McpServerDeltaSection,
   MemoryInventorySection,
-  AssignmentContextSection,
-  PendingActionSection,
-  ProjectGuidelinesSection,
   RuntimeContextFragmentEntry,
   RuntimeCompanionAgentEntry,
-  RuntimeHookInjectionEntry,
   RuntimeMemorySourceEntry,
   RuntimeSkillEntry,
   SkillDeltaSection,
   SystemNoticeSection,
   ToolPathDeltaSection,
   ToolSchemaDeltaSection,
-  UnknownSection,
-  UserPreferencesSection,
-  UserContextSection,
   VfsDeltaSection,
 } from "../../model/contextFrame";
 import { sectionKindToToken } from "../../model/contextFrame";
@@ -77,10 +69,8 @@ export function SectionBlock({ section }: { section: ContextFrameSection }) {
 
 function sectionTitle(section: ContextFrameSection): string {
   switch (section.kind) {
-    case "identity":
-      return section.title || "Identity";
-    case "assignment_context":
-      return section.title || "Assignment Context";
+    case "context_fragments":
+      return "Context Fragments";
     case "capability_key_delta":
       return "Capability Keys";
     case "tool_path_delta":
@@ -99,28 +89,14 @@ function sectionTitle(section: ContextFrameSection): string {
       return "Companion Agents";
     case "system_notice":
       return section.title || "System Notice";
-    case "pending_action":
-      return section.title || "Pending Action";
-    case "auto_resume":
-      return section.title || "Auto Resume";
     case "compaction_summary":
       return section.title || "Compaction Summary";
-    case "user_preferences":
-      return section.title || "User Preferences";
-    case "project_guidelines":
-      return section.title || "Project Guidelines";
-    case "user_context":
-      return section.title || "User Context";
-    case "unknown_section":
-      return `Unknown Section: ${section.original_kind}`;
   }
 }
 
 function sectionHint(section: ContextFrameSection): string | null {
   switch (section.kind) {
-    case "identity":
-      return `${section.fragments.length} fragments`;
-    case "assignment_context":
+    case "context_fragments":
       return `${section.fragments.length} fragments`;
     case "capability_key_delta": {
       const added = section.added_capabilities.length;
@@ -183,29 +159,15 @@ function sectionHint(section: ContextFrameSection): string | null {
     }
     case "system_notice":
       return null;
-    case "pending_action":
-      return section.status || "pending";
-    case "auto_resume":
-      return section.reason || "auto";
     case "compaction_summary":
       return `${section.messages_compacted} messages`;
-    case "user_preferences":
-      return `${section.items.length} items`;
-    case "project_guidelines":
-      return `${section.entries.length} files`;
-    case "user_context":
-      return section.provider || `${section.groups.length} groups`;
-    case "unknown_section":
-      return section.original_kind;
   }
 }
 
 function renderSectionBody(section: ContextFrameSection) {
   switch (section.kind) {
-    case "identity":
-      return <IdentityBody section={section} />;
-    case "assignment_context":
-      return <AssignmentContextBody section={section} />;
+    case "context_fragments":
+      return <ContextFragmentsBody section={section} />;
     case "capability_key_delta":
       return <CapabilityKeyDeltaBody section={section} />;
     case "tool_path_delta":
@@ -224,48 +186,14 @@ function renderSectionBody(section: ContextFrameSection) {
       return <CompanionAgentRosterDeltaBody section={section} />;
     case "system_notice":
       return <SystemNoticeBody section={section} />;
-    case "pending_action":
-      return <PendingActionBody section={section} />;
-    case "auto_resume":
-      return <AutoResumeBody section={section} />;
     case "compaction_summary":
       return <CompactionSummaryBody section={section} />;
-    case "user_preferences":
-      return <UserPreferencesBody section={section} />;
-    case "project_guidelines":
-      return <ProjectGuidelinesBody section={section} />;
-    case "user_context":
-      return <UserContextBody section={section} />;
-    case "unknown_section":
-      return <UnknownSectionBody section={section} />;
   }
 }
 
 // ─── 各 section body ─────────────────────────────────────────────────────────
 
-function IdentityBody({ section }: { section: IdentitySection }) {
-  if (section.fragments.length === 0) {
-    return <p className="text-xs text-muted-foreground/60">暂无片段</p>;
-  }
-
-  return (
-    <div className="space-y-2">
-      {section.summary && (
-        <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
-      )}
-      <div className="space-y-2">
-        {section.fragments.map((fragment, index) => (
-          <FragmentItem
-            key={`${fragment.slot}:${fragment.source}:${index}`}
-            fragment={fragment}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function AssignmentContextBody({ section }: { section: AssignmentContextSection }) {
+function ContextFragmentsBody({ section }: { section: ContextFragmentsSection }) {
   if (section.fragments.length === 0) {
     return <p className="text-xs text-muted-foreground/60">暂无片段</p>;
   }
@@ -747,68 +675,6 @@ function EffectiveCompanionAgentsBlock({
   );
 }
 
-function InjectionBody({ injections }: { injections: RuntimeHookInjectionEntry[] }) {
-  if (injections.length === 0) {
-    return <p className="text-xs text-muted-foreground/60">无注入内容</p>;
-  }
-  return (
-    <div className="space-y-2">
-      {injections.map((injection, index) => (
-        <InjectionItem
-          key={`${injection.slot}:${injection.source}:${index}`}
-          injection={injection}
-        />
-      ))}
-    </div>
-  );
-}
-
-function PendingActionBody({ section }: { section: PendingActionSection }) {
-  return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-1.5">
-        <Chip label={`id: ${section.action_id}`} />
-        <Chip label={`type: ${section.action_type}`} />
-        <Chip label={`status: ${section.status}`} />
-        <Chip label={`rev: ${section.revision}`} />
-        {section.turn_id && <Chip label={`turn: ${section.turn_id}`} />}
-      </div>
-      {section.summary && (
-        <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
-      )}
-      {section.instructions.length > 0 && (
-        <div className="space-y-1">
-          {section.instructions.map((line, index) => (
-            <pre
-              key={`${section.action_id}-inst-${index}`}
-              className="whitespace-pre-wrap text-xs leading-relaxed text-foreground/75"
-            >
-              {line}
-            </pre>
-          ))}
-        </div>
-      )}
-      {section.injections.length > 0 && <InjectionBody injections={section.injections} />}
-    </div>
-  );
-}
-
-function InjectionItem({ injection }: { injection: RuntimeHookInjectionEntry }) {
-  return (
-    <article className="space-y-1">
-      <div className="flex flex-wrap gap-1.5">
-        <Chip label={injection.slot || "slot"} />
-        <Chip label={injection.source || "unknown"} />
-      </div>
-      {injection.content && (
-        <pre className="max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground/75">
-          {injection.content}
-        </pre>
-      )}
-    </article>
-  );
-}
-
 function SystemNoticeBody({ section }: { section: SystemNoticeSection }) {
   if (!section.body) {
     return <p className="text-xs text-muted-foreground/60">{section.summary || "无补充内容"}</p>;
@@ -817,19 +683,6 @@ function SystemNoticeBody({ section }: { section: SystemNoticeSection }) {
     <pre className="max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground/75">
       {section.body}
     </pre>
-  );
-}
-
-function AutoResumeBody({ section }: { section: AutoResumeSection }) {
-  return (
-    <div className="space-y-1.5">
-      {section.reason && <Chip label={`reason: ${section.reason}`} />}
-      {section.prompt && (
-        <pre className={`max-h-96 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
-          {section.prompt}
-        </pre>
-      )}
-    </div>
   );
 }
 
@@ -863,90 +716,6 @@ function CompactionSummaryBody({ section }: { section: CompactionSummarySection 
         <CompactedUntilRefBlock value={section.compacted_until_ref} />
       )}
     </div>
-  );
-}
-
-function UserPreferencesBody({ section }: { section: UserPreferencesSection }) {
-  if (section.items.length === 0) {
-    return <p className="text-xs text-muted-foreground/60">暂无用户偏好</p>;
-  }
-  return (
-    <div className="space-y-1">
-      {section.items.map((item, index) => (
-        <p key={`${item}-${index}`} className="text-xs leading-5 text-foreground/75">
-          {item}
-        </p>
-      ))}
-    </div>
-  );
-}
-
-function ProjectGuidelinesBody({ section }: { section: ProjectGuidelinesSection }) {
-  if (section.entries.length === 0) {
-    return <p className="text-xs text-muted-foreground/60">暂无项目指引</p>;
-  }
-  return (
-    <div className="space-y-2">
-      {section.entries.map((entry, index) => (
-        <article
-          key={`${entry.path}-${index}`}
-          className="space-y-1"
-        >
-          <div className="flex flex-wrap gap-1.5">
-            <Chip label={entry.path} />
-          </div>
-          {entry.content && (
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground/75">
-              {entry.content}
-            </pre>
-          )}
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function UserContextBody({ section }: { section: UserContextSection }) {
-  const chips = [
-    section.user_id ? `user: ${section.user_id}` : null,
-    section.display_name ? `name: ${section.display_name}` : null,
-    section.email ? `email: ${section.email}` : null,
-    section.provider ? `provider: ${section.provider}` : null,
-  ].filter((item): item is string => item != null);
-
-  return (
-    <div className="space-y-2">
-      {section.summary && (
-        <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
-      )}
-      {chips.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {chips.map((label) => (
-            <Chip key={label} label={label} />
-          ))}
-        </div>
-      )}
-      {section.groups.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {section.groups.map((group) => (
-            <Chip key={group} label={`group: ${group}`} />
-          ))}
-        </div>
-      )}
-      {section.extra != null && (
-        <div className={CB.codeBlock}>
-          <JsonTree data={section.extra} defaultDepth={2} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function UnknownSectionBody({ section }: { section: UnknownSection }) {
-  return (
-    <pre className={`max-h-64 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
-      {formatJson(section.raw)}
-    </pre>
   );
 }
 

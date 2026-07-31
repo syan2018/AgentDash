@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "确认backend规范路由与Agent Runtime相关文档边界。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "约束compaction accepted fact、active recipe、retained records与usage语义。"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "约束Dash Surface、ContextFrame materializer、provider与canonical projection同源。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "约束Complete Agent source authority、Product binding与JSONB hard migration。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "约束ContextFrameChanged、delivery status、排序与canonical conversation分层。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "约束context recipe与前端feed的跨层成员、顺序和展示合同。"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "约束ContextFrameChanged进入session canonical feed的唯一归约路径。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "约束ContextFrame与conversation presentation在前端保持独立。"}
+{"file": ".trellis/tasks/07-31-contextframe-compaction-rebuild-architecture/research/architecture-baseline.md", "reason": "提供清理前后架构、双lane边界与normal/reset统一规则。"}
+{"file": ".trellis/tasks/07-31-contextframe-compaction-rebuild-architecture/research/normal-update-reset-evidence.md", "reason": "提供源码证据、现有协议能力、测试缺口与migration约束。"}
+{"file": ".trellis/tasks/07-31-contextframe-compaction-rebuild-architecture/research/main-reference-contextframe-comparison.md", "reason": "提取main-reference的语义聚合原则，并识别已删除RuntimeSession留下的delivery planner协议残留。"}

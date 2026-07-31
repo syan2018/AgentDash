@@ -32,8 +32,12 @@ export function ContextFrameStream({
     return null;
   }
 
-  const orderedFrames = [...frames].sort(compareContextDeliveryOrder);
-  const summary = summarizeFrames(orderedFrames);
+  const summary = summarizeFrames(frames);
+  const header = frames.some(
+    (frame) => frame.delivery_status === "applied_to_compacted_context",
+  )
+    ? "上下文已重建"
+    : "上下文已更新";
 
   return (
     <div>
@@ -44,13 +48,13 @@ export function ContextFrameStream({
       >
         <span className={ST.badge}>CTX</span>
         <span className={ST.hint}>
-          上下文已更新 {describeFrameSet(orderedFrames)} {summary ? `· ${summary}` : ""}
+          {header} {describeFrameSet(frames)} {summary ? `· ${summary}` : ""}
         </span>
       </DisclosureRow>
 
       {expanded && (
         <div className={ST.itemList}>
-          {orderedFrames.map((frame) => (
+          {frames.map((frame) => (
             <FrameStripItem key={frame.id} frame={frame} defaultOpen={defaultExpanded} />
           ))}
         </div>
@@ -70,7 +74,6 @@ function FrameStripItem({
   const [open, setOpen] = useState(defaultOpen);
   const token = frameKindToToken(frame.kind);
   const label = frameTabLabel(frame);
-  const delivery = frame.delivery_metadata;
 
   return (
     <div>
@@ -83,7 +86,7 @@ function FrameStripItem({
         <span className={ST.badge}>{token.token}</span>
         <span className={ST.title}>{label}</span>
         <span className={ST.hint}>
-          {delivery.delivery_phase} #{delivery.delivery_order} · {delivery.cache_policy} · {delivery.model_channel}/{delivery.agent_consumption.mode}
+          {frame.delivery_status}
         </span>
       </button>
       {open && (
@@ -95,52 +98,23 @@ function FrameStripItem({
   );
 }
 
-function compareContextDeliveryOrder(a: ContextFrame, b: ContextFrame): number {
-  const phase = phaseRank(a.delivery_metadata.delivery_phase) - phaseRank(b.delivery_metadata.delivery_phase);
-  if (phase !== 0) return phase;
-  const order = a.delivery_metadata.delivery_order - b.delivery_metadata.delivery_order;
-  if (order !== 0) return order;
-  const createdAt = a.created_at_ms - b.created_at_ms;
-  if (createdAt !== 0) return createdAt;
-  return a.id.localeCompare(b.id);
-}
-
-function phaseRank(phase: ContextFrame["delivery_metadata"]["delivery_phase"]): number {
-  switch (phase) {
-    case "stable_system":
-      return 0;
-    case "session_policy":
-      return 1;
-    case "run_state":
-      return 2;
-    case "assignment":
-      return 3;
-    case "discovered_inventory":
-      return 4;
-    case "turn_runtime":
-      return 5;
-  }
-}
-
 function summarizeFrames(frames: ContextFrame[]): string {
   const last = frames[frames.length - 1]!;
-  const phase = last.phase_node ?? last.kind;
   if (frames.length === 1) {
-    return last.phase_node ?? "";
+    return last.kind;
   }
-  return `${frames.length}x · ${phase}`;
+  return `${frames.length}x · ${last.kind}`;
 }
 
 const FRAME_KIND_LABELS: Record<string, string> = {
   identity: "IDENTITY",
-  capability_state_snapshot: "CAPABILITY SNAPSHOT",
   capability_state_delta: "CAPABILITY",
   assignment_context: "ASSIGNMENT",
-  pending_action: "ACTION",
-  auto_resume: "RESUME",
   compaction_summary: "COMPACTION",
   system_guidelines: "GUIDELINES",
   memory_context: "MEMORY",
+  user_context: "USER",
+  environment: "ENVIRONMENT",
 };
 
 function describeFrameSet(frames: ContextFrame[]): string {
@@ -161,27 +135,17 @@ function frameKindLabel(frame: ContextFrame): string {
 /**
  * 单个 frame tab 上的文字描述：优先展示阶段/关键变化，退化为 kind。
  *
- * - capability_state_snapshot / capability_state_delta：展示能力/工具统计
- * - auto_resume：展示 reason
+ * - capability_state_delta：展示能力/工具统计
  * - compaction_summary：展示压缩条数
- * - 其他：phase_node 或 kind
+ * - 其他：kind
  */
 function frameTabLabel(frame: ContextFrame): string {
   const parts: string[] = [];
-  if (frame.phase_node) parts.push(frame.phase_node);
-  else parts.push(frame.kind);
+  parts.push(frame.kind);
 
-  if (
-    frame.kind === "capability_state_snapshot" ||
-    frame.kind === "capability_state_delta"
-  ) {
+  if (frame.kind === "capability_state_delta") {
     const diff = summarizeRuntimeUpdate(frame);
     if (diff) parts.push(diff);
-  } else if (frame.kind === "auto_resume") {
-    const resume = frame.sections.find((section) => section.kind === "auto_resume");
-    if (resume && resume.kind === "auto_resume" && resume.reason) {
-      parts.push(resume.reason);
-    }
   } else if (frame.kind === "compaction_summary") {
     const compaction = frame.sections.find(
       (section) => section.kind === "compaction_summary",
@@ -189,12 +153,6 @@ function frameTabLabel(frame: ContextFrame): string {
     if (compaction && compaction.kind === "compaction_summary") {
       parts.push(`${compaction.messages_compacted} msg`);
     }
-  } else if (frame.kind === "system_guidelines") {
-    const preferences = frame.sections.find((section) => section.kind === "user_preferences");
-    const guidelines = frame.sections.find((section) => section.kind === "project_guidelines");
-    const prefCount = preferences && preferences.kind === "user_preferences" ? preferences.items.length : 0;
-    const fileCount = guidelines && guidelines.kind === "project_guidelines" ? guidelines.entries.length : 0;
-    if (prefCount + fileCount > 0) parts.push(`${prefCount} prefs / ${fileCount} files`);
   } else if (frame.kind === "memory_context") {
     const memory = frame.sections.find((section) => section.kind === "memory_inventory");
     if (memory && memory.kind === "memory_inventory") {

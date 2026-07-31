@@ -95,18 +95,25 @@ type AgentRuntimeStreamFrame =
 - `ContextFrame`是平台事实进入concrete Agent模型上下文的typed delivery协议，也是该已接纳事实的
   canonical presentation。Agent history保存最终frame，provider materializer消费其
   `rendered_text`，canonical stream发布同一typed value。
+- 会话Message、ToolCall与ToolResult始终属于canonical conversation record lane并以provider native
+  message进入recipe，不包装成ContextFrame。ContextFrame只表达system-level accepted context；
+  压缩prefix由CompactionSummary映射，retained suffix保持conversation records。
 - `tool_schema_delta`携带`added_tools/removed_tools/changed_tools`及完整`parameters_schema`；前端
-  默认展示工具摘要并提供JSON tree展开，以便审计模型可读文本与机器schema是否同源。frame排序依次
-  使用delivery phase、delivery order、created_at与稳定frame id。
+  默认展示工具摘要并提供JSON tree展开，以便审计模型可读文本与机器schema是否同源。Frame顺序由
+  concrete Agent compiler产出的accepted Vec决定；provider、canonical projector与前端不得按展示
+  metadata重排。
 - Dash capability surface的各维度delta与`tool_schema_delta`属于同一个
-  `capability_state_delta` record，并声明`context/system_append`。因此前端看到的每个CAP record
+  `capability_state_delta` record。因此前端看到的每个CAP record
   对应一次可执行surface transition；首次record是完整初始增量，后续record只展示发生变化的
   section，不把capability清单与工具schema拆成两个独立投递事实。
-- `SurfaceApplied`保存的stable ContextFrames是provider恢复当前模型上下文所需的snapshot；
+- `SurfaceApplied` occurrence保存聚合后的stable ContextFrames与真实CAP delta；
   `ContextFrameChanged`是相邻surface之间的canonical transition。projector必须使用previous
-  surface过滤语义未变化的stable frame，不能因为frame id/cache revision随surface更新就把
+  accepted occurrence过滤语义未变化的stable frame，不能因为frame id随surface更新就把
   identity、environment、guidelines和assignment重新发布。read、changes与durable live必须调用
   同一个previous/current投影函数，保证重载与实时观察一致。
+- successful `CompactionApplied + CompactionCompleted`以Applied payload的完整Frame Vec重置active
+  baseline；projector直接发布该Vec，不扫描旧Surface history重建成员。failed/lost/cancelled不改变
+  active Frames。
 - 断线或进程重启后丢弃 ephemeral lane，并从 Complete Agent `read` 重新获取 durable history。
   Snapshot-only Agent 不需要平台 durable change journal。
 - PTY terminal、Canvas、Workspace Module 与 AgentFrame 是独立资源事实；即使它们引用 Agent
@@ -135,7 +142,8 @@ type AgentRuntimeStreamFrame =
 | vendor 发送 executor-specific conversation DTO | adapter 边界拒绝或映射为 owned canonical record |
 | tool surface同名定义改变 | `changed_tools`渲染↻；不渲染为第二次新增 |
 | surface只改变tool/capability | timeline只追加CAP；stable context仍进入provider但不重复发布 |
-| 多个ContextFrame拥有相同phase/order/time | 以稳定frame id确定顺序，snapshot与live merge后顺序一致 |
+| 同批ContextFrame到达 | 保持accepted Vec与canonical event顺序，不按kind/time重新排序 |
+| compaction rebuild ID重复、occurrence前缀或顺序错误 | history fold拒绝，不发布部分batch |
 | tool delta带完整parameters schema | schema保留为structured contract；UI摘要可展开完整嵌套JSON tree |
 | fsRead结果同时包含typed正文与details | Read Card显示路径、行数和逐行正文；重载后使用同一内容，不展示executor envelope |
 | durable展示record在初始snapshot中 | 渲染审计记录，不自动切换面板 |
@@ -172,8 +180,8 @@ type AgentRuntimeStreamFrame =
   control字段改变时 Composer 状态才变化。
 - ordering test断言用户输入与`TurnStarted`先于第一个ephemeral output；ContextFrame test断言直接
   消费`Platform(ContextFrameChanged)`并保留typed frame。
-- ContextFrame frontend tests覆盖added/removed/changed tool渲染、added/changed完整schema展开，
-  以及相同phase/order/time时按frame id稳定排序。
+- ContextFrame frontend tests覆盖added/removed/changed tool渲染、added/changed完整schema展开、
+  accepted Vec顺序保持与reset批次“上下文已重建”呈现。
 - Complete Agent projection test连续应用stable instructions相同、tool surface变化的两个revision，
   断言read/changes/live第二次只发布CAP，同时provider prompt仍含完整stable context。
 - production tracer 覆盖 Product input → tool live items → final assistant → reload durable history，

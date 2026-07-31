@@ -1,115 +1,326 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use agentdash_agent::dash::{
-    DashSurface, DashSurfaceInstruction, DashToolDefinition, InitialContextContribution,
+use super::{
+    CompactionId, ContextRevision, DashSurface, DashSurfaceInstruction, DashToolDefinition,
     InitialContextInstallation,
 };
 use agentdash_agent_protocol::{
-    AgentCapabilityManifest, AgentSurfaceInstructionPresentation, ContextAgentConsumption,
-    ContextAgentConsumptionMode, ContextConnectorProfile, ContextDeliveryChannel,
-    ContextDeliveryMetadata, ContextDeliveryStatus, ContextFrame, ContextFrameKind,
-    ContextFrameSection, ContextFrameSource, ContextMessageRole, RuntimeCompanionAgentEntry,
+    AgentCapabilityManifest, AgentSurfaceInstructionPresentation, ContextDeliveryStatus,
+    ContextFrame, ContextFrameKind, ContextFrameSection, RuntimeCompanionAgentEntry,
     RuntimeContextFragmentEntry, RuntimeMemoryDiagnosticEntry, RuntimeMemoryInventoryMode,
     RuntimeMemorySourceEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SkillContextExposure,
 };
 use serde_json::Value;
 
-pub(crate) fn materialize_surface_frames(
-    surface: &DashSurface,
-    previous: Option<&DashSurface>,
-) -> Result<Vec<ContextFrame>, serde_json::Error> {
-    let mut frames = Vec::new();
-    let mut capability_frame_index = None;
-    for (index, instruction) in surface.instructions.iter().enumerate() {
-        if matches!(
-            &instruction.presentation,
-            AgentSurfaceInstructionPresentation::CapabilityManifest { .. }
-        ) {
-            capability_frame_index.get_or_insert(frames.len());
-            continue;
-        }
-        if let Some(frame) = materialize_instruction_frame(surface, instruction, index) {
-            frames.push(frame);
-        }
-    }
-    if let Some(frame) = materialize_capability_state_frame(surface, previous)? {
-        let index = capability_frame_index.unwrap_or(frames.len());
-        frames.insert(index, frame);
-    }
-    Ok(frames)
-}
-
-pub(crate) fn materialize_initial_context_frames(
+pub(crate) fn compile_initial_context(
     installation: &InitialContextInstallation,
 ) -> Vec<ContextFrame> {
-    let mut frames = installation
+    let mut frames = compile_stable_frames(Some(installation), None, "initial-context");
+    for (index, contribution) in installation
         .contributions
         .iter()
+        .filter(|contribution| contribution.kind == "compact_summary")
         .enumerate()
-        .map(|(index, contribution)| {
-            materialize_initial_context_frame(installation, contribution, index)
-        })
-        .collect::<Vec<_>>();
+    {
+        let rendered_text = format!(
+            "## AgentDash Initial Context: Compaction Summary\n{}",
+            contribution.payload
+        );
+        frames.push(ContextFrame {
+            id: format!(
+                "initial-context:{}:summary:{index}",
+                installation.package_id
+            ),
+            kind: ContextFrameKind::CompactionSummary,
+            delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
+            rendered_text: rendered_text.clone(),
+            sections: vec![ContextFrameSection::ContextFragments {
+                fragments: vec![RuntimeContextFragmentEntry {
+                    slot: "initial_context".to_owned(),
+                    label: "Compaction Summary".to_owned(),
+                    source: contribution.authority.clone(),
+                    content: rendered_text,
+                    context_usage_kind: Some(contribution.kind.clone()),
+                }],
+            }],
+            created_at_ms: 0,
+        });
+    }
     frames.sort_by(frame_order);
     frames
 }
 
-fn materialize_instruction_frame(
+pub(crate) fn compile_surface_update(
+    installation: Option<&InitialContextInstallation>,
     surface: &DashSurface,
-    instruction: &DashSurfaceInstruction,
-    index: usize,
-) -> Option<ContextFrame> {
-    if instruction.text.trim().is_empty() {
-        return None;
+    previous: Option<&DashSurface>,
+) -> Result<Vec<ContextFrame>, serde_json::Error> {
+    let mut frames = compile_stable_frames(
+        installation,
+        Some(surface),
+        &format!("surface:{}:{}", surface.revision, surface.digest),
+    );
+    if let Some(frame) = materialize_capability_state_frame(surface, previous)? {
+        frames.push(frame);
     }
-    let (kind, role, title) = instruction_presentation(instruction);
-    let mut metadata = dash_delivery_metadata(kind, role, "accepted_surface_instruction");
-    metadata.cache_key = Some(surface.digest.clone());
-    metadata.cache_revision = Some(surface.revision.to_string());
-    metadata.delivery_order = metadata
-        .delivery_order
-        .saturating_add(u32::try_from(index).unwrap_or(u32::MAX));
-    let fragment = RuntimeContextFragmentEntry {
-        slot: instruction.channel.clone(),
-        label: instruction
-            .key
-            .rsplit(':')
-            .next()
-            .unwrap_or(instruction.key.as_str())
-            .to_owned(),
-        source: instruction.key.clone(),
-        content: instruction.text.clone(),
-        context_usage_kind: Some("agent_surface".to_owned()),
+    frames.sort_by(frame_order);
+    Ok(frames)
+}
+
+pub(crate) fn compile_surface_revoke(
+    installation: Option<&InitialContextInstallation>,
+    previous: &DashSurface,
+) -> Result<Vec<ContextFrame>, serde_json::Error> {
+    let mut frames = compile_stable_frames(
+        installation,
+        None,
+        &format!("surface-revoke:{}:{}", previous.revision, previous.digest),
+    );
+    let empty = DashSurface {
+        revision: previous.revision.saturating_add(1),
+        digest: format!("revoked:{}", previous.digest),
+        instructions: Vec::new(),
+        tools: Vec::new(),
     };
-    let sections = match &instruction.presentation {
-        AgentSurfaceInstructionPresentation::Identity => vec![ContextFrameSection::Identity {
-            title: title.to_owned(),
-            summary: instruction.key.clone(),
-            fragments: vec![fragment],
-        }],
-        _ => vec![ContextFrameSection::AssignmentContext {
-            title: title.to_owned(),
-            summary: instruction.key.clone(),
-            fragments: vec![fragment],
-        }],
+    if let Some(frame) = materialize_capability_state_frame(&empty, Some(previous))? {
+        frames.push(frame);
+    }
+    frames.sort_by(frame_order);
+    Ok(frames)
+}
+
+pub(crate) fn compile_compaction_rebuild(
+    installation: Option<&InitialContextInstallation>,
+    surface: Option<&DashSurface>,
+    compaction_id: &CompactionId,
+    revision: &ContextRevision,
+    summary_frame: ContextFrame,
+) -> Result<Vec<ContextFrame>, serde_json::Error> {
+    let mut frames = compile_stable_frames(
+        installation,
+        surface,
+        &format!("compaction:{}:{}", compaction_id.0, revision.0),
+    );
+    if let Some(surface) = surface
+        && let Some(frame) = materialize_capability_state_frame(surface, None)?
+    {
+        frames.push(frame);
+    }
+    frames.push(summary_frame);
+    frames.sort_by(frame_order);
+    let created_at_ms = frames
+        .iter()
+        .find(|frame| frame.kind == ContextFrameKind::CompactionSummary)
+        .map_or(0, |frame| frame.created_at_ms);
+    for (index, frame) in frames.iter_mut().enumerate() {
+        frame.id = format!(
+            "compaction:{}:{}:{index}:{}",
+            compaction_id.0,
+            revision.0,
+            frame.kind.as_key()
+        );
+        frame.delivery_status = ContextDeliveryStatus::AppliedToCompactedContext;
+        frame.created_at_ms = created_at_ms;
+    }
+    Ok(frames)
+}
+
+pub(crate) fn validate_compaction_rebuild(
+    frames: &[ContextFrame],
+    compaction_id: &CompactionId,
+    revision: &ContextRevision,
+) -> bool {
+    if frames.is_empty()
+        || frames
+            .windows(2)
+            .any(|pair| frame_order(&pair[0], &pair[1]).is_gt())
+    {
+        return false;
+    }
+
+    let id_prefix = format!("compaction:{}:{}:", compaction_id.0, revision.0);
+    let mut frame_ids = BTreeSet::new();
+    let mut stable_kinds = BTreeSet::new();
+    let mut capability_count = 0;
+    let mut summary = None;
+    let accepted_at = frames[0].created_at_ms;
+
+    for (index, frame) in frames.iter().enumerate() {
+        if frame.delivery_status != ContextDeliveryStatus::AppliedToCompactedContext
+            || frame.created_at_ms != accepted_at
+            || !frame_ids.insert(frame.id.as_str())
+            || frame.id != format!("{id_prefix}{index}:{}", frame.kind.as_key())
+        {
+            return false;
+        }
+
+        match frame.kind {
+            ContextFrameKind::Identity
+            | ContextFrameKind::UserContext
+            | ContextFrameKind::Environment
+            | ContextFrameKind::SystemGuidelines
+            | ContextFrameKind::AssignmentContext
+            | ContextFrameKind::MemoryContext => {
+                if !stable_kinds.insert(frame.kind.as_key()) {
+                    return false;
+                }
+            }
+            ContextFrameKind::CapabilityStateDelta => {
+                capability_count += 1;
+                if capability_count > 1 {
+                    return false;
+                }
+            }
+            ContextFrameKind::CompactionSummary => {
+                if summary.replace(frame).is_some() {
+                    return false;
+                }
+            }
+        }
+    }
+
+    let Some(summary_frame) = summary else {
+        return false;
     };
-    Some(ContextFrame {
-        id: format!(
-            "surface:{}:{}:instruction:{}",
-            surface.revision, surface.digest, instruction.key
-        ),
-        kind,
-        source: ContextFrameSource::RuntimeContextUpdate,
-        phase_node: None,
-        apply_mode: Some("accepted_surface".to_owned()),
-        delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
-        delivery_channel: ContextDeliveryChannel::ConnectorContext,
-        message_role: role,
-        delivery_metadata: metadata,
-        rendered_text: instruction.text.clone(),
-        sections,
-        created_at_ms: 0,
-    })
+    let [
+        ContextFrameSection::CompactionSummary {
+            summary,
+            compaction_id: Some(summary_compaction_id),
+            timestamp_ms: Some(timestamp_ms),
+            ..
+        },
+    ] = summary_frame.sections.as_slice()
+    else {
+        return false;
+    };
+    summary_compaction_id == &compaction_id.0
+        && summary_frame.rendered_text
+            == format!("<compacted_context>\n{summary}\n</compacted_context>")
+        && summary_frame.created_at_ms == i64::try_from(*timestamp_ms).unwrap_or(i64::MAX)
+}
+
+fn compile_stable_frames(
+    installation: Option<&InitialContextInstallation>,
+    surface: Option<&DashSurface>,
+    occurrence: &str,
+) -> Vec<ContextFrame> {
+    let mut grouped = stable_kinds()
+        .into_iter()
+        .map(|kind| (kind, Vec::new()))
+        .collect::<Vec<_>>();
+    if let Some(installation) = installation {
+        for contribution in &installation.contributions {
+            let Some(kind) = initial_contribution_kind(&contribution.kind) else {
+                continue;
+            };
+            let title = frame_title(kind);
+            push_fragment(
+                &mut grouped,
+                kind,
+                RuntimeContextFragmentEntry {
+                    slot: "initial_context".to_owned(),
+                    label: title.to_owned(),
+                    source: contribution.authority.clone(),
+                    content: format!(
+                        "## AgentDash Initial Context: {title}\n{}",
+                        contribution.payload
+                    ),
+                    context_usage_kind: Some(contribution.kind.clone()),
+                },
+            );
+        }
+    }
+    if let Some(surface) = surface {
+        for instruction in &surface.instructions {
+            if instruction.text.trim().is_empty()
+                || matches!(
+                    instruction.presentation,
+                    AgentSurfaceInstructionPresentation::CapabilityManifest { .. }
+                )
+            {
+                continue;
+            }
+            let (kind, _) = instruction_presentation(instruction);
+            push_fragment(
+                &mut grouped,
+                kind,
+                RuntimeContextFragmentEntry {
+                    slot: instruction.channel.clone(),
+                    label: instruction
+                        .key
+                        .rsplit(':')
+                        .next()
+                        .unwrap_or(instruction.key.as_str())
+                        .to_owned(),
+                    source: instruction.key.clone(),
+                    content: instruction.text.clone(),
+                    context_usage_kind: Some("agent_surface".to_owned()),
+                },
+            );
+        }
+    }
+    grouped
+        .into_iter()
+        .filter_map(|(kind, fragments)| {
+            if fragments.is_empty() {
+                return None;
+            }
+            let rendered_text = fragments
+                .iter()
+                .map(|fragment| fragment.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            Some(ContextFrame {
+                id: format!("{occurrence}:{}", kind.as_key()),
+                kind,
+                delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
+                rendered_text,
+                sections: vec![ContextFrameSection::ContextFragments { fragments }],
+                created_at_ms: 0,
+            })
+        })
+        .collect()
+}
+
+fn stable_kinds() -> [ContextFrameKind; 6] {
+    [
+        ContextFrameKind::Identity,
+        ContextFrameKind::UserContext,
+        ContextFrameKind::Environment,
+        ContextFrameKind::SystemGuidelines,
+        ContextFrameKind::AssignmentContext,
+        ContextFrameKind::MemoryContext,
+    ]
+}
+
+fn push_fragment(
+    grouped: &mut [(ContextFrameKind, Vec<RuntimeContextFragmentEntry>)],
+    kind: ContextFrameKind,
+    fragment: RuntimeContextFragmentEntry,
+) {
+    if let Some((_, fragments)) = grouped.iter_mut().find(|(candidate, _)| *candidate == kind) {
+        fragments.push(fragment);
+    }
+}
+
+fn initial_contribution_kind(kind: &str) -> Option<ContextFrameKind> {
+    match kind {
+        "constraint_set" => Some(ContextFrameKind::SystemGuidelines),
+        "workflow_context" => Some(ContextFrameKind::AssignmentContext),
+        _ => None,
+    }
+}
+
+fn frame_title(kind: ContextFrameKind) -> &'static str {
+    match kind {
+        ContextFrameKind::Identity => "Agent Identity",
+        ContextFrameKind::UserContext => "User Context",
+        ContextFrameKind::Environment => "Runtime Environment",
+        ContextFrameKind::SystemGuidelines => "System Guidelines",
+        ContextFrameKind::AssignmentContext => "Assignment Context",
+        ContextFrameKind::MemoryContext => "Memory Context",
+        _ => "Context",
+    }
 }
 
 fn materialize_capability_state_frame(
@@ -148,27 +359,13 @@ fn materialize_capability_state_frame(
     }
 
     let kind = ContextFrameKind::CapabilityStateDelta;
-    let role = ContextMessageRole::Context;
-    let mut metadata = dash_delivery_metadata(kind, role, "accepted_capability_state_append");
-    metadata.agent_consumption.mode = ContextAgentConsumptionMode::SystemAppend;
-    metadata.connector_profile.declared_consumption_modes =
-        vec![ContextAgentConsumptionMode::SystemAppend];
-    metadata.cache_key = Some(surface.digest.clone());
-    metadata.cache_revision = Some(surface.revision.to_string());
-    metadata.frontend_label = "Capability State Delta".to_owned();
     Ok(Some(ContextFrame {
         id: format!(
             "surface:{}:{}:capability-state-delta",
             surface.revision, surface.digest
         ),
         kind,
-        source: ContextFrameSource::RuntimeContextUpdate,
-        phase_node: None,
-        apply_mode: Some("accepted_surface_append".to_owned()),
         delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
-        delivery_channel: ContextDeliveryChannel::ConnectorContext,
-        message_role: role,
-        delivery_metadata: metadata,
         rendered_text: render_capability_state_delta(&sections),
         sections,
         created_at_ms: 0,
@@ -228,116 +425,31 @@ fn tool_identity(tool: &DashToolDefinition) -> (String, String, String, String) 
     )
 }
 
-fn materialize_initial_context_frame(
-    installation: &InitialContextInstallation,
-    contribution: &InitialContextContribution,
-    index: usize,
-) -> ContextFrame {
-    let (kind, title, role) = match contribution.kind.as_str() {
-        "compact_summary" => (
-            ContextFrameKind::CompactionSummary,
-            "Compaction Summary",
-            ContextMessageRole::Context,
-        ),
-        "constraint_set" => (
-            ContextFrameKind::SystemGuidelines,
-            "System Guidelines",
-            ContextMessageRole::System,
-        ),
-        _ => (
-            ContextFrameKind::AssignmentContext,
-            "Workflow Context",
-            ContextMessageRole::Context,
-        ),
-    };
-    let mut metadata = dash_delivery_metadata(kind, role, "accepted_initial_context");
-    metadata.cache_key = Some(installation.package_digest.clone());
-    metadata.cache_revision = Some(contribution.source_revision.clone());
-    metadata.delivery_order = metadata
-        .delivery_order
-        .saturating_add(u32::try_from(index).unwrap_or(u32::MAX));
-    let rendered_text = format!(
-        "## AgentDash Initial Context: {title}\n{}",
-        contribution.payload
-    );
-    ContextFrame {
-        id: format!("initial-context:{}:{index}", installation.package_id),
-        kind,
-        source: ContextFrameSource::RuntimeContextUpdate,
-        phase_node: None,
-        apply_mode: Some("initial_context_install".to_owned()),
-        delivery_status: ContextDeliveryStatus::AppliedBeforePrompt,
-        delivery_channel: ContextDeliveryChannel::ConnectorContext,
-        message_role: role,
-        delivery_metadata: metadata,
-        rendered_text: rendered_text.clone(),
-        sections: vec![ContextFrameSection::SystemNotice {
-            title: title.to_owned(),
-            summary: contribution.kind.clone(),
-            body: Some(rendered_text),
-        }],
-        created_at_ms: 0,
-    }
-}
-
-fn dash_delivery_metadata(
-    kind: ContextFrameKind,
-    role: ContextMessageRole,
-    reason: &str,
-) -> ContextDeliveryMetadata {
-    let mut metadata =
-        ContextDeliveryMetadata::for_frame(kind, ContextDeliveryChannel::ConnectorContext, role);
-    metadata.agent_consumption = ContextAgentConsumption {
-        target: "dash-agent".to_owned(),
-        mode: ContextAgentConsumptionMode::Consume,
-        reason: reason.to_owned(),
-    };
-    metadata.connector_profile = ContextConnectorProfile {
-        profile_id: "dash-agent".to_owned(),
-        declared_consumption_modes: vec![ContextAgentConsumptionMode::Consume],
-    };
-    metadata
-}
-
 fn instruction_presentation(
     instruction: &DashSurfaceInstruction,
-) -> (ContextFrameKind, ContextMessageRole, &'static str) {
+) -> (ContextFrameKind, &'static str) {
     match &instruction.presentation {
-        AgentSurfaceInstructionPresentation::SystemGuidelines => (
-            ContextFrameKind::SystemGuidelines,
-            ContextMessageRole::System,
-            "System Guidelines",
-        ),
-        AgentSurfaceInstructionPresentation::Identity => (
-            ContextFrameKind::Identity,
-            ContextMessageRole::System,
-            "Agent Identity",
-        ),
-        AgentSurfaceInstructionPresentation::Environment => (
-            ContextFrameKind::Environment,
-            ContextMessageRole::Context,
-            "Runtime Environment",
-        ),
-        AgentSurfaceInstructionPresentation::MemoryContext => (
-            ContextFrameKind::MemoryContext,
-            ContextMessageRole::Context,
-            "Memory Context",
-        ),
-        AgentSurfaceInstructionPresentation::CapabilityManifest { .. } => (
-            ContextFrameKind::CapabilityStateDelta,
-            ContextMessageRole::Context,
-            "Capability Surface",
-        ),
-        AgentSurfaceInstructionPresentation::UserContext => (
-            ContextFrameKind::UserContext,
-            ContextMessageRole::User,
-            "User Context",
-        ),
-        AgentSurfaceInstructionPresentation::AssignmentContext => (
-            ContextFrameKind::AssignmentContext,
-            ContextMessageRole::Context,
-            "Assignment Context",
-        ),
+        AgentSurfaceInstructionPresentation::SystemGuidelines => {
+            (ContextFrameKind::SystemGuidelines, "System Guidelines")
+        }
+        AgentSurfaceInstructionPresentation::Identity => {
+            (ContextFrameKind::Identity, "Agent Identity")
+        }
+        AgentSurfaceInstructionPresentation::Environment => {
+            (ContextFrameKind::Environment, "Runtime Environment")
+        }
+        AgentSurfaceInstructionPresentation::MemoryContext => {
+            (ContextFrameKind::MemoryContext, "Memory Context")
+        }
+        AgentSurfaceInstructionPresentation::CapabilityManifest { .. } => {
+            (ContextFrameKind::CapabilityStateDelta, "Capability Surface")
+        }
+        AgentSurfaceInstructionPresentation::UserContext => {
+            (ContextFrameKind::UserContext, "User Context")
+        }
+        AgentSurfaceInstructionPresentation::AssignmentContext => {
+            (ContextFrameKind::AssignmentContext, "Assignment Context")
+        }
     }
 }
 
@@ -1249,18 +1361,23 @@ fn compact_json(value: &Value) -> String {
 }
 
 fn frame_order(left: &ContextFrame, right: &ContextFrame) -> std::cmp::Ordering {
-    (
-        left.delivery_metadata.delivery_phase,
-        left.delivery_metadata.delivery_order,
-        left.created_at_ms,
-        left.id.as_str(),
-    )
-        .cmp(&(
-            right.delivery_metadata.delivery_phase,
-            right.delivery_metadata.delivery_order,
-            right.created_at_ms,
-            right.id.as_str(),
-        ))
+    fn rank(kind: ContextFrameKind) -> u8 {
+        match kind {
+            ContextFrameKind::Identity => 10,
+            ContextFrameKind::UserContext => 20,
+            ContextFrameKind::Environment => 30,
+            ContextFrameKind::SystemGuidelines => 40,
+            ContextFrameKind::AssignmentContext => 50,
+            ContextFrameKind::MemoryContext => 60,
+            ContextFrameKind::CapabilityStateDelta => 70,
+            ContextFrameKind::CompactionSummary => 80,
+        }
+    }
+    (rank(left.kind), left.created_at_ms, left.id.as_str()).cmp(&(
+        rank(right.kind),
+        right.created_at_ms,
+        right.id.as_str(),
+    ))
 }
 
 #[cfg(test)]
@@ -1301,7 +1418,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_and_tool_schema_are_one_platform_owned_system_append_frame() {
+    fn capability_and_tool_schema_are_one_platform_owned_transition_frame() {
         let surface = DashSurface {
             revision: 1,
             digest: "surface-1".to_owned(),
@@ -1310,10 +1427,9 @@ mod tests {
                 ..AgentCapabilityManifest::default()
             })],
             tools: vec![test_tool("workspace_write", "Write a workspace document.")],
-            context_frames: Vec::new(),
         };
 
-        let frames = materialize_surface_frames(&surface, None).expect("frames");
+        let frames = compile_surface_update(None, &surface, None).expect("frames");
         let capability_frames = frames
             .iter()
             .filter(|frame| frame.kind == ContextFrameKind::CapabilityStateDelta)
@@ -1326,15 +1442,8 @@ mod tests {
         );
         let frame = capability_frames[0];
         assert_eq!(
-            frame.delivery_metadata.agent_consumption.mode,
-            ContextAgentConsumptionMode::SystemAppend
-        );
-        assert_eq!(
-            frame
-                .delivery_metadata
-                .connector_profile
-                .declared_consumption_modes,
-            [ContextAgentConsumptionMode::SystemAppend]
+            frame.delivery_status,
+            ContextDeliveryStatus::AppliedBeforePrompt
         );
         assert!(
             frame
@@ -1369,7 +1478,6 @@ mod tests {
             digest: "surface-1".to_owned(),
             instructions: vec![capability_instruction(manifest.clone())],
             tools: vec![test_tool("existing_tool", "Existing tool description.")],
-            context_frames: Vec::new(),
         };
         let current = DashSurface {
             revision: 2,
@@ -1379,10 +1487,9 @@ mod tests {
                 test_tool("existing_tool", "Existing tool description."),
                 test_tool("new_tool", "New tool description."),
             ],
-            context_frames: Vec::new(),
         };
 
-        let frames = materialize_surface_frames(&current, Some(&previous)).expect("frames");
+        let frames = compile_surface_update(None, &current, Some(&previous)).expect("frames");
         let frame = frames
             .iter()
             .find(|frame| frame.kind == ContextFrameKind::CapabilityStateDelta)
@@ -1416,17 +1523,15 @@ mod tests {
             digest: "surface-1".to_owned(),
             instructions: vec![capability_instruction(manifest.clone())],
             tools: vec![test_tool("workspace_write", "Write a workspace document.")],
-            context_frames: Vec::new(),
         };
         let current = DashSurface {
             revision: 2,
             digest: "surface-2".to_owned(),
             instructions: vec![capability_instruction(manifest)],
             tools: previous.tools.clone(),
-            context_frames: Vec::new(),
         };
 
-        let frames = materialize_surface_frames(&current, Some(&previous)).expect("frames");
+        let frames = compile_surface_update(None, &current, Some(&previous)).expect("frames");
 
         assert!(
             frames
@@ -1438,7 +1543,7 @@ mod tests {
 
     #[test]
     fn tool_schema_frame_renders_complete_readable_summary_and_retains_structured_schema() {
-        let mut surface = DashSurface {
+        let surface = DashSurface {
             revision: 7,
             digest: "surface-7".to_owned(),
             instructions: Vec::new(),
@@ -1477,11 +1582,10 @@ mod tests {
                 context_usage_kind: "system_tools".to_owned(),
                 protocol_projector: ToolProtocolProjector::Dynamic,
             }],
-            context_frames: Vec::new(),
         };
-        surface.context_frames = materialize_surface_frames(&surface, None).expect("frames");
+        let frames = compile_surface_update(None, &surface, None).expect("frames");
 
-        let frame = surface.context_frames.last().expect("tool frame");
+        let frame = frames.last().expect("tool frame");
         assert!(
             frame
                 .rendered_text
@@ -1504,5 +1608,67 @@ mod tests {
         assert!(complete.contains("Complete JSON Schema"));
         assert!(complete.contains("\"properties\""));
         assert!(complete.contains("\"minLength\": 1"));
+    }
+
+    #[test]
+    fn compaction_rebuild_validation_rejects_noncanonical_occurrence_frames() {
+        let compaction_id = CompactionId::new("compact-validation");
+        let revision = ContextRevision::new("sha256:validation");
+        let summary = super::super::accepted_compaction_summary_frame(
+            &compaction_id,
+            &revision,
+            "accepted summary",
+            super::super::CompactionMode::Manual,
+            3,
+            2,
+            None,
+            None,
+            None,
+            42,
+        );
+        let surface = DashSurface {
+            revision: 1,
+            digest: "surface-validation".to_owned(),
+            instructions: vec![DashSurfaceInstruction {
+                key: "identity:validation".to_owned(),
+                channel: "identity".to_owned(),
+                text: "Validation identity".to_owned(),
+                presentation: AgentSurfaceInstructionPresentation::Identity,
+            }],
+            tools: vec![test_tool("validation_tool", "Validate a rebuild.")],
+        };
+        let frames =
+            compile_compaction_rebuild(None, Some(&surface), &compaction_id, &revision, summary)
+                .expect("compile rebuild");
+        assert!(validate_compaction_rebuild(
+            &frames,
+            &compaction_id,
+            &revision
+        ));
+
+        let mut wrong_occurrence = frames.clone();
+        wrong_occurrence[0].id = "compaction:other:revision:0:identity".to_owned();
+        assert!(!validate_compaction_rebuild(
+            &wrong_occurrence,
+            &compaction_id,
+            &revision
+        ));
+
+        let mut duplicate_id = frames.clone();
+        let first_id = duplicate_id[0].id.clone();
+        duplicate_id[1].id = first_id;
+        assert!(!validate_compaction_rebuild(
+            &duplicate_id,
+            &compaction_id,
+            &revision
+        ));
+
+        let mut wrong_order = frames.clone();
+        wrong_order.swap(0, 1);
+        assert!(!validate_compaction_rebuild(
+            &wrong_order,
+            &compaction_id,
+            &revision
+        ));
     }
 }

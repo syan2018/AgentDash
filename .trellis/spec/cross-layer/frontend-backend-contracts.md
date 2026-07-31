@@ -23,6 +23,11 @@ agentdash-agent-runtime-wire
 - Rust 类型与生成器是 wire shape 的事实源；TypeScript 不复制手写同名 DTO。
 - Runtime Contract、RuntimeWire 与 Backbone/product contracts 是三套独立合同，不能因字段相似而互相反序列化中转。
 - JSON 使用 `snake_case`；可选字段由 Rust serde/TS 导出共同定义。
+- Backbone ContextFrame前端类型直接派生自generated protocol。runtime parser只做
+  `unknown → generated/view`严格校验：required数组或字段缺失、成员无效、未知variant时拒绝整帧，
+  不补空数组、默认标题/模式或丢弃坏成员。原因是容错重建会掩盖accepted Agent context协议漂移。
+- JSON整数在TypeScript生成结果中使用`number`；ContextFrame时间、token与event sequence字段不得
+  输出`bigint`，原因是网络JSON没有bigint表示。
 
 ## 3. AgentRun Runtime Contract
 
@@ -697,6 +702,9 @@ GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
   coordinate推进或重试耗尽后明确结束loading。
 - Inspector先展示recipe派生的主要段落、消息与Top Tools用量，再以折叠区展示完整模型输入。
   `ContextFrame`同时展示`rendered_text`与完整typed结构，CompactionSummary正文直接可读。
+- Session feed严格保持canonical `ContextFrameChanged`事件顺序；批次包含
+  `AppliedToCompactedContext`时展示“上下文已重建”，普通accepted批次展示“上下文已更新”，不按
+  kind、revision或文本隐藏后端Frames。
 - provider token usage继续来自provider usage事实，不由recipe字符估算覆盖；压缩生效会使旧
   provider pressure失效，UI等待下一次provider确认时展示更新状态。
 

@@ -35,13 +35,18 @@ Agent，因此 Host 不形成 durable owner graph。
 **Canonical Conversation**:
 Complete Agent native history 经唯一 projector 得到的 `CanonicalConversationRecord` 序列。
 snapshot 与已提交 live record 共用同一 projector、presentation identity 和顺序；provider/Core
-只补充当前进程内的 ephemeral delta。断连后丢弃 ephemeral lane并重新读取 Agent authority。
+只补充当前进程内的 ephemeral delta。用户消息、助手消息、ToolCall 与 ToolResult 始终属于该
+record lane；压缩只改变 active history boundary，不把它们转换为 ContextFrame。
 
-**Agent Surface 与 ContextFrame**:
+**Agent Surface**:
 Product 只提交期望的 prompt、tool 与 initial context；concrete Agent 将实际接纳的 surface/context
-写入自己的 history。adapter 从这些 Agent-native facts 投影 `Platform(ContextFrameChanged)`，使前端
-展示的是本次执行真正使用的 identity、capability、tool schema 与 context，而不是 Product 侧输入
-或仓储镜像。
+写入自己的 history。Surface 表达当前系统指令与工具状态，不拥有 conversation。
+
+**ContextFrame**:
+concrete Agent 已接纳并实际进入Agent system context的语义单元，也是该事实的canonical
+presentation。相同语义的多个上游来源聚合为一个Frame，并在内部保留有序fragments/sections；
+Frame粒度不跟随contribution粒度。正常Surface变更产生聚合后的stable Frame与真实transition
+Frame；成功压缩从当前accepted state生成新的完整Frame基线，替换旧active Frame链。
 
 **AgentFrame**:
 Product owner-local 的平台业务 frame，用于描述选择、关联和 materialization intent。AgentFrame

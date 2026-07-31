@@ -27,7 +27,6 @@ fn initial_package() -> InitialContextInstallation {
             source_revision: "source-r1".into(),
             digest: "contribution-digest".into(),
         }],
-        context_frames: Vec::new(),
     }
 }
 
@@ -42,6 +41,7 @@ fn history_with_turn() -> AgentHistory {
                 "entry-context",
                 HistoryPayload::InitialContextInstalled {
                     installation: initial_package(),
+                    context_frames: Vec::new(),
                 },
             ),
             contribution(
@@ -156,7 +156,7 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
         "compacted",
         Some(&HistoryEntryId::new("entry-input")),
     );
-    let summary_frame = accepted_compaction_summary_frame(
+    let mut summary_frame = accepted_compaction_summary_frame(
         &CompactionId::new("compact-b"),
         &revision,
         "compacted",
@@ -167,6 +167,10 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
         None,
         Some(2),
         2_000,
+    );
+    summary_frame.id = format!(
+        "compaction:compact-b:{}:0:compaction_summary",
+        revision.0
     );
     history
         .append_batch(vec![
@@ -192,7 +196,7 @@ fn compaction_is_a_provenance_preserving_history_transformation() {
                 HistoryPayload::CompactionApplied {
                     compaction_id: CompactionId::new("compact-b"),
                     context_revision: revision.clone(),
-                    summary_frame: Box::new(summary_frame),
+                    context_frames: vec![summary_frame],
                     retained_from: Some(HistoryEntryId::new("entry-input")),
                 },
             ),
@@ -384,6 +388,7 @@ fn replay_property_holds_across_many_history_shapes_and_serialization() {
                     &format!("{seed}-context"),
                     HistoryPayload::InitialContextInstalled {
                         installation: initial_package(),
+                        context_frames: Vec::new(),
                     },
                 ))
                 .unwrap();

@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -733,6 +733,7 @@ impl DashAgentService {
     ) -> Result<DashAgentRepositoryState, DashServiceError> {
         let mut store = DashAgentStore::new(history)?;
         if let Some(installation) = initial_context {
+            let context_frames = super::compile_initial_context(&installation);
             store.commit(DashAgentCommit {
                 expected_head: None,
                 command_settlement: None,
@@ -741,7 +742,10 @@ impl DashAgentService {
                         "initial-context:{}",
                         installation.package_id
                     )),
-                    payload: HistoryPayload::InitialContextInstalled { installation },
+                    payload: HistoryPayload::InitialContextInstalled {
+                        installation,
+                        context_frames,
+                    },
                 }],
                 enqueue_commands: vec![],
             })?;
@@ -1030,7 +1034,9 @@ impl DashAgentService {
     ) -> Result<(DashAgentRepositoryState, DashAgentRepositoryState), DashServiceError> {
         let expected = self.repository.load().await?;
         let mut replacement = expected.clone();
-        let current_surface = replacement.store.history().state()?.surface;
+        let state = replacement.store.history().state()?;
+        let current_surface = state.surface;
+        let initial_context = state.initial_context;
         if current_surface
             .as_ref()
             .is_some_and(|existing| surface.revision < existing.revision)
@@ -1040,6 +1046,14 @@ impl DashAgentService {
             });
         }
         if current_surface.as_ref() != Some(&surface) {
+            let context_frames = super::compile_surface_update(
+                initial_context.as_ref(),
+                &surface,
+                current_surface.as_ref(),
+            )
+            .map_err(|error| DashServiceError::Internal {
+                message: format!("compile accepted surface context: {error}"),
+            })?;
             let next_sequence = replacement.store.history().entries().len() as u64 + 1;
             replacement.store.commit(DashAgentCommit {
                 expected_head: replacement.store.history().head().cloned(),
@@ -1051,6 +1065,7 @@ impl DashAgentService {
                     )),
                     payload: HistoryPayload::SurfaceApplied {
                         surface: surface.clone(),
+                        context_frames,
                     },
                 }],
                 enqueue_commands: vec![],
@@ -1073,7 +1088,9 @@ impl DashAgentService {
     ) -> Result<(DashAgentRepositoryState, DashAgentRepositoryState), DashServiceError> {
         let expected = self.repository.load().await?;
         let mut replacement = expected.clone();
-        let current_surface = replacement.store.history().state()?.surface;
+        let state = replacement.store.history().state()?;
+        let current_surface = state.surface;
+        let initial_context = state.initial_context;
         if current_surface
             .as_ref()
             .is_some_and(|surface| surface.revision != expected_revision)
@@ -1083,6 +1100,10 @@ impl DashAgentService {
             });
         }
         if let Some(surface) = current_surface {
+            let context_frames = super::compile_surface_revoke(initial_context.as_ref(), &surface)
+                .map_err(|error| DashServiceError::Internal {
+                    message: format!("compile surface revoke context: {error}"),
+                })?;
             let next_sequence = replacement.store.history().entries().len() as u64 + 1;
             replacement.store.commit(DashAgentCommit {
                 expected_head: replacement.store.history().head().cloned(),
@@ -1091,7 +1112,10 @@ impl DashAgentService {
                     entry_id: HistoryEntryId::new(format!(
                         "surface-revoked:{next_sequence}:{expected_revision}"
                     )),
-                    payload: HistoryPayload::SurfaceRevoked { surface },
+                    payload: HistoryPayload::SurfaceRevoked {
+                        surface,
+                        context_frames,
+                    },
                 }],
                 enqueue_commands: vec![],
             })?;
@@ -3188,93 +3212,108 @@ impl DashProviderRoundMaterializer for DashAgentService {
     }
 }
 
-fn materialize_accepted_context_frames(
-    surface: Option<&DashSurface>,
-    initial_context: Option<&InitialContextInstallation>,
-    compaction_frame: Option<&agentdash_agent_protocol::ContextFrame>,
-    surface_append_frames: &[agentdash_agent_protocol::ContextFrame],
-) -> Vec<agentdash_agent_protocol::ContextFrame> {
-    let mut frames = Vec::new();
-    if let Some(surface) = surface {
-        frames.extend(
-            surface
-                .context_frames
-                .iter()
-                .filter(|frame| {
-                    frame.delivery_metadata.agent_consumption.mode
-                        != agentdash_agent_protocol::ContextAgentConsumptionMode::SystemAppend
-                })
-                .cloned()
-                .map(|frame| (frame, None)),
-        );
-    }
-    if let Some(initial_context) = initial_context {
-        frames.extend(
-            initial_context
-                .context_frames
-                .iter()
-                .cloned()
-                .map(|frame| (frame, None)),
-        );
-    }
-    frames.extend(
-        surface_append_frames
-            .iter()
-            .cloned()
-            .enumerate()
-            .map(|(index, frame)| (frame, Some(index))),
-    );
-    frames.sort_by(|left, right| {
-        (
-            left.0.delivery_metadata.delivery_phase,
-            left.0.delivery_metadata.delivery_order,
-            left.1.unwrap_or_default(),
-            left.0.created_at_ms,
-            left.0.id.as_str(),
-        )
-            .cmp(&(
-                right.0.delivery_metadata.delivery_phase,
-                right.0.delivery_metadata.delivery_order,
-                right.1.unwrap_or_default(),
-                right.0.created_at_ms,
-                right.0.id.as_str(),
-            ))
-    });
-    let mut frames = frames
-        .into_iter()
-        .map(|(frame, _)| frame)
-        .collect::<Vec<_>>();
-    if let Some(compaction_frame) = compaction_frame {
-        frames.push(compaction_frame.clone());
-    }
-    frames
+fn is_stable_context_kind(kind: agentdash_agent_protocol::ContextFrameKind) -> bool {
+    matches!(
+        kind,
+        agentdash_agent_protocol::ContextFrameKind::Identity
+            | agentdash_agent_protocol::ContextFrameKind::UserContext
+            | agentdash_agent_protocol::ContextFrameKind::Environment
+            | agentdash_agent_protocol::ContextFrameKind::SystemGuidelines
+            | agentdash_agent_protocol::ContextFrameKind::AssignmentContext
+            | agentdash_agent_protocol::ContextFrameKind::MemoryContext
+    )
 }
 
-fn accepted_surface_append_frames(
+fn apply_context_occurrence(
+    active: &mut Vec<agentdash_agent_protocol::ContextFrame>,
+    accepted: &[agentdash_agent_protocol::ContextFrame],
+) {
+    let mut stable = accepted
+        .iter()
+        .filter(|frame| is_stable_context_kind(frame.kind))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut capability = active
+        .iter()
+        .filter(|frame| {
+            frame.kind == agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    capability.extend(
+        accepted
+            .iter()
+            .filter(|frame| {
+                frame.kind == agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta
+            })
+            .cloned(),
+    );
+    let mut occurrence = active
+        .iter()
+        .filter(|frame| {
+            !is_stable_context_kind(frame.kind)
+                && frame.kind != agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    occurrence.extend(
+        accepted
+            .iter()
+            .filter(|frame| {
+                !is_stable_context_kind(frame.kind)
+                    && frame.kind
+                        != agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta
+            })
+            .cloned(),
+    );
+    stable.extend(capability);
+    stable.extend(occurrence);
+    *active = stable;
+}
+
+fn active_context_frames(
     entries: &[AgentHistoryEntry],
-) -> Vec<agentdash_agent_protocol::ContextFrame> {
-    let mut frames = Vec::new();
-    let mut frame_ids = BTreeSet::new();
-    for entry in entries {
+) -> (
+    Vec<agentdash_agent_protocol::ContextFrame>,
+    Option<ContextRevision>,
+) {
+    let mut applied = BTreeMap::new();
+    let mut latest_reset = None;
+    for (index, entry) in entries.iter().enumerate() {
         match &entry.payload {
-            HistoryPayload::SurfaceApplied { surface } => {
-                for frame in &surface.context_frames {
-                    if frame.delivery_metadata.agent_consumption.mode
-                        == agentdash_agent_protocol::ContextAgentConsumptionMode::SystemAppend
-                        && frame_ids.insert(frame.id.clone())
-                    {
-                        frames.push(frame.clone());
-                    }
-                }
+            HistoryPayload::CompactionApplied {
+                compaction_id,
+                context_revision,
+                context_frames,
+                ..
+            } => {
+                applied.insert(
+                    compaction_id.clone(),
+                    (context_revision.clone(), context_frames.clone()),
+                );
             }
-            HistoryPayload::SurfaceRevoked { .. } => {
-                frames.clear();
-                frame_ids.clear();
+            HistoryPayload::CompactionCompleted { compaction_id, .. } => {
+                if let Some((revision, context_frames)) = applied.get(compaction_id) {
+                    latest_reset = Some((index, revision.clone(), context_frames.clone()));
+                }
             }
             _ => {}
         }
     }
-    frames
+    let (mut active, context_revision, start) = latest_reset
+        .map(|(index, revision, frames)| (frames, Some(revision), index.saturating_add(1)))
+        .unwrap_or_else(|| (Vec::new(), None, 0));
+    for entry in &entries[start..] {
+        match &entry.payload {
+            HistoryPayload::InitialContextInstalled { context_frames, .. }
+            | HistoryPayload::SurfaceApplied { context_frames, .. }
+            | HistoryPayload::SurfaceRevoked { context_frames, .. } => {
+                apply_context_occurrence(&mut active, context_frames);
+            }
+            _ => {}
+        }
+    }
+    (active, context_revision)
 }
 
 struct MaterializedSessionContext {
@@ -3344,20 +3383,6 @@ pub fn context_recipe_from_history_state(
     })
 }
 
-pub fn compaction_context_frames_from_history_state(
-    history: &AgentHistory,
-    history_state: &AgentHistoryState,
-    summary_frame: &agentdash_agent_protocol::ContextFrame,
-) -> Vec<agentdash_agent_protocol::ContextFrame> {
-    let entries = history_entries_at_state(history, history_state);
-    materialize_accepted_context_frames(
-        history_state.surface.as_ref(),
-        history_state.initial_context.as_ref(),
-        Some(summary_frame),
-        &accepted_surface_append_frames(entries),
-    )
-}
-
 fn analyze_context_usage(
     frames: &[agentdash_agent_protocol::ContextFrame],
     tools: &[DashToolDefinition],
@@ -3374,7 +3399,7 @@ fn analyze_context_usage(
         add_usage_category(
             &mut categories,
             kind.clone(),
-            frame.delivery_metadata.frontend_label.clone(),
+            frame.kind.frontend_label().to_owned(),
             if kind == "compaction_summary" {
                 "compaction"
             } else {
@@ -3586,7 +3611,6 @@ fn materialize_session_context_from_state(
     drop_latest_input: bool,
 ) -> Result<MaterializedSessionContext, DashServiceError> {
     let surface = history_state.surface.clone();
-    let initial_context = history_state.initial_context.clone();
     let entries = history_entries_at_state(history_source, history_state);
     let mut applied_compactions = BTreeMap::new();
     let mut latest_compaction = None;
@@ -3595,39 +3619,35 @@ fn materialize_session_context_from_state(
             HistoryPayload::CompactionApplied {
                 compaction_id,
                 context_revision,
-                summary_frame,
+                context_frames: _,
                 retained_from,
             } => {
                 applied_compactions.insert(
                     compaction_id.clone(),
-                    (
-                        context_revision.clone(),
-                        summary_frame.as_ref().clone(),
-                        retained_from.clone(),
-                    ),
+                    (context_revision.clone(), retained_from.clone()),
                 );
             }
             HistoryPayload::CompactionCompleted { compaction_id, .. } => {
-                if let Some((revision, context_frame, retained_from)) =
+                if let Some((revision, retained_from)) =
                     applied_compactions.get(compaction_id).cloned()
                 {
-                    latest_compaction = Some((index, revision, context_frame, retained_from));
+                    latest_compaction = Some((index, revision, retained_from));
                 }
             }
             _ => {}
         }
     }
-    let (context_revision, compaction_frame, history_start) = latest_compaction
-        .map(
-            |(completed_index, revision, context_frame, retained_from)| {
-                let start = retained_from
-                    .as_ref()
-                    .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
-                    .unwrap_or(completed_index.saturating_add(1));
-                (Some(revision), Some(context_frame), start)
-            },
-        )
-        .unwrap_or((None, None, 0));
+    let (_, folded_context_revision) = active_context_frames(entries);
+    let (context_revision, history_start) = latest_compaction
+        .map(|(completed_index, revision, retained_from)| {
+            let start = retained_from
+                .as_ref()
+                .and_then(|id| entries.iter().position(|entry| &entry.entry_id == id))
+                .unwrap_or(completed_index.saturating_add(1));
+            (Some(revision), start)
+        })
+        .unwrap_or((None, 0));
+    debug_assert_eq!(context_revision, folded_context_revision);
     let mut history = Vec::new();
     let mut message_entry_ids = Vec::new();
     let mut pending_tool_calls = Vec::new();
@@ -3722,12 +3742,7 @@ fn materialize_session_context_from_state(
         history.pop();
         message_entry_ids.pop();
     }
-    let frames = materialize_accepted_context_frames(
-        surface.as_ref(),
-        initial_context.as_ref(),
-        compaction_frame.as_ref(),
-        &accepted_surface_append_frames(entries),
-    );
+    let (frames, _) = active_context_frames(entries);
     let system_prompt = frames
         .iter()
         .map(|frame| frame.rendered_text.as_str())

@@ -22,7 +22,7 @@ describe("SessionEntry ContextFrame 聚合", () => {
     expect(html).toContain("CAPABILITY");
     expect(html).toContain("ASSIGNMENT");
     expect(html).toContain("2x");
-    expect(html).toContain("apply");
+    expect(html).toContain("assignment_context");
     expect(html).not.toContain("已注入动态上下文");
   });
 });
@@ -160,32 +160,9 @@ function contextFrameEntry(
           frame: {
             id,
             kind,
-            source: "runtime_context_update",
-            phase_node: "apply",
-            apply_mode: "live",
-            delivery_status: "queued_for_transform_context",
-            delivery_channel: "turn_start",
-            message_role: "user",
-            delivery_metadata: {
-              delivery_phase: "discovered_inventory",
-              delivery_order: 50,
-              cache_policy: "discovery_digest",
-              cache_key: null,
-              cache_revision: "surface-1",
-              model_channel: "context",
-              agent_consumption: {
-                target: "dash-agent",
-                mode: "system_append",
-                reason: "accepted_capability_state_append",
-              },
-              frontend_label: "Capability State Delta",
-              connector_profile: {
-                profile_id: "dash-agent",
-                declared_consumption_modes: ["system_append"],
-              },
-            },
+            delivery_status: "applied_before_prompt",
             rendered_text: "## Capability Update",
-            created_at_ms: 1n,
+            created_at_ms: 1,
             sections: [
               {
                 kind: "capability_key_delta",
@@ -202,32 +179,11 @@ function contextFrameEntry(
   };
 }
 
-function contextFrame(id: string, kind: string): ContextFrame {
+function contextFrame(id: string, kind: ContextFrame["kind"]): ContextFrame {
   return {
     id,
     kind,
-    source: "runtime_context_update",
-    phase_node: "apply",
-    apply_mode: "live",
-    delivery_status: "queued_for_transform_context",
-    delivery_channel: "turn_start",
-    message_role: "user",
-    delivery_metadata: {
-      delivery_phase: "discovered_inventory",
-      delivery_order: 50,
-      cache_policy: "discovery_digest",
-      model_channel: "context",
-      agent_consumption: {
-        target: "",
-        mode: "consume",
-        reason: "test",
-      },
-      frontend_label: "Capability State Delta",
-      connector_profile: {
-        profile_id: "",
-        declared_consumption_modes: [],
-      },
-    },
+    delivery_status: "applied_before_prompt",
     rendered_text: "## Capability Update",
     created_at_ms: 1,
     sections: [

@@ -68,7 +68,6 @@ pub struct InitialContextInstallation {
     pub mode: InitialContextMode,
     pub fidelity: ContextDeliveryFidelity,
     pub contributions: Vec<InitialContextContribution>,
-    pub context_frames: Vec<ContextFrame>,
 }
 
 /// The exact prompt/tool surface materialized by the Dash agent.
@@ -89,7 +88,6 @@ pub struct DashSurface {
     pub digest: String,
     pub instructions: Vec<DashSurfaceInstruction>,
     pub tools: Vec<DashToolDefinition>,
-    pub context_frames: Vec<ContextFrame>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,12 +112,15 @@ pub enum CompactionMode {
 pub enum HistoryPayload {
     InitialContextInstalled {
         installation: InitialContextInstallation,
+        context_frames: Vec<ContextFrame>,
     },
     SurfaceApplied {
         surface: DashSurface,
+        context_frames: Vec<ContextFrame>,
     },
     SurfaceRevoked {
         surface: DashSurface,
+        context_frames: Vec<ContextFrame>,
     },
     ThreadNameChanged {
         thread_name: String,
@@ -201,7 +202,7 @@ pub enum HistoryPayload {
     CompactionApplied {
         compaction_id: CompactionId,
         context_revision: ContextRevision,
-        summary_frame: Box<ContextFrame>,
+        context_frames: Vec<ContextFrame>,
         retained_from: Option<HistoryEntryId>,
     },
     CompactionCompleted {
@@ -248,38 +249,14 @@ pub fn accepted_compaction_summary_frame(
     first_kept_event_seq: Option<u64>,
     created_at_ms: u64,
 ) -> ContextFrame {
-    use agentdash_agent_protocol::{
-        ContextAgentConsumption, ContextAgentConsumptionMode, ContextConnectorProfile,
-        ContextDeliveryChannel, ContextDeliveryMetadata, ContextDeliveryStatus, ContextFrameKind,
-        ContextFrameSection, ContextFrameSource, ContextMessageRole,
-    };
+    use agentdash_agent_protocol::{ContextDeliveryStatus, ContextFrameKind, ContextFrameSection};
 
     let kind = ContextFrameKind::CompactionSummary;
-    let role = ContextMessageRole::Context;
-    let mut metadata =
-        ContextDeliveryMetadata::for_frame(kind, ContextDeliveryChannel::Continuation, role);
-    metadata.cache_key = Some(compaction_id.0.clone());
-    metadata.cache_revision = Some(revision.0.clone());
-    metadata.agent_consumption = ContextAgentConsumption {
-        target: "dash-agent".to_owned(),
-        mode: ContextAgentConsumptionMode::Consume,
-        reason: "accepted_compaction_summary".to_owned(),
-    };
-    metadata.connector_profile = ContextConnectorProfile {
-        profile_id: "dash-agent".to_owned(),
-        declared_consumption_modes: vec![ContextAgentConsumptionMode::Consume],
-    };
     let rendered_text = format!("<compacted_context>\n{summary}\n</compacted_context>");
     ContextFrame {
         id: format!("compaction-summary:{}:{}", compaction_id.0, revision.0),
         kind,
-        source: ContextFrameSource::RuntimeContextUpdate,
-        phase_node: None,
-        apply_mode: Some("compaction_restore".to_owned()),
         delivery_status: ContextDeliveryStatus::AppliedToCompactedContext,
-        delivery_channel: ContextDeliveryChannel::Continuation,
-        message_role: role,
-        delivery_metadata: metadata,
         rendered_text: rendered_text.clone(),
         sections: vec![ContextFrameSection::CompactionSummary {
             title: "Compaction Summary".to_owned(),
@@ -595,7 +572,7 @@ pub struct CompactionState {
     pub mode: CompactionMode,
     pub status: ActivityStatus,
     pub context_revision: Option<ContextRevision>,
-    pub summary_frame: Option<ContextFrame>,
+    pub context_frames: Vec<ContextFrame>,
     pub retained_from: Option<HistoryEntryId>,
     pub source_digest: String,
     pub started_at_ms: u64,
@@ -737,13 +714,19 @@ fn apply_payload(
     payload: &HistoryPayload,
 ) -> Result<(), HistoryError> {
     match payload {
-        HistoryPayload::InitialContextInstalled { installation } => {
+        HistoryPayload::InitialContextInstalled {
+            installation,
+            context_frames: _,
+        } => {
             if state.initial_context.is_some() || state.entry_count > 0 {
                 return Err(HistoryError::InitialContextNotFirst);
             }
             state.initial_context = Some(installation.clone());
         }
-        HistoryPayload::SurfaceApplied { surface } => {
+        HistoryPayload::SurfaceApplied {
+            surface,
+            context_frames: _,
+        } => {
             if state
                 .surface
                 .as_ref()
@@ -753,7 +736,10 @@ fn apply_payload(
             }
             state.surface = Some(surface.clone());
         }
-        HistoryPayload::SurfaceRevoked { surface } => {
+        HistoryPayload::SurfaceRevoked {
+            surface,
+            context_frames: _,
+        } => {
             if state.surface.as_ref() != Some(surface) {
                 return Err(HistoryError::SurfaceRevisionMismatch);
             }
@@ -1031,7 +1017,7 @@ fn apply_payload(
                         mode: *mode,
                         status: ActivityStatus::Active,
                         context_revision: None,
-                        summary_frame: None,
+                        context_frames: Vec::new(),
                         retained_from: None,
                         source_digest: source_digest.clone(),
                         started_at_ms: *started_at_ms,
@@ -1101,7 +1087,7 @@ fn apply_payload(
         HistoryPayload::CompactionApplied {
             compaction_id,
             context_revision,
-            summary_frame,
+            context_frames,
             retained_from,
         } => {
             ensure_active_compaction(state, compaction_id)?;
@@ -1109,7 +1095,31 @@ fn apply_payload(
                 .compactions
                 .get_mut(compaction_id)
                 .ok_or_else(|| HistoryError::CompactionNotActive(compaction_id.clone()))?;
-            let summary = summary_frame
+            if !super::validate_compaction_rebuild(context_frames, compaction_id, context_revision)
+            {
+                return Err(HistoryError::InvalidCompactionTransition(
+                    compaction_id.clone(),
+                ));
+            }
+            let summary_frames = context_frames
+                .iter()
+                .filter(|frame| {
+                    frame.kind == agentdash_agent_protocol::ContextFrameKind::CompactionSummary
+                        && frame.delivery_status
+                            == agentdash_agent_protocol::ContextDeliveryStatus::AppliedToCompactedContext
+                })
+                .collect::<Vec<_>>();
+            if summary_frames.len() != 1
+                || context_frames.iter().any(|frame| {
+                    frame.delivery_status
+                    != agentdash_agent_protocol::ContextDeliveryStatus::AppliedToCompactedContext
+                })
+            {
+                return Err(HistoryError::InvalidCompactionTransition(
+                    compaction_id.clone(),
+                ));
+            }
+            let summary = summary_frames[0]
                 .sections
                 .iter()
                 .find_map(|section| match section {
@@ -1135,7 +1145,7 @@ fn apply_payload(
                 ));
             }
             compaction.context_revision = Some(context_revision.clone());
-            compaction.summary_frame = Some(summary_frame.as_ref().clone());
+            compaction.context_frames.clone_from(context_frames);
             compaction.retained_from = retained_from.clone();
         }
         HistoryPayload::CompactionCompleted {

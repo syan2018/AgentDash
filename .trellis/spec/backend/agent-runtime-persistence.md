@@ -80,6 +80,10 @@ coordinate 的 effect 可以按 `effect_id` 保存 Agent-owned receipt。Runtime
   command/effect receipt、applied surface evidence 与 source change cursor。
 - Dash source 使用单个 canonical JSONB document。source document 与 branch/history/command/
   effect/change 关系镜像不能同时作为写入目标。
+- Dash source document发生无法从旧payload可信推导的hard schema cutover时，forward migration在
+  同一事务先清除指向这些source的`lifecycle_agents.runtime_binding`与未终态Mailbox delivery
+  evidence，再删除旧source/effect，由正常provisioning建立新authority。原因是Product binding与
+  concrete Agent source共同构成owner invariant，不能让binding指向已被migration删除的source。
 - Create 前需要按 effect identity 查询的 receipt 属于 concrete Agent，不属于 Product、
   Runtime 或 Host。
 - Agent Runtime 只在内存中完成 command mapping、timeout/cancel、snapshot normalize 与 live
@@ -127,6 +131,7 @@ coordinate 的 effect 可以按 `effect_id` 保存 Agent-owned receipt。Runtime
 | presentation cache/store 缺失 | 重新从 Product/Agent owner 读取；不阻断业务命令 |
 | schema readiness 发现 Runtime/Host/Callback revision table | readiness 失败并列出残留 schema |
 | Mailbox intake receipt 缺少 concrete Agent receipt | 保持 queued/consuming/unknown；用同一 effect identity inspect |
+| hard migration命中旧Dash source | 清除对应Product binding与未终态delivery evidence，删除旧source后允许重新provision |
 
 ## 5. Good / Base / Bad Cases
 
@@ -150,6 +155,8 @@ coordinate 的 effect 可以按 `effect_id` 保存 Agent-owned receipt。Runtime
   runtime-thread unique lookup 与 owner deletion。
 - Dash repository 测试覆盖 source document restart、fork/compaction/history read、effect
   inspection，以及不存在关系镜像双写。
+- Dash hard migration测试覆盖旧source/effect清理、Product binding释放、未终态Mailbox evidence
+  释放、terminal evidence保留与同一LifecycleAgent重新provision。
 - Product list/workspace/delete 测试在 Agent resolve/read 失败时仍返回 Product shell。
 - Host restart 测试使用全新 Host 实例，从 Product association 与 Agent receipt 重建 route。
 - Mailbox测试断言intake成功一定包含stable message identity；本次已投递时附带concrete
@@ -204,15 +211,16 @@ HistoryPayload =
     CompactionQueued { compaction_id, mode, queued_at_ms }
   | CompactionStarted { compaction_id, mode, source_head, source_digest, started_at_ms }
   | CompactionSideEffectStarted { compaction_id, started_at_ms }
-  | CompactionApplied { compaction_id, context_revision, summary_frame, retained_from }
+  | CompactionApplied { compaction_id, context_revision, context_frames, retained_from }
   | CompactionCompleted { ... }
   | CompactionFailed { lost, ... }
   | CompactionCancelled { ... };
 ```
 
-数据库通过正式 migration 保存 `repository_schema_version`。启动阶段在任何业务 decode 前把已知
-旧 document 迁移成唯一最终形状、重算 history digest/context revision并重建 observation；生产
-repository只接受当前版本。新状态由repository JSONB整体CAS写入，不建立平行worker表。
+数据库通过正式migration管理source document形状。只有能保持accepted history语义的变更才做
+document transform；ContextFrame occurrence/reset这类无法从旧delta ledger可信恢复的变更采用
+hard migration释放旧authority并重新provision。生产repository只接受当前形状，新状态由repository
+JSONB整体CAS写入，不建立平行worker表。
 
 ### 3. Contracts
 
@@ -253,8 +261,8 @@ repository只接受当前版本。新状态由repository JSONB整体CAS写入，
 - claim CAS barrier覆盖pre-side-effect cancel；provider开始后command matrix必须不可取消。
 - worker panic/reopen覆盖lease失效与Lost terminal；并发Service reopen在有效lease期间不得误判。
 - failed/lost/cancelled覆盖dependent command不保留可执行状态，public effect收敛到对应终态。
-- migration与repository serialization测试覆盖旧flat/nested Applied、digest重算、版本门禁及
-  无法证明side-effect boundary的active compaction拒绝。
+- migration与repository serialization测试覆盖当前Applied形状、hard cutover owner invariant、
+  版本门禁及无法证明side-effect boundary的active compaction拒绝。
 
 ### 7. Wrong vs Correct
 

@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查Rust结构、测试覆盖与重复实现清理。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端呈现、状态派生与focused tests。"}
+{"file": ".trellis/spec/backend/agent-runtime-context.md", "reason": "核验active Frame fold、successful reset与conversation boundary。"}
+{"file": ".trellis/spec/backend/agent-runtime-native-adapter.md", "reason": "核验normal Surface update、compaction rebuild与provider同源。"}
+{"file": ".trellis/spec/backend/agent-runtime-persistence.md", "reason": "核验migration后Product binding与Complete Agent source owner invariant。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "核验canonical Frame batch、delivery ordering与conversation record边界。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "核验provider、inspector、timeline与UI展示的跨层一致性。"}
+{"file": ".trellis/tasks/07-31-contextframe-compaction-rebuild-architecture/research/architecture-baseline.md", "reason": "对照目标架构检查是否引入多余实体或旧ledger消费。"}
+{"file": ".trellis/tasks/07-31-contextframe-compaction-rebuild-architecture/research/normal-update-reset-evidence.md", "reason": "对照源码证据检查实现和测试是否覆盖完整reset语义。"}
+{"file": ".trellis/tasks/07-31-contextframe-compaction-rebuild-architecture/research/main-reference-contextframe-comparison.md", "reason": "核验实现只继承语义聚合，不恢复旧DeliveryPlan/Connector编排。"}

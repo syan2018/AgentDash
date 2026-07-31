@@ -239,32 +239,9 @@ function sampleContextFrameData(): WireContextFrame {
   return {
     id: "runtime-context-1",
     kind: "capability_state_delta",
-    source: "runtime_context_update",
-    phase_node: "apply",
-    apply_mode: "accepted_surface_append",
     delivery_status: "applied_before_prompt",
-    delivery_channel: "connector_context",
-    message_role: "context",
     rendered_text: "## Capability State Delta\n\n### Added Tool Schemas",
-    delivery_metadata: {
-      delivery_phase: "discovered_inventory",
-      delivery_order: 50,
-      cache_policy: "discovery_digest",
-      cache_key: null,
-      cache_revision: "surface-1",
-      model_channel: "context",
-      agent_consumption: {
-        target: "dash-agent",
-        mode: "system_append",
-        reason: "accepted_capability_state_append",
-      },
-      frontend_label: "Capability State Delta",
-      connector_profile: {
-        profile_id: "dash-agent",
-        declared_consumption_modes: ["system_append"],
-      },
-    },
-    created_at_ms: 1n,
+    created_at_ms: 1,
     sections: [
       {
         kind: "tool_schema_delta",

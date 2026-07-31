@@ -1,0 +1,32 @@
+{
+  "id": "contextframe-compaction-rebuild-architecture",
+  "name": "contextframe-compaction-rebuild-architecture",
+  "title": "收敛 ContextFrame 编译与压缩重建架构",
+  "description": "以Dash语义编译器聚合正常ContextFrame，并在压缩后从当前accepted state完整重建新基线；conversation始终保持canonical records。",
+  "status": "in_progress",
+  "dev_type": "refactor",
+  "scope": "cross-layer",
+  "package": "agent-runtime",
+  "priority": "P1",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-07-31",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "crates/agentdash-agent",
+    "crates/agentdash-agent-protocol",
+    "crates/agentdash-integration-native-agent",
+    "crates/agentdash-infrastructure",
+    "packages/app-web/src/features/session"
+  ],
+  "notes": "",
+  "meta": {}
+}

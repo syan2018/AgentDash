@@ -81,9 +81,7 @@ mod tests {
 
     use ts_rs::TS;
 
-    use super::{
-        BackboneEnvelope, BackboneEvent, ContextDeliveryMetadata, ContextFrame, PlatformEvent,
-    };
+    use super::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 
     #[test]
     fn backbone_types_export_to_explicit_temp_dir() {
@@ -106,34 +104,21 @@ mod tests {
     }
 
     #[test]
-    fn context_frame_changed_preserves_the_main_reference_payload_shape() {
-        use super::{
-            ContextDeliveryChannel, ContextDeliveryStatus, ContextFrame, ContextFrameChanged,
-            ContextFrameKind, ContextFrameSource, ContextMessageRole,
-        };
+    fn context_frame_changed_preserves_the_accepted_payload_shape() {
+        use super::{ContextDeliveryStatus, ContextFrame, ContextFrameChanged, ContextFrameKind};
 
         let fixture = serde_json::json!({
-            "id": "frame-1", "kind": "identity", "source": "runtime_context_update",
-            "delivery_status": "accepted", "delivery_channel": "connector_context",
-            "message_role": "system",
-            "delivery_metadata": {
-                "delivery_phase": "stable_system", "delivery_order": 10,
-                "cache_policy": "static", "model_channel": "system",
-                "agent_consumption": { "target": "", "mode": "consume", "reason": "default_identity_delivery" },
-                "frontend_label": "Identity", "connector_profile": { "profile_id": "" }
-            },
+            "id": "frame-1", "kind": "identity",
+            "delivery_status": "applied_before_prompt",
             "rendered_text": "system prompt", "sections": [], "created_at_ms": 123
         });
         let frame: ContextFrame =
-            serde_json::from_value(fixture.clone()).expect("deserialize main-reference payload");
+            serde_json::from_value(fixture.clone()).expect("deserialize accepted payload");
         assert_eq!(frame.kind, ContextFrameKind::Identity);
-        assert_eq!(frame.source, ContextFrameSource::RuntimeContextUpdate);
-        assert_eq!(frame.delivery_status, ContextDeliveryStatus::Accepted);
         assert_eq!(
-            frame.delivery_channel,
-            ContextDeliveryChannel::ConnectorContext
+            frame.delivery_status,
+            ContextDeliveryStatus::AppliedBeforePrompt
         );
-        assert_eq!(frame.message_role, ContextMessageRole::System);
         assert_eq!(serde_json::to_value(&frame).unwrap(), fixture);
 
         let event = BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(Box::new(
@@ -145,47 +130,35 @@ mod tests {
     }
 
     #[test]
-    fn owned_context_frame_vocabulary_round_trips_without_claiming_producer_semantics() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/context_frames_canonical_roundtrip.json"
-        ))
-        .expect("parse wrapper-neutral owned vocabulary fixture");
-        assert_eq!(fixture["fixture_kind"], "protocol_roundtrip_only");
-        let frames: Vec<ContextFrame> =
-            serde_json::from_value(fixture["frames"].clone()).expect("decode owned frames");
-        assert_eq!(serde_json::to_value(&frames).unwrap(), fixture["frames"]);
+    fn owned_context_frame_vocabulary_has_direct_labels_and_order_keys() {
+        use super::ContextFrameKind;
+
+        let kinds = [
+            ContextFrameKind::Identity,
+            ContextFrameKind::UserContext,
+            ContextFrameKind::Environment,
+            ContextFrameKind::SystemGuidelines,
+            ContextFrameKind::AssignmentContext,
+            ContextFrameKind::CapabilityStateDelta,
+            ContextFrameKind::MemoryContext,
+            ContextFrameKind::CompactionSummary,
+        ];
         assert_eq!(
-            frames
+            kinds
                 .iter()
-                .map(|frame| (frame.kind.as_key(), frame.delivery_metadata.delivery_order))
+                .map(|kind| (kind.as_key(), kind.frontend_label()))
                 .collect::<Vec<_>>(),
             vec![
-                ("identity", 10),
-                ("user_context", 12),
-                ("environment", 15),
-                ("system_guidelines", 20),
-                ("compaction_summary", 30),
-                ("assignment_context", 40),
-                ("capability_state_delta", 50),
-                ("memory_context", 60),
-                ("pending_action", 70),
-                ("system_delivery", 100),
-                ("system_notice", 100),
+                ("identity", "Identity"),
+                ("user_context", "User Context"),
+                ("environment", "Environment"),
+                ("system_guidelines", "System Guidelines"),
+                ("assignment_context", "Assignment Context"),
+                ("capability_state_delta", "Capability State Delta"),
+                ("memory_context", "Memory Context"),
+                ("compaction_summary", "Compaction Summary"),
             ]
         );
-        for frame in &frames {
-            let expected = ContextDeliveryMetadata::for_frame(
-                frame.kind,
-                frame.delivery_channel,
-                frame.message_role,
-            );
-            assert_eq!(
-                frame.delivery_metadata,
-                expected,
-                "{} metadata",
-                frame.kind.as_key()
-            );
-        }
     }
 
     #[test]
@@ -199,11 +172,14 @@ mod tests {
             frame.remove("created_at_ms");
             value
         }
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/context_frames_canonical_roundtrip.json"
-        ))
-        .unwrap();
-        let frame = fixture["frames"][0].clone();
+        let frame = serde_json::json!({
+            "id": "frame-1",
+            "kind": "identity",
+            "delivery_status": "applied_before_prompt",
+            "rendered_text": "system prompt",
+            "sections": [],
+            "created_at_ms": 123
+        });
         let left = serde_json::json!({"payload":{"data":{"thread_id":"old","turn_id":"old","frame":frame}}});
         let mut right = left.clone();
         right["payload"]["data"]["thread_id"] = serde_json::json!("new");

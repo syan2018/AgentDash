@@ -90,8 +90,9 @@ authority，同时不会覆盖read窗口内已经观察到的ephemeral或刚提�
 
 `Platform(HookTrace)` 和 `Platform(SessionMetaUpdate)` 不一律静默，交由 `SessionTaskEventGuard` 和 `SessionSystemEventGuard` 判定。
 `Platform(ContextFrameChanged)` 是ContextFrame的canonical入口。`platformEvent`负责从typed variant
-提取`frame + message`，reducer、feed与renderer共享同一个解析函数；`SessionMetaUpdate`不承载
-ContextFrame编码。
+提取generated `frame`，ContextFrame parser对required字段与所有section成员做整帧严格校验；
+reducer、feed与renderer共享该结果，不能补默认值或过滤坏成员。相邻ContextFrame事件按canonical
+Vec顺序进入同一side group；`SessionMetaUpdate`不承载ContextFrame编码。
 `Platform(WorkspaceModulePresentationRequested)` 是可渲染的展示请求审计事件。它使用独立
 discriminant，原因是 presentation intent 与 projection invalidation 具有不同的消费时机；
 `ControlPlaneProjectionChanged` 只表达 read model 需要刷新。

@@ -1,896 +1,589 @@
 import { isRecord } from "./platformEvent";
-import type { SkillContextExposure } from "../../../types/context";
+import type {
+  ContextFrame as GeneratedContextFrame,
+  ContextFrameSection as GeneratedContextFrameSection,
+  RuntimeCompanionAgentEntry,
+  RuntimeContextFragmentEntry,
+  RuntimeMemoryDiagnosticEntry,
+  RuntimeMemoryInventoryMode,
+  RuntimeMemorySourceEntry,
+  RuntimeSkillEntry,
+  RuntimeToolSchemaEntry,
+  SkillContextExposure,
+} from "../../../generated/backbone-protocol";
+import type { JsonValue } from "../../../generated/common-contracts";
 
-export interface ContextFrame {
-  id: string;
-  kind: string;
-  source: string;
-  phase_node?: string;
-  apply_mode?: string;
-  delivery_status: string;
-  delivery_channel: string;
-  message_role: string;
-  delivery_metadata: ContextDeliveryMetadata;
-  rendered_text: string;
-  sections: ContextFrameSection[];
-  created_at_ms: number;
-}
-
-export type ContextDeliveryPhase =
-  | "stable_system"
-  | "session_policy"
-  | "run_state"
-  | "assignment"
-  | "discovered_inventory"
-  | "turn_runtime";
-
-export type ContextCachePolicy =
-  | "static"
-  | "session_digest"
-  | "runtime_state_digest"
-  | "assignment_revision"
-  | "discovery_digest"
-  | "turn_ephemeral"
-  | "uncached";
-
-export type ContextModelChannel =
-  | "system"
-  | "developer"
-  | "context"
-  | "user"
-  | "audit_only"
-  | "ignored";
-
-export type ContextAgentConsumptionMode =
-  | "consume"
-  | "audit_only"
-  | "ignore"
-  | "connector_native"
-  | "system_append";
-
-export interface ContextAgentConsumption {
-  target: string;
-  mode: ContextAgentConsumptionMode;
-  reason: string;
-}
-
-export interface ContextConnectorProfile {
-  profile_id: string;
-  declared_consumption_modes: ContextAgentConsumptionMode[];
-}
-
-export interface ContextDeliveryMetadata {
-  delivery_phase: ContextDeliveryPhase;
-  delivery_order: number;
-  cache_policy: ContextCachePolicy;
-  cache_key?: string;
-  cache_revision?: string;
-  model_channel: ContextModelChannel;
-  agent_consumption: ContextAgentConsumption;
-  frontend_label: string;
-  connector_profile: ContextConnectorProfile;
-}
-
-export type ContextFrameSection =
-  | IdentitySection
-  | AssignmentContextSection
-  | CapabilityKeyDeltaSection
-  | ToolPathDeltaSection
-  | McpServerDeltaSection
-  | VfsDeltaSection
-  | ToolSchemaDeltaSection
-  | SkillDeltaSection
-  | MemoryInventorySection
-  | CompanionAgentRosterDeltaSection
-  | SystemNoticeSection
-  | PendingActionSection
-  | AutoResumeSection
-  | CompactionSummarySection
-  | UserPreferencesSection
-  | ProjectGuidelinesSection
-  | UserContextSection
-  | UnknownSection;
-
-export interface AssignmentContextSection {
-  kind: "assignment_context";
-  title: string;
-  summary: string;
-  fragments: RuntimeContextFragmentEntry[];
-}
-
-export interface IdentitySection {
-  kind: "identity";
-  title: string;
-  summary: string;
-  fragments: RuntimeContextFragmentEntry[];
-}
-
-export interface RuntimeContextFragmentEntry {
-  slot: string;
-  label: string;
-  source: string;
-  content: string;
-  context_usage_kind?: string;
-}
-
-export interface CapabilityKeyDeltaSection {
-  kind: "capability_key_delta";
-  added_capabilities: string[];
-  removed_capabilities: string[];
-  effective_capabilities: string[];
-}
-
-export interface ToolPathDeltaSection {
-  kind: "tool_path_delta";
-  blocked_tool_paths: string[];
-  unblocked_tool_paths: string[];
-  whitelisted_tool_paths: string[];
-  removed_whitelist_paths: string[];
-}
-
-export interface McpServerDeltaSection {
-  kind: "mcp_server_delta";
-  added_mcp_servers: string[];
-  removed_mcp_servers: string[];
-  changed_mcp_servers: string[];
-}
-
-export interface VfsDeltaSection {
-  kind: "vfs_delta";
-  vfs_mounts_added: string[];
-  vfs_mounts_removed: string[];
-  default_mount_before?: string;
-  default_mount_after?: string;
-}
-
-export interface ToolSchemaDeltaSection {
-  kind: "tool_schema_delta";
-  added_tools: RuntimeToolSchemaEntry[];
-  removed_tools: string[];
-  changed_tools: RuntimeToolSchemaEntry[];
-}
-
-export interface RuntimeToolSchemaEntry {
-  name: string;
-  description: string;
-  parameters_schema: unknown;
-  capability_key?: string;
-  source?: string;
-  tool_path?: string;
-  context_usage_kind?: string;
-}
-
-export interface SystemNoticeSection {
-  kind: "system_notice";
-  title: string;
-  summary: string;
-  body?: string;
-}
-
-export interface RuntimeSkillEntry {
-  name: string;
-  capability_key: string;
-  provider_key: string;
-  local_name: string;
-  display_name?: string;
-  description: string;
-  file_path: string;
-  base_dir?: string;
-  exposure: SkillContextExposure;
-  disable_model_invocation: boolean;
-  context_usage_kind?: string;
-}
-
-export type RuntimeMemoryInventoryMode = "snapshot" | "delta";
-
-export interface RuntimeMemorySourceEntry {
-  provider_key: string;
-  source_key: string;
-  display_name: string;
-  source_uri: string;
-  index_uri: string;
-  mount_id: string;
-  scope: string;
-  index_status: string;
-  trust_level: string;
-  revision: string;
-  summary?: string;
-  context_usage_kind?: string;
-}
-
-export interface RuntimeMemoryDiagnosticEntry {
-  provider_key: string;
-  code: string;
-  message: string;
-  source_key?: string;
-  uri?: string;
-  context_usage_kind?: string;
-}
-
-export interface RuntimeCompanionAgentEntry {
-  agent_key: string;
-  executor: string;
-  display_name: string;
-  context_usage_kind?: string;
-}
-
-export interface CompanionAgentRosterDeltaSection {
-  kind: "companion_agent_roster_delta";
-  added_agents: RuntimeCompanionAgentEntry[];
-  removed_agent_keys: string[];
-  changed_agents: RuntimeCompanionAgentEntry[];
-  effective_agents: RuntimeCompanionAgentEntry[];
-}
-
-export interface SkillDeltaSection {
-  kind: "skill_delta";
-  added_skills: RuntimeSkillEntry[];
-  removed_skills: RuntimeSkillEntry[];
-  changed_skills: RuntimeSkillEntry[];
-}
-
-export interface MemoryInventorySection {
-  kind: "memory_inventory";
-  title: string;
-  summary: string;
-  mode: RuntimeMemoryInventoryMode;
-  sources: RuntimeMemorySourceEntry[];
-  diagnostics: RuntimeMemoryDiagnosticEntry[];
-  added_sources: RuntimeMemorySourceEntry[];
-  removed_sources: RuntimeMemorySourceEntry[];
-  changed_sources: RuntimeMemorySourceEntry[];
-}
-
-export interface PendingActionSection {
-  kind: "pending_action";
-  title: string;
-  summary: string;
-  action_id: string;
-  action_type: string;
-  status: string;
-  revision: number;
-  turn_id?: string;
-  instructions: string[];
-  injections: RuntimeHookInjectionEntry[];
-}
-
-export interface AutoResumeSection {
-  kind: "auto_resume";
-  title: string;
-  summary: string;
-  reason: string;
-  prompt: string;
-}
-
-export interface CompactionSummarySection {
-  kind: "compaction_summary";
-  title: string;
-  summary: string;
-  tokens_before: number;
-  messages_compacted: number;
-  compaction_id?: string;
-  projection_version?: number;
-  strategy?: string;
-  trigger?: string;
-  phase?: string;
-  source_start_event_seq?: number;
-  source_end_event_seq?: number;
-  first_kept_event_seq?: number;
-  compacted_until_ref?: unknown;
-  timestamp_ms?: number;
-}
-
-export interface UserPreferencesSection {
-  kind: "user_preferences";
-  title: string;
-  summary: string;
-  items: string[];
-}
-
-export interface ProjectGuidelineEntry {
-  path: string;
-  content: string;
-}
-
-export interface ProjectGuidelinesSection {
-  kind: "project_guidelines";
-  title: string;
-  summary: string;
-  entries: ProjectGuidelineEntry[];
-}
-
-export interface UserContextSection {
-  kind: "user_context";
-  title: string;
-  summary: string;
-  user_id?: string;
-  display_name?: string;
-  email?: string;
-  groups: string[];
-  provider?: string;
-  extra?: unknown;
-}
-
-export interface UnknownSection {
-  kind: "unknown_section";
-  original_kind: string;
-  raw: Record<string, unknown>;
-}
-
-export interface RuntimeHookInjectionEntry {
-  slot: string;
-  source: string;
-  content: string;
-  context_usage_kind?: string;
-}
+export type ContextFrame = GeneratedContextFrame;
+export type ContextFrameKind = GeneratedContextFrame["kind"];
+export type ContextDeliveryStatus = GeneratedContextFrame["delivery_status"];
+export type ContextFrameSection = GeneratedContextFrameSection;
+export type ContextFragmentsSection = Extract<
+  ContextFrameSection,
+  { kind: "context_fragments" }
+>;
+export type CapabilityKeyDeltaSection = Extract<
+  ContextFrameSection,
+  { kind: "capability_key_delta" }
+>;
+export type ToolPathDeltaSection = Extract<
+  ContextFrameSection,
+  { kind: "tool_path_delta" }
+>;
+export type McpServerDeltaSection = Extract<
+  ContextFrameSection,
+  { kind: "mcp_server_delta" }
+>;
+export type VfsDeltaSection = Extract<ContextFrameSection, { kind: "vfs_delta" }>;
+export type ToolSchemaDeltaSection = Extract<
+  ContextFrameSection,
+  { kind: "tool_schema_delta" }
+>;
+export type SkillDeltaSection = Extract<ContextFrameSection, { kind: "skill_delta" }>;
+export type MemoryInventorySection = Extract<
+  ContextFrameSection,
+  { kind: "memory_inventory" }
+>;
+export type CompanionAgentRosterDeltaSection = Extract<
+  ContextFrameSection,
+  { kind: "companion_agent_roster_delta" }
+>;
+export type SystemNoticeSection = Extract<
+  ContextFrameSection,
+  { kind: "system_notice" }
+>;
+export type CompactionSummarySection = Extract<
+  ContextFrameSection,
+  { kind: "compaction_summary" }
+>;
+export type {
+  RuntimeCompanionAgentEntry,
+  RuntimeContextFragmentEntry,
+  RuntimeMemoryDiagnosticEntry,
+  RuntimeMemoryInventoryMode,
+  RuntimeMemorySourceEntry,
+  RuntimeSkillEntry,
+  RuntimeToolSchemaEntry,
+  SkillContextExposure,
+};
 
 export function parseContextFrame(input: unknown): ContextFrame | null {
   if (!isRecord(input)) return null;
-  const value = input;
-  const id = readString(value.id);
-  const kind = readString(value.kind);
-  const source = readString(value.source);
-  const delivery = readString(value.delivery_status);
-  const deliveryChannel = readString(value.delivery_channel);
-  const messageRole = readString(value.message_role);
-  const agentText = readRenderedText(value.rendered_text);
-  const createdAt = readNumber(value.created_at_ms);
-  const rawSections = Array.isArray(value.sections) ? value.sections : [];
-  if (!id || !kind || !source || !delivery || !deliveryChannel || !messageRole || agentText == null || createdAt == null) return null;
-
+  const id = readString(input.id);
+  const kind = readFrameKind(input.kind);
+  const deliveryStatus = readDeliveryStatus(input.delivery_status);
+  const renderedText = readString(input.rendered_text);
+  const createdAt = readInteger(input.created_at_ms);
+  const sections = parseArray(input.sections, parseSection);
+  if (
+    id == null
+    || kind == null
+    || deliveryStatus == null
+    || renderedText == null
+    || createdAt == null
+    || sections == null
+  ) {
+    return null;
+  }
   return {
     id,
     kind,
-    source,
-    phase_node: readString(value.phase_node) ?? undefined,
-    apply_mode: readString(value.apply_mode) ?? undefined,
-    delivery_status: delivery,
-    delivery_channel: deliveryChannel,
-    message_role: messageRole,
-    delivery_metadata: parseDeliveryMetadata(
-      value.delivery_metadata,
-      kind,
-      deliveryChannel,
-      messageRole,
-    ),
-    rendered_text: agentText,
-    sections: rawSections.map(parseSection).filter((item): item is ContextFrameSection => item != null),
+    delivery_status: deliveryStatus,
+    rendered_text: renderedText,
+    sections,
     created_at_ms: createdAt,
   };
 }
 
-function parseDeliveryMetadata(
-  value: unknown,
-  frameKind: string,
-  deliveryChannel: string,
-  messageRole: string,
-): ContextDeliveryMetadata {
-  if (!isRecord(value)) {
-    return defaultDeliveryMetadata(frameKind, deliveryChannel, messageRole);
-  }
-  const fallback = defaultDeliveryMetadata(frameKind, deliveryChannel, messageRole);
-  const rawConsumption = isRecord(value.agent_consumption) ? value.agent_consumption : {};
-  const rawProfile = isRecord(value.connector_profile) ? value.connector_profile : {};
-  const declaredModes = Array.isArray(rawProfile.declared_consumption_modes)
-    ? rawProfile.declared_consumption_modes
-    : [];
-
-  return {
-    delivery_phase: readDeliveryPhase(value.delivery_phase) ?? fallback.delivery_phase,
-    delivery_order: readNumber(value.delivery_order) ?? fallback.delivery_order,
-    cache_policy: readCachePolicy(value.cache_policy) ?? fallback.cache_policy,
-    cache_key: readString(value.cache_key) ?? undefined,
-    cache_revision: readString(value.cache_revision) ?? undefined,
-    model_channel: readModelChannel(value.model_channel) ?? fallback.model_channel,
-    agent_consumption: {
-      target: readString(rawConsumption.target) ?? fallback.agent_consumption.target,
-      mode: readConsumptionMode(rawConsumption.mode) ?? fallback.agent_consumption.mode,
-      reason: readString(rawConsumption.reason) ?? fallback.agent_consumption.reason,
-    },
-    frontend_label: readString(value.frontend_label) ?? fallback.frontend_label,
-    connector_profile: {
-      profile_id: readString(rawProfile.profile_id) ?? "",
-      declared_consumption_modes: declaredModes
-        .map(readConsumptionMode)
-        .filter((item): item is ContextAgentConsumptionMode => item != null),
-    },
-  };
-}
-
-function defaultDeliveryMetadata(
-  frameKind: string,
-  _deliveryChannel: string,
-  messageRole: string,
-): ContextDeliveryMetadata {
-  return {
-    delivery_phase: defaultDeliveryPhase(frameKind),
-    delivery_order: defaultDeliveryOrder(frameKind),
-    cache_policy: defaultCachePolicy(frameKind),
-    model_channel: defaultModelChannel(frameKind, messageRole),
-    agent_consumption: {
-      target: "",
-      mode: "consume",
-      reason: `default_${frameKind}_delivery`,
-    },
-    frontend_label: defaultFrontendLabel(frameKind),
-    connector_profile: {
-      profile_id: "",
-      declared_consumption_modes: [],
-    },
-  };
-}
-
-function defaultDeliveryPhase(frameKind: string): ContextDeliveryPhase {
-  if (frameKind === "identity" || frameKind === "user_context") return "stable_system";
-  if (frameKind === "system_guidelines") return "session_policy";
-  if (frameKind === "compaction_summary") return "run_state";
-  if (frameKind === "assignment_context") return "assignment";
-  if (frameKind === "capability_state_delta" || frameKind === "memory_context") {
-    return "discovered_inventory";
-  }
-  return "turn_runtime";
-}
-
-function defaultDeliveryOrder(frameKind: string): number {
-  if (frameKind === "identity") return 10;
-  if (frameKind === "user_context") return 12;
-  if (frameKind === "system_guidelines") return 20;
-  if (frameKind === "compaction_summary") return 30;
-  if (frameKind === "assignment_context") return 40;
-  if (frameKind === "capability_state_delta") return 50;
-  if (frameKind === "memory_context") return 60;
-  if (frameKind === "pending_action") return 70;
-  if (frameKind === "auto_resume") return 80;
-  return 100;
-}
-
-function defaultCachePolicy(frameKind: string): ContextCachePolicy {
-  if (frameKind === "identity" || frameKind === "user_context") return "static";
-  if (frameKind === "system_guidelines") return "session_digest";
-  if (frameKind === "compaction_summary") return "runtime_state_digest";
-  if (frameKind === "assignment_context") return "assignment_revision";
-  if (frameKind === "capability_state_delta" || frameKind === "memory_context") {
-    return "discovery_digest";
-  }
-  if (frameKind === "pending_action" || frameKind === "auto_resume") return "turn_ephemeral";
-  return "uncached";
-}
-
-function defaultModelChannel(frameKind: string, messageRole: string): ContextModelChannel {
-  if (frameKind === "identity" || frameKind === "user_context" || frameKind === "system_guidelines") return "system";
+function readFrameKind(value: unknown): ContextFrameKind | null {
   if (
-    frameKind === "memory_context"
-    || frameKind === "compaction_summary"
-    || frameKind === "assignment_context"
-  ) return "context";
-  if (frameKind === "auto_resume" || frameKind === "pending_action") return "user";
-  if (messageRole === "system") return "system";
-  if (messageRole === "developer") return "developer";
-  if (messageRole === "user") return "user";
-  return "context";
+    value === "identity"
+    || value === "user_context"
+    || value === "environment"
+    || value === "system_guidelines"
+    || value === "assignment_context"
+    || value === "capability_state_delta"
+    || value === "memory_context"
+    || value === "compaction_summary"
+  ) return value;
+  return null;
 }
 
-function defaultFrontendLabel(frameKind: string): string {
-  if (frameKind === "identity") return "Identity";
-  if (frameKind === "system_guidelines") return "System Guidelines";
-  if (frameKind === "compaction_summary") return "Compaction Summary";
-  if (frameKind === "assignment_context") return "Assignment Context";
-  if (frameKind === "capability_state_delta") return "Capability State Delta";
-  if (frameKind === "memory_context") return "Memory Context";
-  if (frameKind === "pending_action") return "Pending Action";
-  if (frameKind === "auto_resume") return "Auto Resume";
-  return "Context Frame";
+function readDeliveryStatus(value: unknown): ContextDeliveryStatus | null {
+  if (value === "applied_before_prompt" || value === "applied_to_compacted_context") {
+    return value;
+  }
+  return null;
 }
 
 function parseSection(value: unknown): ContextFrameSection | null {
   if (!isRecord(value)) return null;
   const kind = readString(value.kind);
-  if (kind === "assignment_context") {
-    const fragments = Array.isArray(value.fragments) ? value.fragments : [];
-    return {
-      kind,
-      title: readString(value.title) ?? "Assignment Context",
-      summary: readString(value.summary) ?? "",
-      fragments: fragments.map(parseFragmentEntry).filter((item): item is RuntimeContextFragmentEntry => item != null),
-    };
-  }
-  if (kind === "identity") {
-    const fragments = Array.isArray(value.fragments) ? value.fragments : [];
-    return {
-      kind,
-      title: readString(value.title) ?? "Identity",
-      summary: readString(value.summary) ?? "",
-      fragments: fragments.map(parseFragmentEntry).filter((item): item is RuntimeContextFragmentEntry => item != null),
-    };
+  if (kind === "context_fragments") {
+    const fragments = parseArray(value.fragments, parseFragmentEntry);
+    return fragments == null ? null : { kind, fragments };
   }
   if (kind === "capability_key_delta") {
+    const addedCapabilities = readStringArray(value.added_capabilities);
+    const removedCapabilities = readStringArray(value.removed_capabilities);
+    const effectiveCapabilities = readStringArray(value.effective_capabilities);
+    if (
+      addedCapabilities == null
+      || removedCapabilities == null
+      || effectiveCapabilities == null
+    ) return null;
     return {
       kind,
-      added_capabilities: readStringArray(value.added_capabilities),
-      removed_capabilities: readStringArray(value.removed_capabilities),
-      effective_capabilities: readStringArray(value.effective_capabilities),
+      added_capabilities: addedCapabilities,
+      removed_capabilities: removedCapabilities,
+      effective_capabilities: effectiveCapabilities,
     };
   }
   if (kind === "tool_path_delta") {
+    const blockedToolPaths = readStringArray(value.blocked_tool_paths);
+    const unblockedToolPaths = readStringArray(value.unblocked_tool_paths);
+    const whitelistedToolPaths = readStringArray(value.whitelisted_tool_paths);
+    const removedWhitelistPaths = readStringArray(value.removed_whitelist_paths);
+    if (
+      blockedToolPaths == null
+      || unblockedToolPaths == null
+      || whitelistedToolPaths == null
+      || removedWhitelistPaths == null
+    ) return null;
     return {
       kind,
-      blocked_tool_paths: readStringArray(value.blocked_tool_paths),
-      unblocked_tool_paths: readStringArray(value.unblocked_tool_paths),
-      whitelisted_tool_paths: readStringArray(value.whitelisted_tool_paths),
-      removed_whitelist_paths: readStringArray(value.removed_whitelist_paths),
+      blocked_tool_paths: blockedToolPaths,
+      unblocked_tool_paths: unblockedToolPaths,
+      whitelisted_tool_paths: whitelistedToolPaths,
+      removed_whitelist_paths: removedWhitelistPaths,
     };
   }
   if (kind === "mcp_server_delta") {
+    const addedMcpServers = readStringArray(value.added_mcp_servers);
+    const removedMcpServers = readStringArray(value.removed_mcp_servers);
+    const changedMcpServers = readStringArray(value.changed_mcp_servers);
+    if (
+      addedMcpServers == null
+      || removedMcpServers == null
+      || changedMcpServers == null
+    ) return null;
     return {
       kind,
-      added_mcp_servers: readStringArray(value.added_mcp_servers),
-      removed_mcp_servers: readStringArray(value.removed_mcp_servers),
-      changed_mcp_servers: readStringArray(value.changed_mcp_servers),
+      added_mcp_servers: addedMcpServers,
+      removed_mcp_servers: removedMcpServers,
+      changed_mcp_servers: changedMcpServers,
     };
   }
   if (kind === "vfs_delta") {
+    const vfsMountsAdded = readStringArray(value.vfs_mounts_added);
+    const vfsMountsRemoved = readStringArray(value.vfs_mounts_removed);
+    const defaultMountBefore = readOptionalString(value.default_mount_before);
+    const defaultMountAfter = readOptionalString(value.default_mount_after);
+    if (
+      vfsMountsAdded == null
+      || vfsMountsRemoved == null
+      || defaultMountBefore === INVALID
+      || defaultMountAfter === INVALID
+    ) return null;
     return {
       kind,
-      vfs_mounts_added: readStringArray(value.vfs_mounts_added),
-      vfs_mounts_removed: readStringArray(value.vfs_mounts_removed),
-      default_mount_before: readString(value.default_mount_before) ?? undefined,
-      default_mount_after: readString(value.default_mount_after) ?? undefined,
+      vfs_mounts_added: vfsMountsAdded,
+      vfs_mounts_removed: vfsMountsRemoved,
+      default_mount_before: defaultMountBefore,
+      default_mount_after: defaultMountAfter,
     };
   }
   if (kind === "tool_schema_delta") {
-    const addedTools = Array.isArray(value.added_tools) ? value.added_tools : [];
-    const changedTools = Array.isArray(value.changed_tools) ? value.changed_tools : [];
+    const addedTools = parseArray(value.added_tools, parseToolSchemaEntry);
+    const removedTools = readStringArray(value.removed_tools);
+    const changedTools = parseArray(value.changed_tools, parseToolSchemaEntry);
+    if (addedTools == null || removedTools == null || changedTools == null) return null;
     return {
       kind,
-      added_tools: addedTools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
-      removed_tools: readStringArray(value.removed_tools),
-      changed_tools: changedTools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
+      added_tools: addedTools,
+      removed_tools: removedTools,
+      changed_tools: changedTools,
     };
   }
   if (kind === "skill_delta") {
-    const added = Array.isArray(value.added_skills) ? value.added_skills : [];
-    const removed = Array.isArray(value.removed_skills) ? value.removed_skills : [];
-    const changed = Array.isArray(value.changed_skills) ? value.changed_skills : [];
+    const added = parseArray(value.added_skills, parseSkillEntry);
+    const removed = parseArray(value.removed_skills, parseSkillEntry);
+    const changed = parseArray(value.changed_skills, parseSkillEntry);
+    if (added == null || removed == null || changed == null) return null;
     return {
       kind,
-      added_skills: added.map(parseSkillEntry).filter((item): item is RuntimeSkillEntry => item != null),
-      removed_skills: removed.map(parseSkillEntry).filter((item): item is RuntimeSkillEntry => item != null),
-      changed_skills: changed.map(parseSkillEntry).filter((item): item is RuntimeSkillEntry => item != null),
+      added_skills: added,
+      removed_skills: removed,
+      changed_skills: changed,
     };
   }
   if (kind === "memory_inventory") {
-    const sources = Array.isArray(value.sources) ? value.sources : [];
-    const diagnostics = Array.isArray(value.diagnostics) ? value.diagnostics : [];
-    const added = Array.isArray(value.added_sources) ? value.added_sources : [];
-    const removed = Array.isArray(value.removed_sources) ? value.removed_sources : [];
-    const changed = Array.isArray(value.changed_sources) ? value.changed_sources : [];
+    const title = readString(value.title);
+    const summary = readString(value.summary);
+    const mode = readMemoryInventoryMode(value.mode);
+    const sources = parseArray(value.sources, parseMemorySourceEntry);
+    const diagnostics = parseArray(value.diagnostics, parseMemoryDiagnosticEntry);
+    const added = parseArray(value.added_sources, parseMemorySourceEntry);
+    const removed = parseArray(value.removed_sources, parseMemorySourceEntry);
+    const changed = parseArray(value.changed_sources, parseMemorySourceEntry);
+    if (
+      title == null
+      || summary == null
+      || mode == null
+      || sources == null
+      || diagnostics == null
+      || added == null
+      || removed == null
+      || changed == null
+    ) return null;
     return {
       kind,
-      title: readString(value.title) ?? "Memory Inventory",
-      summary: readString(value.summary) ?? "",
-      mode: value.mode === "delta" ? "delta" : "snapshot",
-      sources: sources.map(parseMemorySourceEntry).filter((item): item is RuntimeMemorySourceEntry => item != null),
-      diagnostics: diagnostics
-        .map(parseMemoryDiagnosticEntry)
-        .filter((item): item is RuntimeMemoryDiagnosticEntry => item != null),
-      added_sources: added.map(parseMemorySourceEntry).filter((item): item is RuntimeMemorySourceEntry => item != null),
-      removed_sources: removed.map(parseMemorySourceEntry).filter((item): item is RuntimeMemorySourceEntry => item != null),
-      changed_sources: changed.map(parseMemorySourceEntry).filter((item): item is RuntimeMemorySourceEntry => item != null),
+      title,
+      summary,
+      mode,
+      sources,
+      diagnostics,
+      added_sources: added,
+      removed_sources: removed,
+      changed_sources: changed,
     };
   }
   if (kind === "companion_agent_roster_delta") {
-    const added = Array.isArray(value.added_agents) ? value.added_agents : [];
-    const removed = Array.isArray(value.removed_agent_keys) ? value.removed_agent_keys : [];
-    const changed = Array.isArray(value.changed_agents) ? value.changed_agents : [];
-    const effective = Array.isArray(value.effective_agents) ? value.effective_agents : [];
+    const added = parseArray(value.added_agents, parseCompanionAgentEntry);
+    const removed = readStringArray(value.removed_agent_keys);
+    const changed = parseArray(value.changed_agents, parseCompanionAgentEntry);
+    const effective = parseArray(value.effective_agents, parseCompanionAgentEntry);
+    if (added == null || removed == null || changed == null || effective == null) return null;
     return {
       kind,
-      added_agents: added
-        .map(parseCompanionAgentEntry)
-        .filter((item): item is RuntimeCompanionAgentEntry => item != null),
-      removed_agent_keys: removed.map(readString).filter((item): item is string => item != null),
-      changed_agents: changed
-        .map(parseCompanionAgentEntry)
-        .filter((item): item is RuntimeCompanionAgentEntry => item != null),
-      effective_agents: effective
-        .map(parseCompanionAgentEntry)
-        .filter((item): item is RuntimeCompanionAgentEntry => item != null),
+      added_agents: added,
+      removed_agent_keys: removed,
+      changed_agents: changed,
+      effective_agents: effective,
     };
   }
   if (kind === "system_notice") {
+    const title = readString(value.title);
+    const summary = readString(value.summary);
+    const body = readOptionalString(value.body);
+    if (title == null || summary == null || body === INVALID) return null;
     return {
       kind,
-      title: readString(value.title) ?? "系统通知",
-      summary: readString(value.summary) ?? "",
-      body: readString(value.body) ?? undefined,
-    };
-  }
-  if (kind === "pending_action") {
-    const instructions = Array.isArray(value.instructions) ? value.instructions : [];
-    const injections = Array.isArray(value.injections) ? value.injections : [];
-    return {
-      kind,
-      title: readString(value.title) ?? "Pending Action",
-      summary: readString(value.summary) ?? "",
-      action_id: readString(value.action_id) ?? "",
-      action_type: readString(value.action_type) ?? "",
-      status: readString(value.status) ?? "pending",
-      revision: readNumber(value.revision) ?? 0,
-      turn_id: readString(value.turn_id) ?? undefined,
-      instructions: instructions.map(readString).filter((item): item is string => item != null),
-      injections: injections.map(parseInjectionEntry).filter((item): item is RuntimeHookInjectionEntry => item != null),
-    };
-  }
-  if (kind === "auto_resume") {
-    return {
-      kind,
-      title: readString(value.title) ?? "Auto Resume",
-      summary: readString(value.summary) ?? "",
-      reason: readString(value.reason) ?? "",
-      prompt: readString(value.prompt) ?? "",
+      title,
+      summary,
+      body,
     };
   }
   if (kind === "compaction_summary") {
+    const title = readString(value.title);
+    const summary = readString(value.summary);
+    const tokensBefore = readUnsignedInteger(value.tokens_before);
+    const messagesCompacted = readUnsignedInteger(value.messages_compacted);
+    const compactionId = readOptionalString(value.compaction_id);
+    const projectionVersion = readOptionalUnsignedInteger(value.projection_version);
+    const strategy = readOptionalString(value.strategy);
+    const trigger = readOptionalString(value.trigger);
+    const phase = readOptionalString(value.phase);
+    const sourceStartEventSeq = readOptionalUnsignedInteger(value.source_start_event_seq);
+    const sourceEndEventSeq = readOptionalUnsignedInteger(value.source_end_event_seq);
+    const firstKeptEventSeq = readOptionalUnsignedInteger(value.first_kept_event_seq);
+    const compactedUntilRef = readOptionalJson(value.compacted_until_ref);
+    const timestampMs = readOptionalUnsignedInteger(value.timestamp_ms);
+    if (
+      title == null
+      || summary == null
+      || tokensBefore == null
+      || messagesCompacted == null
+      || compactionId === INVALID
+      || projectionVersion === INVALID
+      || strategy === INVALID
+      || trigger === INVALID
+      || phase === INVALID
+      || sourceStartEventSeq === INVALID
+      || sourceEndEventSeq === INVALID
+      || firstKeptEventSeq === INVALID
+      || compactedUntilRef === INVALID
+      || timestampMs === INVALID
+    ) return null;
     return {
       kind,
-      title: readString(value.title) ?? "Compaction Summary",
-      summary: readString(value.summary) ?? "",
-      tokens_before: readNumber(value.tokens_before) ?? 0,
-      messages_compacted: readNumber(value.messages_compacted) ?? 0,
-      compaction_id: readString(value.compaction_id) ?? undefined,
-      projection_version: readNumber(value.projection_version) ?? undefined,
-      strategy: readString(value.strategy) ?? undefined,
-      trigger: readString(value.trigger) ?? undefined,
-      phase: readString(value.phase) ?? undefined,
-      source_start_event_seq: readNumber(value.source_start_event_seq) ?? undefined,
-      source_end_event_seq: readNumber(value.source_end_event_seq) ?? undefined,
-      first_kept_event_seq: readNumber(value.first_kept_event_seq) ?? undefined,
-      compacted_until_ref: value.compacted_until_ref,
-      timestamp_ms: readNumber(value.timestamp_ms) ?? undefined,
+      title,
+      summary,
+      tokens_before: tokensBefore,
+      messages_compacted: messagesCompacted,
+      compaction_id: compactionId,
+      projection_version: projectionVersion,
+      strategy,
+      trigger,
+      phase,
+      source_start_event_seq: sourceStartEventSeq,
+      source_end_event_seq: sourceEndEventSeq,
+      first_kept_event_seq: firstKeptEventSeq,
+      compacted_until_ref: compactedUntilRef,
+      timestamp_ms: timestampMs,
     };
   }
-  if (kind === "user_preferences") {
-    const items = Array.isArray(value.items) ? value.items : [];
-    return {
-      kind,
-      title: readString(value.title) ?? "User Preferences",
-      summary: readString(value.summary) ?? "",
-      items: items.map(readString).filter((item): item is string => item != null),
-    };
-  }
-  if (kind === "project_guidelines") {
-    const entries = Array.isArray(value.entries) ? value.entries : [];
-    return {
-      kind,
-      title: readString(value.title) ?? "Project Guidelines",
-      summary: readString(value.summary) ?? "",
-      entries: entries
-        .map(parseProjectGuidelineEntry)
-        .filter((item): item is ProjectGuidelineEntry => item != null),
-    };
-  }
-  if (kind === "user_context") {
-    const groups = Array.isArray(value.groups) ? value.groups : [];
-    return {
-      kind,
-      title: readString(value.title) ?? "User Context",
-      summary: readString(value.summary) ?? "",
-      user_id: readString(value.user_id) ?? undefined,
-      display_name: readString(value.display_name) ?? undefined,
-      email: readString(value.email) ?? undefined,
-      groups: groups.map(readString).filter((item): item is string => item != null),
-      provider: readString(value.provider) ?? undefined,
-      extra: value.extra ?? undefined,
-    };
-  }
-  return {
-    kind: "unknown_section",
-    original_kind: kind ?? "unknown",
-    raw: value,
-  };
+  return null;
 }
 
 function parseFragmentEntry(value: unknown): RuntimeContextFragmentEntry | null {
   if (!isRecord(value)) return null;
   const slot = readString(value.slot);
-  const content = readString(value.content) ?? "";
-  if (!slot && !content) return null;
+  const label = readString(value.label);
+  const source = readString(value.source);
+  const content = readString(value.content);
+  const contextUsageKind = readOptionalString(value.context_usage_kind);
+  if (
+    slot == null
+    || label == null
+    || source == null
+    || content == null
+    || contextUsageKind === INVALID
+  ) return null;
   return {
-    slot: slot ?? "context",
-    label: readString(value.label) ?? slot ?? "context",
-    source: readString(value.source) ?? "unknown",
+    slot,
+    label,
+    source,
     content,
-    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
+    context_usage_kind: contextUsageKind,
   };
 }
 
 function parseToolSchemaEntry(value: unknown): RuntimeToolSchemaEntry | null {
   if (!isRecord(value)) return null;
   const name = readString(value.name);
-  const description = readString(value.description) ?? "";
-  if (!name) return null;
+  const description = readString(value.description);
+  const parametersSchema = readRequiredJson(value.parameters_schema);
+  const capabilityKey = readOptionalString(value.capability_key);
+  const source = readOptionalString(value.source);
+  const toolPath = readOptionalString(value.tool_path);
+  const contextUsageKind = readOptionalString(value.context_usage_kind);
+  if (
+    name == null
+    || description == null
+    || parametersSchema === INVALID
+    || capabilityKey === INVALID
+    || source === INVALID
+    || toolPath === INVALID
+    || contextUsageKind === INVALID
+  ) return null;
   return {
     name,
     description,
-    parameters_schema: value.parameters_schema,
-    capability_key: readString(value.capability_key) ?? undefined,
-    source: readString(value.source) ?? undefined,
-    tool_path: readString(value.tool_path) ?? undefined,
-    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
-  };
-}
-
-function parseInjectionEntry(value: unknown): RuntimeHookInjectionEntry | null {
-  if (!isRecord(value)) return null;
-  return {
-    slot: readString(value.slot) ?? "context",
-    source: readString(value.source) ?? "unknown",
-    content: readString(value.content) ?? "",
-    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
+    parameters_schema: parametersSchema,
+    capability_key: capabilityKey,
+    source,
+    tool_path: toolPath,
+    context_usage_kind: contextUsageKind,
   };
 }
 
 function parseSkillEntry(value: unknown): RuntimeSkillEntry | null {
   if (!isRecord(value)) return null;
-  const rawName = readString(value.name);
-  const providerKey = readString(value.provider_key) ?? "";
-  const localName = readString(value.local_name) ?? rawName ?? "";
-  const displayName = readString(value.display_name) ?? undefined;
-  const capabilityKey =
-    readString(value.capability_key)
-    ?? (providerKey && localName ? `${providerKey}/${localName}` : rawName ?? localName);
-  const name = rawName ?? displayName ?? localName ?? capabilityKey;
-  if (!name) return null;
+  const name = readString(value.name);
+  const capabilityKey = readString(value.capability_key);
+  const providerKey = readString(value.provider_key);
+  const localName = readString(value.local_name);
+  const displayName = readOptionalString(value.display_name);
+  const description = readString(value.description);
+  const filePath = readString(value.file_path);
+  const baseDir = readOptionalString(value.base_dir);
+  const exposure = readSkillExposure(value.exposure);
+  const disableModelInvocation = readBoolean(value.disable_model_invocation);
+  const contextUsageKind = readOptionalString(value.context_usage_kind);
+  if (
+    name == null
+    || capabilityKey == null
+    || providerKey == null
+    || localName == null
+    || displayName === INVALID
+    || description == null
+    || filePath == null
+    || baseDir === INVALID
+    || exposure == null
+    || disableModelInvocation == null
+    || contextUsageKind === INVALID
+  ) return null;
   return {
     name,
     capability_key: capabilityKey,
     provider_key: providerKey,
-    local_name: localName || name,
+    local_name: localName,
     display_name: displayName,
-    description: readString(value.description) ?? "",
-    file_path: readString(value.file_path) ?? "",
-    base_dir: readString(value.base_dir) ?? undefined,
-    exposure: readSkillExposure(value.exposure),
-    disable_model_invocation: value.disable_model_invocation === true,
-    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
+    description,
+    file_path: filePath,
+    base_dir: baseDir,
+    exposure,
+    disable_model_invocation: disableModelInvocation,
+    context_usage_kind: contextUsageKind,
   };
 }
 
 function parseCompanionAgentEntry(value: unknown): RuntimeCompanionAgentEntry | null {
   if (!isRecord(value)) return null;
   const agentKey = readString(value.agent_key);
-  if (!agentKey) return null;
+  const executor = readString(value.executor);
+  const displayName = readString(value.display_name);
+  const contextUsageKind = readOptionalString(value.context_usage_kind);
+  if (
+    agentKey == null
+    || executor == null
+    || displayName == null
+    || contextUsageKind === INVALID
+  ) return null;
   return {
     agent_key: agentKey,
-    executor: readString(value.executor) ?? "",
-    display_name: readString(value.display_name) ?? agentKey,
-    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
+    executor,
+    display_name: displayName,
+    context_usage_kind: contextUsageKind,
   };
 }
 
 function parseMemorySourceEntry(value: unknown): RuntimeMemorySourceEntry | null {
   if (!isRecord(value)) return null;
-  const providerKey = readString(value.provider_key) ?? "";
-  const sourceKey = readString(value.source_key) ?? "";
-  const sourceUri = readString(value.source_uri) ?? "";
-  const indexUri = readString(value.index_uri) ?? "";
-  if (!sourceKey && !sourceUri && !indexUri) return null;
-  const displayName = readString(value.display_name) ?? (sourceKey || sourceUri || "Memory Source");
+  const providerKey = readString(value.provider_key);
+  const sourceKey = readString(value.source_key);
+  const displayName = readString(value.display_name);
+  const sourceUri = readString(value.source_uri);
+  const indexUri = readString(value.index_uri);
+  const mountId = readString(value.mount_id);
+  const scope = readString(value.scope);
+  const indexStatus = readString(value.index_status);
+  const trustLevel = readString(value.trust_level);
+  const revision = readString(value.revision);
+  const summary = readOptionalString(value.summary);
+  const contextUsageKind = readOptionalString(value.context_usage_kind);
+  if (
+    providerKey == null
+    || sourceKey == null
+    || displayName == null
+    || sourceUri == null
+    || indexUri == null
+    || mountId == null
+    || scope == null
+    || indexStatus == null
+    || trustLevel == null
+    || revision == null
+    || summary === INVALID
+    || contextUsageKind === INVALID
+  ) return null;
   return {
     provider_key: providerKey,
     source_key: sourceKey,
     display_name: displayName,
     source_uri: sourceUri,
     index_uri: indexUri,
-    mount_id: readString(value.mount_id) ?? "",
-    scope: readString(value.scope) ?? "unknown",
-    index_status: readString(value.index_status) ?? "unknown",
-    trust_level: readString(value.trust_level) ?? "unknown",
-    revision: readString(value.revision) ?? "",
-    summary: readString(value.summary) ?? undefined,
-    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
+    mount_id: mountId,
+    scope,
+    index_status: indexStatus,
+    trust_level: trustLevel,
+    revision,
+    summary,
+    context_usage_kind: contextUsageKind,
   };
 }
 
 function parseMemoryDiagnosticEntry(value: unknown): RuntimeMemoryDiagnosticEntry | null {
   if (!isRecord(value)) return null;
+  const providerKey = readString(value.provider_key);
   const code = readString(value.code);
   const message = readString(value.message);
-  if (!code && !message) return null;
+  const sourceKey = readOptionalString(value.source_key);
+  const uri = readOptionalString(value.uri);
+  const contextUsageKind = readOptionalString(value.context_usage_kind);
+  if (
+    providerKey == null
+    || code == null
+    || message == null
+    || sourceKey === INVALID
+    || uri === INVALID
+    || contextUsageKind === INVALID
+  ) return null;
   return {
-    provider_key: readString(value.provider_key) ?? "",
-    code: code ?? "memory_diagnostic",
-    message: message ?? "",
-    source_key: readString(value.source_key) ?? undefined,
-    uri: readString(value.uri) ?? undefined,
-    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
+    provider_key: providerKey,
+    code,
+    message,
+    source_key: sourceKey,
+    uri,
+    context_usage_kind: contextUsageKind,
   };
 }
 
-function parseProjectGuidelineEntry(value: unknown): ProjectGuidelineEntry | null {
-  if (!isRecord(value)) return null;
-  const path = readString(value.path);
-  const content = readRenderedText(value.content);
-  if (!path || content == null) return null;
-  return { path, content };
+function readSkillExposure(value: unknown): SkillContextExposure | null {
+  if (value === "explicit_only" || value === "default_exposed") return value;
+  return null;
 }
 
-function readSkillExposure(value: unknown): SkillContextExposure {
-  if (value === "explicit_only") return "explicit_only";
-  return "default_exposed";
+function readMemoryInventoryMode(value: unknown): RuntimeMemoryInventoryMode | null {
+  if (value === "snapshot" || value === "delta") return value;
+  return null;
 }
 
 function readString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  return typeof value === "string" ? value : null;
 }
 
-function readDeliveryPhase(value: unknown): ContextDeliveryPhase | null {
-  if (
-    value === "stable_system"
-    || value === "session_policy"
-    || value === "run_state"
-    || value === "assignment"
-    || value === "discovered_inventory"
-    || value === "turn_runtime"
-  ) return value;
-  return null;
+function readBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
-function readCachePolicy(value: unknown): ContextCachePolicy | null {
-  if (
-    value === "static"
-    || value === "session_digest"
-    || value === "runtime_state_digest"
-    || value === "assignment_revision"
-    || value === "discovery_digest"
-    || value === "turn_ephemeral"
-    || value === "uncached"
-  ) return value;
-  return null;
+function readInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 }
 
-function readModelChannel(value: unknown): ContextModelChannel | null {
-  if (
-    value === "system"
-    || value === "developer"
-    || value === "context"
-    || value === "user"
-    || value === "audit_only"
-    || value === "ignored"
-  ) return value;
-  return null;
+function readUnsignedInteger(value: unknown): number | null {
+  const parsed = readInteger(value);
+  return parsed != null && parsed >= 0 ? parsed : null;
 }
 
-function readConsumptionMode(value: unknown): ContextAgentConsumptionMode | null {
-  if (
-    value === "consume"
-    || value === "audit_only"
-    || value === "ignore"
-    || value === "connector_native"
-    || value === "system_append"
-  ) return value;
-  return null;
+function readStringArray(value: unknown): string[] | null {
+  return parseArray(value, readString);
 }
 
-function readRenderedText(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  return value;
-}
-
-function readNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "bigint") {
-    const converted = Number(value);
-    return Number.isSafeInteger(converted) ? converted : null;
+function parseArray<T>(
+  value: unknown,
+  parseItem: (item: unknown) => T | null,
+): T[] | null {
+  if (!Array.isArray(value)) return null;
+  const parsed: T[] = [];
+  for (const item of value) {
+    const next = parseItem(item);
+    if (next == null) return null;
+    parsed.push(next);
   }
-  return null;
+  return parsed;
 }
 
-function readStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map(readString).filter((item): item is string => item != null);
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true;
+  if (
+    typeof value === "string"
+    || typeof value === "boolean"
+    || (typeof value === "number" && Number.isFinite(value))
+  ) return true;
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return isRecord(value) && Object.values(value).every(isJsonValue);
+}
+
+const INVALID = Symbol("invalid_optional_context_frame_field");
+type OptionalParsed<T> = T | null | undefined | typeof INVALID;
+
+function readRequiredJson(value: unknown): JsonValue | typeof INVALID {
+  return isJsonValue(value) ? value : INVALID;
+}
+
+function readOptionalString(value: unknown): OptionalParsed<string> {
+  if (value === undefined || value === null) return value;
+  return typeof value === "string" ? value : INVALID;
+}
+
+function readOptionalUnsignedInteger(value: unknown): OptionalParsed<number> {
+  if (value === undefined || value === null) return value;
+  return readUnsignedInteger(value) ?? INVALID;
+}
+
+function readOptionalJson(value: unknown): OptionalParsed<JsonValue> {
+  if (value === undefined || value === null) return value;
+  return isJsonValue(value) ? value : INVALID;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -915,16 +608,10 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
   switch (kind) {
     case "identity":
       return { token: "IDN", variant: "primary" };
-    case "capability_state_snapshot":
-      return { token: "CAPS", variant: "primary" };
     case "capability_state_delta":
       return { token: "CAP", variant: "neutral" };
     case "assignment_context":
       return { token: "ASN", variant: "primary" };
-    case "pending_action":
-      return { token: "ACT", variant: "warning" };
-    case "auto_resume":
-      return { token: "RSM", variant: "warning" };
     case "compaction_summary":
       return { token: "CMP", variant: "warning" };
     case "system_guidelines":
@@ -946,10 +633,8 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
 /** 由 section.kind 推导内层 section 行 token 与徽标颜色 */
 export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTokenInfo {
   switch (kind) {
-    case "identity":
-      return { token: "IDN", variant: "primary" };
-    case "assignment_context":
-      return { token: "ASN", variant: "primary" };
+    case "context_fragments":
+      return { token: "CTX", variant: "primary" };
     case "capability_key_delta":
       return { token: "CAP", variant: "neutral" };
     case "tool_path_delta":
@@ -968,19 +653,7 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "AGNT", variant: "primary" };
     case "system_notice":
       return { token: "SYS", variant: "neutral" };
-    case "pending_action":
-      return { token: "ACT", variant: "warning" };
-    case "auto_resume":
-      return { token: "RSM", variant: "warning" };
     case "compaction_summary":
       return { token: "CMP", variant: "warning" };
-    case "user_preferences":
-      return { token: "PREF", variant: "primary" };
-    case "project_guidelines":
-      return { token: "GUID", variant: "primary" };
-    case "user_context":
-      return { token: "USR", variant: "primary" };
-    case "unknown_section":
-      return { token: "UNK", variant: "warning" };
   }
 }

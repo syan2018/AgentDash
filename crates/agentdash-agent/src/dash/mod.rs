@@ -1,3 +1,4 @@
+mod context_frame_compiler;
 mod core_execution;
 mod history;
 mod lifecycle;
@@ -36,10 +37,14 @@ pub use service::{
     DashContextUsageCategory, DashConversationNamer, DashConversationNamingRequest,
     DashEffectInspection, DashExecutionDependencies, DashHistoryCallbacks, DashHistoryCommit,
     DashPublicCommand, DashReceiptState, DashServiceError, DashTerminalOutcome,
-    NoopDashConversationNamer, NoopDashHistoryCallbacks,
-    compaction_context_frames_from_history_state, context_recipe_from_history_state,
+    NoopDashConversationNamer, NoopDashHistoryCallbacks, context_recipe_from_history_state,
 };
 pub use store::{
     CommandSettlement, DashAgentChange, DashAgentCommit, DashAgentStore, DashChangeCursor,
     StoreError,
+};
+
+pub(crate) use context_frame_compiler::{
+    compile_compaction_rebuild, compile_initial_context, compile_surface_revoke,
+    compile_surface_update, validate_compaction_rebuild,
 };
